@@ -1,0 +1,19 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+TESTDLL   = ole32.dll
+IMPORTS   = oleaut32 ole32 user32 kernel32
+EXTRALIBS = -luuid
+
+CTESTS = \
+	compobj.c \
+	marshal.c \
+	moniker.c \
+	propvariant.c \
+	stg_prop.c \
+	storage32.c
+
+@MAKE_TEST_RULES@
+
+### Dependencies:

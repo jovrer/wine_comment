@@ -1,0 +1,144 @@
+# Global rules for building dlls     -*-Makefile-*-
+#
+# Each individual makefile should define the following variables:
+# MODULE       : name of the main module being built
+# EXTRALIBS    : extra libraries to link in (optional)
+# SPEC_SRCS16  : interface definition files for 16-bit dlls (optional)
+# SUBSYSTEM    : (optional) subsystem (for native dlls)
+#
+# plus all variables required by the global Make.rules.in
+#
+
+DLLDEFS     = @DLLDEFS@
+DLLFLAGS    = @DLLFLAGS@
+DLLEXT      = @DLLEXT@
+IMPLIBEXT   = @IMPLIBEXT@
+DEFS        = -D__WINESRC__ $(DLLDEFS) $(EXTRADEFS)
+BASEMODULE  = $(MODULE:%.dll=%)
+MAINSPEC    = $(BASEMODULE).spec
+SPEC_DEF    = lib$(BASEMODULE).def
+WIN16_FILES = $(SPEC_SRCS16:.spec=.spec.o) $(C_SRCS16:.c=.o) $(EXTRA_OBJS16)
+ALL_OBJS    = @WIN16_FILES@ $(OBJS) $(RC_SRCS:.rc=.res)
+ALL_LIBS    = $(LIBWINE) $(EXTRALIBS) $(LIBPORT) $(LDFLAGS) $(LIBS)
+ALL_IMPORTS = $(DELAYIMPORTS) $(IMPORTS)
+IMPLIB_OBJS = $(IMPLIB_SRCS:.c=.o)
+STATICIMPLIB= $(IMPORTLIB:.def=.def.a)
+DLL_LDPATH  = -L$(DLLDIR) $(ALL_IMPORTS:%=-L$(DLLDIR)/%)
+
+all: $(MODULE)$(DLLEXT) $(SUBDIRS)
+
+@MAKE_RULES@
+
+# Rules for .so files
+
+$(MODULE).so: $(MAINSPEC) $(ALL_OBJS) Makefile.in
+	$(WINEGCC) -B$(TOOLSDIR)/tools/winebuild -shared $(SRCDIR)/$(MAINSPEC) $(ALL_OBJS) $(SUBSYSTEM:%=-Wb,--subsystem,%) $(BASEADDRESS:%=-Wl,--image-base,%) -o $@ $(DLL_LDPATH) $(ALL_IMPORTS:%=-l%) $(DELAYIMPORTS:%=-Wb,-d%) $(ALL_LIBS)
+
+# Rules for .dll files
+
+$(MODULE): $(RCOBJS) $(OBJS) $(SPEC_DEF) Makefile.in
+	$(DLLWRAP) -k --def $(SPEC_DEF) -o $@ $(RCOBJS) $(OBJS) $(DLL_LDPATH) $(ALL_IMPORTS:%=-l%) $(ALL_LIBS)
+
+# Rules for import libraries
+
+.PHONY: implib $(IMPLIB_OBJS:%=__static_implib__%)
+
+all implib: $(IMPORTLIB) $(IMPLIB_OBJS:%=__static_implib__%)
+
+$(IMPLIB_OBJS:%=__static_implib__%): $(STATICIMPLIB)
+
+lib$(BASEMODULE).def: $(MAINSPEC)
+	$(WINEBUILD) -w --def -o $@ --export $(SRCDIR)/$(MAINSPEC)
+
+lib$(BASEMODULE).def.a: $(IMPLIB_OBJS)
+	$(RM) $@
+	$(AR) $@ $(IMPLIB_OBJS)
+	$(RANLIB) $@
+
+lib$(BASEMODULE).a: $(SPEC_DEF) $(IMPLIB_OBJS)
+	$(DLLTOOL) -k -l $@ -d $(SPEC_DEF)
+	$(AR) $@ $(IMPLIB_OBJS)
+	$(RANLIB) $@
+
+$(SUBDIRS): implib
+
+# Rules for checking that no imports are missing
+
+.PHONY: checklink16 $(WIN16_FILES:%=__checklink16__%)
+
+$(WIN16_FILES:%=__checklink16__%): checklink16
+
+checklink16:: $(MAINSPEC).o $(OBJS) dummy
+	$(CC) -o checklink -Wl,-rpath,$(TOPOBJDIR)/libs $(TOPSRCDIR)/dlls/checklink.c $(MAINSPEC).o $(OBJS) -L$(DLLDIR) $(ALL_LIBS) -lwinecrt0 -lm && $(RM) checklink $(MAINSPEC).o
+
+checklink:: $(WIN16_FILES:%=__checklink16__%)
+
+# Rules for testing
+
+check test:: $(SUBDIRS:%=%/__test__)
+
+crosstest:: $(SUBDIRS:%=%/__crosstest__)
+
+# Rule to explicitly generate the .spec.s for debugging
+
+$(MAINSPEC).s $(MAINSPEC).o: $(MAINSPEC) $(ALL_OBJS)
+	$(WINEBUILD) $(WINEBUILDFLAGS) --dll -o $@ --export $(SRCDIR)/$(MAINSPEC) $(SUBSYSTEM:%=--subsystem %) $(ALL_OBJS) $(DLL_LDPATH) $(ALL_IMPORTS:%=-l%) $(DELAYIMPORTS:%=-d%) $(DLLDIR)/libwinecrt0.a
+
+# Rules for auto documentation
+
+man: $(C_SRCS)
+	$(C2MAN) -o $(TOPOBJDIR)/documentation/man$(api_manext) -R$(TOPOBJDIR) -C$(SRCDIR) -S$(api_manext) $(INCLUDES) $(MAINSPEC:%=-w %) $(SPEC_SRCS16:%=-w %) $(C_SRCS) $(C_SRCS16)
+
+doc-html: $(C_SRCS)
+	$(C2MAN) -o $(TOPOBJDIR)/documentation/html -R$(TOPOBJDIR) -C$(SRCDIR) $(INCLUDES) -Th $(MAINSPEC:%=-w %) $(SPEC_SRCS16:%=-w %) $(C_SRCS) $(C_SRCS16)
+
+doc-sgml: $(C_SRCS)
+	$(C2MAN) -o $(TOPOBJDIR)/documentation/api-guide -R$(TOPOBJDIR) -C$(SRCDIR) $(INCLUDES) -Ts $(MAINSPEC:%=-w %) $(SPEC_SRCS16:%=-w %) $(C_SRCS) $(C_SRCS16)
+
+.PHONY: man doc-html doc-sgml
+
+# Rules for installation
+
+EXE_SPECS16 = $(SPEC_SRCS16:.exe.spec=.exe)
+DRV_SPECS16 = $(EXE_SPECS16:.drv.spec=.drv)
+ALL_SPECS16 = $(DRV_SPECS16:.spec=.dll)
+
+WIN16_INSTALL = $(ALL_SPECS16:%=_install_/%)
+
+.PHONY: install_lib install_static_implib_def install_static_implib_a
+.PHONY: $(ALL_SPECS16:%=_install_/%) $(IMPORTLIB:%=_install_/%) $(IMPLIB_OBJS:%=_install_static_implib_/%)
+
+$(ALL_SPECS16:%=_install_/%): install_lib
+	cd $(dlldir) && $(RM) `basename $@`$(DLLEXT) && $(LN_S) $(MODULE)$(DLLEXT) `basename $@`$(DLLEXT)
+
+install_lib: $(MODULE)$(DLLEXT)
+	$(MKINSTALLDIRS) $(dlldir)
+	$(INSTALL_PROGRAM) $(MODULE)$(DLLEXT) $(dlldir)/$(MODULE)$(DLLEXT)
+
+$(IMPORTLIB:%=_install_/%): $(IMPORTLIB)
+	$(MKINSTALLDIRS) $(dlldir)
+	$(INSTALL_DATA) $(IMPORTLIB) $(dlldir)/$(IMPORTLIB)
+
+install_static_implib_def: $(STATICIMPLIB)
+	$(MKINSTALLDIRS) $(dlldir)
+	$(INSTALL_DATA) $(STATICIMPLIB) $(dlldir)/$(STATICIMPLIB)
+
+install_static_implib_a:
+
+$(IMPLIB_OBJS:%=_install_static_implib_/%): install_static_implib_$(IMPLIBEXT)
+
+install install-lib:: install_lib @WIN16_INSTALL@
+
+install install-dev:: $(IMPORTLIB:%=_install_/%) $(IMPLIB_OBJS:%=_install_static_implib_/%)
+
+uninstall::
+	[ ! -d $(dlldir) ] || (cd $(dlldir) && $(RM) $(MODULE)$(DLLEXT) $(IMPORTLIB) $(STATICIMPLIB) $(ALL_SPECS16:%=%$(DLLEXT)))
+
+# Misc. rules
+
+clean::
+	$(RM) $(SPEC_DEF)
+
+$(SPEC_DEF) $(SPEC_SRCS16:.spec=.spec.o): $(WINEBUILD)
+
+# End of global dll rules

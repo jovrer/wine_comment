@@ -1,0 +1,173 @@
+EXTRADEFS = -D_USER32_ -D_WINABLE_
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = user32.dll
+IMPORTLIB = libuser32.$(IMPLIBEXT)
+IMPORTS   = gdi32 advapi32 kernel32 ntdll
+EXTRALIBS = $(LIBUNICODE)
+
+SPEC_SRCS16 = \
+	ddeml.spec \
+	display.drv.spec \
+	keyboard.drv.spec \
+	mouse.drv.spec \
+	user.exe.spec
+
+C_SRCS = \
+	button.c \
+	caret.c \
+	class.c \
+	clipboard.c \
+	combo.c \
+	cursoricon.c \
+	dde_client.c \
+	dde_misc.c \
+	dde_server.c \
+	ddeml16.c \
+	defdlg.c \
+	defwnd.c \
+	desktop.c \
+	dialog.c \
+	dialog16.c \
+	driver.c \
+	driver16.c \
+	edit.c \
+	exticon.c \
+	focus.c \
+	hook.c \
+	icontitle.c \
+	input.c \
+	listbox.c \
+	lstr.c \
+	mdi.c \
+	menu.c \
+	message.c \
+	misc.c \
+	msg16.c \
+	msgbox.c \
+	nonclient.c \
+	painting.c \
+	property.c \
+	resource.c \
+	scroll.c \
+	spy.c \
+	static.c \
+	sysparams.c \
+	text.c \
+	uitools.c \
+	user_main.c \
+	win.c \
+	winhelp.c \
+	winpos.c \
+	winproc.c \
+	winstation.c \
+	wsprintf.c
+
+C_SRCS16 = \
+	bidi16.c \
+	comm16.c \
+	display.c \
+	hook16.c \
+	kbd16.c \
+	mouse16.c \
+	network.c \
+	user16.c \
+	wnd16.c
+
+RC_SRCS = resources/user32.rc
+
+RC_BINSRC = resources/user32_bin.rc
+RC_BINARIES = \
+	resources/obm_btncorners.bmp \
+	resources/obm_btsize.bmp \
+	resources/obm_check.bmp \
+	resources/obm_checkboxes.bmp \
+	resources/obm_close.bmp \
+	resources/obm_combo.bmp \
+	resources/obm_dnarrow.bmp \
+	resources/obm_dnarrowd.bmp \
+	resources/obm_dnarrowi.bmp \
+	resources/obm_lfarrow.bmp \
+	resources/obm_lfarrowd.bmp \
+	resources/obm_lfarrowi.bmp \
+	resources/obm_mnarrow.bmp \
+	resources/obm_old_close.bmp \
+	resources/obm_old_dnarrow.bmp \
+	resources/obm_old_lfarrow.bmp \
+	resources/obm_old_reduce.bmp \
+	resources/obm_old_restore.bmp \
+	resources/obm_old_rgarrow.bmp \
+	resources/obm_old_uparrow.bmp \
+	resources/obm_old_zoom.bmp \
+	resources/obm_reduce.bmp \
+	resources/obm_reduced.bmp \
+	resources/obm_restore.bmp \
+	resources/obm_restored.bmp \
+	resources/obm_rgarrow.bmp \
+	resources/obm_rgarrowd.bmp \
+	resources/obm_rgarrowi.bmp \
+	resources/obm_size.bmp \
+	resources/obm_trtype.bmp \
+	resources/obm_uparrow.bmp \
+	resources/obm_uparrowd.bmp \
+	resources/obm_uparrowi.bmp \
+	resources/obm_zoom.bmp \
+	resources/obm_zoomd.bmp \
+	resources/ocr_appstarting.cur \
+	resources/ocr_cross.cur \
+	resources/ocr_dragobject.cur \
+	resources/ocr_hand.cur \
+	resources/ocr_help.cur \
+	resources/ocr_ibeam.cur \
+	resources/ocr_icon.cur \
+	resources/ocr_no.cur \
+	resources/ocr_normal.cur \
+	resources/ocr_size.cur \
+	resources/ocr_sizeall.cur \
+	resources/ocr_sizenesw.cur \
+	resources/ocr_sizens.cur \
+	resources/ocr_sizenwse.cur \
+	resources/ocr_sizewe.cur \
+	resources/ocr_up.cur \
+	resources/ocr_wait.cur \
+	resources/oic_bang.ico \
+	resources/oic_hand.ico \
+	resources/oic_note.ico \
+	resources/oic_ques.ico \
+	resources/oic_sample.ico \
+	resources/oic_winlogo.ico
+
+RC_SRCS16 = \
+	resources/display.rc \
+	resources/mouse.rc \
+	resources/version16.rc
+
+SUBDIRS = tests
+
+EXTRASUBDIRS = resources
+
+@MAKE_DLL_RULES@
+
+# Special rules for 16-bit resource and spec files
+
+user.exe.spec.o: user.exe.spec resources/version16.res
+	$(WINEBUILD) $(WINEBUILDFLAGS) --dll -o $@ --heap 65520 --main-module $(MODULE) --res resources/version16.res --export $(SRCDIR)/user.exe.spec
+
+display.drv.spec.o: display.drv.spec resources/display.res
+	$(WINEBUILD) $(WINEBUILDFLAGS) --dll -o $@ --main-module $(MODULE) --res resources/display.res --export $(SRCDIR)/display.drv.spec
+
+mouse.drv.spec.o: mouse.drv.spec resources/mouse.res
+	$(WINEBUILD) $(WINEBUILDFLAGS) --dll -o $@ --main-module $(MODULE) --res resources/mouse.res --export $(SRCDIR)/mouse.drv.spec
+
+resources/display.res: resources/display.rc
+	$(LDPATH) $(RC16) $(RC16FLAGS) -fo$@ $(SRCDIR)/resources/display.rc
+
+resources/mouse.res: resources/mouse.rc
+	$(LDPATH) $(RC16) $(RC16FLAGS) -fo$@ $(SRCDIR)/resources/mouse.rc
+
+resources/version16.res: resources/version16.rc
+	$(LDPATH) $(RC16) $(RC16FLAGS) -fo$@ $(SRCDIR)/resources/version16.rc
+
+### Dependencies:

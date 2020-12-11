@@ -1,0 +1,20 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+TESTDLL   = shell32.dll
+IMPORTS   = shell32 ole32 oleaut32 shlwapi advapi32 kernel32
+EXTRALIBS = -luuid
+
+CTESTS = \
+	generated.c \
+	shelllink.c \
+	shellpath.c \
+	shlexec.c \
+	shlfileop.c \
+	shlfolder.c \
+	string.c
+
+@MAKE_TEST_RULES@
+
+### Dependencies:

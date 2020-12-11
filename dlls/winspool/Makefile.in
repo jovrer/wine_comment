@@ -1,0 +1,27 @@
+EXTRADEFS = -D_SPOOL32_
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = winspool.drv
+IMPORTLIB = libwinspool.$(IMPLIBEXT)
+IMPORTS   = user32 gdi32 advapi32 kernel32 ntdll
+EXTRALIBS = $(LIBUNICODE)
+
+C_SRCS = \
+	info.c \
+	wspool.c
+
+RC_SRCS = winspool.rc
+
+SUBDIRS = tests
+
+@MAKE_DLL_RULES@
+
+$(IMPORTLIB): lib$(BASEMODULE).$(IMPLIBEXT)
+	$(RM) $@ && $(LN_S) lib$(BASEMODULE).$(IMPLIBEXT) $@
+
+clean::
+	$(RM) $(IMPORTLIB)
+
+### Dependencies:

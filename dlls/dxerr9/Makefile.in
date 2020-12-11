@@ -1,0 +1,12 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = libdxerr9.a
+
+C_SRCS = \
+	dxerr9.c
+
+@MAKE_IMPLIB_RULES@
+
+### Dependencies:

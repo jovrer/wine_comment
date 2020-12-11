@@ -1,0 +1,36 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = mshtml.dll
+IMPORTLIB = libmshtml.$(IMPLIBEXT)
+IMPORTS   = urlmon ole32 oleaut32 user32 gdi32 advapi32 kernel32 ntdll
+EXTRALIBS = $(LIBUNICODE) -lstrmiids -luuid
+EXTRADEFS = -DCOM_NO_WINDOWS_H
+
+C_SRCS = \
+	hlink.c \
+	htmldoc.c \
+	main.c \
+	nsembed.c \
+	oleobj.c \
+	olewnd.c \
+	persist.c \
+	protocol.c \
+	service.c \
+	view.c
+
+RC_SRCS = rsrc.rc
+
+IDL_SRCS = nsiface.idl
+
+SUBDIRS = tests
+
+@MAKE_DLL_RULES@
+
+rsrc.res: mshtml.inf blank.htm
+
+### Dependencies:
+
+# note: this will get overwritten by make depend
+$(ALL_OBJS): $(IDL_SRCS:.idl=.h)

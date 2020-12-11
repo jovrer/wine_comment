@@ -1,0 +1,19 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+TESTDLL   = advapi32.dll
+IMPORTS   = advapi32 kernel32
+
+CTESTS = \
+	crypt.c \
+	crypt_lmhash.c \
+	crypt_md4.c \
+	crypt_md5.c \
+	crypt_sha.c \
+	registry.c \
+	security.c
+
+@MAKE_TEST_RULES@
+
+### Dependencies:

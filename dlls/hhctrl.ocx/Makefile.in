@@ -1,0 +1,21 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = hhctrl.ocx
+IMPORTS   = advapi32 comctl32 shell32 ole32 oleaut32 user32 gdi32 kernel32
+EXTRALIBS = -luuid
+
+C_SRCS = \
+	chm.c \
+	help.c \
+	hhctrl.c \
+	main.c \
+	regsvr.c \
+	webbrowser.c
+
+RC_SRCS = hhctrl.rc
+
+@MAKE_DLL_RULES@
+
+### Dependencies:

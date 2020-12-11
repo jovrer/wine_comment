@@ -1,0 +1,57 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = winedbg.exe
+APPMODE   = -mconsole
+IMPORTS   = dbghelp advapi32 kernel32 ntdll
+DELAYIMPORTS = user32
+
+C_SRCS = \
+	be_alpha.c \
+	be_i386.c \
+	be_ppc.c \
+	break.c \
+	db_disasm.c \
+	display.c \
+	expr.c \
+	gdbproxy.c \
+	info.c \
+	memory.c \
+	source.c \
+	symbol.c \
+	stack.c \
+	tgt_active.c \
+	tgt_minidump.c \
+	types.c \
+	winedbg.c
+
+EXTRA_SRCS = dbg.y debug.l
+EXTRA_OBJS = dbg.tab.o @LEX_OUTPUT_ROOT@.o
+
+MANPAGES = winedbg.man
+
+@MAKE_PROG_RULES@
+
+all: $(MANPAGES)
+
+dbg.tab.c dbg.tab.h: dbg.y
+	$(BISON) -d -t $(SRCDIR)/dbg.y -o dbg.tab.c
+
+# hack to allow parallel make
+dbg.tab.h: dbg.tab.c
+dbg.tab.o: dbg.tab.h
+
+@LEX_OUTPUT_ROOT@.c: debug.l
+	$(LEX) -8 -I $(SRCDIR)/debug.l
+
+@LEX_OUTPUT_ROOT@.o: dbg.tab.h
+
+install:: $(MANPAGES)
+	$(MKINSTALLDIRS) $(mandir)/man$(prog_manext)
+	$(INSTALL_DATA) winedbg.man $(mandir)/man$(prog_manext)/winedbg.$(prog_manext)
+
+uninstall::
+	$(RM) $(mandir)/man$(prog_manext)/winedbg.$(prog_manext)
+
+### Dependencies:

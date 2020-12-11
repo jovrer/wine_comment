@@ -1,0 +1,370 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ..
+SRCDIR    = @srcdir@
+VPATH	  = @srcdir@
+MODULE	  = none
+
+WINDOWS_IDL_SRCS = \
+	activscp.idl \
+	amstream.idl \
+	amvideo.idl \
+	austream.idl \
+	comcat.idl \
+	control.idl \
+	ddstream.idl \
+	dispex.idl \
+	docobj.idl \
+	downloadmgr.idl \
+	exdisp.idl \
+	hlink.idl \
+	iads.idl \
+	mediaobj.idl \
+	mimeinfo.idl \
+	mlang.idl \
+	mmstream.idl \
+	mshtmhst.idl \
+	mshtml.idl \
+	msxml.idl \
+	msxml2.idl \
+	oaidl.idl \
+	objidl.idl \
+	objsafe.idl \
+	ocidl.idl \
+	oleidl.idl \
+	propidl.idl \
+	pstore.idl \
+	richole.idl \
+	sensevts.idl \
+	servprov.idl \
+	shldisp.idl \
+	shobjidl.idl \
+	shtypes.idl \
+	strmif.idl \
+	unknwn.idl \
+	urlmon.idl \
+	wtypes.idl \
+	xmldom.idl \
+	xmldso.idl
+
+WINDOWS_IDL_INCLUDES = \
+	$(WINDOWS_IDL_SRCS) \
+	axcore.idl \
+	axextend.idl \
+	devenum.idl \
+	dyngraph.idl
+
+WINDOWS_INCLUDES = \
+	$(WINDOWS_IDL_INCLUDES) \
+	accctrl.h \
+	aclapi.h \
+	advpub.h \
+	appmgmt.h \
+	audevcod.h \
+	aviriff.h \
+	basetsd.h \
+	basetyps.h \
+	cderr.h \
+	cguid.h \
+	commctrl.h \
+	commdlg.h \
+	compobj.h \
+	cpl.h \
+	custcntl.h \
+	cvconst.h \
+	d3d.h \
+	d3d8.h \
+	d3d8caps.h \
+	d3d8types.h \
+	d3d9.h \
+	d3d9caps.h \
+	d3d9types.h \
+	d3dcaps.h \
+	d3dhal.h \
+	d3drm.h \
+	d3dtypes.h \
+	d3dvec.inl \
+	d3dx8core.h \
+	dbghelp.h \
+	dbt.h \
+	dciddi.h \
+	dciman.h \
+	dde.h \
+	ddeml.h \
+	ddk/cfgmgr32.h \
+	ddk/wdm.h \
+	ddk/winsplp.h \
+	ddraw.h \
+	ddrawi.h \
+	devguid.h \
+	digitalv.h \
+	dinput.h \
+	dispdib.h \
+	dlgs.h \
+	dls1.h \
+	dls2.h \
+	dmdls.h \
+	dmerror.h \
+	dmo.h \
+	dmoreg.h \
+	dmort.h \
+	dmplugin.h \
+	dmusbuff.h \
+	dmusicc.h \
+	dmusicf.h \
+	dmusici.h \
+	dmusics.h \
+	dpaddr.h \
+	dplay.h \
+	dplay8.h \
+	dplobby.h \
+	dsconf.h \
+	dsdriver.h \
+	dshow.h \
+	dsound.h \
+	dxdiag.h \
+	dxerr8.h \
+	dxerr9.h \
+	dxfile.h \
+	evcode.h \
+	evntrace.h \
+	excpt.h \
+	exdispid.h \
+	fci.h \
+	fdi.h \
+	guiddef.h \
+	htmlhelp.h \
+	icm.h \
+	icmpapi.h \
+	idispids.h \
+	imagehlp.h \
+	imm.h \
+	initguid.h \
+	ipexport.h \
+	iphlpapi.h \
+	ipifcons.h \
+	iprtrmib.h \
+	iptypes.h \
+	ks.h \
+	ksguid.h \
+	ksmedia.h \
+	lm.h \
+	lmaccess.h \
+	lmapibuf.h \
+	lmbrowsr.h \
+	lmcons.h \
+	lmerr.h \
+	lmjoin.h \
+	lmserver.h \
+	lmshare.h \
+	lmstats.h \
+	lmwksta.h \
+	lzexpand.h \
+	mapi.h \
+	mapicode.h \
+	mapidefs.h \
+	mapiguid.h \
+	mapitags.h \
+	mapiutil.h \
+	mapival.h \
+	mapix.h \
+	mciavi.h \
+	mcx.h \
+	mediaerr.h \
+	minmax.h \
+	mmddk.h \
+	mmreg.h \
+	mmsystem.h \
+	msacm.h \
+	msacmdlg.h \
+	msacmdrv.h \
+	mscat.h \
+	mshtmdid.h \
+	msi.h \
+	msidefs.h \
+	msiquery.h \
+	mssip.h \
+	mswsock.h \
+	msxml2did.h \
+	msxmldid.h \
+	nb30.h \
+	npapi.h \
+	nspapi.h \
+	ntddcdrm.h \
+	ntddscsi.h \
+	ntddstor.h \
+	ntsecapi.h \
+	ntstatus.h \
+	objbase.h \
+	objsel.h \
+	odbcinst.h \
+	ole2.h \
+	ole2ver.h \
+	oleauto.h \
+	olectl.h \
+	oledlg.h \
+	pktdef.h \
+	poppack.h \
+	powrprof.h \
+	prsht.h \
+	psapi.h \
+	pshpack1.h \
+	pshpack2.h \
+	pshpack4.h \
+	pshpack8.h \
+	ras.h \
+	reason.h \
+	regstr.h \
+	richedit.h \
+	rpc.h \
+	rpcdce.h \
+	rpcdcep.h \
+	rpcndr.h \
+	rpcnterr.h \
+	rpcproxy.h \
+	schannel.h \
+	schemadef.h \
+	schnlsp.h \
+	sddl.h \
+	secext.h \
+	security.h \
+	sensapi.h \
+	setupapi.h \
+	shellapi.h \
+	shlguid.h \
+	shlobj.h \
+	shlwapi.h \
+	sipbase.h \
+	snmp.h \
+	sql.h \
+	sqlext.h \
+	sqltypes.h \
+	sspi.h \
+	storage.h \
+	tapi.h \
+	tchar.h \
+	textserv.h \
+	tlhelp32.h \
+	tmschema.h \
+	uuids.h \
+	uxtheme.h \
+	ver.h \
+	vfw.h \
+	vfwmsgs.h \
+	winbase.h \
+	wincon.h \
+	wincrypt.h \
+	windef.h \
+	windows.h \
+	windowsx.h \
+	winerror.h \
+	wingdi.h \
+	wininet.h \
+	winioctl.h \
+	winldap.h \
+	winnetwk.h \
+	winnls.h \
+	winnls32.h \
+	winnt.h \
+	winreg.h \
+	winres.h \
+	winresrc.h \
+	winsock.h \
+	winsock2.h \
+	winspool.h \
+	winsvc.h \
+	wintab.h \
+	wintabx.h \
+	winternl.h \
+	wintrust.h \
+	winuser.h \
+	winver.h \
+	wmistr.h \
+	wnaspi32.h \
+	wownt32.h \
+	ws2spi.h \
+	ws2tcpip.h \
+	wshisotp.h \
+	wsipx.h \
+	wsnwlink.h \
+	wtsapi32.h \
+	xcmc.h \
+	xmldomdid.h \
+	xmldsodid.h \
+	zmouse.h
+
+MSVCRT_INCLUDES = \
+	msvcrt/conio.h \
+	msvcrt/crtdbg.h \
+	msvcrt/ctype.h \
+	msvcrt/direct.h \
+	msvcrt/dirent.h \
+	msvcrt/dos.h \
+	msvcrt/eh.h \
+	msvcrt/errno.h \
+	msvcrt/fcntl.h \
+	msvcrt/float.h \
+	msvcrt/io.h \
+	msvcrt/limits.h \
+	msvcrt/locale.h \
+	msvcrt/malloc.h \
+	msvcrt/math.h \
+	msvcrt/mbctype.h \
+	msvcrt/mbstring.h \
+	msvcrt/process.h \
+	msvcrt/search.h \
+	msvcrt/setjmp.h \
+	msvcrt/share.h \
+	msvcrt/signal.h \
+	msvcrt/stddef.h \
+	msvcrt/stdio.h \
+	msvcrt/stdlib.h \
+	msvcrt/string.h \
+	msvcrt/sys/locking.h \
+	msvcrt/sys/stat.h \
+	msvcrt/sys/timeb.h \
+	msvcrt/sys/types.h \
+	msvcrt/sys/unistd.h \
+	msvcrt/sys/utime.h \
+	msvcrt/time.h \
+	msvcrt/unistd.h \
+	msvcrt/wchar.h \
+	msvcrt/wctype.h
+
+WINE_IDL_SRCS = \
+	itss.idl
+
+WINE_INCLUDES = \
+	$(WINE_IDL_SRCS) \
+	debug.h \
+	exception.h \
+	library.h \
+	unicode.h
+
+IDL_SRCS = $(WINDOWS_IDL_SRCS) $(WINE_IDL_SRCS:%=wine/%)
+
+EXTRASUBDIRS = msvcrt msvcrt/sys wine
+
+@MAKE_RULES@
+
+WINDOWS_IDL_HEADERS = $(WINDOWS_IDL_SRCS:.idl=.h)
+WINE_IDL_HEADERS = $(WINE_IDL_SRCS:.idl=.h)
+IDL_HEADERS = $(IDL_SRCS:.idl=.h)
+
+all: $(IDL_HEADERS)
+
+install:: $(IDL_HEADERS)
+	$(MKINSTALLDIRS) $(includedir) $(includedir)/windows $(includedir)/windows/ddk $(includedir)/msvcrt $(includedir)/msvcrt/sys
+	for f in $(WINDOWS_INCLUDES); do $(INSTALL_DATA) $(SRCDIR)/$$f $(includedir)/windows/$$f; done
+	for f in $(WINDOWS_IDL_HEADERS); do $(INSTALL_DATA) $$f $(includedir)/windows/$$f; done
+	for f in $(MSVCRT_INCLUDES); do $(INSTALL_DATA) $(SRCDIR)/$$f $(includedir)/$$f; done
+	for f in $(WINE_INCLUDES); do $(INSTALL_DATA) $(SRCDIR)/wine/$$f $(includedir)/$$f; done
+	for f in $(WINE_IDL_HEADERS); do $(INSTALL_DATA) wine/$$f $(includedir)/$$f; done
+
+# Don't just do a rm -rf on $(includedir) -- don't want to wipe out
+# anything extra the user may have put there.
+uninstall::
+	[ -d $(includedir)/windows ] && cd $(includedir)/windows && $(RM) $(WINDOWS_INCLUDES) $(WINDOWS_IDL_HEADERS) || true
+	[ -d $(includedir) ] && cd $(includedir) && $(RM) $(MSVCRT_INCLUDES) $(WINE_INCLUDES) $(WINE_IDL_HEADERS) || true
+	-rmdir $(includedir)/msvcrt/sys $(includedir)/msvcrt $(includedir)/windows/ddk $(includedir)/windows $(includedir)
+
+### Dependencies:

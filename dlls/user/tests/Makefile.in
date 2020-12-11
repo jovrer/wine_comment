@@ -1,0 +1,32 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+TESTDLL   = user32.dll
+IMPORTS   = user32 gdi32 advapi32 kernel32
+
+CTESTS = \
+	class.c \
+	clipboard.c \
+	dce.c \
+	dde.c \
+	dialog.c \
+	edit.c \
+	generated.c \
+	input.c \
+	listbox.c \
+	menu.c \
+	monitor.c \
+	msg.c \
+	resource.c \
+	sysparams.c \
+	text.c \
+	win.c \
+	winstation.c \
+	wsprintf.c
+
+RC_SRCS = resource.rc
+
+@MAKE_TEST_RULES@
+
+### Dependencies:

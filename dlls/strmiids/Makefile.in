@@ -1,0 +1,12 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = libstrmiids.a
+
+C_SRCS = \
+	strmiids.c
+
+@MAKE_IMPLIB_RULES@
+
+### Dependencies:

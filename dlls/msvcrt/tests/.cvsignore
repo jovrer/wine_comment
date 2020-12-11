@@ -1,0 +1,11 @@
+Makefile
+cpp.ok
+environ.ok
+file.ok
+headers.ok
+heap.ok
+printf.ok
+scanf.ok
+string.ok
+testlist.c
+time.ok

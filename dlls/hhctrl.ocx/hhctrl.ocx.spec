@@ -1,0 +1,5 @@
+13 stdcall doWinMain(long ptr)
+14 stdcall HtmlHelpA(ptr ptr long long)
+15 stdcall HtmlHelpW(ptr ptr long long)
+@ stdcall -private DllRegisterServer()
+@ stdcall -private DllUnregisterServer()

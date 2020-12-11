@@ -1,0 +1,14 @@
+EXTRADEFS = -DUSE_MSVCRT_PREFIX
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = msvcrt40.dll
+IMPORTLIB = libmsvcrt40.$(IMPLIBEXT)
+IMPORTS   = msvcrt kernel32
+
+C_SRCS = msvcrt40.c
+
+@MAKE_DLL_RULES@
+
+### Dependencies:

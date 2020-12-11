@@ -1,0 +1,17 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = serialui.dll
+IMPORTLIB = libserialui.$(IMPLIBEXT)
+IMPORTS   = user32 advapi32 kernel32
+EXTRALIBS = $(LIBUNICODE)
+
+C_SRCS = \
+	confdlg.c
+
+RC_SRCS= serialui_rc.rc
+
+@MAKE_DLL_RULES@
+
+### Dependencies:

@@ -1,0 +1,14 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = vdmdbg.dll
+IMPORTLIB = libvdmdbg.$(IMPLIBEXT)
+IMPORTS   = kernel32
+
+C_SRCS = \
+	vdmdbg.c
+
+@MAKE_DLL_RULES@
+
+### Dependencies:

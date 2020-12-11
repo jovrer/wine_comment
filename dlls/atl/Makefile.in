@@ -1,0 +1,26 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = atl.dll
+IMPORTLIB = libatl.$(IMPLIBEXT)
+IMPORTS   = ole32 shlwapi user32 advapi32 kernel32
+EXTRALIBS = $(LIBUNICODE) -luuid
+
+C_SRCS = \
+	atl_main.c \
+	registrar.c
+
+RC_SRCS = rsrc.rc
+
+IDL_SRCS = \
+	atliface.idl
+
+@MAKE_DLL_RULES@
+
+rsrc.res: atl.rgs
+
+### Dependencies:
+
+# note: this will get overwritten by make depend
+$(ALL_OBJS): $(IDL_SRCS:.idl=.h)

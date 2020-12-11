@@ -1,0 +1,25 @@
+EXTRADEFS = -DCOM_NO_WINDOWS_H
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = msxml3.dll
+IMPORTS   = oleaut32 advapi32 kernel32 ntdll
+EXTRALIBS = -luuid $(LIBUNICODE) @XML2LIBS@ @XSLTLIBS@
+EXTRAINCL = @XML2INCL@ @XSLTINCL@
+
+C_SRCS = \
+	domdoc.c \
+	element.c \
+	factory.c \
+	main.c \
+	node.c \
+	nodelist.c \
+	nodemap.c \
+	parseerror.c
+
+SUBDIRS = tests
+
+@MAKE_DLL_RULES@
+
+### Dependencies:

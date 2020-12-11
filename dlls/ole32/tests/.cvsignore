@@ -1,0 +1,8 @@
+Makefile
+compobj.ok
+marshal.ok
+moniker.ok
+propvariant.ok
+stg_prop.ok
+storage32.ok
+testlist.c

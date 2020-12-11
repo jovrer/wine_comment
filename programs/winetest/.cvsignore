@@ -1,0 +1,5 @@
+Makefile
+dist.res
+tests.rc
+wine.ico
+winetest.res

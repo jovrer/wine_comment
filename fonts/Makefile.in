@@ -1,0 +1,302 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = none
+fontdir   = $(datadir)/fonts/wine
+
+BITMAP_FONTS  = \
+	coue1255.fon \
+	coue1256.fon \
+	coue1257.fon \
+	coure.fon \
+	couree.fon \
+	coureg.fon \
+	courer.fon \
+	couret.fon \
+	cvgasys.fon \
+	hvgasys.fon \
+	jvgasys.fon \
+	sserife.fon \
+	sserifee.fon \
+	sserifeg.fon \
+	sserifer.fon \
+	sserifet.fon \
+	ssee1255.fon \
+	ssee1256.fon \
+	ssee1257.fon \
+	ssee874.fon \
+	svgasys.fon \
+	vgasys.fon \
+	vgasyse.fon \
+	vgasysg.fon \
+	vgasysr.fon \
+	vgasyst.fon \
+	vgas1255.fon \
+	vgas1256.fon \
+	vgas1257.fon \
+	vgas874.fon
+
+TRUETYPE_FONTS = \
+	marlett.ttf
+
+FONTS = \
+	$(BITMAP_FONTS) \
+	$(TRUETYPE_FONTS)
+
+all: $(FONTS)
+
+@MAKE_RULES@
+
+courier.ttf: courier.sfd
+	$(FONTFORGE) -script $(TOPSRCDIR)/fonts/genttf.ff $< $@
+
+ms_sans_serif.ttf: ms_sans_serif.sfd
+	$(FONTFORGE) -script $(TOPSRCDIR)/fonts/genttf.ff $< $@
+
+system.ttf: system.sfd
+	$(FONTFORGE) -script $(TOPSRCDIR)/fonts/genttf.ff $< $@
+
+courier-1252-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1252 96 128 8
+
+courier-1250-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1250 96 128 8
+
+courier-1251-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1251 96 128 8
+
+courier-1253-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1253 96 128 8
+
+courier-1254-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1254 96 128 8
+
+courier-1255-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1255 96 128 8
+
+courier-1256-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1256 96 128 8
+
+courier-1257-96-13.fnt: courier.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1257 96 128 8
+
+ms_sans_serif-1252-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1252 96 129 5
+
+ms_sans_serif-1252-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1252 96 129 7
+
+ms_sans_serif-1252-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 1252 96 129 8
+
+ms_sans_serif-1250-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1250 96 129 5
+
+ms_sans_serif-1250-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1250 96 129 7
+
+ms_sans_serif-1251-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1251 96 129 5
+
+ms_sans_serif-1251-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1251 96 129 7
+
+ms_sans_serif-1251-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 1251 96 129 8
+
+ms_sans_serif-1253-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1253 96 129 5
+
+ms_sans_serif-1253-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1253 96 129 7
+
+ms_sans_serif-1253-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 1253 96 129 8
+
+ms_sans_serif-1254-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1254 96 129 5
+
+ms_sans_serif-1254-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1254 96 129 7
+
+ms_sans_serif-1254-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 1254 96 129 8
+
+ms_sans_serif-1255-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1255 96 129 5
+
+ms_sans_serif-1255-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1255 96 129 7
+
+ms_sans_serif-1255-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 1255 96 129 8
+
+ms_sans_serif-1256-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1256 96 129 5
+
+ms_sans_serif-1256-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1256 96 129 7
+
+ms_sans_serif-1256-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 1256 96 129 8
+
+ms_sans_serif-1257-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 1257 96 129 5
+
+ms_sans_serif-1257-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1257 96 129 7
+
+ms_sans_serif-1257-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 1257 96 129 8
+
+ms_sans_serif-874-96-13.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 13 874 96 129 5
+
+ms_sans_serif-874-96-16.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 874 96 129 7
+
+ms_sans_serif-874-96-20.fnt: ms_sans_serif.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 20 874 96 129 8
+
+system-1252-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1252 96 128 7
+
+system-1250-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1250 96 128 7
+
+system-1251-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1251 96 128 7
+
+system-1253-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1253 96 128 7
+
+system-1254-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1254 96 128 7
+
+system-1255-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1255 96 128 7
+
+system-1256-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1256 96 128 7
+
+system-1257-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 1257 96 128 7
+
+system-874-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 874 96 128 7
+
+system-932-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 932 96 128 7
+
+system-936-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 936 96 128 7
+
+system-949-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 949 96 128 7
+
+system-950-96-16.fnt: system.ttf $(SFNT2FNT)
+	$(LDPATH) $(SFNT2FNT) $< 16 950 96 128 7
+
+coure.fon: courier-1252-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1252-96-13.fnt $@
+
+couree.fon: courier-1250-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1250-96-13.fnt $@
+
+courer.fon: courier-1251-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1251-96-13.fnt $@
+
+coureg.fon: courier-1253-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1253-96-13.fnt $@
+
+couret.fon: courier-1254-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1254-96-13.fnt $@
+
+coue1255.fon: courier-1255-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1255-96-13.fnt $@
+
+coue1256.fon: courier-1256-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1256-96-13.fnt $@
+
+coue1257.fon: courier-1257-96-13.fnt $(FNT2FON)
+	$(FNT2FON) courier-1257-96-13.fnt $@
+
+sserife.fon: ms_sans_serif-1252-96-13.fnt ms_sans_serif-1252-96-16.fnt ms_sans_serif-1252-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1252-96-13.fnt ms_sans_serif-1252-96-16.fnt ms_sans_serif-1252-96-20.fnt $@
+
+sserifee.fon: ms_sans_serif-1250-96-13.fnt ms_sans_serif-1250-96-16.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1250-96-13.fnt ms_sans_serif-1250-96-16.fnt $@
+
+sserifer.fon: ms_sans_serif-1251-96-13.fnt ms_sans_serif-1251-96-16.fnt ms_sans_serif-1251-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1251-96-13.fnt ms_sans_serif-1251-96-16.fnt ms_sans_serif-1251-96-20.fnt $@
+
+sserifeg.fon: ms_sans_serif-1253-96-13.fnt ms_sans_serif-1253-96-16.fnt ms_sans_serif-1253-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1253-96-13.fnt ms_sans_serif-1253-96-16.fnt ms_sans_serif-1253-96-20.fnt $@
+
+sserifet.fon: ms_sans_serif-1254-96-13.fnt ms_sans_serif-1254-96-16.fnt ms_sans_serif-1254-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1254-96-13.fnt ms_sans_serif-1254-96-16.fnt ms_sans_serif-1254-96-20.fnt $@
+
+ssee1255.fon: ms_sans_serif-1255-96-13.fnt ms_sans_serif-1255-96-16.fnt ms_sans_serif-1255-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1255-96-13.fnt ms_sans_serif-1255-96-16.fnt ms_sans_serif-1255-96-20.fnt $@
+
+ssee1256.fon: ms_sans_serif-1256-96-13.fnt ms_sans_serif-1256-96-16.fnt ms_sans_serif-1256-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1256-96-13.fnt ms_sans_serif-1256-96-16.fnt ms_sans_serif-1256-96-20.fnt $@
+
+ssee1257.fon: ms_sans_serif-1257-96-13.fnt ms_sans_serif-1257-96-16.fnt ms_sans_serif-1257-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-1257-96-13.fnt ms_sans_serif-1257-96-16.fnt ms_sans_serif-1257-96-20.fnt $@
+
+ssee874.fon: ms_sans_serif-874-96-13.fnt ms_sans_serif-874-96-16.fnt ms_sans_serif-874-96-20.fnt $(FNT2FON)
+	$(FNT2FON) ms_sans_serif-874-96-13.fnt ms_sans_serif-874-96-16.fnt ms_sans_serif-874-96-20.fnt $@
+
+vgasys.fon: system-1252-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1252-96-16.fnt $@
+
+vgasyse.fon: system-1250-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1250-96-16.fnt $@
+
+vgasysr.fon: system-1251-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1251-96-16.fnt $@
+
+vgasysg.fon: system-1253-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1253-96-16.fnt $@
+
+vgasyst.fon: system-1254-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1254-96-16.fnt $@
+
+vgas1255.fon: system-1255-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1255-96-16.fnt $@
+
+vgas1256.fon: system-1256-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1255-96-16.fnt $@
+
+vgas1257.fon: system-1257-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-1255-96-16.fnt $@
+
+vgas874.fon: system-874-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-874-96-16.fnt $@
+
+jvgasys.fon: system-932-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-932-96-16.fnt $@
+
+svgasys.fon: system-936-96-16.fnt system-1252-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-936-96-16.fnt system-1252-96-16.fnt $@
+
+hvgasys.fon: system-949-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-949-96-16.fnt $@
+
+cvgasys.fon: system-950-96-16.fnt system-1252-96-16.fnt $(FNT2FON)
+	$(FNT2FON) system-950-96-16.fnt system-1252-96-16.fnt $@
+
+install:: $(FONTS)
+	$(MKINSTALLDIRS) $(fontdir)
+	for i in $(FONTS); do $(INSTALL_DATA) $$i $(fontdir)/$$i || exit 1; done
+
+uninstall::
+	-cd $(fontdir) && $(RM) $(FONTS)
+	-rmdir $(fontdir)
+
+clean::
+	$(RM) *.fon *.fnt *.ttf
+
+### Dependencies:

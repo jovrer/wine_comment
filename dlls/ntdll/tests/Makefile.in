@@ -1,0 +1,26 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+TESTDLL   = ntdll.dll
+IMPORTS   = kernel32
+
+CTESTS = \
+	atom.c \
+	env.c \
+	error.c \
+	generated.c \
+	info.c \
+	large_int.c \
+	path.c \
+	om.c \
+	reg.c \
+	rtl.c \
+	rtlbitmap.c \
+	rtlstr.c \
+	string.c \
+	time.c
+
+@MAKE_TEST_RULES@
+
+### Dependencies:

@@ -1,0 +1,143 @@
+# This Makefile understands the following targets:
+#
+# all (default):   build wine
+# clean:           remove all intermediate files
+# distclean:       also remove all files created by configure
+# test:            run tests
+# testclean:       clean test results to force running all tests again
+# crosstest:       build tests as native windows applications (requires MinGW)
+# install-lib:     install libraries needed to run applications
+# install-dev:     install development environment
+# install:         install everything
+# uninstall:       uninstall everything
+# depend:          create the dependencies
+# etags:           create a TAGS file for Emacs.
+# manpages:        compile manpages for Wine API
+# htmlpages:       compile html pages for Wine API
+# sgmlpages:       compile sgml source for the Wine API Guide
+
+# Directories
+
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = .
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+LIBEXT    = @LIBEXT@
+MODULE    = none
+
+FONTSSUBDIRS = @FONTSSUBDIRS@
+
+# Sub-directories to run make depend/clean into
+SUBDIRS = \
+	dlls \
+	documentation \
+	fonts \
+	include \
+	libs \
+	loader \
+	programs \
+	server \
+	tools
+
+# Sub-directories to install for install-lib
+INSTALLLIBSUBDIRS = \
+	$(FONTSSUBDIRS) \
+	loader \
+	programs \
+	server
+
+# Sub-directories to install for install-dev
+INSTALLDEVSUBDIRS = include
+
+# Sub-directories to install for both install-lib and install-dev
+INSTALLBOTHSUBDIRS = dlls libs tools
+
+INSTALLSUBDIRS = $(INSTALLDEVSUBDIRS) $(INSTALLLIBSUBDIRS)
+
+# Sub-directories to run make test into
+TESTSUBDIRS = \
+	dlls \
+	programs
+
+all: Make.rules wine
+	@echo "Wine build complete."
+
+WINAPI_CHECK_EXTRA_FLAGS = --global
+
+@MAKE_RULES@
+
+Make.rules: Make.rules.in configure
+	@echo $? is newer than 'Make.rules', please rerun ./configure!
+	@exit 1
+
+wine: $(WINEWRAPPER)
+	$(RM) $@ && $(LN_S) $(WINEWRAPPER) $@
+
+# Installation rules
+
+install-aclocal: dummy
+	$(MKINSTALLDIRS) $(datadir)/aclocal
+	$(INSTALL_DATA) $(SRCDIR)/aclocal.m4 $(datadir)/aclocal/wine.m4
+
+install-lib:: $(INSTALLLIBSUBDIRS:%=%/__install__) $(INSTALLBOTHSUBDIRS:%=%/__install-lib__)
+
+install-dev:: $(INSTALLDEVSUBDIRS:%=%/__install__) $(INSTALLBOTHSUBDIRS:%=%/__install-dev__) install-aclocal
+
+install:: install-lib install-dev install-aclocal
+
+uninstall:: $(INSTALLBOTHSUBDIRS:%=%/__uninstall__)
+	$(RM) $(datadir)/aclocal/wine.m4
+	-rmdir $(datadir)/wine $(datadir)/aclocal
+
+.PHONY: install-aclocal
+
+# Dependencies between directories
+
+all: $(INSTALLSUBDIRS) $(INSTALLBOTHSUBDIRS)
+dlls: include libs tools
+fonts loader server: libs tools
+programs: dlls include libs tools
+include: libs tools
+tools: libs
+
+dlls/__install-lib__ dlls/__install-dev__: libs tools include
+include/__install__: include libs tools
+libs/__install-lib__ libs/__install-dev__: libs
+fonts/__install__ loader/__install__ server/__install__: libs tools
+programs/__install__: libs tools include dlls/__install-lib__
+tools/__install-lib__ tools/__install-dev__: tools
+
+$(SUBDIRS:%=%/__depend__): tools include
+
+# Test rules
+
+checklink:: $(TESTSUBDIRS:%=%/__checklink__)
+
+check test:: $(TESTSUBDIRS:%=%/__test__)
+$(TESTSUBDIRS:%=%/__test__): wine
+
+crosstest:: $(TESTSUBDIRS:%=%/__crosstest__)
+$(TESTSUBDIRS:%=%/__crosstest__): tools include
+
+# Misc rules
+
+TAGS etags:
+	find $(TOPSRCDIR) -name '*.[ch]' -print | etags -
+
+tags ctags:
+	find $(TOPSRCDIR) -name '*.[ch]' -print | ctags --c-types=+px -L -
+
+manpages htmlpages sgmlpages:
+	cd documentation && $(MAKE) $@
+
+clean::
+	$(RM) wine
+
+distclean: clean
+	$(RM) config.* configure.lineno TAGS tags Make.rules dlls/Makedll.rules dlls/Makeimplib.rules dlls/Maketest.rules programs/Makeprog.rules libs/Makelib.rules include/config.h
+	$(RM) -r autom4te.cache
+	$(RM) `find . \( -name Makefile -o -size 0 \) -print`
+
+.PHONY: manpages htmlpages sgmlpages distclean
+
+### Dependencies:

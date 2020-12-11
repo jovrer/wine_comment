@@ -1,0 +1,15 @@
+EXTRADEFS = -DUSE_MSVCRT_PREFIX
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = msvcrt20.dll
+IMPORTLIB = libmsvcrt20.$(IMPLIBEXT)
+IMPORTS   = msvcrt kernel32
+EXTRALIBS = $(LIBUNICODE)
+
+C_SRCS = msvcrt20.c
+
+@MAKE_DLL_RULES@
+
+### Dependencies:

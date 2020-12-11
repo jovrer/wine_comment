@@ -1,0 +1,15 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+TESTDLL   = msvcrtd.dll
+IMPORTS   = msvcrt kernel32
+EXTRAINCL = -I$(TOPSRCDIR)/include/msvcrt
+MODCFLAGS = @BUILTINFLAG@
+
+CTESTS = \
+	debug.c
+
+@MAKE_TEST_RULES@
+
+### Dependencies:

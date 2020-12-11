@@ -1,0 +1,23 @@
+TOPSRCDIR = @top_srcdir@
+TOPOBJDIR = ../..
+SRCDIR    = @srcdir@
+VPATH     = @srcdir@
+MODULE    = secur32.dll
+IMPORTLIB = libsecur32.$(IMPLIBEXT)
+IMPORTS   = user32 advapi32 kernel32 ntdll
+
+C_SRCS = \
+	base64_codec.c \
+	dispatcher.c \
+	negotiate.c \
+	ntlm.c \
+	schannel.c \
+	secur32.c \
+	thunks.c \
+	wrapper.c
+
+SUBDIRS = tests
+
+@MAKE_DLL_RULES@
+
+### Dependencies:
