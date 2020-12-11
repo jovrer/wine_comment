@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 
@@ -37,14 +37,65 @@
 #ifdef HAVE_SYS_POLL_H
 #include <sys/poll.h>
 #endif
+#ifdef HAVE_LINUX_MAJOR_H
+#include <linux/major.h>
+#endif
+#ifdef HAVE_SYS_STATVFS_H
+#include <sys/statvfs.h>
+#endif
+#ifdef HAVE_SYS_VFS_H
+/* Work around a conflict with Solaris' system list defined in sys/list.h. */
+#define list SYSLIST
+#define list_next SYSLIST_NEXT
+#define list_prev SYSLIST_PREV
+#define list_head SYSLIST_HEAD
+#define list_tail SYSLIST_TAIL
+#define list_move_tail SYSLIST_MOVE_TAIL
+#define list_remove SYSLIST_REMOVE
+#include <sys/vfs.h>
+#undef list
+#undef list_next
+#undef list_prev
+#undef list_head
+#undef list_tail
+#undef list_move_tail
+#undef list_remove
+#endif
+#ifdef HAVE_SYS_PARAM_H
+#include <sys/param.h>
+#endif
+#ifdef HAVE_SYS_MOUNT_H
+#include <sys/mount.h>
+#endif
+#ifdef HAVE_SYS_STATFS_H
+#include <sys/statfs.h>
+#endif
+#ifdef HAVE_SYS_SYSCTL_H
+#include <sys/sysctl.h>
+#endif
+#ifdef HAVE_SYS_EVENT_H
+#include <sys/event.h>
+#undef LIST_INIT
+#undef LIST_ENTRY
+#endif
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
 #endif
 #include <sys/stat.h>
 #include <sys/time.h>
+#ifdef MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#elif defined(MAJOR_IN_SYSMACROS)
+#include <sys/sysmacros.h>
+#endif
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef HAVE_SYS_SYSCALL_H
+#include <sys/syscall.h>
+#endif
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "object.h"
 #include "file.h"
 #include "handle.h"
@@ -52,6 +103,7 @@
 #include "request.h"
 
 #include "winternl.h"
+#include "winioctl.h"
 
 #if defined(HAVE_SYS_EPOLL_H) && defined(HAVE_EPOLL_CREATE)
 # include <sys/epoll.h>
@@ -80,41 +132,27 @@ struct epoll_event
   epoll_data_t data;
 };
 
-#define SYSCALL_RET(ret) do { \
-        if (ret < 0) { errno = -ret; ret = -1; } \
-        return ret; \
-    } while(0)
-
 static inline int epoll_create( int size )
 {
-    int ret;
-    __asm__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-             : "=a" (ret) : "0" (254 /*NR_epoll_create*/), "r" (size) );
-    SYSCALL_RET(ret);
+    return syscall( 254 /*NR_epoll_create*/, size );
 }
 
 static inline int epoll_ctl( int epfd, int op, int fd, const struct epoll_event *event )
 {
-    int ret;
-    __asm__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-             : "=a" (ret)
-             : "0" (255 /*NR_epoll_ctl*/), "r" (epfd), "c" (op), "d" (fd), "S" (event), "m" (*event) );
-    SYSCALL_RET(ret);
+    return syscall( 255 /*NR_epoll_ctl*/, epfd, op, fd, event );
 }
 
 static inline int epoll_wait( int epfd, struct epoll_event *events, int maxevents, int timeout )
 {
-    int ret;
-    __asm__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-             : "=a" (ret)
-             : "0" (256 /*NR_epoll_wait*/), "r" (epfd), "c" (events), "d" (maxevents), "S" (timeout)
-             : "memory" );
-    SYSCALL_RET(ret);
+    return syscall( 256 /*NR_epoll_wait*/, epfd, events, maxevents, timeout );
 }
-#undef SYSCALL_RET
 
 #endif /* linux && __i386__ && HAVE_STDINT_H */
 
+#if defined(HAVE_PORT_H) && defined(HAVE_PORT_CREATE)
+# include <port.h>
+# define USE_EVENT_PORTS
+#endif /* HAVE_PORT_H && HAVE_PORT_CREATE */
 
 /* Because of the stupid Posix locking semantics, we need to keep
  * track of all file descriptors referencing a given file, and not
@@ -128,7 +166,8 @@ struct closed_fd
 {
     struct list entry;       /* entry in inode closed list */
     int         unix_fd;     /* the unix file descriptor */
-    char        unlink[1];   /* name to unlink on close (if any) */
+    int         unlink;      /* whether to unlink on close: -1 - implicit FILE_DELETE_ON_CLOSE, 1 - explicit disposition */
+    char       *unix_name;   /* name to unlink on close, points to parent fd unix_name */
 };
 
 struct fd
@@ -140,13 +179,22 @@ struct fd
     struct closed_fd    *closed;      /* structure to store the unix fd at destroy time */
     struct object       *user;        /* object using this file descriptor */
     struct list          locks;       /* list of locks on this fd */
-    unsigned int         access;      /* file access (GENERIC_READ/WRITE) */
+    unsigned int         access;      /* file access (FILE_READ_DATA etc.) */
+    unsigned int         options;     /* file options (FILE_DELETE_ON_CLOSE, FILE_SYNCHRONOUS...) */
     unsigned int         sharing;     /* file sharing mode */
+    char                *unix_name;   /* unix file name */
     int                  unix_fd;     /* unix file descriptor */
-    int                  fs_locks;    /* can we use filesystem locks for this fd? */
+    unsigned int         no_fd_status;/* status to return when unix_fd is -1 */
+    unsigned int         cacheable :1;/* can the fd be cached on the client side? */
+    unsigned int         signaled :1; /* is the fd signaled? */
+    unsigned int         fs_locks :1; /* can we use filesystem locks for this fd? */
     int                  poll_index;  /* index of fd in poll array */
-    struct list          read_q;      /* async readers of this fd */
-    struct list          write_q;     /* async writers of this fd */
+    struct async_queue   read_q;      /* async readers of this fd */
+    struct async_queue   write_q;     /* async writers of this fd */
+    struct async_queue   wait_q;      /* other async waiters of this fd */
+    struct completion   *completion;  /* completion object attached to this fd */
+    apc_param_t          comp_key;    /* completion key to set in completion events */
+    unsigned int         comp_flags;  /* completion flags */
 };
 
 static void fd_dump( struct object *obj, int verbose );
@@ -156,12 +204,20 @@ static const struct object_ops fd_ops =
 {
     sizeof(struct fd),        /* size */
     fd_dump,                  /* dump */
+    no_get_type,              /* get_type */
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
+    no_map_access,            /* map_access */
+    default_get_sd,           /* get_sd */
+    default_set_sd,           /* set_sd */
+    no_lookup_name,           /* lookup_name */
+    no_link_name,             /* link_name */
+    NULL,                     /* unlink_name */
+    no_open_file,             /* open_file */
     no_close_handle,          /* close_handle */
     fd_destroy                /* destroy */
 };
@@ -187,12 +243,20 @@ static const struct object_ops device_ops =
 {
     sizeof(struct device),    /* size */
     device_dump,              /* dump */
+    no_get_type,              /* get_type */
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
+    no_map_access,            /* map_access */
+    default_get_sd,           /* get_sd */
+    default_set_sd,           /* set_sd */
+    no_lookup_name,           /* lookup_name */
+    no_link_name,             /* link_name */
+    NULL,                     /* unlink_name */
+    no_open_file,             /* open_file */
     no_close_handle,          /* close_handle */
     device_destroy            /* destroy */
 };
@@ -217,12 +281,20 @@ static const struct object_ops inode_ops =
 {
     sizeof(struct inode),     /* size */
     inode_dump,               /* dump */
+    no_get_type,              /* get_type */
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
+    no_map_access,            /* map_access */
+    default_get_sd,           /* get_sd */
+    default_set_sd,           /* set_sd */
+    no_lookup_name,           /* lookup_name */
+    no_link_name,             /* link_name */
+    NULL,                     /* unlink_name */
+    no_open_file,             /* open_file */
     no_close_handle,          /* close_handle */
     inode_destroy             /* destroy */
 };
@@ -243,18 +315,26 @@ struct file_lock
 };
 
 static void file_lock_dump( struct object *obj, int verbose );
-static int file_lock_signaled( struct object *obj, struct thread *thread );
+static int file_lock_signaled( struct object *obj, struct wait_queue_entry *entry );
 
 static const struct object_ops file_lock_ops =
 {
     sizeof(struct file_lock),   /* size */
     file_lock_dump,             /* dump */
+    no_get_type,                /* get_type */
     add_queue,                  /* add_queue */
     remove_queue,               /* remove_queue */
     file_lock_signaled,         /* signaled */
     no_satisfied,               /* satisfied */
     no_signal,                  /* signal */
     no_get_fd,                  /* get_fd */
+    no_map_access,              /* map_access */
+    default_get_sd,             /* get_sd */
+    default_set_sd,             /* set_sd */
+    no_lookup_name,             /* lookup_name */
+    no_link_name,               /* link_name */
+    NULL,                       /* unlink_name */
+    no_open_file,               /* open_file */
     no_close_handle,            /* close_handle */
     no_destroy                  /* destroy */
 };
@@ -267,7 +347,7 @@ static file_pos_t max_unix_offset = OFF_T_MAX;
 
 #define DUMP_LONG_LONG(val) do { \
     if (sizeof(val) > sizeof(unsigned long) && (val) > ~0UL) \
-        fprintf( stderr, "%lx%08lx", (unsigned long)((val) >> 32), (unsigned long)(val) ); \
+        fprintf( stderr, "%lx%08lx", (unsigned long)((unsigned long long)(val) >> 32), (unsigned long)(val) ); \
     else \
         fprintf( stderr, "%lx", (unsigned long)(val) ); \
   } while (0)
@@ -280,22 +360,30 @@ static file_pos_t max_unix_offset = OFF_T_MAX;
 struct timeout_user
 {
     struct list           entry;      /* entry in sorted timeout list */
-    struct timeval        when;       /* timeout expiry (absolute time) */
+    timeout_t             when;       /* timeout expiry (absolute time) */
     timeout_callback      callback;   /* callback function */
     void                 *private;    /* callback private data */
 };
 
 static struct list timeout_list = LIST_INIT(timeout_list);   /* sorted timeouts list */
+timeout_t current_time;
+
+static inline void set_current_time(void)
+{
+    static const timeout_t ticks_1601_to_1970 = (timeout_t)86400 * (369 * 365 + 89) * TICKS_PER_SEC;
+    struct timeval now;
+    gettimeofday( &now, NULL );
+    current_time = (timeout_t)now.tv_sec * TICKS_PER_SEC + now.tv_usec * 10 + ticks_1601_to_1970;
+}
 
 /* add a timeout user */
-struct timeout_user *add_timeout_user( const struct timeval *when, timeout_callback func,
-                                       void *private )
+struct timeout_user *add_timeout_user( timeout_t when, timeout_callback func, void *private )
 {
     struct timeout_user *user;
     struct list *ptr;
 
     if (!(user = mem_alloc( sizeof(*user) ))) return NULL;
-    user->when     = *when;
+    user->when     = (when > 0) ? when : current_time - when;
     user->callback = func;
     user->private  = private;
 
@@ -304,7 +392,7 @@ struct timeout_user *add_timeout_user( const struct timeval *when, timeout_callb
     LIST_FOR_EACH( ptr, &timeout_list )
     {
         struct timeout_user *timeout = LIST_ENTRY( ptr, struct timeout_user, entry );
-        if (!time_before( &timeout->when, when )) break;
+        if (timeout->when >= user->when) break;
     }
     list_add_before( ptr, &user->entry );
     return user;
@@ -317,19 +405,39 @@ void remove_timeout_user( struct timeout_user *user )
     free( user );
 }
 
-/* add a timeout in milliseconds to an absolute time */
-void add_timeout( struct timeval *when, int timeout )
+/* return a text description of a timeout for debugging purposes */
+const char *get_timeout_str( timeout_t timeout )
 {
-    if (timeout)
+    static char buffer[64];
+    long secs, nsecs;
+
+    if (!timeout) return "0";
+    if (timeout == TIMEOUT_INFINITE) return "infinite";
+
+    if (timeout < 0)  /* relative */
     {
-        long sec = timeout / 1000;
-        if ((when->tv_usec += (timeout - 1000*sec) * 1000) >= 1000000)
-        {
-            when->tv_usec -= 1000000;
-            when->tv_sec++;
-        }
-        when->tv_sec += sec;
+        secs = -timeout / TICKS_PER_SEC;
+        nsecs = -timeout % TICKS_PER_SEC;
+        sprintf( buffer, "+%ld.%07ld", secs, nsecs );
     }
+    else  /* absolute */
+    {
+        secs = (timeout - current_time) / TICKS_PER_SEC;
+        nsecs = (timeout - current_time) % TICKS_PER_SEC;
+        if (nsecs < 0)
+        {
+            nsecs += TICKS_PER_SEC;
+            secs--;
+        }
+        if (secs >= 0)
+            sprintf( buffer, "%x%08x (+%ld.%07ld)",
+                     (unsigned int)(timeout >> 32), (unsigned int)timeout, secs, nsecs );
+        else
+            sprintf( buffer, "%x%08x (-%ld.%07ld)",
+                     (unsigned int)(timeout >> 32), (unsigned int)timeout,
+                     -(secs + 1), TICKS_PER_SEC - nsecs );
+    }
+    return buffer;
 }
 
 
@@ -343,10 +451,21 @@ static int active_users;                    /* current number of active users */
 static int allocated_users;                 /* count of allocated entries in the array */
 static struct fd **freelist;                /* list of free entries in the array */
 
+static int get_next_timeout(void);
+
+static inline void fd_poll_event( struct fd *fd, int event )
+{
+    fd->fd_ops->poll_event( fd, event );
+}
+
 #ifdef USE_EPOLL
 
-static int epoll_fd;
-static struct epoll_event *epoll_events;
+static int epoll_fd = -1;
+
+static inline void init_epoll(void)
+{
+    epoll_fd = epoll_create( 128 );
+}
 
 /* set the events that epoll waits for on this fd; helper for set_fd_events */
 static inline void set_fd_epoll_events( struct fd *fd, int user, int events )
@@ -373,6 +492,7 @@ static inline void set_fd_epoll_events( struct fd *fd, int user, int events )
     }
 
     ev.events = events;
+    memset(&ev.data, 0, sizeof(ev.data));
     ev.data.u32 = user;
 
     if (epoll_ctl( epoll_fd, ctl, fd->unix_fd, &ev ) == -1)
@@ -386,11 +506,285 @@ static inline void set_fd_epoll_events( struct fd *fd, int user, int events )
     }
 }
 
-#else /* USE_EPOLL */
+static inline void remove_epoll_user( struct fd *fd, int user )
+{
+    if (epoll_fd == -1) return;
+
+    if (pollfd[user].fd != -1)
+    {
+        struct epoll_event dummy;
+        epoll_ctl( epoll_fd, EPOLL_CTL_DEL, fd->unix_fd, &dummy );
+    }
+}
+
+static inline void main_loop_epoll(void)
+{
+    int i, ret, timeout;
+    struct epoll_event events[128];
+
+    assert( POLLIN == EPOLLIN );
+    assert( POLLOUT == EPOLLOUT );
+    assert( POLLERR == EPOLLERR );
+    assert( POLLHUP == EPOLLHUP );
+
+    if (epoll_fd == -1) return;
+
+    while (active_users)
+    {
+        timeout = get_next_timeout();
+
+        if (!active_users) break;  /* last user removed by a timeout */
+        if (epoll_fd == -1) break;  /* an error occurred with epoll */
+
+        ret = epoll_wait( epoll_fd, events, ARRAY_SIZE( events ), timeout );
+        set_current_time();
+
+        /* put the events into the pollfd array first, like poll does */
+        for (i = 0; i < ret; i++)
+        {
+            int user = events[i].data.u32;
+            pollfd[user].revents = events[i].events;
+        }
+
+        /* read events from the pollfd array, as set_fd_events may modify them */
+        for (i = 0; i < ret; i++)
+        {
+            int user = events[i].data.u32;
+            if (pollfd[user].revents) fd_poll_event( poll_users[user], pollfd[user].revents );
+        }
+    }
+}
+
+#elif defined(HAVE_KQUEUE)
+
+static int kqueue_fd = -1;
+
+static inline void init_epoll(void)
+{
+#ifdef __APPLE__ /* kqueue support is broken in Mac OS < 10.5 */
+    int mib[2];
+    char release[32];
+    size_t len = sizeof(release);
+
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_OSRELEASE;
+    if (sysctl( mib, 2, release, &len, NULL, 0 ) == -1) return;
+    if (atoi(release) < 9) return;
+#endif
+    kqueue_fd = kqueue();
+}
 
 static inline void set_fd_epoll_events( struct fd *fd, int user, int events )
 {
+    struct kevent ev[2];
+
+    if (kqueue_fd == -1) return;
+
+    EV_SET( &ev[0], fd->unix_fd, EVFILT_READ, 0, NOTE_LOWAT, 1, (void *)(long)user );
+    EV_SET( &ev[1], fd->unix_fd, EVFILT_WRITE, 0, NOTE_LOWAT, 1, (void *)(long)user );
+
+    if (events == -1)  /* stop waiting on this fd completely */
+    {
+        if (pollfd[user].fd == -1) return;  /* already removed */
+        ev[0].flags |= EV_DELETE;
+        ev[1].flags |= EV_DELETE;
+    }
+    else if (pollfd[user].fd == -1)
+    {
+        if (pollfd[user].events) return;  /* stopped waiting on it, don't restart */
+        ev[0].flags |= EV_ADD | ((events & POLLIN) ? EV_ENABLE : EV_DISABLE);
+        ev[1].flags |= EV_ADD | ((events & POLLOUT) ? EV_ENABLE : EV_DISABLE);
+    }
+    else
+    {
+        if (pollfd[user].events == events) return;  /* nothing to do */
+        ev[0].flags |= (events & POLLIN) ? EV_ENABLE : EV_DISABLE;
+        ev[1].flags |= (events & POLLOUT) ? EV_ENABLE : EV_DISABLE;
+    }
+
+    if (kevent( kqueue_fd, ev, 2, NULL, 0, NULL ) == -1)
+    {
+        if (errno == ENOMEM)  /* not enough memory, give up on kqueue */
+        {
+            close( kqueue_fd );
+            kqueue_fd = -1;
+        }
+        else perror( "kevent" );  /* should not happen */
+    }
 }
+
+static inline void remove_epoll_user( struct fd *fd, int user )
+{
+    if (kqueue_fd == -1) return;
+
+    if (pollfd[user].fd != -1)
+    {
+        struct kevent ev[2];
+
+        EV_SET( &ev[0], fd->unix_fd, EVFILT_READ, EV_DELETE, 0, 0, 0 );
+        EV_SET( &ev[1], fd->unix_fd, EVFILT_WRITE, EV_DELETE, 0, 0, 0 );
+        kevent( kqueue_fd, ev, 2, NULL, 0, NULL );
+    }
+}
+
+static inline void main_loop_epoll(void)
+{
+    int i, ret, timeout;
+    struct kevent events[128];
+
+    if (kqueue_fd == -1) return;
+
+    while (active_users)
+    {
+        timeout = get_next_timeout();
+
+        if (!active_users) break;  /* last user removed by a timeout */
+        if (kqueue_fd == -1) break;  /* an error occurred with kqueue */
+
+        if (timeout != -1)
+        {
+            struct timespec ts;
+
+            ts.tv_sec = timeout / 1000;
+            ts.tv_nsec = (timeout % 1000) * 1000000;
+            ret = kevent( kqueue_fd, NULL, 0, events, ARRAY_SIZE( events ), &ts );
+        }
+        else ret = kevent( kqueue_fd, NULL, 0, events, ARRAY_SIZE( events ), NULL );
+
+        set_current_time();
+
+        /* put the events into the pollfd array first, like poll does */
+        for (i = 0; i < ret; i++)
+        {
+            long user = (long)events[i].udata;
+            pollfd[user].revents = 0;
+        }
+        for (i = 0; i < ret; i++)
+        {
+            long user = (long)events[i].udata;
+            if (events[i].filter == EVFILT_READ) pollfd[user].revents |= POLLIN;
+            else if (events[i].filter == EVFILT_WRITE) pollfd[user].revents |= POLLOUT;
+            if (events[i].flags & EV_EOF) pollfd[user].revents |= POLLHUP;
+            if (events[i].flags & EV_ERROR) pollfd[user].revents |= POLLERR;
+        }
+
+        /* read events from the pollfd array, as set_fd_events may modify them */
+        for (i = 0; i < ret; i++)
+        {
+            long user = (long)events[i].udata;
+            if (pollfd[user].revents) fd_poll_event( poll_users[user], pollfd[user].revents );
+            pollfd[user].revents = 0;
+        }
+    }
+}
+
+#elif defined(USE_EVENT_PORTS)
+
+static int port_fd = -1;
+
+static inline void init_epoll(void)
+{
+    port_fd = port_create();
+}
+
+static inline void set_fd_epoll_events( struct fd *fd, int user, int events )
+{
+    int ret;
+
+    if (port_fd == -1) return;
+
+    if (events == -1)  /* stop waiting on this fd completely */
+    {
+        if (pollfd[user].fd == -1) return;  /* already removed */
+        port_dissociate( port_fd, PORT_SOURCE_FD, fd->unix_fd );
+    }
+    else if (pollfd[user].fd == -1)
+    {
+        if (pollfd[user].events) return;  /* stopped waiting on it, don't restart */
+        ret = port_associate( port_fd, PORT_SOURCE_FD, fd->unix_fd, events, (void *)user );
+    }
+    else
+    {
+        if (pollfd[user].events == events) return;  /* nothing to do */
+        ret = port_associate( port_fd, PORT_SOURCE_FD, fd->unix_fd, events, (void *)user );
+    }
+
+    if (ret == -1)
+    {
+        if (errno == ENOMEM)  /* not enough memory, give up on port_associate */
+        {
+            close( port_fd );
+            port_fd = -1;
+        }
+        else perror( "port_associate" );  /* should not happen */
+    }
+}
+
+static inline void remove_epoll_user( struct fd *fd, int user )
+{
+    if (port_fd == -1) return;
+
+    if (pollfd[user].fd != -1)
+    {
+        port_dissociate( port_fd, PORT_SOURCE_FD, fd->unix_fd );
+    }
+}
+
+static inline void main_loop_epoll(void)
+{
+    int i, nget, ret, timeout;
+    port_event_t events[128];
+
+    if (port_fd == -1) return;
+
+    while (active_users)
+    {
+        timeout = get_next_timeout();
+        nget = 1;
+
+        if (!active_users) break;  /* last user removed by a timeout */
+        if (port_fd == -1) break;  /* an error occurred with event completion */
+
+        if (timeout != -1)
+        {
+            struct timespec ts;
+
+            ts.tv_sec = timeout / 1000;
+            ts.tv_nsec = (timeout % 1000) * 1000000;
+            ret = port_getn( port_fd, events, ARRAY_SIZE( events ), &nget, &ts );
+        }
+        else ret = port_getn( port_fd, events, ARRAY_SIZE( events ), &nget, NULL );
+
+	if (ret == -1) break;  /* an error occurred with event completion */
+
+        set_current_time();
+
+        /* put the events into the pollfd array first, like poll does */
+        for (i = 0; i < nget; i++)
+        {
+            long user = (long)events[i].portev_user;
+            pollfd[user].revents = events[i].portev_events;
+        }
+
+        /* read events from the pollfd array, as set_fd_events may modify them */
+        for (i = 0; i < nget; i++)
+        {
+            long user = (long)events[i].portev_user;
+            if (pollfd[user].revents) fd_poll_event( poll_users[user], pollfd[user].revents );
+            /* if we are still interested, reassociate the fd */
+            if (pollfd[user].fd != -1) {
+                port_associate( port_fd, PORT_SOURCE_FD, pollfd[user].fd, pollfd[user].events, (void *)user );
+            }
+        }
+    }
+}
+
+#else /* HAVE_KQUEUE */
+
+static inline void init_epoll(void) { }
+static inline void set_fd_epoll_events( struct fd *fd, int user, int events ) { }
+static inline void remove_epoll_user( struct fd *fd, int user ) { }
+static inline void main_loop_epoll(void) { }
 
 #endif /* USE_EPOLL */
 
@@ -422,16 +816,7 @@ static int add_poll_user( struct fd *fd )
             }
             poll_users = newusers;
             pollfd = newpoll;
-#ifdef USE_EPOLL
-            if (!allocated_users) epoll_fd = epoll_create( new_count );
-            if (epoll_fd != -1)
-            {
-                struct epoll_event *new_events;
-                if (!(new_events = realloc( epoll_events, new_count * sizeof(*epoll_events) )))
-                    return -1;
-                epoll_events = new_events;
-            }
-#endif
+            if (!allocated_users) init_epoll();
             allocated_users = new_count;
         }
         ret = nb_users++;
@@ -450,13 +835,7 @@ static void remove_poll_user( struct fd *fd, int user )
     assert( user >= 0 );
     assert( poll_users[user] == fd );
 
-#ifdef USE_EPOLL
-    if (epoll_fd != -1 && pollfd[user].fd != -1)
-    {
-        struct epoll_event dummy;
-        epoll_ctl( epoll_fd, EPOLL_CTL_DEL, fd->unix_fd, &dummy );
-    }
-#endif
+    remove_epoll_user( fd, user );
     pollfd[user].fd = -1;
     pollfd[user].events = 0;
     pollfd[user].revents = 0;
@@ -471,9 +850,6 @@ static int get_next_timeout(void)
     if (!list_empty( &timeout_list ))
     {
         struct list expired_list, *ptr;
-        struct timeval now;
-
-        gettimeofday( &now, NULL );
 
         /* first remove all expired timers from the list */
 
@@ -482,7 +858,7 @@ static int get_next_timeout(void)
         {
             struct timeout_user *timeout = LIST_ENTRY( ptr, struct timeout_user, entry );
 
-            if (!time_before( &now, &timeout->when ))
+            if (timeout->when <= current_time)
             {
                 list_remove( &timeout->entry );
                 list_add_tail( &expired_list, &timeout->entry );
@@ -503,8 +879,7 @@ static int get_next_timeout(void)
         if ((ptr = list_head( &timeout_list )) != NULL)
         {
             struct timeout_user *timeout = LIST_ENTRY( ptr, struct timeout_user, entry );
-            int diff = (timeout->when.tv_sec - now.tv_sec) * 1000
-                     + (timeout->when.tv_usec - now.tv_usec) / 1000;
+            int diff = (timeout->when - current_time + 9999) / 10000;
             if (diff < 0) diff = 0;
             return diff;
         }
@@ -517,40 +892,11 @@ void main_loop(void)
 {
     int i, ret, timeout;
 
-#ifdef USE_EPOLL
-    assert( POLLIN == EPOLLIN );
-    assert( POLLOUT == EPOLLOUT );
-    assert( POLLERR == EPOLLERR );
-    assert( POLLHUP == EPOLLHUP );
+    set_current_time();
+    server_start_time = current_time;
 
-    if (epoll_fd != -1)
-    {
-        while (active_users)
-        {
-            timeout = get_next_timeout();
-
-            if (!active_users) break;  /* last user removed by a timeout */
-            if (epoll_fd == -1) break;  /* an error occurred with epoll */
-
-            ret = epoll_wait( epoll_fd, epoll_events, allocated_users, timeout );
-
-            /* put the events into the pollfd array first, like poll does */
-            for (i = 0; i < ret; i++)
-            {
-                int user = epoll_events[i].data.u32;
-                pollfd[user].revents = epoll_events[i].events;
-            }
-
-            /* read events from the pollfd array, as set_fd_events may modify them */
-            for (i = 0; i < ret; i++)
-            {
-                int user = epoll_events[i].data.u32;
-                if (pollfd[user].revents) fd_poll_event( poll_users[user], pollfd[user].revents );
-            }
-        }
-    }
+    main_loop_epoll();
     /* fall through to normal poll loop */
-#endif  /* USE_EPOLL */
 
     while (active_users)
     {
@@ -559,6 +905,8 @@ void main_loop(void)
         if (!active_users) break;  /* last user removed by a timeout */
 
         ret = poll( pollfd, nb_users, timeout );
+        set_current_time();
+
         if (ret > 0)
         {
             for (i = 0; i < nb_users; i++)
@@ -579,8 +927,45 @@ void main_loop(void)
 
 static struct list device_hash[DEVICE_HASH_SIZE];
 
+static int is_device_removable( dev_t dev, int unix_fd )
+{
+#if defined(linux) && defined(HAVE_FSTATFS)
+    struct statfs stfs;
+
+    /* check for floppy disk */
+    if (major(dev) == FLOPPY_MAJOR) return 1;
+
+    if (fstatfs( unix_fd, &stfs ) == -1) return 0;
+    return (stfs.f_type == 0x9660 ||    /* iso9660 */
+            stfs.f_type == 0x9fa1 ||    /* supermount */
+            stfs.f_type == 0x15013346); /* udf */
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__) || defined(__APPLE__)
+    struct statfs stfs;
+
+    if (fstatfs( unix_fd, &stfs ) == -1) return 0;
+    return (!strcmp("cd9660", stfs.f_fstypename) || !strcmp("udf", stfs.f_fstypename));
+#elif defined(__NetBSD__)
+    struct statvfs stfs;
+
+    if (fstatvfs( unix_fd, &stfs ) == -1) return 0;
+    return (!strcmp("cd9660", stfs.f_fstypename) || !strcmp("udf", stfs.f_fstypename));
+#elif defined(sun)
+# include <sys/dkio.h>
+# include <sys/vtoc.h>
+    struct dk_cinfo dkinf;
+    if (ioctl( unix_fd, DKIOCINFO, &dkinf ) == -1) return 0;
+    return (dkinf.dki_ctype == DKC_CDROM ||
+            dkinf.dki_ctype == DKC_NCRFLOPPY ||
+            dkinf.dki_ctype == DKC_SMSFLOPPY ||
+            dkinf.dki_ctype == DKC_INTEL82072 ||
+            dkinf.dki_ctype == DKC_INTEL82077);
+#else
+    return 0;
+#endif
+}
+
 /* retrieve the device object for a given fd, creating it if needed */
-static struct device *get_device( dev_t dev, int create )
+static struct device *get_device( dev_t dev, int unix_fd )
 {
     struct device *device;
     unsigned int i, hash = dev % DEVICE_HASH_SIZE;
@@ -594,11 +979,11 @@ static struct device *get_device( dev_t dev, int create )
 
     /* not found, create it */
 
-    if (!create) return NULL;
+    if (unix_fd == -1) return NULL;
     if ((device = alloc_object( &device_ops )))
     {
         device->dev = dev;
-        device->removable = -1;
+        device->removable = is_device_removable( dev, unix_fd );
         for (i = 0; i < INODE_HASH_SIZE; i++) list_init( &device->inode_hash[i] );
         list_add_head( &device_hash[hash], &device->entry );
     }
@@ -643,9 +1028,10 @@ static void inode_close_pending( struct inode *inode, int keep_unlinks )
             close( fd->unix_fd );
             fd->unix_fd = -1;
         }
-        if (!keep_unlinks || !fd->unlink[0])  /* get rid of it unless there's an unlink pending on that file */
+        if (!keep_unlinks || !fd->unlink)  /* get rid of it unless there's an unlink pending on that file */
         {
             list_remove( ptr );
+            free( fd->unix_name );
             free( fd );
         }
         ptr = next;
@@ -675,29 +1061,30 @@ static void inode_destroy( struct object *obj )
         struct closed_fd *fd = LIST_ENTRY( ptr, struct closed_fd, entry );
         list_remove( ptr );
         if (fd->unix_fd != -1) close( fd->unix_fd );
-        if (fd->unlink[0])
+        if (fd->unlink)
         {
             /* make sure it is still the same file */
             struct stat st;
-            if (!stat( fd->unlink, &st ) && st.st_dev == inode->device->dev && st.st_ino == inode->ino)
+            if (!stat( fd->unix_name, &st ) && st.st_dev == inode->device->dev && st.st_ino == inode->ino)
             {
-                if (S_ISDIR(st.st_mode)) rmdir( fd->unlink );
-                else unlink( fd->unlink );
+                if (S_ISDIR(st.st_mode)) rmdir( fd->unix_name );
+                else unlink( fd->unix_name );
             }
         }
+        free( fd->unix_name );
         free( fd );
     }
     release_object( inode->device );
 }
 
 /* retrieve the inode object for a given fd, creating it if needed */
-static struct inode *get_inode( dev_t dev, ino_t ino )
+static struct inode *get_inode( dev_t dev, ino_t ino, int unix_fd )
 {
     struct device *device;
     struct inode *inode;
     unsigned int hash = ino % INODE_HASH_SIZE;
 
-    if (!(device = get_device( dev, 1 ))) return NULL;
+    if (!(device = get_device( dev, unix_fd ))) return NULL;
 
     LIST_FOR_EACH_ENTRY( inode, &device->inode_hash[hash], struct inode, entry )
     {
@@ -730,7 +1117,7 @@ static void inode_add_closed_fd( struct inode *inode, struct closed_fd *fd )
     {
         list_add_head( &inode->closed, &fd->entry );
     }
-    else if (fd->unlink[0])  /* close the fd but keep the structure around for unlink */
+    else if (fd->unlink)  /* close the fd but keep the structure around for unlink */
     {
         if (fd->unix_fd != -1) close( fd->unix_fd );
         fd->unix_fd = -1;
@@ -739,6 +1126,7 @@ static void inode_add_closed_fd( struct inode *inode, struct closed_fd *fd )
     else  /* no locks on this inode and no unlink, get rid of the fd */
     {
         if (fd->unix_fd != -1) close( fd->unix_fd );
+        free( fd->unix_name );
         free( fd );
     }
 }
@@ -758,7 +1146,7 @@ static void file_lock_dump( struct object *obj, int verbose )
     fprintf( stderr, "\n" );
 }
 
-static int file_lock_signaled( struct object *obj, struct thread *thread )
+static int file_lock_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct file_lock *lock = (struct file_lock *)obj;
     /* lock is signaled if it has lost its owner */
@@ -794,6 +1182,7 @@ static int set_unix_lock( struct fd *fd, file_pos_t start, file_pos_t end, int t
             /* fall through */
         case EIO:
         case ENOLCK:
+        case ENOTSUP:
             /* no locking on this fs, just ignore it */
             fd->fs_locks = 0;
             return 1;
@@ -802,8 +1191,12 @@ static int set_unix_lock( struct fd *fd, file_pos_t start, file_pos_t end, int t
             return 0;
         case EBADF:
             /* this can happen if we try to set a write lock on a read-only file */
-            /* we just ignore that error */
-            if (fl.l_type == F_WRLCK) return 1;
+            /* try to at least grab a read lock */
+            if (fl.l_type == F_WRLCK)
+            {
+                type = F_RDLCK;
+                break; /* retry */
+            }
             set_error( STATUS_ACCESS_DENIED );
             return 0;
 #ifdef EOVERFLOW
@@ -826,7 +1219,7 @@ static int set_unix_lock( struct fd *fd, file_pos_t start, file_pos_t end, int t
 }
 
 /* check if interval [start;end) overlaps the lock */
-inline static int lock_overlaps( struct file_lock *lock, file_pos_t start, file_pos_t end )
+static inline int lock_overlaps( struct file_lock *lock, file_pos_t start, file_pos_t end )
 {
     if (lock->end && start >= lock->end) return 0;
     if (end && lock->start >= end) return 0;
@@ -938,12 +1331,6 @@ static struct file_lock *add_lock( struct fd *fd, int shared, file_pos_t start, 
 {
     struct file_lock *lock;
 
-    if (!fd->inode)  /* not a regular file */
-    {
-        set_error( STATUS_INVALID_HANDLE );
-        return NULL;
-    }
-
     if (!(lock = alloc_object( &file_lock_ops ))) return NULL;
     lock->shared  = shared;
     lock->start   = start;
@@ -957,9 +1344,9 @@ static struct file_lock *add_lock( struct fd *fd, int shared, file_pos_t start, 
         release_object( lock );
         return NULL;
     }
-    list_add_head( &fd->locks, &lock->fd_entry );
-    list_add_head( &fd->inode->locks, &lock->inode_entry );
-    list_add_head( &lock->process->locks, &lock->proc_entry );
+    list_add_tail( &fd->locks, &lock->fd_entry );
+    list_add_tail( &fd->inode->locks, &lock->inode_entry );
+    list_add_tail( &lock->process->locks, &lock->proc_entry );
     return lock;
 }
 
@@ -1013,6 +1400,12 @@ obj_handle_t lock_fd( struct fd *fd, file_pos_t start, file_pos_t count, int sha
     struct list *ptr;
     file_pos_t end = start + count;
 
+    if (!fd->inode)  /* not a regular file */
+    {
+        set_error( STATUS_INVALID_DEVICE_REQUEST );
+        return 0;
+    }
+
     /* don't allow wrapping locks */
     if (end && end < start)
     {
@@ -1025,7 +1418,7 @@ obj_handle_t lock_fd( struct fd *fd, file_pos_t start, file_pos_t count, int sha
     {
         struct file_lock *lock = LIST_ENTRY( ptr, struct file_lock, inode_entry );
         if (!lock_overlaps( lock, start, end )) continue;
-        if (lock->shared && shared) continue;
+        if (shared && (lock->shared || lock->fd == fd)) continue;
         /* found one */
         if (!wait)
         {
@@ -1067,85 +1460,13 @@ void unlock_fd( struct fd *fd, file_pos_t start, file_pos_t count )
 
 
 /****************************************************************/
-/* asynchronous operations support */
-
-struct async
-{
-    struct thread       *thread;
-    void                *apc;
-    void                *user;
-    void                *sb;
-    struct timeout_user *timeout;
-    struct list          entry;
-};
-
-/* notifies client thread of new status of its async request */
-/* destroys the server side of it */
-static void async_terminate( struct async *async, int status )
-{
-    thread_queue_apc( async->thread, NULL, async->apc, APC_ASYNC_IO,
-                      1, async->user, async->sb, (void *)status );
-
-    if (async->timeout) remove_timeout_user( async->timeout );
-    async->timeout = NULL;
-    list_remove( &async->entry );
-    release_object( async->thread );
-    free( async );
-}
-
-/* cb for timeout on an async request */
-static void async_callback(void *private)
-{
-    struct async *async = (struct async *)private;
-
-    /* fprintf(stderr, "async timeout out %p\n", async); */
-    async->timeout = NULL;
-    async_terminate( async, STATUS_TIMEOUT );
-}
-
-/* create an async on a given queue of a fd */
-struct async *create_async(struct thread *thread, int* timeout, struct list *queue,
-                           void *io_apc, void *io_user, void* io_sb)
-{
-    struct async *async = mem_alloc( sizeof(struct async) );
-
-    if (!async) return NULL;
-
-    async->thread = (struct thread *)grab_object(thread);
-    async->apc = io_apc;
-    async->user = io_user;
-    async->sb = io_sb;
-
-    list_add_tail( queue, &async->entry );
-
-    if (timeout)
-    {
-        struct timeval when;
-
-        gettimeofday( &when, NULL );
-        add_timeout( &when, *timeout );
-        async->timeout = add_timeout_user( &when, async_callback, async );
-    }
-    else async->timeout = NULL;
-
-    return async;
-}
-
-/* terminate the async operation at the head of the queue */
-void async_terminate_head( struct list *queue, int status )
-{
-    struct list *ptr = list_head( queue );
-    if (ptr) async_terminate( LIST_ENTRY( ptr, struct async, entry ), status );
-}
-
-/****************************************************************/
 /* file descriptor functions */
 
 static void fd_dump( struct object *obj, int verbose )
 {
     struct fd *fd = (struct fd *)obj;
-    fprintf( stderr, "Fd unix_fd=%d user=%p", fd->unix_fd, fd->user );
-    if (fd->inode) fprintf( stderr, " inode=%p unlink='%s'", fd->inode, fd->closed->unlink );
+    fprintf( stderr, "Fd unix_fd=%d user=%p options=%08x", fd->unix_fd, fd->user, fd->options );
+    if (fd->inode) fprintf( stderr, " inode=%p unlink=%d", fd->inode, fd->closed->unlink );
     fprintf( stderr, "\n" );
 }
 
@@ -1153,9 +1474,11 @@ static void fd_destroy( struct object *obj )
 {
     struct fd *fd = (struct fd *)obj;
 
-    async_terminate_queue( &fd->read_q, STATUS_CANCELLED );
-    async_terminate_queue( &fd->write_q, STATUS_CANCELLED );
+    free_async_queue( &fd->read_q );
+    free_async_queue( &fd->write_q );
+    free_async_queue( &fd->wait_q );
 
+    if (fd->completion) release_object( fd->completion );
     remove_fd_locks( fd );
     list_remove( &fd->inode_entry );
     if (fd->poll_index != -1) remove_poll_user( fd, fd->poll_index );
@@ -1167,7 +1490,56 @@ static void fd_destroy( struct object *obj )
     else  /* no inode, close it right away */
     {
         if (fd->unix_fd != -1) close( fd->unix_fd );
+        free( fd->unix_name );
     }
+}
+
+/* check if the desired access is possible without violating */
+/* the sharing mode of other opens of the same file */
+static unsigned int check_sharing( struct fd *fd, unsigned int access, unsigned int sharing,
+                                   unsigned int open_flags, unsigned int options )
+{
+    /* only a few access bits are meaningful wrt sharing */
+    const unsigned int read_access = FILE_READ_DATA | FILE_EXECUTE;
+    const unsigned int write_access = FILE_WRITE_DATA | FILE_APPEND_DATA;
+    const unsigned int all_access = read_access | write_access | DELETE;
+
+    unsigned int existing_sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    unsigned int existing_access = 0;
+    struct list *ptr;
+
+    fd->access = access;
+    fd->sharing = sharing;
+
+    LIST_FOR_EACH( ptr, &fd->inode->open )
+    {
+        struct fd *fd_ptr = LIST_ENTRY( ptr, struct fd, inode_entry );
+        if (fd_ptr != fd)
+        {
+            /* if access mode is 0, sharing mode is ignored */
+            if (fd_ptr->access & all_access) existing_sharing &= fd_ptr->sharing;
+            existing_access |= fd_ptr->access;
+        }
+    }
+
+    if (((access & read_access) && !(existing_sharing & FILE_SHARE_READ)) ||
+        ((access & write_access) && !(existing_sharing & FILE_SHARE_WRITE)) ||
+        ((access & DELETE) && !(existing_sharing & FILE_SHARE_DELETE)))
+        return STATUS_SHARING_VIOLATION;
+    if (((existing_access & FILE_MAPPING_WRITE) && !(sharing & FILE_SHARE_WRITE)) ||
+        ((existing_access & FILE_MAPPING_IMAGE) && (access & FILE_WRITE_DATA)))
+        return STATUS_SHARING_VIOLATION;
+    if ((existing_access & FILE_MAPPING_IMAGE) && (options & FILE_DELETE_ON_CLOSE))
+        return STATUS_CANNOT_DELETE;
+    if ((existing_access & FILE_MAPPING_ACCESS) && (open_flags & O_TRUNC))
+        return STATUS_USER_MAPPED_FILE;
+    if (!(access & all_access))
+        return 0;  /* if access mode is 0, sharing mode is ignored (except for mappings) */
+    if (((existing_access & read_access) && !(sharing & FILE_SHARE_READ)) ||
+        ((existing_access & write_access) && !(sharing & FILE_SHARE_WRITE)) ||
+        ((existing_access & DELETE) && !(sharing & FILE_SHARE_DELETE)))
+        return STATUS_SHARING_VIOLATION;
+    return 0;
 }
 
 /* set the events that select waits for on this fd */
@@ -1196,23 +1568,60 @@ static inline void unmount_fd( struct fd *fd )
 {
     assert( fd->inode );
 
-    async_terminate_queue( &fd->read_q, STATUS_VOLUME_DISMOUNTED );
-    async_terminate_queue( &fd->write_q, STATUS_VOLUME_DISMOUNTED );
+    async_wake_up( &fd->read_q, STATUS_VOLUME_DISMOUNTED );
+    async_wake_up( &fd->write_q, STATUS_VOLUME_DISMOUNTED );
 
     if (fd->poll_index != -1) set_fd_events( fd, -1 );
 
     if (fd->unix_fd != -1) close( fd->unix_fd );
 
     fd->unix_fd = -1;
+    fd->no_fd_status = STATUS_VOLUME_DISMOUNTED;
     fd->closed->unix_fd = -1;
-    fd->closed->unlink[0] = 0;
+    fd->closed->unlink = 0;
 
     /* stop using Unix locks on this fd (existing locks have been removed by close) */
     fd->fs_locks = 0;
 }
 
 /* allocate an fd object, without setting the unix fd yet */
-struct fd *alloc_fd( const struct fd_ops *fd_user_ops, struct object *user )
+static struct fd *alloc_fd_object(void)
+{
+    struct fd *fd = alloc_object( &fd_ops );
+
+    if (!fd) return NULL;
+
+    fd->fd_ops     = NULL;
+    fd->user       = NULL;
+    fd->inode      = NULL;
+    fd->closed     = NULL;
+    fd->access     = 0;
+    fd->options    = 0;
+    fd->sharing    = 0;
+    fd->unix_fd    = -1;
+    fd->unix_name  = NULL;
+    fd->cacheable  = 0;
+    fd->signaled   = 1;
+    fd->fs_locks   = 1;
+    fd->poll_index = -1;
+    fd->completion = NULL;
+    fd->comp_flags = 0;
+    init_async_queue( &fd->read_q );
+    init_async_queue( &fd->write_q );
+    init_async_queue( &fd->wait_q );
+    list_init( &fd->inode_entry );
+    list_init( &fd->locks );
+
+    if ((fd->poll_index = add_poll_user( fd )) == -1)
+    {
+        release_object( fd );
+        return NULL;
+    }
+    return fd;
+}
+
+/* allocate a pseudo fd object, for objects that need to behave like files but don't have a unix fd */
+struct fd *alloc_pseudo_fd( const struct fd_ops *fd_user_ops, struct object *user, unsigned int options )
 {
     struct fd *fd = alloc_object( &fd_ops );
 
@@ -1223,106 +1632,204 @@ struct fd *alloc_fd( const struct fd_ops *fd_user_ops, struct object *user )
     fd->inode      = NULL;
     fd->closed     = NULL;
     fd->access     = 0;
+    fd->options    = options;
     fd->sharing    = 0;
+    fd->unix_name  = NULL;
     fd->unix_fd    = -1;
-    fd->fs_locks   = 1;
+    fd->cacheable  = 0;
+    fd->signaled   = 0;
+    fd->fs_locks   = 0;
     fd->poll_index = -1;
+    fd->completion = NULL;
+    fd->comp_flags = 0;
+    fd->no_fd_status = STATUS_BAD_DEVICE_TYPE;
+    init_async_queue( &fd->read_q );
+    init_async_queue( &fd->write_q );
+    init_async_queue( &fd->wait_q );
     list_init( &fd->inode_entry );
     list_init( &fd->locks );
-    list_init( &fd->read_q );
-    list_init( &fd->write_q );
-
-    if ((fd->poll_index = add_poll_user( fd )) == -1)
-    {
-        release_object( fd );
-        return NULL;
-    }
     return fd;
 }
 
-/* check if the desired access is possible without violating */
-/* the sharing mode of other opens of the same file */
-static int check_sharing( struct fd *fd, unsigned int access, unsigned int sharing )
+/* duplicate an fd object for a different user */
+struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sharing, unsigned int options )
 {
-    unsigned int existing_sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    unsigned int existing_access = 0;
-    int unlink = 0;
-    struct list *ptr;
+    unsigned int err;
+    struct fd *fd = alloc_fd_object();
 
-    /* if access mode is 0, sharing mode is ignored */
-    if (!access) sharing = existing_sharing;
-    fd->access = access;
-    fd->sharing = sharing;
+    if (!fd) return NULL;
 
-    LIST_FOR_EACH( ptr, &fd->inode->open )
+    fd->options    = options;
+    fd->cacheable  = orig->cacheable;
+
+    if (orig->unix_name)
     {
-        struct fd *fd_ptr = LIST_ENTRY( ptr, struct fd, inode_entry );
-        if (fd_ptr != fd)
-        {
-            existing_sharing &= fd_ptr->sharing;
-            existing_access  |= fd_ptr->access;
-            if (fd_ptr->closed->unlink[0]) unlink = 1;
-        }
+        if (!(fd->unix_name = mem_alloc( strlen(orig->unix_name) + 1 ))) goto failed;
+        strcpy( fd->unix_name, orig->unix_name );
     }
 
-    if ((access & GENERIC_READ) && !(existing_sharing & FILE_SHARE_READ)) return 0;
-    if ((access & GENERIC_WRITE) && !(existing_sharing & FILE_SHARE_WRITE)) return 0;
-    if ((existing_access & GENERIC_READ) && !(sharing & FILE_SHARE_READ)) return 0;
-    if ((existing_access & GENERIC_WRITE) && !(sharing & FILE_SHARE_WRITE)) return 0;
-    if (fd->closed->unlink[0] && !(existing_sharing & FILE_SHARE_DELETE)) return 0;
-    if (unlink && !(sharing & FILE_SHARE_DELETE)) return 0;
-    return 1;
+    if (orig->inode)
+    {
+        struct closed_fd *closed = mem_alloc( sizeof(*closed) );
+        if (!closed) goto failed;
+        if ((fd->unix_fd = dup( orig->unix_fd )) == -1)
+        {
+            file_set_error();
+            free( closed );
+            goto failed;
+        }
+        closed->unix_fd = fd->unix_fd;
+        closed->unlink = 0;
+        closed->unix_name = fd->unix_name;
+        fd->closed = closed;
+        fd->inode = (struct inode *)grab_object( orig->inode );
+        list_add_head( &fd->inode->open, &fd->inode_entry );
+        if ((err = check_sharing( fd, access, sharing, 0, options )))
+        {
+            set_error( err );
+            goto failed;
+        }
+    }
+    else if ((fd->unix_fd = dup( orig->unix_fd )) == -1)
+    {
+        file_set_error();
+        goto failed;
+    }
+    return fd;
+
+failed:
+    release_object( fd );
+    return NULL;
 }
 
-/* open() wrapper using a struct fd */
-/* the fd must have been created with alloc_fd */
-/* on error the fd object is released */
-struct fd *open_fd( struct fd *fd, const char *name, int flags, mode_t *mode,
-                    unsigned int access, unsigned int sharing, unsigned int options )
+/* find an existing fd object that can be reused for a mapping */
+struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing )
+{
+    struct fd *fd_ptr;
+
+    if (!fd->inode) return NULL;
+
+    LIST_FOR_EACH_ENTRY( fd_ptr, &fd->inode->open, struct fd, inode_entry )
+        if (fd_ptr->access == access && fd_ptr->sharing == sharing)
+            return (struct fd *)grab_object( fd_ptr );
+
+    return NULL;
+}
+
+/* sets the user of an fd that previously had no user */
+void set_fd_user( struct fd *fd, const struct fd_ops *user_ops, struct object *user )
+{
+    assert( fd->fd_ops == NULL );
+    fd->fd_ops = user_ops;
+    fd->user   = user;
+}
+
+char *dup_fd_name( struct fd *root, const char *name )
+{
+    char *ret;
+
+    if (!root) return strdup( name );
+    if (!root->unix_name) return NULL;
+
+    /* skip . prefix */
+    if (name[0] == '.' && (!name[1] || name[1] == '/')) name++;
+
+    if ((ret = malloc( strlen(root->unix_name) + strlen(name) + 2 )))
+    {
+        strcpy( ret, root->unix_name );
+        if (name[0] && name[0] != '/') strcat( ret, "/" );
+        strcat( ret, name );
+    }
+    return ret;
+}
+
+/* open() wrapper that returns a struct fd with no fd user set */
+struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t *mode, unsigned int access,
+                    unsigned int sharing, unsigned int options )
 {
     struct stat st;
     struct closed_fd *closed_fd;
-    const char *unlink_name = "";
+    struct fd *fd;
+    int root_fd = -1;
+    int rw_mode;
 
-    assert( fd->unix_fd == -1 );
+    if (((options & FILE_DELETE_ON_CLOSE) && !(access & DELETE)) ||
+        ((options & FILE_DIRECTORY_FILE) && (flags & O_TRUNC)))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return NULL;
+    }
 
-    if (options & FILE_DELETE_ON_CLOSE) unlink_name = name;
-    if (!(closed_fd = mem_alloc( sizeof(*closed_fd) + strlen(unlink_name) )))
+    if (!(fd = alloc_fd_object())) return NULL;
+
+    fd->options = options;
+    if (!(closed_fd = mem_alloc( sizeof(*closed_fd) )))
     {
         release_object( fd );
         return NULL;
     }
+
+    if (root)
+    {
+        if ((root_fd = get_unix_fd( root )) == -1) goto error;
+        if (fchdir( root_fd ) == -1)
+        {
+            file_set_error();
+            root_fd = -1;
+            goto error;
+        }
+    }
+
     /* create the directory if needed */
     if ((options & FILE_DIRECTORY_FILE) && (flags & O_CREAT))
     {
-        if (mkdir( name, 0777 ) == -1)
+        if (mkdir( name, *mode ) == -1)
         {
             if (errno != EEXIST || (flags & O_EXCL))
             {
                 file_set_error();
-                release_object( fd );
-                free( closed_fd );
-                return NULL;
+                goto error;
             }
         }
         flags &= ~(O_CREAT | O_EXCL | O_TRUNC);
     }
-    if ((fd->unix_fd = open( name, flags & ~O_TRUNC, *mode )) == -1)
+
+    if ((access & FILE_UNIX_WRITE_ACCESS) && !(options & FILE_DIRECTORY_FILE))
     {
-        file_set_error();
-        release_object( fd );
-        free( closed_fd );
-        return NULL;
+        if (access & FILE_UNIX_READ_ACCESS) rw_mode = O_RDWR;
+        else rw_mode = O_WRONLY;
     }
+    else rw_mode = O_RDONLY;
+
+    fd->unix_name = dup_fd_name( root, name );
+
+    if ((fd->unix_fd = open( name, rw_mode | (flags & ~O_TRUNC), *mode )) == -1)
+    {
+        /* if we tried to open a directory for write access, retry read-only */
+        if (errno == EISDIR)
+        {
+            if ((access & FILE_UNIX_WRITE_ACCESS) || (flags & O_CREAT))
+                fd->unix_fd = open( name, O_RDONLY | (flags & ~(O_TRUNC | O_CREAT | O_EXCL)), *mode );
+        }
+
+        if (fd->unix_fd == -1)
+        {
+            file_set_error();
+            goto error;
+        }
+    }
+
     closed_fd->unix_fd = fd->unix_fd;
-    closed_fd->unlink[0] = 0;
+    closed_fd->unlink = 0;
+    closed_fd->unix_name = fd->unix_name;
     fstat( fd->unix_fd, &st );
     *mode = st.st_mode;
 
     /* only bother with an inode for normal files and directories */
     if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode))
     {
-        struct inode *inode = get_inode( st.st_dev, st.st_ino );
+        unsigned int err;
+        struct inode *inode = get_inode( st.st_dev, st.st_ino, fd->unix_fd );
 
         if (!inode)
         {
@@ -1333,61 +1840,78 @@ struct fd *open_fd( struct fd *fd, const char *name, int flags, mode_t *mode,
         }
         fd->inode = inode;
         fd->closed = closed_fd;
+        fd->cacheable = !inode->device->removable;
         list_add_head( &inode->open, &fd->inode_entry );
+        closed_fd = NULL;
 
         /* check directory options */
         if ((options & FILE_DIRECTORY_FILE) && !S_ISDIR(st.st_mode))
         {
-            release_object( fd );
-            set_error( STATUS_NOT_A_DIRECTORY );
-            return NULL;
-        }
-        if ((options & FILE_NON_DIRECTORY_FILE) && S_ISDIR(st.st_mode))
-        {
-            release_object( fd );
-            set_error( STATUS_FILE_IS_A_DIRECTORY );
-            return NULL;
-        }
-        if (!check_sharing( fd, access, sharing ))
-        {
-            release_object( fd );
-            set_error( STATUS_SHARING_VIOLATION );
-            return NULL;
-        }
-        strcpy( closed_fd->unlink, unlink_name );
-        if (flags & O_TRUNC) ftruncate( fd->unix_fd, 0 );
-    }
-    else  /* special file */
-    {
-        if (options & FILE_DIRECTORY_FILE)
-        {
             set_error( STATUS_NOT_A_DIRECTORY );
             goto error;
         }
-        if (unlink_name[0])  /* we can't unlink special files */
+        if ((options & FILE_NON_DIRECTORY_FILE) && S_ISDIR(st.st_mode))
+        {
+            set_error( STATUS_FILE_IS_A_DIRECTORY );
+            goto error;
+        }
+        if ((err = check_sharing( fd, access, sharing, flags, options )))
+        {
+            set_error( err );
+            goto error;
+        }
+
+        /* can't unlink files if we don't have permission to access */
+        if ((options & FILE_DELETE_ON_CLOSE) && !(flags & O_CREAT) &&
+            !(st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)))
+        {
+            set_error( STATUS_CANNOT_DELETE );
+            goto error;
+        }
+
+        fd->closed->unlink = (options & FILE_DELETE_ON_CLOSE) ? -1 : 0;
+        if (flags & O_TRUNC)
+        {
+            if (S_ISDIR(st.st_mode))
+            {
+                set_error( STATUS_OBJECT_NAME_COLLISION );
+                goto error;
+            }
+            ftruncate( fd->unix_fd, 0 );
+        }
+    }
+    else  /* special file */
+    {
+        if (options & FILE_DELETE_ON_CLOSE)  /* we can't unlink special files */
         {
             set_error( STATUS_INVALID_PARAMETER );
             goto error;
         }
         free( closed_fd );
+        fd->cacheable = 1;
     }
+    if (root_fd != -1) fchdir( server_dir_fd ); /* go back to the server dir */
     return fd;
 
 error:
     release_object( fd );
     free( closed_fd );
+    if (root_fd != -1) fchdir( server_dir_fd ); /* go back to the server dir */
     return NULL;
 }
 
 /* create an fd for an anonymous file */
 /* if the function fails the unix fd is closed */
-struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops, int unix_fd, struct object *user )
+struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops, int unix_fd, struct object *user,
+                                unsigned int options )
 {
-    struct fd *fd = alloc_fd( fd_user_ops, user );
+    struct fd *fd = alloc_fd_object();
 
     if (fd)
     {
+        set_fd_user( fd, fd_user_ops, user );
         fd->unix_fd = unix_fd;
+        fd->options = options;
         return fd;
     }
     close( unix_fd );
@@ -1400,10 +1924,22 @@ void *get_fd_user( struct fd *fd )
     return fd->user;
 }
 
+/* retrieve the opening options for the fd */
+unsigned int get_fd_options( struct fd *fd )
+{
+    return fd->options;
+}
+
+/* check if fd is in overlapped mode */
+int is_fd_overlapped( struct fd *fd )
+{
+    return !(fd->options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
+}
+
 /* retrieve the unix fd for an object */
 int get_unix_fd( struct fd *fd )
 {
-    if (fd->unix_fd == -1) set_error( STATUS_VOLUME_DISMOUNTED );
+    if (fd->unix_fd == -1) set_error( fd->no_fd_status );
     return fd->unix_fd;
 }
 
@@ -1413,10 +1949,36 @@ int is_same_file_fd( struct fd *fd1, struct fd *fd2 )
     return fd1->inode == fd2->inode;
 }
 
-/* callback for event happening in the main poll() loop */
-void fd_poll_event( struct fd *fd, int event )
+/* allow the fd to be cached (can't be reset once set) */
+void allow_fd_caching( struct fd *fd )
 {
-    return fd->fd_ops->poll_event( fd, event );
+    fd->cacheable = 1;
+}
+
+/* check if fd is on a removable device */
+int is_fd_removable( struct fd *fd )
+{
+    return (fd->inode && fd->inode->device->removable);
+}
+
+/* set or clear the fd signaled state */
+void set_fd_signaled( struct fd *fd, int signaled )
+{
+    if (fd->comp_flags & FILE_SKIP_SET_EVENT_ON_HANDLE) return;
+    fd->signaled = signaled;
+    if (signaled) wake_up( fd->user, 0 );
+}
+
+/* check if fd is signaled */
+int is_fd_signaled( struct fd *fd )
+{
+    return fd->signaled;
+}
+
+/* handler for close_handle that refuses to close fd-associated handles in other processes */
+int fd_close_handle( struct object *obj, struct process *process, obj_handle_t handle )
+{
+    return (!current || current->process == process);
 }
 
 /* check if events are pending and if yes return which one(s) */
@@ -1425,6 +1987,7 @@ int check_fd_events( struct fd *fd, int events )
     struct pollfd pfd;
 
     if (fd->unix_fd == -1) return POLLERR;
+    if (fd->inode) return events;  /* regular files are always signaled */
 
     pfd.fd     = fd->unix_fd;
     pfd.events = events;
@@ -1432,93 +1995,48 @@ int check_fd_events( struct fd *fd, int events )
     return pfd.revents;
 }
 
-/* default add_queue() routine for objects that poll() on an fd */
-int default_fd_add_queue( struct object *obj, struct wait_queue_entry *entry )
-{
-    struct fd *fd = get_obj_fd( obj );
-
-    if (!fd) return 0;
-    if (list_empty( &obj->wait_queue ))  /* first on the queue */
-        set_fd_events( fd, fd->fd_ops->get_poll_events( fd ) );
-    add_queue( obj, entry );
-    release_object( fd );
-    return 1;
-}
-
-/* default remove_queue() routine for objects that poll() on an fd */
-void default_fd_remove_queue( struct object *obj, struct wait_queue_entry *entry )
-{
-    struct fd *fd = get_obj_fd( obj );
-
-    grab_object( obj );
-    remove_queue( obj, entry );
-    if (list_empty( &obj->wait_queue ))  /* last on the queue is gone */
-        set_fd_events( fd, 0 );
-    release_object( obj );
-    release_object( fd );
-}
-
 /* default signaled() routine for objects that poll() on an fd */
-int default_fd_signaled( struct object *obj, struct thread *thread )
+int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
-    int events, ret;
     struct fd *fd = get_obj_fd( obj );
-
-    if (fd->inode) return 1;  /* regular files are always signaled */
-
-    events = fd->fd_ops->get_poll_events( fd );
-    ret = check_fd_events( fd, events ) != 0;
-
-    if (ret)
-        set_fd_events( fd, 0 ); /* stop waiting on select() if we are signaled */
-    else if (!list_empty( &obj->wait_queue ))
-        set_fd_events( fd, events ); /* restart waiting on poll() if we are no longer signaled */
-
+    int ret = fd->signaled;
     release_object( fd );
     return ret;
+}
+
+/* default map_access() routine for objects that behave like an fd */
+unsigned int default_fd_map_access( struct object *obj, unsigned int access )
+{
+    if (access & GENERIC_READ)    access |= FILE_GENERIC_READ;
+    if (access & GENERIC_WRITE)   access |= FILE_GENERIC_WRITE;
+    if (access & GENERIC_EXECUTE) access |= FILE_GENERIC_EXECUTE;
+    if (access & GENERIC_ALL)     access |= FILE_ALL_ACCESS;
+    return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
 }
 
 int default_fd_get_poll_events( struct fd *fd )
 {
     int events = 0;
 
-    if (!list_empty( &fd->read_q ))
-        events |= POLLIN;
-    if (!list_empty( &fd->write_q ))
-        events |= POLLOUT;
-
+    if (async_waiting( &fd->read_q )) events |= POLLIN;
+    if (async_waiting( &fd->write_q )) events |= POLLOUT;
     return events;
 }
 
 /* default handler for poll() events */
 void default_poll_event( struct fd *fd, int event )
 {
-    if (!list_empty( &fd->read_q ) && (POLLIN & event) )
-    {
-        async_terminate_head( &fd->read_q, STATUS_ALERTED );
-        return;
-    }
-    if (!list_empty( &fd->write_q ) && (POLLOUT & event) )
-    {
-        async_terminate_head( &fd->write_q, STATUS_ALERTED );
-        return;
-    }
+    if (event & (POLLIN | POLLERR | POLLHUP)) async_wake_up( &fd->read_q, STATUS_ALERTED );
+    if (event & (POLLOUT | POLLERR | POLLHUP)) async_wake_up( &fd->write_q, STATUS_ALERTED );
 
     /* if an error occurred, stop polling this fd to avoid busy-looping */
     if (event & (POLLERR | POLLHUP)) set_fd_events( fd, -1 );
-    wake_up( fd->user, 0 );
+    else if (!fd->inode) set_fd_events( fd, fd->fd_ops->get_poll_events( fd ) );
 }
 
-void fd_queue_async_timeout( struct fd *fd, void *apc, void *user, void *io_sb, int type, int count, int *timeout )
+void fd_queue_async( struct fd *fd, struct async *async, int type )
 {
-    struct list *queue;
-    int events;
-
-    if (!(fd->fd_ops->get_file_info( fd ) & (FD_FLAG_OVERLAPPED|FD_FLAG_TIMEOUT)))
-    {
-        set_error( STATUS_INVALID_HANDLE );
-        return;
-    }
+    struct async_queue *queue;
 
     switch (type)
     {
@@ -1528,57 +2046,79 @@ void fd_queue_async_timeout( struct fd *fd, void *apc, void *user, void *io_sb, 
     case ASYNC_TYPE_WRITE:
         queue = &fd->write_q;
         break;
+    case ASYNC_TYPE_WAIT:
+        queue = &fd->wait_q;
+        break;
     default:
-        set_error( STATUS_INVALID_PARAMETER );
-        return;
+        queue = NULL;
+        assert(0);
     }
 
-    if (!create_async( current, timeout, queue, apc, user, io_sb ))
-        return;
+    queue_async( queue, async );
 
-    /* Check if the new pending request can be served immediately */
-    events = check_fd_events( fd, fd->fd_ops->get_poll_events( fd ) );
-    if (events) fd->fd_ops->poll_event( fd, events );
-
-    set_fd_events( fd, fd->fd_ops->get_poll_events( fd ) );
+    if (type != ASYNC_TYPE_WAIT)
+    {
+        if (!fd->inode)
+            set_fd_events( fd, fd->fd_ops->get_poll_events( fd ) );
+        else  /* regular files are always ready for read and write */
+            async_wake_up( queue, STATUS_ALERTED );
+    }
 }
 
-void default_fd_queue_async( struct fd *fd, void *apc, void *user, void *io_sb, int type, int count )
+void fd_async_wake_up( struct fd *fd, int type, unsigned int status )
 {
-    fd_queue_async_timeout( fd, apc, user, io_sb, type, count, NULL );
+    switch (type)
+    {
+    case ASYNC_TYPE_READ:
+        async_wake_up( &fd->read_q, status );
+        break;
+    case ASYNC_TYPE_WRITE:
+        async_wake_up( &fd->write_q, status );
+        break;
+    case ASYNC_TYPE_WAIT:
+        async_wake_up( &fd->wait_q, status );
+        break;
+    default:
+        assert(0);
+    }
 }
 
-void default_fd_cancel_async( struct fd *fd )
+void fd_reselect_async( struct fd *fd, struct async_queue *queue )
 {
-    async_terminate_queue( &fd->read_q, STATUS_CANCELLED );
-    async_terminate_queue( &fd->write_q, STATUS_CANCELLED );
+    fd->fd_ops->reselect_async( fd, queue );
 }
 
-/* default flush() routine */
-int no_flush( struct fd *fd, struct event **event )
-{
-    set_error( STATUS_OBJECT_TYPE_MISMATCH );
-    return 0;
-}
-
-/* default get_file_info() routine */
-int no_get_file_info( struct fd *fd )
-{
-    set_error( STATUS_OBJECT_TYPE_MISMATCH );
-    return 0;
-}
-
-/* default queue_async() routine */
-void no_queue_async( struct fd *fd, void* apc, void* user, void* io_sb, 
-                     int type, int count)
+void no_fd_queue_async( struct fd *fd, struct async *async, int type, int count )
 {
     set_error( STATUS_OBJECT_TYPE_MISMATCH );
 }
 
-/* default cancel_async() routine */
-void no_cancel_async( struct fd *fd )
+void default_fd_queue_async( struct fd *fd, struct async *async, int type, int count )
 {
-    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+    fd_queue_async( fd, async, type );
+    set_error( STATUS_PENDING );
+}
+
+/* default reselect_async() fd routine */
+void default_fd_reselect_async( struct fd *fd, struct async_queue *queue )
+{
+    if (queue == &fd->read_q || queue == &fd->write_q)
+    {
+        int poll_events = fd->fd_ops->get_poll_events( fd );
+        int events = check_fd_events( fd, poll_events );
+        if (events) fd->fd_ops->poll_event( fd, events );
+        else set_fd_events( fd, poll_events );
+    }
+}
+
+static inline int is_valid_mounted_device( struct stat *st )
+{
+#if defined(linux) || defined(__sun__)
+    return S_ISBLK( st->st_mode );
+#else
+    /* disks are char devices on *BSD */
+    return S_ISCHR( st->st_mode );
+#endif
 }
 
 /* close all Unix file descriptors on a device to allow unmounting it */
@@ -1589,14 +2129,17 @@ static void unmount_device( struct fd *device_fd )
     struct device *device;
     struct inode *inode;
     struct fd *fd;
+    int unix_fd = get_unix_fd( device_fd );
 
-    if (device_fd->unix_fd == -1 || fstat( device_fd->unix_fd, &st ) == -1 || !S_ISBLK( st.st_mode ))
+    if (unix_fd == -1) return;
+
+    if (fstat( unix_fd, &st ) == -1 || !is_valid_mounted_device( &st ))
     {
         set_error( STATUS_INVALID_PARAMETER );
         return;
     }
 
-    if (!(device = get_device( st.st_rdev, 0 ))) return;
+    if (!(device = get_device( st.st_rdev, -1 ))) return;
 
     for (i = 0; i < INODE_HASH_SIZE; i++)
     {
@@ -1615,6 +2158,110 @@ static void unmount_device( struct fd *device_fd )
     release_object( device );
 }
 
+/* default read() routine */
+int no_fd_read( struct fd *fd, struct async *async, file_pos_t pos )
+{
+    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+    return 0;
+}
+
+/* default write() routine */
+int no_fd_write( struct fd *fd, struct async *async, file_pos_t pos )
+{
+    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+    return 0;
+}
+
+/* default flush() routine */
+int no_fd_flush( struct fd *fd, struct async *async )
+{
+    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+    return 0;
+}
+
+/* default get_file_info() routine */
+void no_fd_get_file_info( struct fd *fd, obj_handle_t handle, unsigned int info_class )
+{
+    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+}
+
+/* default get_file_info() routine */
+void default_fd_get_file_info( struct fd *fd, obj_handle_t handle, unsigned int info_class )
+{
+    switch (info_class)
+    {
+    case FileAccessInformation:
+        {
+            FILE_ACCESS_INFORMATION info;
+            if (get_reply_max_size() < sizeof(info))
+            {
+                set_error( STATUS_INFO_LENGTH_MISMATCH );
+                return;
+            }
+            info.AccessFlags = get_handle_access( current->process, handle );
+            set_reply_data( &info, sizeof(info) );
+            break;
+        }
+    case FileModeInformation:
+        {
+            FILE_MODE_INFORMATION info;
+            if (get_reply_max_size() < sizeof(info))
+            {
+                set_error( STATUS_INFO_LENGTH_MISMATCH );
+                return;
+            }
+            info.Mode = fd->options & ( FILE_WRITE_THROUGH
+                                      | FILE_SEQUENTIAL_ONLY
+                                      | FILE_NO_INTERMEDIATE_BUFFERING
+                                      | FILE_SYNCHRONOUS_IO_ALERT
+                                      | FILE_SYNCHRONOUS_IO_NONALERT );
+            set_reply_data( &info, sizeof(info) );
+            break;
+        }
+    case FileIoCompletionNotificationInformation:
+        {
+            FILE_IO_COMPLETION_NOTIFICATION_INFORMATION info;
+            if (get_reply_max_size() < sizeof(info))
+            {
+                set_error( STATUS_INFO_LENGTH_MISMATCH );
+                return;
+            }
+            info.Flags = fd->comp_flags;
+            set_reply_data( &info, sizeof(info) );
+            break;
+        }
+    default:
+        set_error( STATUS_NOT_IMPLEMENTED );
+    }
+}
+
+/* default get_volume_info() routine */
+void no_fd_get_volume_info( struct fd *fd, unsigned int info_class )
+{
+    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+}
+
+/* default ioctl() routine */
+int no_fd_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
+{
+    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+    return 0;
+}
+
+/* default ioctl() routine */
+int default_fd_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
+{
+    switch(code)
+    {
+    case FSCTL_DISMOUNT_VOLUME:
+        unmount_device( fd );
+        return 1;
+    default:
+        set_error( STATUS_NOT_SUPPORTED );
+        return 0;
+    }
+}
+
 /* same as get_handle_obj but retrieve the struct fd associated to the object */
 static struct fd *get_handle_fd_obj( struct process *process, obj_handle_t handle,
                                      unsigned int access )
@@ -1630,19 +2277,235 @@ static struct fd *get_handle_fd_obj( struct process *process, obj_handle_t handl
     return fd;
 }
 
+/* set disposition for the fd */
+static void set_fd_disposition( struct fd *fd, int unlink )
+{
+    struct stat st;
+
+    if (!fd->inode)
+    {
+        set_error( STATUS_OBJECT_TYPE_MISMATCH );
+        return;
+    }
+
+    if (fd->unix_fd == -1)
+    {
+        set_error( fd->no_fd_status );
+        return;
+    }
+
+    if (fstat( fd->unix_fd, &st ) == -1)
+    {
+        file_set_error();
+        return;
+    }
+
+    /* can't unlink special files */
+    if (unlink && !S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    /* can't unlink files we don't have permission to write */
+    if (unlink && !(st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) && !S_ISDIR(st.st_mode))
+    {
+        set_error( STATUS_CANNOT_DELETE );
+        return;
+    }
+
+    fd->closed->unlink = unlink ? 1 : 0;
+    if (fd->options & FILE_DELETE_ON_CLOSE)
+        fd->closed->unlink = -1;
+}
+
+/* set new name for the fd */
+static void set_fd_name( struct fd *fd, struct fd *root, const char *nameptr,
+                         data_size_t len, int create_link )
+{
+    struct inode *inode;
+    struct stat st;
+    char *name;
+
+    if (!fd->inode || !fd->unix_name)
+    {
+        set_error( STATUS_OBJECT_TYPE_MISMATCH );
+        return;
+    }
+    if (!len || ((nameptr[0] == '/') ^ !root))
+    {
+        set_error( STATUS_OBJECT_PATH_SYNTAX_BAD );
+        return;
+    }
+    if (!(name = mem_alloc( len + 1 ))) return;
+    memcpy( name, nameptr, len );
+    name[len] = 0;
+
+    if (root)
+    {
+        char *combined_name = dup_fd_name( root, name );
+        if (!combined_name)
+        {
+            set_error( STATUS_NO_MEMORY );
+            goto failed;
+        }
+        free( name );
+        name = combined_name;
+    }
+
+    /* when creating a hard link, source cannot be a dir */
+    if (create_link && fd->unix_fd != -1 &&
+        !fstat( fd->unix_fd, &st ) && S_ISDIR( st.st_mode ))
+    {
+        set_error( STATUS_FILE_IS_A_DIRECTORY );
+        goto failed;
+    }
+
+    if (!stat( name, &st ))
+    {
+        /* can't replace directories or special files */
+        if (!S_ISREG( st.st_mode ))
+        {
+            set_error( STATUS_ACCESS_DENIED );
+            goto failed;
+        }
+
+        /* can't replace an opened file */
+        if ((inode = get_inode( st.st_dev, st.st_ino, -1 )))
+        {
+            int is_empty = list_empty( &inode->open );
+            release_object( inode );
+            if (!is_empty)
+            {
+                set_error( STATUS_ACCESS_DENIED );
+                goto failed;
+            }
+        }
+
+        /* link() expects that the target doesn't exist */
+        /* rename() cannot replace files with directories */
+        if (create_link || (fd->unix_fd != -1 &&
+            !fstat( fd->unix_fd, &st ) && S_ISDIR( st.st_mode )))
+        {
+            if (unlink( name ))
+            {
+                file_set_error();
+                goto failed;
+            }
+        }
+    }
+
+    if (create_link)
+    {
+        if (link( fd->unix_name, name ))
+            file_set_error();
+        free( name );
+        return;
+    }
+
+    if (rename( fd->unix_name, name ))
+    {
+        file_set_error();
+        goto failed;
+    }
+
+    free( fd->unix_name );
+    fd->unix_name = name;
+    fd->closed->unix_name = name;
+    return;
+
+failed:
+    free( name );
+}
+
+struct completion *fd_get_completion( struct fd *fd, apc_param_t *p_key )
+{
+    *p_key = fd->comp_key;
+    return fd->completion ? (struct completion *)grab_object( fd->completion ) : NULL;
+}
+
+void fd_copy_completion( struct fd *src, struct fd *dst )
+{
+    assert( !dst->completion );
+    dst->completion = fd_get_completion( src, &dst->comp_key );
+    dst->comp_flags = src->comp_flags;
+}
+
 /* flush a file buffers */
-DECL_HANDLER(flush_file)
+DECL_HANDLER(flush)
+{
+    struct fd *fd = get_handle_fd_obj( current->process, req->async.handle, 0 );
+    struct async *async;
+
+    if (!fd) return;
+
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
+    {
+        reply->event = async_handoff( async, fd->fd_ops->flush( fd, async ), NULL, 1 );
+        release_object( async );
+    }
+    release_object( fd );
+}
+
+/* query file info */
+DECL_HANDLER(get_file_info)
 {
     struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
-    struct event * event = NULL;
 
     if (fd)
     {
-        fd->fd_ops->flush( fd, &event );
-        if ( event )
+        fd->fd_ops->get_file_info( fd, req->handle, req->info_class );
+        release_object( fd );
+    }
+}
+
+/* query volume info */
+DECL_HANDLER(get_volume_info)
+{
+    struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
+
+    if (fd)
+    {
+        fd->fd_ops->get_volume_info( fd, req->info_class );
+        release_object( fd );
+    }
+}
+
+/* open a file object */
+DECL_HANDLER(open_file_object)
+{
+    struct unicode_str name = get_req_unicode_str();
+    struct object *obj, *result, *root = NULL;
+
+    if (req->rootdir && !(root = get_handle_obj( current->process, req->rootdir, 0, NULL ))) return;
+
+    obj = open_named_object( root, NULL, &name, req->attributes );
+    if (root) release_object( root );
+    if (!obj) return;
+
+    if ((result = obj->ops->open_file( obj, req->access, req->sharing, req->options )))
+    {
+        reply->handle = alloc_handle( current->process, result, req->access, req->attributes );
+        release_object( result );
+    }
+    release_object( obj );
+}
+
+/* get the Unix name from a file handle */
+DECL_HANDLER(get_handle_unix_name)
+{
+    struct fd *fd;
+
+    if ((fd = get_handle_fd_obj( current->process, req->handle, 0 )))
+    {
+        if (fd->unix_name)
         {
-            reply->event = alloc_handle( current->process, event, SYNCHRONIZE, 0 );
+            data_size_t name_len = strlen( fd->unix_name );
+            reply->name_len = name_len;
+            if (name_len <= get_reply_max_size()) set_reply_data( fd->unix_name, name_len );
+            else set_error( STATUS_BUFFER_OVERFLOW );
         }
+        else set_error( STATUS_OBJECT_TYPE_MISMATCH );
         release_object( fd );
     }
 }
@@ -1652,94 +2515,184 @@ DECL_HANDLER(get_handle_fd)
 {
     struct fd *fd;
 
-    reply->fd = -1;
-
-    if ((fd = get_handle_fd_obj( current->process, req->handle, req->access )))
+    if ((fd = get_handle_fd_obj( current->process, req->handle, 0 )))
     {
         int unix_fd = get_unix_fd( fd );
+        reply->cacheable = fd->cacheable;
         if (unix_fd != -1)
         {
-            int cached_fd = get_handle_unix_fd( current->process, req->handle, req->access );
-            if (cached_fd != -1) reply->fd = cached_fd;
-            else if (!get_error()) send_client_fd( current->process, unix_fd, req->handle );
+            reply->type = fd->fd_ops->get_fd_type( fd );
+            reply->options = fd->options;
+            reply->access = get_handle_access( current->process, req->handle );
+            send_client_fd( current->process, unix_fd, req->handle );
         }
-        if (fd->inode) reply->removable = fd->inode->device->removable;
-        reply->flags = fd->fd_ops->get_file_info( fd );
         release_object( fd );
     }
 }
 
-/* set the cached file descriptor of a handle */
-DECL_HANDLER(set_handle_fd)
+/* perform a read on a file object */
+DECL_HANDLER(read)
 {
-    struct fd *fd;
+    struct fd *fd = get_handle_fd_obj( current->process, req->async.handle, FILE_READ_DATA );
+    struct async *async;
 
-    reply->cur_fd = -1;
-    if ((fd = get_handle_fd_obj( current->process, req->handle, 0 )))
+    if (!fd) return;
+
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
     {
-        struct device *device = fd->inode ? fd->inode->device : NULL;
-
-        if (device && device->removable == -1) device->removable = req->removable;
-
-        /* only cache the fd on non-removable devices */
-        if (!device || !device->removable)
-            reply->cur_fd = set_handle_unix_fd( current->process, req->handle, req->fd );
-        release_object( fd );
+        reply->wait    = async_handoff( async, fd->fd_ops->read( fd, async, req->pos ), NULL, 0 );
+        reply->options = fd->options;
+        release_object( async );
     }
+    release_object( fd );
 }
 
-/* get ready to unmount a Unix device */
-DECL_HANDLER(unmount_device)
+/* perform a write on a file object */
+DECL_HANDLER(write)
 {
-    struct fd *fd;
+    struct fd *fd = get_handle_fd_obj( current->process, req->async.handle, FILE_WRITE_DATA );
+    struct async *async;
 
-    if ((fd = get_handle_fd_obj( current->process, req->handle, 0 )))
+    if (!fd) return;
+
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
     {
-        unmount_device( fd );
-        release_object( fd );
+        reply->wait    = async_handoff( async, fd->fd_ops->write( fd, async, req->pos ), &reply->size, 0 );
+        reply->options = fd->options;
+        release_object( async );
     }
+    release_object( fd );
+}
+
+/* perform an ioctl on a file */
+DECL_HANDLER(ioctl)
+{
+    unsigned int access = (req->code >> 14) & (FILE_READ_DATA|FILE_WRITE_DATA);
+    struct fd *fd = get_handle_fd_obj( current->process, req->async.handle, access );
+    struct async *async;
+
+    if (!fd) return;
+
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
+    {
+        reply->wait    = async_handoff( async, fd->fd_ops->ioctl( fd, req->code, async ), NULL, 0 );
+        reply->options = fd->options;
+        release_object( async );
+    }
+    release_object( fd );
 }
 
 /* create / reschedule an async I/O */
 DECL_HANDLER(register_async)
 {
-    struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
+    unsigned int access;
+    struct async *async;
+    struct fd *fd;
 
-    /*
-     * The queue_async method must do the following:
-     *
-     * 1. Get the async_queue for the request of given type.
-     * 2. Create a new asynchronous request for the selected queue
-     * 3. Carry out any operations necessary to adjust the object's poll events
-     *    Usually: set_elect_events (obj, obj->ops->get_poll_events()).
-     * 4. When the async request is triggered, then send back (with a proper APC)
-     *    the trigger (STATUS_ALERTED) to the thread that posted the request. 
-     *    async_destroy() is to be called: it will both notify the sender about
-     *    the trigger and destroy the request by itself
-     * See also the implementations in file.c, serial.c, and sock.c.
-     */
-
-    if (fd)
+    switch(req->type)
     {
-        fd->fd_ops->queue_async( fd, req->io_apc, req->io_user, req->io_sb, 
-                                 req->type, req->count );
+    case ASYNC_TYPE_READ:
+        access = FILE_READ_DATA;
+        break;
+    case ASYNC_TYPE_WRITE:
+        access = FILE_WRITE_DATA;
+        break;
+    default:
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    if ((fd = get_handle_fd_obj( current->process, req->async.handle, access )))
+    {
+        if (get_unix_fd( fd ) != -1 && (async = create_async( fd, current, &req->async, NULL )))
+        {
+            fd->fd_ops->queue_async( fd, async, req->type, req->count );
+            release_object( async );
+        }
         release_object( fd );
     }
 }
 
-/* cancels all async I/O */
-DECL_HANDLER(cancel_async)
+/* attach completion object to a fd */
+DECL_HANDLER(set_completion_info)
+{
+    struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
+
+    if (fd)
+    {
+        if (is_fd_overlapped( fd ) && !fd->completion)
+        {
+            fd->completion = get_completion_obj( current->process, req->chandle, IO_COMPLETION_MODIFY_STATE );
+            fd->comp_key = req->ckey;
+        }
+        else set_error( STATUS_INVALID_PARAMETER );
+        release_object( fd );
+    }
+}
+
+/* push new completion msg into a completion queue attached to the fd */
+DECL_HANDLER(add_fd_completion)
 {
     struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
     if (fd)
     {
-        /* Note: we don't kill the queued APC_ASYNC_IO on this thread because
-         * NtCancelIoFile() will force the pending APC to be run. Since, 
-         * Windows only guarantees that the current thread will have no async 
-         * operation on the current fd when NtCancelIoFile returns, this shall
-         * do the work.
-         */
-        fd->fd_ops->cancel_async( fd );
+        if (fd->completion && (req->async || !(fd->comp_flags & FILE_SKIP_COMPLETION_PORT_ON_SUCCESS)))
+            add_completion( fd->completion, fd->comp_key, req->cvalue, req->status, req->information );
         release_object( fd );
-    }        
+    }
+}
+
+/* set fd completion information */
+DECL_HANDLER(set_fd_completion_mode)
+{
+    struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
+    if (fd)
+    {
+        if (is_fd_overlapped( fd ))
+        {
+            if (req->flags & FILE_SKIP_SET_EVENT_ON_HANDLE)
+                set_fd_signaled( fd, 0 );
+            /* removing flags is not allowed */
+            fd->comp_flags |= req->flags & ( FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+                                           | FILE_SKIP_SET_EVENT_ON_HANDLE
+                                           | FILE_SKIP_SET_USER_EVENT_ON_FAST_IO );
+        }
+        else
+            set_error( STATUS_INVALID_PARAMETER );
+        release_object( fd );
+    }
+}
+
+/* set fd disposition information */
+DECL_HANDLER(set_fd_disp_info)
+{
+    struct fd *fd = get_handle_fd_obj( current->process, req->handle, DELETE );
+    if (fd)
+    {
+        set_fd_disposition( fd, req->unlink );
+        release_object( fd );
+    }
+}
+
+/* set fd name information */
+DECL_HANDLER(set_fd_name_info)
+{
+    struct fd *fd, *root_fd = NULL;
+
+    if (req->rootdir)
+    {
+        struct dir *root;
+
+        if (!(root = get_dir_obj( current->process, req->rootdir, 0 ))) return;
+        root_fd = get_obj_fd( (struct object *)root );
+        release_object( root );
+        if (!root_fd) return;
+    }
+
+    if ((fd = get_handle_fd_obj( current->process, req->handle, 0 )))
+    {
+        set_fd_name( fd, root_fd, get_req_data(), get_req_data_size(), req->link );
+        release_object( fd );
+    }
+    if (root_fd) release_object( root_fd );
 }

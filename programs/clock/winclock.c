@@ -21,7 +21,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #include "config.h"
 #include "wine/port.h"
@@ -32,16 +32,11 @@
 #include "windows.h"
 #include "winclock.h"
 
-#define Black  RGB(0,0,0)
-#define Gray   RGB(128,128,128)
-#define LtGray RGB(192,192,192)
-#define White  RGB(255,255,255)
-
-static const COLORREF FaceColor = LtGray;
-static const COLORREF HandColor = White;
-static const COLORREF TickColor = White;
-static const COLORREF ShadowColor = Black;
-static const COLORREF BackgroundColor = LtGray;
+#define FaceColor (GetSysColor(COLOR_3DFACE))
+#define HandColor (GetSysColor(COLOR_3DHIGHLIGHT))
+#define TickColor (GetSysColor(COLOR_3DHIGHLIGHT))
+#define ShadowColor (GetSysColor(COLOR_3DDKSHADOW))
+#define BackgroundColor (GetSysColor(COLOR_3DFACE))
 
 static const int SHADOW_DEPTH = 2;
  
@@ -51,7 +46,7 @@ typedef struct
     POINT End;
 } HandData;
 
-HandData HourHand, MinuteHand, SecondHand;
+static HandData HourHand, MinuteHand, SecondHand;
 
 static void DrawTicks(HDC dc, const POINT* centre, int radius)
 {
@@ -82,7 +77,7 @@ static void DrawTicks(HDC dc, const POINT* centre, int radius)
     }
 }
 
-static void DrawFace(HDC dc, const POINT* centre, int radius)
+static void DrawFace(HDC dc, const POINT* centre, int radius, int border)
 {
     /* Ticks */
     SelectObject(dc, CreatePen(PS_SOLID, 2, ShadowColor));
@@ -91,8 +86,12 @@ static void DrawFace(HDC dc, const POINT* centre, int radius)
     DeleteObject(SelectObject(dc, CreatePen(PS_SOLID, 2, TickColor)));
     OffsetWindowOrgEx(dc, SHADOW_DEPTH, SHADOW_DEPTH, NULL);
     DrawTicks(dc, centre, radius);
-
-    DeleteObject(SelectObject(dc, GetStockObject(NULL_BRUSH)));
+    if (border)
+    {
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        DeleteObject(SelectObject(dc, CreatePen(PS_SOLID, 5, ShadowColor)));
+        Ellipse(dc, centre->x - radius, centre->y - radius, centre->x + radius, centre->y + radius);
+    }
     DeleteObject(SelectObject(dc, GetStockObject(NULL_PEN)));
 }
 
@@ -159,7 +158,7 @@ static void PositionHands(const POINT* centre, int radius, BOOL bSeconds)
         PositionHand(centre, radius * 0.79, second/60 * 2*M_PI, &SecondHand);  
 }
 
-void AnalogClock(HDC dc, int x, int y, BOOL bSeconds)
+void AnalogClock(HDC dc, int x, int y, BOOL bSeconds, BOOL border)
 {
     POINT centre;
     int radius;
@@ -171,24 +170,24 @@ void AnalogClock(HDC dc, int x, int y, BOOL bSeconds)
     centre.x = x/2;
     centre.y = y/2;
 
-    DrawFace(dc, &centre, radius);
+    DrawFace(dc, &centre, radius, border);
 
     PositionHands(&centre, radius, bSeconds);
     DrawHands(dc, bSeconds);
 }
 
 
-HFONT SizeFont(HDC dc, int x, int y, BOOL bSeconds, const LOGFONT* font)
+HFONT SizeFont(HDC dc, int x, int y, BOOL bSeconds, const LOGFONTW* font)
 {
     SIZE extent;
-    LOGFONT lf;
+    LOGFONTW lf;
     double xscale, yscale;
     HFONT oldFont, newFont;
-    CHAR szTime[255];
+    WCHAR szTime[255];
     int chars;
 
-    chars = GetTimeFormat(LOCALE_USER_DEFAULT, bSeconds ? 0 : TIME_NOSECONDS, NULL,
-			  NULL, szTime, sizeof (szTime));
+    chars = GetTimeFormatW(LOCALE_USER_DEFAULT, bSeconds ? 0 : TIME_NOSECONDS, NULL,
+                           NULL, szTime, ARRAY_SIZE(szTime));
     if (!chars)
 	return 0;
 
@@ -200,14 +199,14 @@ HFONT SizeFont(HDC dc, int x, int y, BOOL bSeconds, const LOGFONT* font)
     x -= 2 * SHADOW_DEPTH;
     y -= 2 * SHADOW_DEPTH;
 
-    oldFont = SelectObject(dc, CreateFontIndirect(&lf));
-    GetTextExtentPoint(dc, szTime, chars, &extent);
+    oldFont = SelectObject(dc, CreateFontIndirectW(&lf));
+    GetTextExtentPointW(dc, szTime, chars, &extent);
     DeleteObject(SelectObject(dc, oldFont));
 
     xscale = (double)x/extent.cx;
     yscale = (double)y/extent.cy;
     lf.lfHeight *= min(xscale, yscale);    
-    newFont = CreateFontIndirect(&lf);
+    newFont = CreateFontIndirectW(&lf);
 
     return newFont;
 }
@@ -216,26 +215,25 @@ void DigitalClock(HDC dc, int x, int y, BOOL bSeconds, HFONT font)
 {
     SIZE extent;
     HFONT oldFont;
-    CHAR szTime[255];
+    WCHAR szTime[255];
     int chars;
 
-    chars = GetTimeFormat(LOCALE_USER_DEFAULT, bSeconds ? 0 : TIME_NOSECONDS, NULL,
-		  NULL, szTime, sizeof (szTime));
+    chars = GetTimeFormatW(LOCALE_USER_DEFAULT, bSeconds ? 0 : TIME_NOSECONDS, NULL,
+                           NULL, szTime, ARRAY_SIZE(szTime));
     if (!chars)
 	return;
     --chars;
 
     oldFont = SelectObject(dc, font);
-    GetTextExtentPoint(dc, szTime, chars, &extent);
+    GetTextExtentPointW(dc, szTime, chars, &extent);
 
     SetBkColor(dc, BackgroundColor);
     SetTextColor(dc, ShadowColor);
-    TextOut(dc, (x - extent.cx)/2 + SHADOW_DEPTH, (y - extent.cy)/2 + SHADOW_DEPTH,
-	    szTime, chars);
+    TextOutW(dc, (x - extent.cx)/2 + SHADOW_DEPTH, (y - extent.cy)/2 + SHADOW_DEPTH, szTime, chars);
     SetBkMode(dc, TRANSPARENT);
 
     SetTextColor(dc, HandColor);
-    TextOut(dc, (x - extent.cx)/2, (y - extent.cy)/2, szTime, chars);
+    TextOutW(dc, (x - extent.cx)/2, (y - extent.cy)/2, szTime, chars);
 
     SelectObject(dc, oldFont);
 }

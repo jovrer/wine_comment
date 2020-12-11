@@ -13,8 +13,8 @@
 
    You should have received a copy of the GNU Library General Public
    License along with the GNU C Library; see the file COPYING.LIB.  If not,
-   write to the Free Software Foundation, Inc., 59 Temple Place - Suite 330,
-   Boston, MA 02111-1307, USA.  */
+   write to the Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+   Boston, MA 02110-1301, USA  */
 
 #include "config.h"
 #include "wine/port.h"
@@ -133,7 +133,5 @@ mkstemps (
       value += 7777;
     }
 
-  /* We return the null string if we can't find a unique file name.  */
-  template[0] = '\0';
   return -1;
 }

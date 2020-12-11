@@ -15,25 +15,20 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _INC_REGSTR
 #define _INC_REGSTR
 
-#ifdef __cplusplus
-extern "C" {
-#endif /* defined(__cplusplus) */
 
 #define REGSTR_PATH_UNINSTALL			TEXT("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall")
+#define REGSTR_VAL_MAX_HCID_LEN 1024
 
 /* DisplayName <= 32 chars in Windows (otherwise not displayed for uninstall) */
 #define REGSTR_VAL_UNINSTALLER_DISPLAYNAME	TEXT("DisplayName")
 /* UninstallString <= 63 chars in Windows (otherwise problems) */
 #define REGSTR_VAL_UNINSTALLER_COMMANDLINE	TEXT("UninstallString")
 
-#ifdef __cplusplus
-} /* extern "C" */
-#endif /* defined(__cplusplus) */
 
 #endif  /* _INC_REGSTR_H */

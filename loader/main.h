@@ -16,20 +16,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_LOADER_MAIN_H
 #define __WINE_LOADER_MAIN_H
-
-#include "wine/pthread.h"
 
 struct wine_preload_info
 {
     void  *addr;
     size_t size;
 };
-
-extern const struct wine_pthread_functions pthread_functions;
 
 #endif /* __WINE_LOADER_MAIN_H */

@@ -15,13 +15,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WMC_WMC_H
 #define __WMC_WMC_H
-
-#include <time.h>	/* For time_t */
 
 #include "wmctypes.h"
 
@@ -51,21 +49,20 @@ extern char *output_name;
 extern char *input_name;
 extern char *header_name;
 extern char *cmdline;
-extern time_t now;
 
 extern int line_number;
 extern int char_number;
 
-int yyparse(void);
-extern int yydebug;
+int mcy_parse(void);
+extern int mcy_debug;
 extern int want_nl;
 extern int want_line;
 extern int want_file;
 extern node_t *nodehead;
 extern lan_blk_t *lanblockhead;
 
-int yylex(void);
-FILE *yyin;
+int mcy_lex(void);
+extern FILE *yyin;
 void set_codepage(int cp);
 
 void add_token(tok_e type, const WCHAR *name, int tok, int cp, const WCHAR *alias, int fix);

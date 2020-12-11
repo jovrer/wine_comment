@@ -36,6 +36,22 @@ my $no_release = 1;
 
 my %modules;
 
+# These DLLs don't have a hope of compiling properly
+my @unix_dependent_dlls = qw(iphlpapi mountmgr.sys ntdll mswsock opengl32
+                             secur32 winex11 wnaspi32 ws2_32);
+
+sub is_unix_dependent_dll($) {
+    my $dll = shift;
+
+    foreach my $unix_only_dll (@unix_dependent_dlls) {
+	if($dll eq $unix_only_dll) {
+	    return 1;
+	}
+    }
+
+    return 0;
+}
+
 sub read_spec_file($) {
     my $spec_file = shift;
 
@@ -45,14 +61,14 @@ sub read_spec_file($) {
 
     my $type = "win32";
 
-    open(IN, "< $wine_dir/$spec_file");
+    open(IN, "< $wine_dir/$spec_file") || die "Error: Can't open $wine_dir/$spec_file: $!\n";
 
     my $header = 1;
     my $lookahead = 0;
     while($lookahead || defined($_ = <IN>)) {
 	$lookahead = 0;
 
-	s/^\s*?(.*?)\s*$/$1/; # remove whitespace at begining and end of line
+	s/^\s*?(.*?)\s*$/$1/; # remove whitespace at beginning and end of line
 	s/^(.*?)\s*#.*$/$1/;  # remove comments
 	/^$/ && next;         # skip empty lines
 
@@ -72,7 +88,7 @@ sub read_spec_file($) {
     close(IN);
 
     # FIXME: Kludge
-    if($module =~ /^(?:(?:imm|ole2conv|ole2prox|ole2thk|rasapi16|windebug)\.dll|comm\.drv)$/) {
+    if($module =~ /^(?:(?:imm|ole2conv|ole2prox|ole2thk|rasapi16|msacm|windebug)\.dll|comm\.drv)$/) {
 	$type = "win16";
     }
 
@@ -85,12 +101,17 @@ sub read_spec_file($) {
 
 if ($options->wine || $options->winetest) {
     foreach my $spec_file (@spec_files) {
-	read_spec_file($spec_file);
+	my $dll = $spec_file;
+        $dll =~ s%dlls/([^/]+)/[^/]+\.spec%$1%;
+	if(!is_unix_dependent_dll($dll)) {
+	    read_spec_file($spec_file);
+	}
     }
 }
 
-my @gdi32_dirs = qw(dlls/gdi/enhmfdrv dlls/gdi/mfdrv);
+my @gdi32_dirs = qw(dlls/gdi32/enhmfdrv dlls/gdi32/mfdrv);
 
+push @makefile_in_files, "libs/wine/Makefile.in";
 push @makefile_in_files, "tools/winebuild/Makefile.in";
 
 sub filter_files($$) {
@@ -113,23 +134,34 @@ sub filter_files($$) {
 my %wine_test_dsp_files;
 
 MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
-    open(IN, "< $wine_dir/$makefile_in_file");
+    open(IN, "< $wine_dir/$makefile_in_file") || die "Error: Can't open $wine_dir/$makefile_in_file: $!\n";
 
     my $topobjdir;
     my $module;
     my $testdll;
     my @imports;
+    my $type;
+    my $dll;
 
     my %vars;
 
     my $again = 0;
     my $lookahead = 0;
+
+    $dll = $makefile_in_file;
+    $dll =~ s%dlls/([^/]+)/Makefile\.in%$1%;
+
+    if($makefile_in_file eq "loader/Makefile.in" ||
+       is_unix_dependent_dll($dll)) {
+        next;
+    }
+
     while($again || defined(my $line = <IN>)) {
 	if(!$again) {
 	    chomp $line;
 	    if($lookahead) {
 		$lookahead = 0;
-		$_ .= "\n" . $line;
+		$_ .= " " . $line;
 	    } else {
 		$_ = $line;
 	    }
@@ -137,7 +169,7 @@ MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
 	    $again = 0;
 	}
 
-	s/^\s*?(.*?)\s*$/$1/; # remove whitespace at begining and end of line
+	s/^\s*?(.*?)\s*$/$1/; # remove whitespace at beginning and end of line
 	s/^(.*?)\s*#.*$/$1/;  # remove comments
 	/^$/ && next;         # skip empty lines
 
@@ -146,36 +178,28 @@ MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
 	    next;
 	}
 
-	if(/^MODULE\s*=\s*([\w\.]+)$/) {
+	if(/^MODULE\s*=\s*([\w\.-]+)$/) {
 	    $module = $1;
-
-	    if($module eq "none") {
-		if($makefile_in_file eq "library/Makefile.in") {
-		    $module = "wine.dll";
-		} elsif($makefile_in_file eq "unicode/Makefile.in") {
-		    $module = "wine_unicode.dll";
-		} elsif($makefile_in_file eq "tools/winebuild/Makefile.in") {
-		    $module = "winebuild.exe";
-		} else {
-		    next MAKEFILE_IN;
-		}
-	    }
+	} elsif (/^\@MAKE_IMPLIB_RULES\@/) {
+	    $type = "lib";
 	} elsif(/^TOPOBJDIR\s*=\s*(\S+)\s*$/) {
 	    $topobjdir = $1;
 	} elsif (/^TESTDLL\s*=\s*(\S+)\s*$/) {
 	    $testdll = $1;
 	} elsif (/^IMPORTS\s*=\s*/) {
             push @imports, grep !/^ntdll$/, split /\s+/s, $';
+	} elsif (/^DELAYIMPORTS\s*=\s*/) {
+            push @imports, $;
 	} elsif (/^EXTRALIBS\s*=\s*/) {
             push @imports, map { /^-l(dxerr8|dxerr9|dxguid|strmiids|uuid)$/ ? $1 : () } split /\s+/s, $';
-	} elsif (/^CTESTS\s*=\s*/) {
+	} elsif (/^CTESTS\s*=\s*/ || ( ($makefile_in_file =~ /\/tests\/Makefile\.in$/) && /^C_SRCS\s*=\s*/ ) ) {
 	    my @files = split /\s+/s, $';
 
 	    my $dir = $makefile_in_file;
 	    $dir =~ s/\/Makefile\.in$//;
 
 	    my $dsp_file = $testdll;
-	    $dsp_file =~ s/\.(dll|drv)$/_test.dsp/;
+	    $dsp_file =~ s/\.(dll|drv|ocx)$/_test.dsp/;
 	    $dsp_file = "$dir/$dsp_file";
 
 	    $wine_test_dsp_files{$dsp_file}{files} = [@files, "testlist.c"];
@@ -209,6 +233,14 @@ MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
 
     close(IN);
 
+    if (!$module) {
+        if ($makefile_in_file eq "libs/wine/Makefile.in") {
+            $module = "wine.lib";
+        } elsif ($makefile_in_file eq "tools/winebuild/Makefile.in") {
+            $module = "winebuild.exe";
+        }
+    }
+
     next if !$module;
 
     my $c_srcs = [];
@@ -228,16 +260,45 @@ MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
 	$resource_files = [sort(@{$vars{RC_SRCS}})];
     }
 
+    my $idl_h_files = [];
+    if(exists($vars{IDL_H_SRCS})) {
+	$idl_h_files = [sort(@{$vars{IDL_H_SRCS}})];
+    }
+
+    my $idl_c_files = [];
+    if(exists($vars{IDL_C_SRCS})) {
+	$idl_c_files = [sort(@{$vars{IDL_C_SRCS}})];
+    }
+
+    my $idl_s_files = [];
+    if(exists($vars{IDL_S_SRCS})) {
+	$idl_s_files = [sort(@{$vars{IDL_S_SRCS}})];
+    }
+
+    my $idl_p_files = [];
+    if(exists($vars{IDL_P_SRCS})) {
+	$idl_p_files = [sort(@{$vars{IDL_P_SRCS}})];
+    }
+
+    my $idl_tlb_files = [];
+    if(exists($vars{IDL_TLB_SRCS})) {
+	$idl_tlb_files = [sort(@{$vars{IDL_TLB_SRCS}})];
+    }
+
+    my $extradefs;
+    if(exists($vars{EXTRADEFS})) {
+	$extradefs = $vars{EXTRADEFS};
+    }
+
     my $project = $module;
     $project =~ s/\.(?:dll|exe|lib)$//;
     $project =~ y/./_/;
 
-    my $type;
     if($module =~ /\.exe$/) {
 	$type = "exe";
     } elsif($module =~ /\.lib$/) {
 	$type = "lib";
-    } else {
+    } elsif(!$type) {
 	$type = "dll";
     }
 
@@ -261,6 +322,7 @@ MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
 	    ($source_files, my $local_source_files) = filter_files($source_files, "$dir2/");
 	    ($header_files, my $local_header_files) = filter_files($header_files, "$dir2/");
 	    ($resource_files, my $local_resource_files) = filter_files($resource_files, "$dir2/");
+	    ($idl_h_files, my $local_idl_h_files) = filter_files($idl_h_files, "$dir2/");
 
 	    $modules{$module}{wine} = 1;
 	    $modules{$module}{winetest} = 0;
@@ -272,6 +334,12 @@ MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
 	    $modules{$module}{header_files} = $local_header_files;
 	    $modules{$module}{resource_files} = $local_resource_files;
 	    $modules{$module}{imports} = [];
+	    $modules{$module}{idl_h_files} = $local_idl_h_files;
+	    $modules{$module}{idl_c_files} = [];
+	    $modules{$module}{idl_s_files} = [];
+	    $modules{$module}{idl_p_files} = [];
+	    $modules{$module}{idl_tlb_files} = [];
+	    $modules{$module}{extradefs} = $extradefs if $extradefs;
 	}
     }
 
@@ -284,7 +352,13 @@ MAKEFILE_IN: foreach my $makefile_in_file (@makefile_in_files) {
     $modules{$module}{source_files} = $source_files;
     $modules{$module}{header_files} = $header_files;
     $modules{$module}{resource_files} = $resource_files;
-    $modules{$module}{imports} = [];
+    $modules{$module}{imports} = [@imports];
+    $modules{$module}{idl_h_files} = $idl_h_files;
+    $modules{$module}{idl_c_files} = $idl_c_files;
+    $modules{$module}{idl_s_files} = $idl_s_files;
+    $modules{$module}{idl_p_files} = $idl_p_files;
+    $modules{$module}{idl_tlb_files} = $idl_tlb_files;
+    $modules{$module}{extradefs} = $extradefs if $extradefs;
 }
 
 $wine_test_dsp_files{"wineruntests.dsp"}{files} = ["runtests.c"];
@@ -312,6 +386,7 @@ foreach my $dsp_file (keys(%wine_test_dsp_files)) {
     my $source_files = [];
     my $header_files = [];
     my $resource_files = [];
+    my $idl_h_files = [];
 
     my @tests = ();
 
@@ -358,6 +433,11 @@ foreach my $dsp_file (keys(%wine_test_dsp_files)) {
     $modules{$module}{header_files} = $header_files;
     $modules{$module}{resource_files} = $resource_files;
     $modules{$module}{imports} = [@imports];
+    $modules{$module}{idl_h_files} = [];
+    $modules{$module}{idl_c_files} = [];
+    $modules{$module}{idl_s_files} = [];
+    $modules{$module}{idl_p_files} = [];
+    $modules{$module}{idl_tlb_files} = [];
 
     $modules{$module}{tests} = [@tests];
 }
@@ -384,6 +464,52 @@ my $progress_max = scalar(@modules);
 foreach my $module (@modules) {
     my $dsp_file = $modules{$module}{dsp_file};
     replace_file("$wine_dir/$dsp_file", \&_generate_dsp, $module);
+}
+
+sub output_dsp_idl_rules($$$) {
+    my $wine_include_dir = shift;
+    my $ext = shift;
+    my @idl_src_files = @{(shift)};
+
+    foreach my $idl_src_file (@idl_src_files) {
+	$idl_src_file =~ s%/%\\%g;
+	if($idl_src_file !~ /^\./) {
+	    $idl_src_file = ".\\$idl_src_file";
+	}
+
+	print OUT "# Begin Source File\r\n";
+	print OUT "\r\n";
+
+	print OUT "SOURCE=$idl_src_file\r\n";
+
+	my $basename = $idl_src_file;
+	$basename =~ s/\.idl$//;
+
+	print OUT "# PROP Ignore_Default_Tool 1\r\n";
+	print OUT "# Begin Custom Build\r\n";
+	print OUT "InputPath=$idl_src_file\r\n";
+	print OUT "\r\n";
+	print OUT "BuildCmds= \\\r\n";
+	print OUT "\tmidl /nologo /I $wine_include_dir $idl_src_file ";
+	if ($ext eq ".h") {
+	    print OUT "/client none /server none /notlb /h ";
+	} elsif ($ext eq "_c.c") {
+	    print OUT "/server none /notlb /cstub ";
+	} elsif ($ext eq "_s.c") {
+	    print OUT "/client none /notlb /sstub ";
+	} elsif ($ext eq "_p.c") {
+	    print OUT "/client none /server none /notlb /proxy ";
+	} elsif ($ext eq ".tlb") {
+	    print OUT "/client none /server none /tlb ";
+	}
+        print OUT "$basename$ext\r\n";
+	print OUT "\r\n";
+	print OUT "\"$basename$ext\" : \$(SOURCE) \"\$(INTDIR)\" \"\$(OUTDIR)\"\r\n";
+	print OUT "   \$(BuildCmds)\r\n";
+	print OUT "# End Custom Build\r\n";
+
+	print OUT "# End Source File\r\n";
+    }
 }
 
 sub _generate_dsp($$) {
@@ -416,17 +542,25 @@ sub _generate_dsp($$) {
     $progress_current++;
     $output->progress("$dsp_file (file $progress_current of $progress_max)");
 
+    my $base_module = $module;
+	$base_module =~ s/\.(?:dll)$//;
+
     my @c_srcs = @{$modules{$module}{c_srcs}};
     my @source_files = @{$modules{$module}{source_files}};
     my @header_files = @{$modules{$module}{header_files}};
     my @resource_files = @{$modules{$module}{resource_files}};
+    my @idl_h_files = @{$modules{$module}{idl_h_files}};
+    my @idl_c_files = @{$modules{$module}{idl_c_files}};
+    my @idl_s_files = @{$modules{$module}{idl_s_files}};
+    my @idl_p_files = @{$modules{$module}{idl_p_files}};
+    my @idl_tlb_files = @{$modules{$module}{idl_tlb_files}};
 
-    if ($project !~ /^wine(?:_unicode|build|runtests|test)?$/ &&
+    if ($project !~ /^wine(?:build|runtests|test)?$/ &&
         $project !~ /^(?:gdi32)_.+?$/ &&
-        $project !~ /_test$/)
+        $project !~ /_test$/ &&
+        !$lib)
     {
-	push @source_files, "$project.spec";
-	# push @source_files, "$project.spec.c";
+	push @source_files, "$base_module.spec";
 	@source_files = sort(@source_files);
     }
 
@@ -454,6 +588,12 @@ sub _generate_dsp($$) {
 	foreach my $cfg (@cfgs) {
 	    push @_cfgs, "$cfg Debug";
 	    push @_cfgs, "$cfg Release";
+	}
+	@cfgs = @_cfgs;
+    } else {
+	my @_cfgs;
+	foreach my $cfg (@cfgs) {
+	    push @_cfgs, "$cfg Debug";
 	}
 	@cfgs = @_cfgs;
     }
@@ -515,6 +655,7 @@ sub _generate_dsp($$) {
     print OUT "CPP=cl.exe\r\n";
     print OUT "MTL=midl.exe\r\n" if !$lib && !$exe;
     print OUT "RSC=rc.exe\r\n";
+    print OUT "\r\n";
 
     my $n = 0;
 
@@ -567,68 +708,73 @@ sub _generate_dsp($$) {
 	print OUT "# PROP Ignore_Export_Lib 0\r\n" if $dll;
 	print OUT "# PROP Target_Dir \"\"\r\n";
 
-	my @defines;
+	print OUT "# ADD BASE CPP /nologo ";
+	my @defines = qw(WINVER=0x0600 _WIN32_WINNT=0x0600 _WIN32_IE=0x0700 WIN32);
 	if($debug) {
 	    if($lib || $exe) {
-		print OUT "# ADD BASE CPP /nologo /W3 /Gm /GX /Zi /Od";
-		@defines = (qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 WIN32 _DEBUG _MBCS _LIB));
+		push @defines, qw(_DEBUG _MBCS _LIB);
 	    } else {
-		print OUT "# ADD BASE CPP /nologo /MTd /W3 /Gm /GX /Zi /Od";
-		@defines = (qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 WIN32 _DEBUG _WINDOWS _MBCS _USRDLL), ("\U${project}\E_EXPORTS"));
+		print OUT "/MDd ";
+		push @defines, qw(_DEBUG _WINDOWS _MBCS _USRDLL);
 	    }
+	    print OUT "/W3 /Gm /GX /Zi /Od";
 	} else {
 	    if($lib || $exe) {
-		print OUT "# ADD BASE CPP /nologo /W3 /GX /O2";
-		@defines = (qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 WIN32 NDEBUG _MBCS _LIB));
+		push @defines, qw(NDEBUG _MBCS _LIB);
 	    } else {
-		print OUT "# ADD BASE CPP /nologo /MT /W3 /GX /O2";
-		@defines = (qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 WIN32 NDEBUG _WINDOWS _MBCS _USRDLL), ("\U${project}\E_EXPORTS"));
+		print OUT "/MD ";
+		push @defines, qw(NDEBUG _WINDOWS _MBCS _USRDLL);
 	    }
+	    print OUT "/W3 /GX /O2";
 	}
 
 	foreach my $define (@defines) {
-	    print OUT " /D \"$define\"";
+	    if ($define !~ /=/) {
+		print OUT " /D \"$define\"";
+	    } else {
+		print OUT " /D $define";
+	    }
 	}
 	print OUT " /YX" if $lib || $exe;
 	print OUT " /FD";
 	print OUT " /GZ" if $debug;
-	print OUT " " if $debug && ($lib || $exe);
 	print OUT " /c";
 	print OUT "\r\n";
 
-	my @defines2;
+	my @defines2 = qw(_CRT_SECURE_NO_DEPRECATE _CRT_NONSTDC_NO_DEPRECATE
+                          USE_COMPILER_EXCEPTIONS _USE_MATH_DEFINES
+                          WINVER=0x0600 _WIN32_WINNT=0x0600 _WIN32_IE=0x0700);
 	if($debug) {
 	    if($lib) {
-		print OUT "# ADD CPP /nologo /MTd /W3 /Gm /GX /Zi /Od";
-		@defines2 = qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 WIN32 _DEBUG _WINDOWS _MBCS _LIB);
+		print OUT "# ADD CPP /nologo /MDd /W3 /Gm /GX /Zi /Od";
+		push @defines2, qw(WIN32 _DEBUG _WINDOWS _MBCS _LIB);
 	    } else {
-		print OUT "# ADD CPP /nologo /MTd /W3 /Gm /GX /Zi /Od";
-		@defines2 = qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 _DEBUG WIN32 _WINDOWS _MBCS _USRDLL);
+		print OUT "# ADD CPP /nologo /MDd /W3 /Gm /GX /Zi /Od";
+		push @defines2, qw(_DEBUG WIN32 _WINDOWS _MBCS _USRDLL);
 	    }
 	} else {
 	    if($lib) {
-		print OUT "# ADD CPP /nologo /MT /W3 /GX /O2";
-		@defines2 = qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 WIN32 NDEBUG _WINDOWS _MBCS _LIB);
+		print OUT "# ADD CPP /nologo /MD /W3 /GX /O2";
+		push @defines2, qw(WIN32 NDEBUG _WINDOWS _MBCS _LIB);
 	    } else {
-		print OUT "# ADD CPP /nologo /MT /W3 /GX /O2";
-		@defines2 = qw(WINVER=0x0501 _WIN32_WINNT=0x0501 _WIN32_IE=0x0600 NDEBUG WIN32 _WINDOWS _MBCS _USRDLL);
+		print OUT "# ADD CPP /nologo /MD /W3 /GX /O2";
+		push @defines2, qw(NDEBUG WIN32 _WINDOWS _MBCS _USRDLL);
 	    }
 	}
 
 	my @includes = ();
 	if($wine) {
-	    push @defines2, "_\U${project}\E_";
 	    push @defines2, qw(__WINESRC__) if $project !~ /^(?:wine(?:build|test)|.*?_test)$/;
 	    if ($msvc_headers) {
 	    	push @defines2, qw(__WINE_USE_NATIVE_HEADERS);
 	    }
 	    my $output_dir2 = $output_dir;
-	    $output_dir =~ s/\\/\\\\/g;
-	    push @defines2, "__WINETEST_OUTPUT_DIR=\\\"$output_dir\\\"";
+	    $output_dir2 =~ s/\\/\\\\/g;
+	    push @defines2, "__WINETEST_OUTPUT_DIR=\\\"$output_dir2\\\"";
 	    push @defines2, qw(__i386__ _X86_);
 
-	    if($project =~ /^gdi32_(?:enhmfdrv|mfdrv)$/) {
-		push @includes, "..";
+	    if ($project eq "wine") {
+		push @defines2, "WINE_UNICODE_API=";
 	    }
 
 	    if ($project =~ /_test$/) {
@@ -642,16 +788,12 @@ sub _generate_dsp($$) {
 
 	if($wine) {
 	    foreach my $include (@includes) {
-		if ($include !~ /[\\\"]/) {
-		    print OUT " /I \"$include\"";
-		} else {
-		    print OUT " /I $include";
-		}
+                print OUT " /I \"$include\"";
 	    }
 	}
 
 	foreach my $define (@defines2) {
-	    if ($define !~ /[\\\"]/) {
+	    if ($define !~ /=/) {
 		print OUT " /D \"$define\"";
 	    } else {
 		print OUT " /D $define";
@@ -660,11 +802,14 @@ sub _generate_dsp($$) {
 	print OUT " /D inline=__inline" if $wine;
 	print OUT " /D \"__STDC__\"" if 0 && $wine;
 
+	if(exists($modules{$module}{extradefs})) {
+	    print OUT " @{$modules{$module}{extradefs}} ";
+	}
+
 	print OUT " /YX" if $lib;
 	print OUT " /FR" if !$lib;
 	print OUT " /FD";
 	print OUT " /GZ" if $debug;
-	print OUT " " if $debug && $lib;
 	print OUT " /c";
 	print OUT " /TP" if !$no_cpp;
 	print OUT "\r\n";
@@ -700,12 +845,12 @@ sub _generate_dsp($$) {
 
 	if($exe || $dll) {
 	    print OUT "LINK32=link.exe\r\n";
-	    print OUT "# ADD BASE LINK32 ";
+	    print OUT "# ADD BASE LINK32";
 	    my @libraries = qw(kernel32.lib user32.lib gdi32.lib winspool.lib
 			       comdlg32.lib advapi32.lib shell32.lib ole32.lib
 			       oleaut32.lib uuid.lib odbc32.lib odbccp32.lib);
 	    foreach my $library (@libraries) {
-		print OUT "$library ";
+		print OUT " $library";
 	    }
 	    print OUT " /nologo";
 	    print OUT " /dll" if $dll;
@@ -716,11 +861,11 @@ sub _generate_dsp($$) {
 	    print OUT "\r\n";
 
 	    print OUT "# ADD LINK32";
-	    print OUT " /nologo";
 	    print OUT " libcmt.lib" if $project =~ /^ntdll$/; # FIXME: Kludge
 	    foreach my $import (@imports) {
 		print OUT " $import.lib" if ($import ne "msvcrt");
 	    }
+	    print OUT " /nologo";
 	    print OUT " /dll" if $dll;
             print OUT " /subsystem:console" if $console;
 	    print OUT " /debug" if $debug;
@@ -744,15 +889,6 @@ sub _generate_dsp($$) {
 	print OUT "\r\n";
     }
 
-    if ($project eq "winebuild") {
-	print OUT "# Begin Special Build Tool\r\n";
-	print OUT "SOURCE=\"\$(InputPath)\"\r\n";
-        print OUT "PostBuild_Desc=Copying wine.dll and wine_unicode.dll ...\r\n";
-	print OUT "PostBuild_Cmds=";
-	print OUT "copy ..\\..\\library\\$output_dir\\wine.dll \$(OutDir)\t";
-	print OUT "copy ..\\..\\unicode\\$output_dir\\wine_unicode.dll \$(OutDir)\r\n";
-	print OUT "# End Special Build Tool\r\n";
-    }
     print OUT "# Begin Target\r\n";
     print OUT "\r\n";
     foreach my $cfg (@cfgs) {
@@ -763,22 +899,20 @@ sub _generate_dsp($$) {
     print OUT "\r\n";
     print OUT "# PROP Default_Filter \"cpp;c;cxx;rc;def;r;odl;idl;hpj;bat\"\r\n";
 
+    if ($project eq "winebuild") {
+        for my $ source_file ("getopt.c", "getopt1.c", "mkstemps.c")
+        {
+            print OUT "# Begin Source File\r\n";
+            print OUT "\r\n";
+            print OUT "SOURCE=..\\..\\libs\\port\\$source_file\r\n";
+            print OUT "# End Source File\r\n";
+        }
+    }
+
     foreach my $source_file (@source_files) {
 	$source_file =~ s%/%\\%g;
 	if($source_file !~ /^\./) {
 	    $source_file = ".\\$source_file";
-	}
-
-	if($source_file =~ /^(.*?)\.spec$/) {
-	    my $basename = $1;
-
-	    $basename = "$basename.dll" if $basename !~ /\..{1,3}$/;
-	    my $dbg_c_file = "$basename.dbg.c";
-
-	    print OUT "# Begin Source File\r\n";
-	    print OUT "\r\n";
-	    print OUT "SOURCE=$dbg_c_file\r\n";
-	    print OUT "# End Source File\r\n";
 	}
 
 	print OUT "# Begin Source File\r\n";
@@ -786,15 +920,15 @@ sub _generate_dsp($$) {
 
 	print OUT "SOURCE=$source_file\r\n";
 
+	if ($project eq "wine" && $source_file eq ".\\config.c") {
+	    print OUT "# ADD CPP /D BINDIR=\\\"\\\" /D DLLDIR=\\\"\\\" /D LIB_TO_BINDIR=\\\"\\\" /D LIB_TO_DLLDIR=\\\"\\\" /D BIN_TO_DLLDIR=\\\"\\\" /D LIB_TO_DATADIR=\\\"\\\" /D BIN_TO_DATADIR=\\\"\\\"\r\n";
+	}
+
 	if($source_file =~ /^(.*?)\.spec$/) {
 	    my $basename = $1;
 
 	    my $spec_file = $source_file;
 	    my $def_file = "$basename.def";
-
-	    $basename = "$basename.dll" if $basename !~ /\..{1,3}$/;
-	    my $dbg_file = "$basename.dbg";
-	    my $dbg_c_file = "$basename.dbg.c";
 
 	    my $srcdir = "."; # FIXME: Is this really always correct?
 
@@ -802,32 +936,9 @@ sub _generate_dsp($$) {
 	    print OUT "InputPath=$spec_file\r\n";
 	    print OUT "\r\n";
 	    print OUT "BuildCmds= \\\r\n";
-	    print OUT "\t..\\..\\tools\\winebuild\\$output_dir\\winebuild.exe --def $spec_file > $def_file \\\r\n";
-	    
-	    if($project =~ /^ntdll$/) {
-		my $n = 0;
-		foreach my $c_src (@c_srcs) {
-		    if($n++ > 0)  {
-			print OUT "\techo $c_src >> $dbg_file \\\r\n";
-		    } else {
-			print OUT "\techo $c_src > $dbg_file \\\r\n";
-		    }
-		}
-		print OUT "\t..\\..\\tools\\winebuild\\$output_dir\\winebuild.exe";
-		print OUT " -o $dbg_c_file --debug -C$srcdir $dbg_file \\\r\n";
-	    } else {
-		my $c_srcs = join(" ", grep(/\.c$/, @c_srcs));
-
-		print OUT "\t..\\..\\tools\\winebuild\\$output_dir\\winebuild.exe";
-		print OUT " -o $dbg_c_file --debug -C$srcdir $c_srcs \\\r\n";
-	    }
-
-	    print OUT "\t\r\n";
+	    print OUT "\t..\\..\\tools\\winebuild\\$output_dir\\winebuild.exe -w --def -k -o $def_file --export $spec_file\r\n";
 	    print OUT "\r\n";
 	    print OUT "\"$def_file\" : \$(SOURCE) \"\$(INTDIR)\" \"\$(OUTDIR)\"\r\n";
-	    print OUT "   \$(BuildCmds)\r\n";
-	    print OUT "\r\n";
-	    print OUT "\"$dbg_c_file\" : \$(SOURCE) \"\$(INTDIR)\" \"\$(OUTDIR)\"\r\n";
 	    print OUT "   \$(BuildCmds)\r\n";
 	    print OUT "# End Custom Build\r\n";
 	} elsif($source_file =~ /([^\\]*?\.h)$/) {
@@ -872,6 +983,16 @@ sub _generate_dsp($$) {
 
 	print OUT "# End Source File\r\n";
     }
+
+    output_dsp_idl_rules $wine_include_dir, ".h", \@idl_h_files;
+    output_dsp_idl_rules $wine_include_dir, "_c.c", \@idl_c_files;
+    output_dsp_idl_rules $wine_include_dir, "_s.c", \@idl_s_files;
+    output_dsp_idl_rules $wine_include_dir, "_p.c", \@idl_p_files;
+    # Hack - stdole2.idl cannot be compiled with midl
+    if($project ne "include") {
+	output_dsp_idl_rules $wine_include_dir, ".tlb", \@idl_tlb_files;
+    }
+
     print OUT "# End Group\r\n";
 
     print OUT "# Begin Group \"Header Files\"\r\n";
@@ -979,14 +1100,14 @@ sub _generate_wine_dsw($) {
 	my $dsp_file = $modules{$module}{dsp_file};
 
 	my @dependencies;
-	if($project =~ /^wine(?:_unicode)?$/) {
+	if($project eq "wine") {
 	    @dependencies = ();
-	} elsif($project =~ /^winebuild$/) {
-	    @dependencies = ("wine", "wine_unicode");
+	} elsif($project eq "winebuild") {
+	    @dependencies = ("wine");
 	} elsif($project =~ /^(?:gdi32)_.+?$/) {
 	    @dependencies = ();
 	} else {
-	    @dependencies = ("wine", "wine_unicode", "winebuild");
+	    @dependencies = ("wine", "include", "winebuild");
 	}
 
         if($project =~ /^gdi32$/) {
@@ -1142,7 +1263,7 @@ sub _generate_winetest_c($) {
     print OUT "/* Automatically generated file; DO NOT EDIT!! */\n\n";
 
     print OUT "/* Force the linker to generate a .lib file */\n";
-    print OUT "void __wine_dummy_lib_function()\n{\n}\n\n";
+    print OUT "void __wine_dummy_lib_function(void)\n{\n}\n\n";
 }
 
 if ($options->wine) {
@@ -1155,54 +1276,37 @@ if ($options->wine) {
 
 sub _generate_config_h($) {
     local *OUT = shift;
+    my @defines;
 
     print OUT "#define __WINE_CONFIG_H\n";
     print OUT "\n";
 
-    my @headers = qw(direct.h fcntl.h io.h string.h process.h);
+    my @headers = qw(direct.h float.h memory.h io.h stdlib.h string.h process.h sys/stat.h sys/types.h);
     foreach my $header (@headers) {
 	$header =~ y/\.\//__/;
-	print OUT "#define HAVE_\U$header\E\n";
-	print OUT "\n";
+	push @defines, "HAVE_\U$header\E 1";
     }
 
     my @functions = qw(
-        _alldiv _allmul _allrem _aulldiv _aullrem
-        _access _chdir _close _lseek _mkdir _open _pclose _popen _read _rmdir _write _stat
-        _snprintf _spawnvp _stricmp _strnicmp _vsnprintf _wcsicmp
-        ecvt fcvt gcvt
-        memmove
-        strerror
-        wcslen
+        _pclose _popen _snprintf _spawnvp _stricmp _strnicmp _strdup
+        _strtoi64 _strtoui64 _vsnprintf
+        chsize memmove strdup spawnvp strerror vsnprintf
     );
     foreach my $function (@functions) {
-	print OUT "#define HAVE_\U$function\E 1\n";
-	print OUT "\n";
+	push @defines, "HAVE_\U$function\E 1";
     }
 
-    if(0) {
-	print OUT "#define NEED_STDCALL_DECORATION 1\n";
-	print OUT "\n";
+    my @types = qw(
+        long_long off_t size_t
+    );
+    foreach my $type (@types) {
+	push @defines, "HAVE_\U$type\E 1";
     }
 
-    print OUT "#define X_DISPLAY_MISSING 1\n";
-    print OUT "\n";
-
-    print OUT "/* Define to a macro to generate an assembly function directive */\n";
-    print OUT "#define __ASM_FUNC(name) \"\"\n";
-    print OUT "\n";
-
-    print OUT "/* Define to a macro to generate an assembly name from a C symbol */\n";
-    print OUT "#define __ASM_NAME(name) name\n";
-    print OUT "\n";
-
-    print OUT "/* Define to the assembler keyword used to specify a word value */\n";
-    print OUT "#define __ASM_SHORT \".short\"\n";
-    print OUT "\n";
-
-    print OUT "/* Define to the assembler keyword used to specify an ASCII string */\n";
-    print OUT "#define __ASM_STRING \".string\"\n";
-    print OUT "\n";
+    foreach my $define (sort(@defines)) {
+	print OUT "#define $define\n";
+	print OUT "\n";
+    }
 
     print OUT "/* Define to the address where bug reports for this package should be sent. */\n";
     print OUT "#define PACKAGE_BUGREPORT \"\"\n";
@@ -1222,6 +1326,17 @@ sub _generate_config_h($) {
 
     print OUT "/* Define to the version of this package. */\n";
     print OUT "#define PACKAGE_VERSION \"YYYYMMDD\"\n";
+    print OUT "\n";
+
+    print OUT "#define X_DISPLAY_MISSING 1\n";
+    print OUT "\n";
+
+    print OUT "/* Define to a macro to generate an assembly function directive */\n";
+    print OUT "#define __ASM_FUNC(name) \"\"\n";
+    print OUT "\n";
+
+    print OUT "/* Define to a macro to generate an assembly name from a C symbol */\n";
+    print OUT "#define __ASM_NAME(name) name\n";
     print OUT "\n";
 
     close(OUT);

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -26,7 +26,6 @@
 #include <string.h>
 #include <assert.h>
 
-#include "wine/unicode.h"
 #include "wrc.h"
 #include "genres.h"
 #include "newstruc.h"
@@ -52,9 +51,7 @@ void write_resfile(char *outname, resource_t *top)
 
 	fo = fopen(outname, "wb");
 	if(!fo)
-	{
-		error("Could not open %s\n", outname);
-	}
+            fatal_perror("Could not open %s", outname);
 
 	if(win32)
 	{
@@ -70,12 +67,12 @@ void write_resfile(char *outname, resource_t *top)
 		put_word(res, 0);		/* Memory options */
 		put_word(res, 0);		/* Language */
 		put_dword(res, 0);		/* Version */
-		put_dword(res, 0);		/* Charateristics */
+		put_dword(res, 0);		/* Characteristics */
 		ret = fwrite(res->data, 1, res->size, fo);
 		if(ret != res->size)
 		{
 			fclose(fo);
-			error("Error writing %s", outname);
+			error("Error writing %s\n", outname);
 		}
 		free(res);
 	}
@@ -89,7 +86,7 @@ void write_resfile(char *outname, resource_t *top)
 		if(ret != top->binres->size)
 		{
 			fclose(fo);
-			error("Error writing %s", outname);
+			error("Error writing %s\n", outname);
 		}
 		if(win32 && (top->binres->size & 0x03))
 		{
@@ -98,9 +95,10 @@ void write_resfile(char *outname, resource_t *top)
 			if(ret != 4 - (top->binres->size & 0x03))
 			{
 				fclose(fo);
-				error("Error writing %s", outname);
+				error("Error writing %s\n", outname);
 			}
 		}
 	}
-	fclose(fo);
+	if (fclose(fo))
+            fatal_perror("Error writing %s", outname);
 }

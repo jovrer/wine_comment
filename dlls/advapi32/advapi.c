@@ -15,11 +15,8 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-
-#include "config.h"
-#include "wine/port.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -32,10 +29,14 @@
 #include "winreg.h"
 #include "winternl.h"
 #include "winerror.h"
-#include "appmgmt.h"
+#include "wincred.h"
+#include "wct.h"
 
 #include "wine/library.h"
+#include "wine/unicode.h"
 #include "wine/debug.h"
+
+#include "advapi32_misc.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(advapi);
 
@@ -57,25 +58,21 @@ GetUserNameA( LPSTR lpszName, LPDWORD lpSize )
 {
     WCHAR *buffer;
     BOOL ret;
-    DWORD sizeW = *lpSize * 2;
+    DWORD sizeW = *lpSize;
 
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, sizeW * sizeof(WCHAR) )))
+    if (!(buffer = heap_alloc( sizeW * sizeof(WCHAR) )))
     {
         SetLastError( ERROR_NOT_ENOUGH_MEMORY );
         return FALSE;
     }
+
     ret = GetUserNameW( buffer, &sizeW );
     if (ret)
-    {
-        if (!(*lpSize = WideCharToMultiByte( CP_ACP, 0, buffer, -1, lpszName, *lpSize, NULL, NULL )))
-        {
-            *lpSize = WideCharToMultiByte( CP_ACP, 0, buffer, -1, NULL, 0, NULL, NULL );
-            SetLastError( ERROR_MORE_DATA );
-            ret = FALSE;
-        }
-    }
-    else *lpSize = sizeW * 2;
-    HeapFree( GetProcessHeap(), 0, buffer );
+        *lpSize = WideCharToMultiByte( CP_ACP, 0, buffer, -1, lpszName, *lpSize, NULL, NULL );
+    else
+        *lpSize = sizeW;
+
+    heap_free( buffer );
     return ret;
 }
 
@@ -88,17 +85,37 @@ BOOL WINAPI
 GetUserNameW( LPWSTR lpszName, LPDWORD lpSize )
 {
     const char *name = wine_get_user_name();
-    DWORD len = MultiByteToWideChar( CP_UNIXCP, 0, name, -1, NULL, 0 );
+    DWORD i, len = MultiByteToWideChar( CP_UNIXCP, 0, name, -1, NULL, 0 );
+    LPWSTR backslash;
 
     if (len > *lpSize)
     {
-        SetLastError(ERROR_MORE_DATA);
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
         *lpSize = len;
         return FALSE;
     }
 
     *lpSize = len;
     MultiByteToWideChar( CP_UNIXCP, 0, name, -1, lpszName, len );
+
+    /* Word uses the user name to create named mutexes and file mappings,
+     * and backslashes in the name cause the creation to fail.
+     * Also, Windows doesn't return the domain name in the user name even when
+     * joined to a domain. A Unix box joined to a domain using winbindd will
+     * contain the domain name in the username. So we need to cut this off.
+     * FIXME: Only replaces forward and backslashes for now, should get the
+     * winbind separator char from winbindd and replace that.
+     */
+    for (i = 0; lpszName[i]; i++)
+        if (lpszName[i] == '/') lpszName[i] = '\\';
+
+    backslash = strrchrW(lpszName, '\\');
+    if (backslash == NULL)
+        return TRUE;
+
+    len = lstrlenW(backslash);
+    memmove(lpszName, backslash + 1, len * sizeof(WCHAR));
+    *lpSize = len;
     return TRUE;
 }
 
@@ -118,9 +135,9 @@ BOOL WINAPI GetCurrentHwProfileA(LPHW_PROFILE_INFOA pInfo)
 {
 	FIXME("(%p) semi-stub\n", pInfo);
 	pInfo->dwDockInfo = DOCKINFO_DOCKED;
-	strcpy(pInfo->szHwProfileGuid,"{12340001-1234-1234-1234-1233456789012}");
+	strcpy(pInfo->szHwProfileGuid,"{12340001-1234-1234-1234-123456789012}");
 	strcpy(pInfo->szHwProfileName,"Wine Profile");
-	return 1;
+	return TRUE;
 }
 
 /******************************************************************************
@@ -171,7 +188,7 @@ BOOL WINAPI IsTextUnicode( LPCVOID buf, INT len, LPINT flags )
  */
 BOOL WINAPI AbortSystemShutdownA( LPSTR lpMachineName )
 {
-    TRACE("stub %s (harmless)\n", lpMachineName);
+    TRACE("stub %s (harmless)\n", debugstr_a(lpMachineName));
     return TRUE;
 }
 
@@ -214,7 +231,7 @@ BOOL WINAPI InitiateSystemShutdownExA( LPSTR lpMachineName, LPSTR lpMessage,
          DWORD dwTimeout, BOOL bForceAppsClosed, BOOL bRebootAfterShutdown,
          DWORD dwReason)
 {
-     FIXME("%s %s %ld %d %d %ld\n", debugstr_a(lpMachineName),
+     FIXME("%s %s %d %d %d %#x\n", debugstr_a(lpMachineName),
             debugstr_a(lpMessage), dwTimeout, bForceAppsClosed,
             bRebootAfterShutdown, dwReason);
      return TRUE;
@@ -229,7 +246,7 @@ BOOL WINAPI InitiateSystemShutdownExW( LPWSTR lpMachineName, LPWSTR lpMessage,
          DWORD dwTimeout, BOOL bForceAppsClosed, BOOL bRebootAfterShutdown,
          DWORD dwReason)
 {
-     FIXME("%s %s %ld %d %d %ld\n", debugstr_w(lpMachineName),
+     FIXME("%s %s %d %d %d %#x\n", debugstr_w(lpMachineName),
             debugstr_w(lpMessage), dwTimeout, bForceAppsClosed,
             bRebootAfterShutdown, dwReason);
      return TRUE;
@@ -254,18 +271,32 @@ BOOL WINAPI InitiateSystemShutdownW( LPWSTR lpMachineName, LPWSTR lpMessage, DWO
 BOOL WINAPI LogonUserA( LPCSTR lpszUsername, LPCSTR lpszDomain, LPCSTR lpszPassword,
                         DWORD dwLogonType, DWORD dwLogonProvider, PHANDLE phToken )
 {
-    FIXME("%s %s %p 0x%08lx 0x%08lx %p - stub\n", debugstr_a(lpszUsername),
+    WCHAR *usernameW = NULL, *domainW = NULL, *passwordW = NULL;
+    BOOL ret = FALSE;
+
+    TRACE("%s %s %p 0x%08x 0x%08x %p\n", debugstr_a(lpszUsername),
           debugstr_a(lpszDomain), lpszPassword, dwLogonType, dwLogonProvider, phToken);
 
-    return TRUE;
+    if (lpszUsername && !(usernameW = strdupAW( lpszUsername ))) return FALSE;
+    if (lpszDomain && !(domainW = strdupAW( lpszUsername ))) goto done;
+    if (lpszPassword && !(passwordW = strdupAW( lpszPassword ))) goto done;
+
+    ret = LogonUserW( usernameW, domainW, passwordW, dwLogonType, dwLogonProvider, phToken );
+
+done:
+    heap_free( usernameW );
+    heap_free( domainW );
+    heap_free( passwordW );
+    return ret;
 }
 
 BOOL WINAPI LogonUserW( LPCWSTR lpszUsername, LPCWSTR lpszDomain, LPCWSTR lpszPassword,
                         DWORD dwLogonType, DWORD dwLogonProvider, PHANDLE phToken )
 {
-    FIXME("%s %s %p 0x%08lx 0x%08lx %p - stub\n", debugstr_w(lpszUsername),
+    FIXME("%s %s %p 0x%08x 0x%08x %p - stub\n", debugstr_w(lpszUsername),
           debugstr_w(lpszDomain), lpszPassword, dwLogonType, dwLogonProvider, phToken);
 
+    *phToken = (HANDLE *)0xdeadbeef;
     return TRUE;
 }
 
@@ -284,9 +315,19 @@ DWORD WINAPI CommandLineFromMsiDescriptor( WCHAR *szDescriptor,
     hmsi = LoadLibraryW( szMsi );
     if (!hmsi)
         return r;
-    mpcfd = (void*) GetProcAddress( hmsi, "MsiProvideComponentFromDescriptorW" );
+    mpcfd = (fnMsiProvideComponentFromDescriptor)GetProcAddress( hmsi,
+                                                                 "MsiProvideComponentFromDescriptorW" );
     if (mpcfd)
         r = mpcfd( szDescriptor, szCommandLine, pcchCommandLine, NULL );
     FreeLibrary( hmsi );
     return r;
+}
+
+/***********************************************************************
+ *      RegisterWaitChainCOMCallback (ole32.@)
+ */
+void WINAPI RegisterWaitChainCOMCallback(PCOGETCALLSTATE call_state_cb,
+                                         PCOGETACTIVATIONSTATE activation_state_cb)
+{
+    FIXME("%p, %p\n", call_state_cb, activation_state_cb);
 }

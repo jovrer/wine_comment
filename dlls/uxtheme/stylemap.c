@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -28,10 +28,6 @@
 #include "tmschema.h"
 
 #define TMT_ENUM 200
-
-#include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(uxtheme);
 
 typedef struct _MSSTYLES_PROPERTY_MAP {
     WORD dwPrimitiveType;
@@ -1055,7 +1051,7 @@ BOOL MSSTYLES_LookupPartState(LPCWSTR pszClass, LPCWSTR pszPart, LPCWSTR pszStat
 
     *iPartId = 0;
     *iStateId = 0;
-    for(i=0; i<sizeof(mapClass)/sizeof(mapClass[0]); i++) {
+    for(i=0; i<ARRAY_SIZE(mapClass); i++) {
         if(!lstrcmpiW(mapClass[i].pszClass, pszClass)) {
             map = mapClass[i].lpMap;
             if(pszPart) {

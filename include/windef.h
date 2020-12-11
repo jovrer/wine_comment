@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _WINDEF_
@@ -37,27 +37,42 @@ extern "C" {
 
 /* Calling conventions definitions */
 
-#if defined(__i386__) && !defined(_X86_)
-# define _X86_
-#endif
-
-#if defined(_X86_) && !defined(__i386__)
-# define __i386__
-#endif
-
-#ifdef __x86_64__
+#if (defined(__x86_64__) || defined(__powerpc64__) || defined(__aarch64__)) && !defined(_WIN64)
 #define _WIN64
+#endif
+
+#ifndef _WIN64
+# if defined(__i386__) && !defined(_X86_)
+#  define _X86_
+# endif
+# if defined(_X86_) && !defined(__i386__)
+#  define __i386__
+# endif
 #endif
 
 #ifndef __stdcall
 # ifdef __i386__
 #  ifdef __GNUC__
-#   define __stdcall __attribute__((__stdcall__))
+#   if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2)) || defined(__APPLE__)
+#    define __stdcall __attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))
+#   else
+#    define __stdcall __attribute__((__stdcall__))
+#   endif
 #  elif defined(_MSC_VER)
     /* Nothing needs to be done. __stdcall already exists */
 #  else
 #   error You need to define __stdcall for your compiler
 #  endif
+# elif defined(__x86_64__) && defined (__GNUC__)
+#  if (__GNUC__ > 5) || ((__GNUC__ == 5) && (__GNUC_MINOR__ >= 3))
+#   define __stdcall __attribute__((ms_abi)) __attribute__((__force_align_arg_pointer__))
+#  else
+#   define __stdcall __attribute__((ms_abi))
+#  endif
+# elif defined(__arm__) && defined (__GNUC__) && !defined(__SOFTFP__)
+#   define __stdcall __attribute__((pcs("aapcs-vfp")))
+# elif defined(__aarch64__) && defined (__GNUC__)
+#  define __stdcall __attribute__((ms_abi))
 # else  /* __i386__ */
 #  define __stdcall
 # endif  /* __i386__ */
@@ -65,11 +80,49 @@ extern "C" {
 
 #ifndef __cdecl
 # if defined(__i386__) && defined(__GNUC__)
-#  define __cdecl __attribute__((__cdecl__))
+#   if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2)) || defined(__APPLE__)
+#   define __cdecl __attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))
+#  else
+#   define __cdecl __attribute__((__cdecl__))
+#  endif
+# elif defined(__x86_64__) && defined (__GNUC__)
+#  if (__GNUC__ > 5) || ((__GNUC__ == 5) && (__GNUC_MINOR__ >= 3))
+#   define __cdecl __attribute__((ms_abi)) __attribute__((__force_align_arg_pointer__))
+#  else
+#   define __cdecl __attribute__((ms_abi))
+#  endif
+# elif defined(__arm__) && defined (__GNUC__) && !defined(__SOFTFP__)
+#   define __cdecl __attribute__((pcs("aapcs-vfp")))
+# elif defined(__aarch64__) && defined (__GNUC__)
+#  define __cdecl __attribute__((ms_abi))
 # elif !defined(_MSC_VER)
 #  define __cdecl
 # endif
 #endif /* __cdecl */
+
+#ifndef __ms_va_list
+# if (defined(__x86_64__) || defined(__aarch64__)) && defined (__GNUC__)
+#  define __ms_va_list __builtin_ms_va_list
+#  define __ms_va_start(list,arg) __builtin_ms_va_start(list,arg)
+#  define __ms_va_end(list) __builtin_ms_va_end(list)
+#  define __ms_va_copy(dest,src) __builtin_ms_va_copy(dest,src)
+# else
+#  define __ms_va_list va_list
+#  define __ms_va_start(list,arg) va_start(list,arg)
+#  define __ms_va_end(list) va_end(list)
+#  ifdef va_copy
+#   define __ms_va_copy(dest,src) va_copy(dest,src)
+#  else
+#   define __ms_va_copy(dest,src) ((dest) = (src))
+#  endif
+# endif
+#endif
+
+#if defined(__arm__) && defined (__GNUC__) && !defined(__SOFTFP__)
+# define WINAPIV __attribute__((pcs("aapcs")))
+#else
+# define WINAPIV __cdecl
+#endif
 
 #ifdef __WINESRC__
 #define __ONLY_IN_WINELIB(x)	do_not_use_this_in_wine
@@ -140,9 +193,8 @@ extern "C" {
 #define PASCAL      __stdcall
 #define CDECL       __cdecl
 #define _CDECL      __cdecl
-#define WINAPIV     __cdecl
 #define APIENTRY    WINAPI
-#define CONST       const
+#define CONST       __ONLY_IN_WINELIB(const)
 
 /* Misc. constants. */
 
@@ -188,21 +240,22 @@ typedef int             INT,        *PINT,     *LPINT;
 typedef unsigned int    UINT,       *PUINT;
 typedef float           FLOAT,      *PFLOAT;
 typedef char                        *PSZ;
-#if defined(_WIN64) && !defined(_MSC_VER)
-typedef int                                    *LPLONG;
-typedef unsigned int    DWORD,      *PDWORD,   *LPDWORD;
-typedef unsigned int    ULONG,      *PULONG;
-#else
+#ifdef _MSC_VER
 typedef long                                   *LPLONG;
 typedef unsigned long   DWORD,      *PDWORD,   *LPDWORD;
 typedef unsigned long   ULONG,      *PULONG;
+#else
+typedef int                                    *LPLONG;
+typedef unsigned int    DWORD,      *PDWORD,   *LPDWORD;
+typedef unsigned int    ULONG,      *PULONG;
 #endif
 
 /* Macros to map Winelib names to the correct implementation name */
 /* Note that Winelib is purely Win32.                             */
 
 #ifdef __WINESRC__
-#define WINE_NO_UNICODE_MACROS
+#define WINE_NO_UNICODE_MACROS 1
+#define WINE_STRICT_PROTOTYPES 1
 #endif
 
 #ifdef WINE_NO_UNICODE_MACROS
@@ -240,6 +293,7 @@ typedef DWORD           COLORREF, *LPCOLORREF;
 /* Handle types */
 
 typedef int HFILE;
+DECLARE_HANDLE(DPI_AWARENESS_CONTEXT);
 DECLARE_HANDLE(HACCEL);
 DECLARE_HANDLE(HBITMAP);
 DECLARE_HANDLE(HBRUSH);
@@ -279,9 +333,15 @@ typedef HICON HCURSOR;
 
 /* Callback function pointers types */
 
-typedef INT     (CALLBACK *FARPROC)();
-typedef INT     (CALLBACK *PROC)();
-
+#ifdef WINE_STRICT_PROTOTYPES
+typedef INT_PTR (CALLBACK *FARPROC)(void);
+typedef INT_PTR (CALLBACK *NEARPROC)(void);
+typedef INT_PTR (CALLBACK *PROC)(void);
+#else
+typedef INT_PTR (CALLBACK *FARPROC)();
+typedef INT_PTR (CALLBACK *NEARPROC)();
+typedef INT_PTR (CALLBACK *PROC)();
+#endif
 
 /* Macros to split words and longs. */
 
@@ -346,6 +406,17 @@ typedef struct tagPOINTS
 #endif
 } POINTS, *PPOINTS, *LPPOINTS;
 
+typedef struct _FILETIME {
+#ifdef WORDS_BIGENDIAN
+    DWORD  dwHighDateTime;
+    DWORD  dwLowDateTime;
+#else
+    DWORD  dwLowDateTime;
+    DWORD  dwHighDateTime;
+#endif
+} FILETIME, *PFILETIME, *LPFILETIME;
+#define _FILETIME_
+
 /* The RECT structure */
 typedef struct tagRECT
 {
@@ -365,6 +436,21 @@ typedef struct _RECTL
 } RECTL, *PRECTL, *LPRECTL;
 
 typedef const RECTL *LPCRECTL;
+
+/* DPI awareness */
+typedef enum DPI_AWARENESS
+{
+    DPI_AWARENESS_INVALID = -1,
+    DPI_AWARENESS_UNAWARE = 0,
+    DPI_AWARENESS_SYSTEM_AWARE,
+    DPI_AWARENESS_PER_MONITOR_AWARE
+} DPI_AWARENESS;
+
+#define DPI_AWARENESS_CONTEXT_UNAWARE              ((DPI_AWARENESS_CONTEXT)-1)
+#define DPI_AWARENESS_CONTEXT_SYSTEM_AWARE         ((DPI_AWARENESS_CONTEXT)-2)
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE    ((DPI_AWARENESS_CONTEXT)-3)
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT)-4)
+#define DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED    ((DPI_AWARENESS_CONTEXT)-5)
 
 #ifdef __cplusplus
 }

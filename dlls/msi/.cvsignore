@@ -1,7 +1,0 @@
-Makefile
-cond.tab.c
-cond.tab.h
-libmsi.def
-msi.res
-sql.tab.c
-sql.tab.h

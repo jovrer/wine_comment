@@ -13,30 +13,34 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_NTSECAPI_H
 #define __WINE_NTSECAPI_H
+
+#ifndef GUID_DEFINED
+# include <guiddef.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif /* defined(__cplusplus) */
 
 /* Policy access rights */
-#define POLICY_VIEW_LOCAL_INFORMATION           0x00000001L
-#define POLICY_VIEW_AUDIT_INFORMATION           0x00000002L
-#define POLICY_GET_PRIVATE_INFORMATION          0x00000004L
-#define POLICY_TRUST_ADMIN                      0x00000008L
-#define POLICY_CREATE_ACCOUNT                   0x00000010L
-#define POLICY_CREATE_SECRET                    0x00000020L
-#define POLICY_CREATE_PRIVILEGE                 0x00000040L
-#define POLICY_SET_DEFAULT_QUOTA_LIMITS         0x00000080L
-#define POLICY_SET_AUDIT_REQUIREMENTS           0x00000100L
-#define POLICY_AUDIT_LOG_ADMIN                  0x00000200L
-#define POLICY_SERVER_ADMIN                     0x00000400L
-#define POLICY_LOOKUP_NAMES                     0x00000800L
-#define POLICY_NOTIFICATION                     0x00001000L
+#define POLICY_VIEW_LOCAL_INFORMATION           __MSABI_LONG(0x00000001)
+#define POLICY_VIEW_AUDIT_INFORMATION           __MSABI_LONG(0x00000002)
+#define POLICY_GET_PRIVATE_INFORMATION          __MSABI_LONG(0x00000004)
+#define POLICY_TRUST_ADMIN                      __MSABI_LONG(0x00000008)
+#define POLICY_CREATE_ACCOUNT                   __MSABI_LONG(0x00000010)
+#define POLICY_CREATE_SECRET                    __MSABI_LONG(0x00000020)
+#define POLICY_CREATE_PRIVILEGE                 __MSABI_LONG(0x00000040)
+#define POLICY_SET_DEFAULT_QUOTA_LIMITS         __MSABI_LONG(0x00000080)
+#define POLICY_SET_AUDIT_REQUIREMENTS           __MSABI_LONG(0x00000100)
+#define POLICY_AUDIT_LOG_ADMIN                  __MSABI_LONG(0x00000200)
+#define POLICY_SERVER_ADMIN                     __MSABI_LONG(0x00000400)
+#define POLICY_LOOKUP_NAMES                     __MSABI_LONG(0x00000800)
+#define POLICY_NOTIFICATION                     __MSABI_LONG(0x00001000)
 
 #define POLICY_ALL_ACCESS                       ( \
     STANDARD_RIGHTS_REQUIRED | \
@@ -75,10 +79,10 @@ extern "C" {
    POLICY_VIEW_LOCAL_INFORMATION | \
    POLICY_LOOKUP_NAMES)
 
-#define POLICY_AUDIT_EVENT_UNCHANGED 0x00000000L
-#define POLICY_AUDIT_EVENT_SUCCESS   0x00000001L
-#define POLICY_AUDIT_EVENT_FAILURE   0x00000002L
-#define POLICY_AUDIT_EVENT_NONE      0x00000004L
+#define POLICY_AUDIT_EVENT_UNCHANGED __MSABI_LONG(0x00000000)
+#define POLICY_AUDIT_EVENT_SUCCESS   __MSABI_LONG(0x00000001)
+#define POLICY_AUDIT_EVENT_FAILURE   __MSABI_LONG(0x00000002)
+#define POLICY_AUDIT_EVENT_NONE      __MSABI_LONG(0x00000004)
 
 #define POLICY_AUDIT_EVENT_MASK (POLICY_AUDIT_EVENT_SUCCESS | \
                                  POLICY_AUDIT_EVENT_FAILURE | \
@@ -135,12 +139,52 @@ typedef enum _POLICY_AUDIT_EVENT_TYPE
     AuditCategoryAccountManagement
 } POLICY_AUDIT_EVENT_TYPE, *PPOLICY_AUDIT_EVENT_TYPE;
 
+#ifndef __STRING_DEFINED__
+#define __STRING_DEFINED__
+typedef struct _STRING {
+  USHORT Length;
+  USHORT MaximumLength;
+  PCHAR Buffer;
+} STRING, *PSTRING;
+#endif
+
+#ifndef __UNICODE_STRING_DEFINED__
+#define __UNICODE_STRING_DEFINED__
+typedef struct _UNICODE_STRING {
+  USHORT Length;        /* bytes */
+  USHORT MaximumLength; /* bytes */
+  PWSTR  Buffer;
+} UNICODE_STRING, *PUNICODE_STRING;
+#endif
+
+#ifndef __OBJECT_ATTRIBUTES_DEFINED__
+#define __OBJECT_ATTRIBUTES_DEFINED__
+typedef struct _OBJECT_ATTRIBUTES {
+  ULONG Length;
+  HANDLE RootDirectory;
+  PUNICODE_STRING ObjectName;
+  ULONG Attributes;
+  PVOID SecurityDescriptor;       /* type SECURITY_DESCRIPTOR */
+  PVOID SecurityQualityOfService; /* type SECURITY_QUALITY_OF_SERVICE */
+} OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES;
+#endif
+
+#ifndef __SECHANDLE_DEFINED__
+#define __SECHANDLE_DEFINED__
+typedef struct _SecHandle
+{
+    ULONG_PTR dwLower;
+    ULONG_PTR dwUpper;
+} SecHandle, *PSecHandle;
+#endif
+
 typedef UNICODE_STRING LSA_UNICODE_STRING, *PLSA_UNICODE_STRING;
 typedef STRING LSA_STRING, *PLSA_STRING;
 typedef OBJECT_ATTRIBUTES LSA_OBJECT_ATTRIBUTES, *PLSA_OBJECT_ATTRIBUTES;
 
 typedef PVOID LSA_HANDLE, *PLSA_HANDLE;
 typedef ULONG LSA_ENUMERATION_HANDLE, *PLSA_ENUMERATION_HANDLE;
+typedef ULONG LSA_OPERATIONAL_MODE, *PLSA_OPERATIONAL_MODE;
 
 typedef enum
 {
@@ -179,6 +223,47 @@ typedef struct _POLICY_ACCOUNT_DOMAIN_INFO
     PSID DomainSid;
 } POLICY_ACCOUNT_DOMAIN_INFO, *PPOLICY_ACCOUNT_DOMAIN_INFO;
 
+typedef struct _POLICY_DNS_DOMAIN_INFO
+{
+    LSA_UNICODE_STRING Name;
+    LSA_UNICODE_STRING DnsDomainName;
+    LSA_UNICODE_STRING DnsForestName;
+    GUID DomainGuid;
+    PSID Sid;
+} POLICY_DNS_DOMAIN_INFO, *PPOLICY_DNS_DOMAIN_INFO;
+
+typedef enum _POLICY_LSA_SERVER_ROLE
+{
+    PolicyServerRoleBackup = 2,
+    PolicyServerRolePrimary
+} POLICY_LSA_SERVER_ROLE, *PPOLICY_LSA_SERVER_ROLE;
+
+typedef struct _POLICY_LSA_SERVER_ROLE_INFO
+{
+    POLICY_LSA_SERVER_ROLE LsaServerRole;
+} POLICY_LSA_SERVER_ROLE_INFO, *PPOLICY_LSA_SERVER_ROLE_INFO;
+
+typedef struct _POLICY_MODIFICATION_INFO
+{
+    LARGE_INTEGER ModifiedId;
+    LARGE_INTEGER DatabaseCreationTime;
+} POLICY_MODIFICATION_INFO, *PPOLICY_MODIFICATION_INFO;
+
+typedef struct _SECURITY_LOGON_SESSION_DATA {
+    ULONG Size;
+    LUID LogonId;
+    LSA_UNICODE_STRING UserName;
+    LSA_UNICODE_STRING LogonDomain;
+    LSA_UNICODE_STRING AuthenticationPackage;
+    ULONG LogonType;
+    ULONG Session;
+    PSID Sid;
+    LARGE_INTEGER LogonTime;
+    LSA_UNICODE_STRING LogonServer;
+    LSA_UNICODE_STRING DnsDomainName;
+    LSA_UNICODE_STRING Upn;
+} SECURITY_LOGON_SESSION_DATA, *PSECURITY_LOGON_SESSION_DATA;
+
 typedef struct
 {
     SID_NAME_USE Use;
@@ -205,21 +290,216 @@ typedef struct _LSA_TRANSLATED_SID
     LONG DomainIndex;
 } LSA_TRANSLATED_SID, *PLSA_TRANSLATED_SID;
 
+typedef struct _TRUSTED_DOMAIN_INFORMATION_EX
+{
+    LSA_UNICODE_STRING Name;
+    LSA_UNICODE_STRING FlatName;
+    PSID Sid;
+    ULONG TrustDirection;
+    ULONG TrustType;
+    ULONG TrustAttributes;
+} TRUSTED_DOMAIN_INFORMATION_EX, *PTRUSTED_DOMAIN_INFORMATION_EX;
+
+typedef struct _LSA_AUTH_INFORMATION
+{
+    LARGE_INTEGER LastUpdateTime;
+    ULONG AuthType;
+    ULONG AuthInfoLength;
+    PUCHAR AuthInfo;
+} LSA_AUTH_INFORMATION, *PLSA_AUTH_INFORMATION;
+
+typedef struct _TRUSTED_DOMAIN_AUTH_INFORMATION
+{
+    ULONG IncomingAuthInfos;
+    PLSA_AUTH_INFORMATION IncomingAuthenticationInformation;
+    PLSA_AUTH_INFORMATION IncomingPreviousAuthenticationInformation;
+    ULONG OutgoingAuthInfos;
+    PLSA_AUTH_INFORMATION OutgoingAuthenticationInformation;
+    PLSA_AUTH_INFORMATION OutgoingPreviousAuthenticationInformation;
+} TRUSTED_DOMAIN_AUTH_INFORMATION, *PTRUSTED_DOMAIN_AUTH_INFORMATION;
+
+typedef struct _LSA_TRANSLATED_SID2
+{
+    SID_NAME_USE Use;
+    PSID Sid;
+    LONG DomainIndex;
+    ULONG Flags;
+} LSA_TRANSLATED_SID2, *PLSA_TRANSLATED_SID2;
+
+typedef enum _TRUSTED_INFORMATION_CLASS
+{
+    TrustedDomainNameInformation = 1,
+    TrustedControllersInformation,
+    TrustedPosixOffsetInformation,
+    TrustedPasswordInformation,
+    TrustedDomainInformationBasic,
+    TrustedDomainInformationEx,
+    TrustedDomainAuthInformation,
+    TrustedDomainFullInformation
+} TRUSTED_INFORMATION_CLASS, *PTRUSTED_INFORMATION_CLASS;
+
+typedef enum _POLICY_NOTIFICATION_INFORMATION_CLASS
+{
+    PolicyNotifyAuditEventsInformation = 1,
+    PolicyNotifyAccountDomainInformation,
+    PolicyNotifyServerRoleInformation,
+    PolicyNotifyDnsDomainInformation,
+    PolicyNotifyDomainEfsInformation,
+    PolicyNotifyDomainKerberosTicketInformation,
+    PolicyNotifyMachineAccountPasswordInformation
+} POLICY_NOTIFICATION_INFORMATION_CLASS, *PPOLICY_NOTIFICATION_INFORMATION_CLASS;
+
+#define MICROSOFT_KERBEROS_NAME_A "Kerberos"
+#if defined(_MSC_VER)
+#define MICROSOFT_KERBEROS_NAME_W L"Kerberos"
+#elif defined(__GNUC__)
+#define MICROSOFT_KERBEROS_NAME_W (const WCHAR []){ 'K','e','r','b','e','r','o','s',0 }
+#else /* _MSC_VER/__GNUC__ */
+static const WCHAR MICROSOFT_KERBEROS_NAME_W[] = { 'K','e','r','b','e','r','o','s',0 };
+#endif
+
+#define KERB_TICKET_FLAGS_reserved          0x80000000
+#define KERB_TICKET_FLAGS_forwardable       0x40000000
+#define KERB_TICKET_FLAGS_forwarded         0x20000000
+#define KERB_TICKET_FLAGS_proxiable         0x10000000
+#define KERB_TICKET_FLAGS_proxy             0x08000000
+#define KERB_TICKET_FLAGS_may_postdate      0x04000000
+#define KERB_TICKET_FLAGS_postdated         0x02000000
+#define KERB_TICKET_FLAGS_invalid           0x01000000
+#define KERB_TICKET_FLAGS_renewable         0x00800000
+#define KERB_TICKET_FLAGS_initial           0x00400000
+#define KERB_TICKET_FLAGS_pre_authent       0x00200000
+#define KERB_TICKET_FLAGS_hw_authent        0x00100000
+#define KERB_TICKET_FLAGS_ok_as_delegate    0x00040000
+#define KERB_TICKET_FLAGS_name_canonicalize 0x00010000
+#define KERB_TICKET_FLAGS_cname_in_pa_data  0x00040000
+#define KERB_TICKET_FLAGS_reserved1         0x00000001
+
+typedef enum _KERB_PROTOCOL_MESSAGE_TYPE
+{
+    KerbDebugRequestMessage = 0,
+    KerbQueryTicketCacheMessage,
+    KerbChangeMachinePasswordMessage,
+    KerbVerifyPacMessage,
+    KerbRetrieveTicketMessage,
+    KerbUpdateAddressesMessage,
+    KerbPurgeTicketCacheMessage,
+    KerbChangePasswordMessage,
+    KerbRetrieveEncodedTicketMessage,
+    KerbDecryptDataMessage,
+    KerbAddBindingCacheEntryMessage,
+    KerbSetPasswordMessage,
+    KerbSetPasswordExMessage,
+    KerbVerifyCredentialsMessage,
+    KerbQueryTicketCacheExMessage,
+    KerbPurgeTicketCacheExMessage,
+    KerbRefreshSmartcardCredentialsMessage,
+    KerbAddExtraCredentialsMessage,
+    KerbQuerySupplementalCredentialsMessage,
+    KerbTransferCredentialsMessage,
+    KerbQueryTicketCacheEx2Message,
+    KerbSubmitTicketMessage,
+    KerbAddExtraCredentialsExMessage,
+    KerbQueryKdcProxyCacheMessage,
+    KerbPurgeKdcProxyCacheMessage,
+    KerbQueryTicketCacheEx3Message,
+    KerbCleanupMachinePkinitCredsMessage,
+    KerbAddBindingCacheEntryExMessage,
+    KerbQueryBindingCacheMessage,
+    KerbPurgeBindingCacheMessage,
+    KerbQueryDomainExtendedPoliciesMessage,
+    KerbQueryS4U2ProxyCacheMessage
+} KERB_PROTOCOL_MESSAGE_TYPE, *PKERB_PROTOCOL_MESSAGE_TYPE;
+
+typedef struct _KERB_TICKET_CACHE_INFO
+{
+    UNICODE_STRING ServerName;
+    UNICODE_STRING RealmName;
+    LARGE_INTEGER StartTime;
+    LARGE_INTEGER EndTime;
+    LARGE_INTEGER RenewTime;
+    LONG EncryptionType;
+    ULONG TicketFlags;
+} KERB_TICKET_CACHE_INFO, *PKERB_TICKET_CACHE_INFO;
+
+typedef struct _KERB_QUERY_TKT_CACHE_REQUEST
+{
+    KERB_PROTOCOL_MESSAGE_TYPE MessageType;
+    LUID LogonId;
+} KERB_QUERY_TKT_CACHE_REQUEST, *PKERB_QUERY_TKT_CACHE_REQUEST;
+
+typedef struct _KERB_QUERY_TKT_CACHE_RESPONSE
+{
+    KERB_PROTOCOL_MESSAGE_TYPE MessageType;
+    ULONG CountOfTickets;
+    KERB_TICKET_CACHE_INFO Tickets[ANYSIZE_ARRAY];
+} KERB_QUERY_TKT_CACHE_RESPONSE, *PKERB_QUERY_TKT_CACHE_RESPONSE;
+
+typedef struct _KERB_RETRIEVE_TKT_REQUEST
+{
+    KERB_PROTOCOL_MESSAGE_TYPE MessageType;
+    LUID LogonId;
+    UNICODE_STRING TargetName;
+    ULONG TicketFlags;
+    ULONG CacheOptions;
+    LONG EncryptionType;
+    SecHandle CredentialsHandle;
+} KERB_RETRIEVE_TKT_REQUEST, *PKERB_RETRIEVE_TKT_REQUEST;
+
+typedef struct _KERB_PURGE_TKT_CACHE_REQUEST
+{
+    KERB_PROTOCOL_MESSAGE_TYPE MessageType;
+    LUID LogonId;
+    UNICODE_STRING ServerName;
+    UNICODE_STRING RealmName;
+} KERB_PURGE_TKT_CACHE_REQUEST, *PKERB_PURGE_TKT_CACHE_REQUEST;
+
+#define RtlGenRandom                    SystemFunction036
+#define RtlEncryptMemory                SystemFunction040
+#define RtlDecryptMemory                SystemFunction041
+
+BOOLEAN WINAPI RtlGenRandom(PVOID,ULONG);
+NTSTATUS WINAPI RtlEncryptMemory(PVOID,ULONG,ULONG);
+NTSTATUS WINAPI RtlDecryptMemory(PVOID,ULONG,ULONG);
+
+NTSTATUS WINAPI LsaAddAccountRights(LSA_HANDLE,PSID,PLSA_UNICODE_STRING,ULONG);
 NTSTATUS WINAPI LsaCallAuthenticationPackage(HANDLE,ULONG,PVOID,ULONG,PVOID*,PULONG,PNTSTATUS);
 NTSTATUS WINAPI LsaClose(LSA_HANDLE);
 NTSTATUS WINAPI LsaConnectUntrusted(PHANDLE);
+NTSTATUS WINAPI LsaCreateTrustedDomainEx(LSA_HANDLE,PTRUSTED_DOMAIN_INFORMATION_EX,
+                                         PTRUSTED_DOMAIN_AUTH_INFORMATION,ACCESS_MASK,PLSA_HANDLE);
+NTSTATUS WINAPI LsaDeleteTrustedDomain(LSA_HANDLE,PSID);
 NTSTATUS WINAPI LsaDeregisterLogonProcess(HANDLE);
+NTSTATUS WINAPI LsaEnumerateAccountRights(LSA_HANDLE,PSID,PLSA_UNICODE_STRING*,PULONG);
+NTSTATUS WINAPI LsaEnumerateAccountsWithUserRight(LSA_HANDLE,PLSA_UNICODE_STRING,PVOID*,PULONG);
+NTSTATUS WINAPI LsaEnumerateLogonSessions(PULONG,PLUID*);
 NTSTATUS WINAPI LsaEnumerateTrustedDomains(LSA_HANDLE,PLSA_ENUMERATION_HANDLE,PVOID*,ULONG,PULONG);
+NTSTATUS WINAPI LsaEnumerateTrustedDomainsEx(LSA_HANDLE,PLSA_ENUMERATION_HANDLE,PVOID*,ULONG,PULONG);
 NTSTATUS WINAPI LsaFreeMemory(PVOID);
-NTSTATUS WINAPI LsaLookupNames(LSA_HANDLE,ULONG Count,PLSA_UNICODE_STRING,PLSA_REFERENCED_DOMAIN_LIST*,
+NTSTATUS WINAPI LsaFreeReturnBuffer(PVOID);
+NTSTATUS WINAPI LsaGetLogonSessionData(PLUID,PSECURITY_LOGON_SESSION_DATA*);
+NTSTATUS WINAPI LsaLogonUser(HANDLE,PLSA_STRING,SECURITY_LOGON_TYPE,ULONG,PVOID,ULONG,PTOKEN_GROUPS,PTOKEN_SOURCE,PVOID*,PULONG,PLUID,PHANDLE,PQUOTA_LIMITS,PNTSTATUS);
+NTSTATUS WINAPI LsaLookupAuthenticationPackage(HANDLE,PLSA_STRING,PULONG);
+NTSTATUS WINAPI LsaLookupNames(LSA_HANDLE,ULONG,PLSA_UNICODE_STRING,PLSA_REFERENCED_DOMAIN_LIST*,
                                PLSA_TRANSLATED_SID*);
+NTSTATUS WINAPI LsaLookupNames2(LSA_HANDLE,ULONG,ULONG,PLSA_UNICODE_STRING,PLSA_REFERENCED_DOMAIN_LIST*,
+                                PLSA_TRANSLATED_SID2*);
 NTSTATUS WINAPI LsaLookupSids(LSA_HANDLE,ULONG,PSID *,PLSA_REFERENCED_DOMAIN_LIST *,PLSA_TRANSLATED_NAME *);
 ULONG WINAPI LsaNtStatusToWinError(NTSTATUS);
 NTSTATUS WINAPI LsaOpenPolicy(PLSA_UNICODE_STRING,PLSA_OBJECT_ATTRIBUTES,ACCESS_MASK,PLSA_HANDLE);
+NTSTATUS WINAPI LsaOpenTrustedDomainByName(LSA_HANDLE,PLSA_UNICODE_STRING,ACCESS_MASK,PLSA_HANDLE);
 NTSTATUS WINAPI LsaQueryInformationPolicy(LSA_HANDLE,POLICY_INFORMATION_CLASS,PVOID*);
+NTSTATUS WINAPI LsaQueryTrustedDomainInfo(LSA_HANDLE,PSID,TRUSTED_INFORMATION_CLASS,PVOID*);
+NTSTATUS WINAPI LsaQueryTrustedDomainInfoByName(LSA_HANDLE,PLSA_UNICODE_STRING,TRUSTED_INFORMATION_CLASS,PVOID*);
+NTSTATUS WINAPI LsaRegisterLogonProcess(PLSA_STRING,PHANDLE,PLSA_OPERATIONAL_MODE);
+NTSTATUS WINAPI LsaRegisterPolicyChangeNotification(POLICY_NOTIFICATION_INFORMATION_CLASS,HANDLE);
+NTSTATUS WINAPI LsaRemoveAccountRights(LSA_HANDLE,PSID,BOOLEAN,PLSA_UNICODE_STRING,ULONG);
 NTSTATUS WINAPI LsaRetrievePrivateData(LSA_HANDLE,PLSA_UNICODE_STRING,PLSA_UNICODE_STRING*);
 NTSTATUS WINAPI LsaSetInformationPolicy(LSA_HANDLE,POLICY_INFORMATION_CLASS,PVOID);
+NTSTATUS WINAPI LsaSetTrustedDomainInfoByName(LSA_HANDLE,PLSA_UNICODE_STRING,TRUSTED_INFORMATION_CLASS,PVOID);
+NTSTATUS WINAPI LsaSetTrustedDomainInformation(LSA_HANDLE,PSID,TRUSTED_INFORMATION_CLASS,PVOID);
 NTSTATUS WINAPI LsaStorePrivateData(LSA_HANDLE,PLSA_UNICODE_STRING,PLSA_UNICODE_STRING);
+NTSTATUS WINAPI LsaUnregisterPolicyChangeNotification(POLICY_NOTIFICATION_INFORMATION_CLASS,HANDLE);
 
 #ifdef __cplusplus
 } /* extern "C" */

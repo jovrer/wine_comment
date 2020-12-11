@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DXFILE_H
@@ -34,11 +34,11 @@ typedef DWORD DXFILEFORMAT;
 
 typedef DWORD DXFILELOADOPTIONS;
 
-#define DXFILELOAD_FROMFILE     0x00L
-#define DXFILELOAD_FROMRESOURCE 0x01L
-#define DXFILELOAD_FROMMEMORY   0x02L
-#define DXFILELOAD_FROMSTREAM   0x04L
-#define DXFILELOAD_FROMURL      0x08L
+#define DXFILELOAD_FROMFILE     __MSABI_LONG(0x00)
+#define DXFILELOAD_FROMRESOURCE __MSABI_LONG(0x01)
+#define DXFILELOAD_FROMMEMORY   __MSABI_LONG(0x02)
+#define DXFILELOAD_FROMSTREAM   __MSABI_LONG(0x04)
+#define DXFILELOAD_FROMURL      __MSABI_LONG(0x08)
 
 typedef struct _DXFILELOADRESOURCE {
     HMODULE hModule;
@@ -207,14 +207,14 @@ DECLARE_INTERFACE_(IDirectXFileDataReference,IDirectXFileObject)
 
 #if !defined(__cplusplus) || defined(CINTERFACE)
     /*** IUnknown methods ***/
-#define IDirectXFileData_QueryInterface(p,a,b) (p)->lpVtbl->QueryInterface(p,a,b)
-#define IDirectXFileData_AddRef(p)             (p)->lpVtbl->AddRef(p)
-#define IDirectXFileData_Release(p)            (p)->lpVtbl->Release(p)
+#define IDirectXFileDataReference_QueryInterface(p,a,b) (p)->lpVtbl->QueryInterface(p,a,b)
+#define IDirectXFileDataReference_AddRef(p)             (p)->lpVtbl->AddRef(p)
+#define IDirectXFileDataReference_Release(p)            (p)->lpVtbl->Release(p)
     /*** IDirectXFileObject methods ***/
-#define IDirectXFileData_GetName(p,a,b) (p)->lpVtbl->GetName(p,a,b)
-#define IDirectXFileData_GetId(p,a)     (p)->lpVtbl->GetId(p,a)
+#define IDirectXFileDataReference_GetName(p,a,b) (p)->lpVtbl->GetName(p,a,b)
+#define IDirectXFileDataReference_GetId(p,a)     (p)->lpVtbl->GetId(p,a)
     /*** IDirectXFileDataReference methods ***/
-#define IDirectXFileData_Resolve(p,a) (p)->lpVtbl->GetData(p,a)
+#define IDirectXFileDataReference_Resolve(p,a) (p)->lpVtbl->Resolve(p,a)
 #endif
 
 #define INTERFACE IDirectXFileBinary

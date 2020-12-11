@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _TEXTSERV_H
@@ -23,15 +23,12 @@
 extern "C" {
 #endif
 
-DEFINE_GUID(IID_ITextServices,0x8d33f740,0xcf58,0x11ce,0xa8,0x9d,0x00,0xaa,0x00,0x6c,0xad,0xc5);
-DEFINE_GUID(IID_ITextHost,    0xc5bdd8d0,0xd26e,0x11ce,0xa8,0x9e,0x00,0xaa,0x00,0x6c,0xad,0xc5);
-DEFINE_GUID(IID_ITextHost2,   0xc5bdd8d0,0xd26e,0x11ce,0xa8,0x9e,0x00,0xaa,0x00,0x6c,0xad,0xc5);
+EXTERN_C const IID IID_ITextServices;
+EXTERN_C const IID IID_ITextHost;
 
 /*****************************************************************************
  * ITextServices interface
  */
-typedef struct ITextServices ITextServices;
-
 #define INTERFACE ITextServices
 DECLARE_INTERFACE_(ITextServices,IUnknown)
 {
@@ -115,7 +112,7 @@ DECLARE_INTERFACE_(ITextServices,IUnknown)
     STDMETHOD(TxSetText)( THIS_
         LPCWSTR pszText) PURE;
 
-    STDMETHOD(TxGetCurrentTargetX)( THIS_
+    STDMETHOD(TxGetCurTargetX)( THIS_
         LONG* x) PURE;
 
     STDMETHOD(TxGetBaseLinePos)( THIS_
@@ -143,34 +140,14 @@ DECLARE_INTERFACE_(ITextServices,IUnknown)
         DWORD* pdwHeight) PURE;
 
 };
+#undef INTERFACE
 
 #ifdef COBJMACROS
 /*** IUnknown methods ***/
 #define ITextServices_QueryInterface(p,a,b) (p)->lpVtbl->QueryInterface(p,a,b)
 #define ITextServices_AddRef(p) (p)->lpVtbl->AddRef(p)
 #define ITextServices_Release(p) (p)->lpVtbl->Release(p)
-/*** ITextServices methods ***/
-#define ITextServices_TxSendMessage(p,a,b,c,d) (p)->lpVtbl->TxSendMessage(p,a,b,c,d)
-#define ITextServices_TxDraw(p,a,b,c,d,e,f,g,h,i,j,k,l) (p)->lpVtbl->TxDraw(p,a,b,c,d,e,f,g,h,i,j,k,l)
-#define ITextServices_TxGetHScroll(p,a,b,c,d,e) (p)->lpVtbl->TxGetHScroll(p,a,b,c,d,e)
-#define ITextServices_TxGetVScroll(p,a,b,c,d,e) (p)->lpVtbl->TxGetVScroll(p,a,b,c,d,e)
-#define ITextServices_OnTxSetCursor(p,a,b,c,d,e,f,g,h,i) (p)->lpVtbl->OnTxSetCursor(p,a,b,c,d,e,f,g,h,i)
-#define ITextServices_TxQueryHitPoint(p,a,b,c,d,e,f,g,h,i,j) (p)->lpVtbl->TxQueryHitPoint(p,a,b,c,d,e,f,g,h,i,j)
-#define ITextServices_OnTxInplaceActivate(p,a) (p)->lpVtbl->OnTxInplaceActivate(p,a)
-#define ITextServices_OnTxInplaceDeactivate(p) (p)->lpVtbl->OnTxInplaceDeactivate(p)
-#define ITextServices_OnTxUIActivate(p) (p)->lpVtbl->OnTxUIActivate(p)
-#define ITextServices_OnTxUIDeactivate(p) (p)->lpVtbl->OnTxUIDeactivate(p)
-#define ITextServices_TxGetText(p,a) (p)->lpVtbl->TxGetText(p,a)
-#define ITextServices_TxSetText(p,a) (p)->lpVtbl->TxSetText(p,a)
-#define ITextServices_TxGetCurrentTargetX(p,a) (p)->lpVtbl->TxGetCurrentTargetX(p,a)
-#define ITextServices_TxGetBaseLinePos(p,a) (p)->lpVtbl->TxGetBaseLinePos(p,a)
-#define ITextServices_TxGetNaturalSize(p,a,b,c,d,e,f,g,h) (p)->lpVtbl->TxGetNaturalSize(p,a,b,c,d,e,f,g,h)
-#define ITextServices_TxGetDropTarget(p,a) (p)->lpVtbl->TxGetDropTarget(p,a)
-#define ITextServices_OnTxPropertyBitsChange(p,a,b) (p)->lpVtbl->OnTxPropertyBitsChange(p,a,b)
-#define ITextServices_TxGetCachedSize(p,a,b) (p)->lpVtbl->TxGetCachedSize(p,a,b)
 #endif
-
-#undef INTERFACE
 
 typedef enum _TXTBACKSTYLE {
     TXTBACK_TRANSPARENT = 0,
@@ -216,8 +193,6 @@ enum TXTVIEW {
 #define TXTBIT_EXTENTCHANGE     0x080000
 #define TXTBIT_CLIENTRECTCHANGE 0x100000
 #define TXTBIT_USECURRENTBKG    0x200000
-
-typedef struct ITextHost ITextHost;
 
 /*****************************************************************************
  * ITextHost interface
@@ -275,7 +250,7 @@ DECLARE_INTERFACE_(ITextHost,IUnknown)
     STDMETHOD_(BOOL,TxShowCaret)( THIS_
         BOOL fShow) PURE;
 
-    STDMETHOD_(BOOL,TxSetCarentPos)( THIS_
+    STDMETHOD_(BOOL,TxSetCaretPos)( THIS_
         INT x,
         INT y) PURE;
 
@@ -338,7 +313,7 @@ DECLARE_INTERFACE_(ITextHost,IUnknown)
     STDMETHOD(TxGetMaxLength)( THIS_
         DWORD* plength) PURE;
 
-    STDMETHOD(TxGetScrollbars)( THIS_
+    STDMETHOD(TxGetScrollBars)( THIS_
         DWORD* pdwScrollBar) PURE;
 
     STDMETHOD(TxGetPasswordChar)( THIS_
@@ -374,55 +349,18 @@ DECLARE_INTERFACE_(ITextHost,IUnknown)
         LONG* lSelBarWidth) PURE;
 
 };
+#undef INTERFACE
 
 #ifdef COBJMACROS
 /*** IUnknown methods ***/
 #define ITextHost_QueryInterface(p,a,b) (p)->lpVtbl->QueryInterface(p,a,b)
 #define ITextHost_AddRef(p) (p)->lpVtbl->AddRef(p)
 #define ITextHost_Release(p) (p)->lpVtbl->Release(p)
-/*** ITextHost methods ***/
-#define ITextHost_TxGetDC(p) (p)->lpVtbl->TxGetDC(p)
-#define ITextHost_TxReleaseDC(p,a) (p)->lpVtbl->TxReleaseDC(p,a)
-#define ITextHost_TxShowScrollBar(p,a,b) (p)->lpVtbl->TxShowScrollBar(p,a,b)
-#define ITextHost_TxEnableScrollBar(p,a,b) (p)->lpVtbl->TxEnableScrollBar(p,a,b)
-#define ITextHost_TxSetScrollRange(p,a,b,c,d) (p)->lpVtbl->TxSetScrollRange(p,a,b,c,d)
-#define ITextHost_TxSetScrollPos(p,a,b,c) (p)->lpVtbl->TxSetScrollPos(p,a,b,c)
-#define ITextHost_TxInvalidateRect(p,a,b) (p)->lpVtbl->TxInvalidateRect(p,a,b)
-#define ITextHost_TxViewChange(p,a) (p)->lpVtbl->TxViewChange(p,a)
-#define ITextHost_TxCreateCaret(p,a,b,c) (p)->lpVtbl->TxCreateCaret(p,a,b,c)
-#define ITextHost_TxShowCaret(p,a) (p)->lpVtbl->TxShowCaret(p,a)
-#define ITextHost_TxSetCarentPos(p,a,b) (p)->lpVtbl->TxSetCarentPos(p,a,b)
-#define ITextHost_TxSetTimer(p,a,b) (p)->lpVtbl->TxSetTimer(p,a,b)
-#define ITextHost_TxKillTimer(p,a) (p)->lpVtbl->TxKillTimer(p,a)
-#define ITextHost_TxScrollWindowEx(p,a,b,c,d,e,f,g) (p)->lpVtbl->TxScrollWindowEx(p,a,b,c,d,e,f,g)
-#define ITextHost_TxSetCapture(p,a) (p)->lpVtbl->TxSetCapture(p,a)
-#define ITextHost_TxSetFocus(p) (p)->lpVtbl->TxSetFocus(p)
-#define ITextHost_TxSetCursor(p,a,b) (p)->lpVtbl->TxSetCursor(p,a,b)
-#define ITextHost_TxScreenToClient(p,a) (p)->lpVtbl->TxScreenToClient(p,a)
-#define ITextHost_TxClientToScreen(p,a) (p)->lpVtbl->TxClientToScreen(p,a)
-#define ITextHost_TxActivate(p,a) (p)->lpVtbl->TxActivate(p,a)
-#define ITextHost_TxDeactivate(p,a) (p)->lpVtbl->TxDeactivate(p,a)
-#define ITextHost_TxGetClientRect(p,a) (p)->lpVtbl->TxGetClientRect(p,a)
-#define ITextHost_TxGetViewInset(p,a) (p)->lpVtbl->TxGetViewInset(p,a)
-#define ITextHost_TxGetCharFormat(p,a) (p)->lpVtbl->TxGetCharFormat(p,a)
-#define ITextHost_TxGetParaFormat(p,a) (p)->lpVtbl->TxGetParaFormat(p,a)
-#define ITextHost_TxGetSysColor(p,a) (p)->lpVtbl->TxGetSysColor(p,a)
-#define ITextHost_TxGetBackStyle(p,a) (p)->lpVtbl->TxGetBackStyle(p,a)
-#define ITextHost_TxGetMaxLength(p,a) (p)->lpVtbl->TxGetMaxLength(p,a)
-#define ITextHost_TxGetScrollbars(p,a) (p)->lpVtbl->TxGetScrollbars(p,a)
-#define ITextHost_TxGetPasswordChar(p,a) (p)->lpVtbl->TxGetPasswordChar(p,a)
-#define ITextHost_TxGetAcceleratorPos(p,a) (p)->lpVtbl->TxGetAcceleratorPos(p,a)
-#define ITextHost_TxGetExtent(p,a) (p)->lpVtbl->TxGetExtent(p,a)
-#define ITextHost_OnTxCharFormatChange(p,a) (p)->lpVtbl->OnTxCharFormatChange(p,a)
-#define ITextHost_OnTxParaFormatChange(p,a) (p)->lpVtbl->OnTxParaFormatChange(p,a)
-#define ITextHost_TxGetPropertyBits(p,a,b) (p)->lpVtbl->TxGetPropertyBits(p,a,b)
-#define ITextHost_TxNotify(p,a,b) (p)->lpVtbl->TxNotify(p,a,b)
-#define ITextHost_TxImmGetContext(p) (p)->lpVtbl->TxImmGetContext(p)
-#define ITextHost_TxImmReleaseContext(p,a) (p)->lpVtbl->TxImmReleaseContext(p,a)
-#define ITextHost_TxGetSelectionBarWidth(p,a) (p)->lpVtbl->TxGetSelectionBarWidth(p,a)
 #endif
 
-#undef INTERFACE
+HRESULT WINAPI CreateTextServices(IUnknown*,ITextHost*,IUnknown**);
+
+typedef HRESULT (WINAPI *PCreateTextServices)(IUnknown*,ITextHost*,IUnknown**);
 
 #ifdef __cplusplus
 }

@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -34,6 +34,8 @@
 
 #include "wingdi.h"	/* for BITMAPINFOHEADER */
 
+#define ICO_PNG_MAGIC 0x474e5089
+
 #include <pshpack2.h>
 typedef struct
 {
@@ -45,37 +47,149 @@ typedef struct
 } BITMAPOS2HEADER;
 #include <poppack.h>
 
-/* Generate new_* functions that have no parameters (NOTE: no ';') */
-__NEW_STRUCT_FUNC(dialog)
-__NEW_STRUCT_FUNC(dialogex)
-__NEW_STRUCT_FUNC(name_id)
-__NEW_STRUCT_FUNC(menu)
-__NEW_STRUCT_FUNC(menuex)
-__NEW_STRUCT_FUNC(menu_item)
-__NEW_STRUCT_FUNC(menuex_item)
-__NEW_STRUCT_FUNC(control)
-__NEW_STRUCT_FUNC(icon)
-__NEW_STRUCT_FUNC(cursor)
-__NEW_STRUCT_FUNC(versioninfo)
-__NEW_STRUCT_FUNC(ver_value)
-__NEW_STRUCT_FUNC(ver_block)
-__NEW_STRUCT_FUNC(stt_entry)
-__NEW_STRUCT_FUNC(accelerator)
-__NEW_STRUCT_FUNC(event)
-__NEW_STRUCT_FUNC(raw_data)
-__NEW_STRUCT_FUNC(lvc)
-__NEW_STRUCT_FUNC(res_count)
-__NEW_STRUCT_FUNC(string)
-__NEW_STRUCT_FUNC(toolbar_item)
-__NEW_STRUCT_FUNC(ani_any)
-
 /* New instances for all types of structures */
 /* Very inefficient (in size), but very functional :-]
  * Especially for type-checking.
  */
+
+dialog_t *new_dialog(void)
+{
+    dialog_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+name_id_t *new_name_id(void)
+{
+    name_id_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+menu_t *new_menu(void)
+{
+    menu_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+menu_item_t *new_menu_item(void)
+{
+    menu_item_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+control_t *new_control(void)
+{
+    control_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+icon_t *new_icon(void)
+{
+    icon_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+cursor_t *new_cursor(void)
+{
+    cursor_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+versioninfo_t *new_versioninfo(void)
+{
+    versioninfo_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+ver_value_t *new_ver_value(void)
+{
+    ver_value_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+ver_block_t *new_ver_block(void)
+{
+    ver_block_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+stt_entry_t *new_stt_entry(void)
+{
+    stt_entry_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+accelerator_t *new_accelerator(void)
+{
+    accelerator_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+event_t *new_event(void)
+{
+    event_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+raw_data_t *new_raw_data(void)
+{
+    raw_data_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+lvc_t *new_lvc(void)
+{
+    lvc_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+res_count_t *new_res_count(void)
+{
+    res_count_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+string_t *new_string(void)
+{
+    string_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    set_location( &ret->loc );
+    return ret;
+}
+
+toolbar_item_t *new_toolbar_item(void)
+{
+    toolbar_item_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
+ani_any_t *new_ani_any(void)
+{
+    ani_any_t *ret = xmalloc( sizeof(*ret) );
+    memset( ret, 0, sizeof(*ret) );
+    return ret;
+}
+
 resource_t *new_resource(enum res_e t, void *res, int memopt, language_t *lan)
 {
-	resource_t *r = (resource_t *)xmalloc(sizeof(resource_t));
+	resource_t *r = xmalloc(sizeof(resource_t));
+	memset( r, 0, sizeof(*r) );
 	r->type = t;
 	r->res.overlay = res;
 	r->memopt = memopt;
@@ -85,21 +199,21 @@ resource_t *new_resource(enum res_e t, void *res, int memopt, language_t *lan)
 
 version_t *new_version(DWORD v)
 {
-	version_t *vp = (version_t *)xmalloc(sizeof(version_t));
+	version_t *vp = xmalloc(sizeof(version_t));
 	*vp = v;
 	return vp;
 }
 
 characts_t *new_characts(DWORD c)
 {
-	characts_t *cp = (characts_t *)xmalloc(sizeof(characts_t));
+	characts_t *cp = xmalloc(sizeof(characts_t));
 	*cp = c;
 	return cp;
 }
 
 language_t *new_language(int id, int sub)
 {
-	language_t *lan = (language_t *)xmalloc(sizeof(language_t));
+	language_t *lan = xmalloc(sizeof(language_t));
 	lan->id = id;
 	lan->sub = sub;
 	return lan;
@@ -139,7 +253,7 @@ html_t *new_html(raw_data_t *rd, int *memopt)
 
 rcdata_t *new_rcdata(raw_data_t *rd, int *memopt)
 {
-	rcdata_t *rc = (rcdata_t *)xmalloc(sizeof(rcdata_t));
+	rcdata_t *rc = xmalloc(sizeof(rcdata_t));
 	rc->data = rd;
 	if(memopt)
 	{
@@ -153,7 +267,7 @@ rcdata_t *new_rcdata(raw_data_t *rd, int *memopt)
 
 font_id_t *new_font_id(int size, string_t *face, int weight, int italic)
 {
-	font_id_t *fid = (font_id_t *)xmalloc(sizeof(font_id_t));
+	font_id_t *fid = xmalloc(sizeof(font_id_t));
 	fid->name = face;
 	fid->size = size;
 	fid->weight = weight;
@@ -163,7 +277,7 @@ font_id_t *new_font_id(int size, string_t *face, int weight, int italic)
 
 user_t *new_user(name_id_t *type, raw_data_t *rd, int *memopt)
 {
-	user_t *usr = (user_t *)xmalloc(sizeof(user_t));
+	user_t *usr = xmalloc(sizeof(user_t));
 	usr->data = rd;
 	if(memopt)
 	{
@@ -178,7 +292,7 @@ user_t *new_user(name_id_t *type, raw_data_t *rd, int *memopt)
 
 font_t *new_font(raw_data_t *rd, int *memopt)
 {
-	font_t *fnt = (font_t *)xmalloc(sizeof(font_t));
+	font_t *fnt = xmalloc(sizeof(font_t));
 	fnt->data = rd;
 	if(memopt)
 	{
@@ -192,7 +306,7 @@ font_t *new_font(raw_data_t *rd, int *memopt)
 
 fontdir_t *new_fontdir(raw_data_t *rd, int *memopt)
 {
-	fontdir_t *fnd = (fontdir_t *)xmalloc(sizeof(fontdir_t));
+	fontdir_t *fnd = xmalloc(sizeof(fontdir_t));
 	fnd->data = rd;
 	if(memopt)
 	{
@@ -208,41 +322,42 @@ fontdir_t *new_fontdir(raw_data_t *rd, int *memopt)
 /*
  * Convert bitmaps to proper endian
  */
-static void convert_bitmap_swap_v3(BITMAPINFOHEADER *bih)
+static void convert_bitmap_swap(BITMAPV5HEADER *bh, DWORD size)
 {
-	bih->biSize		= BYTESWAP_DWORD(bih->biSize);
-	bih->biWidth		= BYTESWAP_DWORD(bih->biWidth);
-	bih->biHeight		= BYTESWAP_DWORD(bih->biHeight);
-	bih->biPlanes		= BYTESWAP_WORD(bih->biPlanes);
-	bih->biBitCount		= BYTESWAP_WORD(bih->biBitCount);
-	bih->biCompression	= BYTESWAP_DWORD(bih->biCompression);
-	bih->biSizeImage	= BYTESWAP_DWORD(bih->biSizeImage);
-	bih->biXPelsPerMeter	= BYTESWAP_DWORD(bih->biXPelsPerMeter);
-	bih->biYPelsPerMeter	= BYTESWAP_DWORD(bih->biYPelsPerMeter);
-	bih->biClrUsed		= BYTESWAP_DWORD(bih->biClrUsed);
-	bih->biClrImportant	= BYTESWAP_DWORD(bih->biClrImportant);
-}
-
-static void convert_bitmap_swap_v4(BITMAPV4HEADER *b4h)
-{
-	convert_bitmap_swap_v3((BITMAPINFOHEADER *)b4h);
-	b4h->bV4RedMask		= BYTESWAP_DWORD(b4h->bV4RedMask);
-	b4h->bV4GreenMask	= BYTESWAP_DWORD(b4h->bV4GreenMask);
-	b4h->bV4BlueMask	= BYTESWAP_DWORD(b4h->bV4BlueMask);
-	b4h->bV4AlphaMask	= BYTESWAP_DWORD(b4h->bV4AlphaMask);
-	b4h->bV4CSType		= BYTESWAP_DWORD(b4h->bV4CSType);
-	b4h->bV4Endpoints.ciexyzRed.ciexyzX	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzRed.ciexyzX);
-	b4h->bV4Endpoints.ciexyzRed.ciexyzY	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzRed.ciexyzY);
-	b4h->bV4Endpoints.ciexyzRed.ciexyzZ	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzRed.ciexyzZ);
-	b4h->bV4Endpoints.ciexyzGreen.ciexyzX	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzGreen.ciexyzX);
-	b4h->bV4Endpoints.ciexyzGreen.ciexyzY	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzGreen.ciexyzY);
-	b4h->bV4Endpoints.ciexyzGreen.ciexyzZ	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzGreen.ciexyzZ);
-	b4h->bV4Endpoints.ciexyzBlue.ciexyzX	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzBlue.ciexyzX);
-	b4h->bV4Endpoints.ciexyzBlue.ciexyzY	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzBlue.ciexyzY);
-	b4h->bV4Endpoints.ciexyzBlue.ciexyzZ	= BYTESWAP_DWORD(b4h->bV4Endpoints.ciexyzBlue.ciexyzZ);
-	b4h->bV4GammaRed	= BYTESWAP_DWORD(b4h->bV4GammaRed);
-	b4h->bV4GammaGreen	= BYTESWAP_DWORD(b4h->bV4GammaGreen);
-	b4h->bV4GammaBlue	= BYTESWAP_DWORD(b4h->bV4GammaBlue);
+	bh->bV5Size		= BYTESWAP_DWORD(bh->bV5Size);
+	bh->bV5Width		= BYTESWAP_DWORD(bh->bV5Width);
+	bh->bV5Height		= BYTESWAP_DWORD(bh->bV5Height);
+	bh->bV5Planes		= BYTESWAP_WORD(bh->bV5Planes);
+	bh->bV5BitCount		= BYTESWAP_WORD(bh->bV5BitCount);
+	bh->bV5Compression	= BYTESWAP_DWORD(bh->bV5Compression);
+	bh->bV5SizeImage	= BYTESWAP_DWORD(bh->bV5SizeImage);
+	bh->bV5XPelsPerMeter	= BYTESWAP_DWORD(bh->bV5XPelsPerMeter);
+	bh->bV5YPelsPerMeter	= BYTESWAP_DWORD(bh->bV5YPelsPerMeter);
+	bh->bV5ClrUsed		= BYTESWAP_DWORD(bh->bV5ClrUsed);
+	bh->bV5ClrImportant	= BYTESWAP_DWORD(bh->bV5ClrImportant);
+        if (size == sizeof(BITMAPINFOHEADER)) return;
+	bh->bV5RedMask		= BYTESWAP_DWORD(bh->bV5RedMask);
+	bh->bV5GreenMask	= BYTESWAP_DWORD(bh->bV5GreenMask);
+	bh->bV5BlueMask		= BYTESWAP_DWORD(bh->bV5BlueMask);
+	bh->bV5AlphaMask	= BYTESWAP_DWORD(bh->bV5AlphaMask);
+	bh->bV5CSType		= BYTESWAP_DWORD(bh->bV5CSType);
+	bh->bV5Endpoints.ciexyzRed.ciexyzX	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzRed.ciexyzX);
+	bh->bV5Endpoints.ciexyzRed.ciexyzY	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzRed.ciexyzY);
+	bh->bV5Endpoints.ciexyzRed.ciexyzZ	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzRed.ciexyzZ);
+	bh->bV5Endpoints.ciexyzGreen.ciexyzX	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzGreen.ciexyzX);
+	bh->bV5Endpoints.ciexyzGreen.ciexyzY	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzGreen.ciexyzY);
+	bh->bV5Endpoints.ciexyzGreen.ciexyzZ	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzGreen.ciexyzZ);
+	bh->bV5Endpoints.ciexyzBlue.ciexyzX	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzBlue.ciexyzX);
+	bh->bV5Endpoints.ciexyzBlue.ciexyzY	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzBlue.ciexyzY);
+	bh->bV5Endpoints.ciexyzBlue.ciexyzZ	= BYTESWAP_DWORD(bh->bV5Endpoints.ciexyzBlue.ciexyzZ);
+	bh->bV5GammaRed		= BYTESWAP_DWORD(bh->bV5GammaRed);
+	bh->bV5GammaGreen	= BYTESWAP_DWORD(bh->bV5GammaGreen);
+	bh->bV5GammaBlue	= BYTESWAP_DWORD(bh->bV5GammaBlue);
+        if (size == sizeof(BITMAPV4HEADER)) return;
+	bh->bV5Intent		= BYTESWAP_DWORD(bh->bV5Intent);
+	bh->bV5ProfileData	= BYTESWAP_DWORD(bh->bV5ProfileData);
+	bh->bV5ProfileSize	= BYTESWAP_DWORD(bh->bV5ProfileSize);
+	bh->bV5Reserved		= BYTESWAP_DWORD(bh->bV5Reserved);
 }
 
 static void convert_bitmap_swap_os2(BITMAPOS2HEADER *boh)
@@ -256,31 +371,13 @@ static void convert_bitmap_swap_os2(BITMAPOS2HEADER *boh)
 
 #define FL_SIGBE	0x01
 #define FL_SIZEBE	0x02
-#define FL_V4		0x04
-#define FL_OS2		0x08
 static int convert_bitmap(char *data, int size)
 {
-	BITMAPINFOHEADER *bih = (BITMAPINFOHEADER *)data;
-	BITMAPV4HEADER *b4h = (BITMAPV4HEADER *)data;
+	BITMAPV5HEADER *bih = (BITMAPV5HEADER *)data;
 	BITMAPOS2HEADER *boh = (BITMAPOS2HEADER *)data;
+	DWORD bmsize;
 	int type = 0;
 	int returnSize = 0;           /* size to be returned */
-#ifdef WORDS_BIGENDIAN
-	DWORD bisizel = BYTESWAP_DWORD(sizeof(BITMAPINFOHEADER));
-	DWORD b4sizel = BYTESWAP_DWORD(sizeof(BITMAPV4HEADER));
-	DWORD bosizel = BYTESWAP_DWORD(sizeof(BITMAPOS2HEADER));
-	DWORD bisizeb = sizeof(BITMAPINFOHEADER);
-	DWORD b4sizeb = sizeof(BITMAPV4HEADER);
-	DWORD bosizeb = sizeof(BITMAPOS2HEADER);
-#else
-	DWORD bisizel = sizeof(BITMAPINFOHEADER);
-	DWORD b4sizel = sizeof(BITMAPV4HEADER);
-	DWORD bosizel = sizeof(BITMAPOS2HEADER);
-	DWORD bisizeb = BYTESWAP_DWORD(sizeof(BITMAPINFOHEADER));
-	DWORD b4sizeb = BYTESWAP_DWORD(sizeof(BITMAPV4HEADER));
-	DWORD bosizeb = BYTESWAP_DWORD(sizeof(BITMAPOS2HEADER));
-#endif
-
 
     /*
      * Originally the bih and b4h pointers were simply incremented here,
@@ -301,47 +398,41 @@ static int convert_bitmap(char *data, int size)
 
 	}
 
-	if(bih->biSize == bisizel)
-	{
-		/* Little endian */
-	}
-	else if(bih->biSize == bisizeb)
-	{
-		type |= FL_SIZEBE;
-	}
-	else if(bih->biSize == b4sizel)
-	{
-		type |= FL_V4;
-	}
-	else if(bih->biSize == b4sizeb)
-	{
-		type |= FL_SIZEBE | FL_V4;
-	}
-	else if(!bih->biSize || bih->biSize == bosizel)
-	{
-		type |= FL_OS2;
-	}
-	else if(bih->biSize == bosizeb)
-	{
-		type |= FL_SIZEBE | FL_OS2;
-	}
-	else
-		yyerror("Invalid bitmap format, bih->biSize = %ld", bih->biSize);
+        bmsize = bih->bV5Size;
+        switch (bmsize)
+        {
+        case sizeof(BITMAPOS2HEADER):
+        case sizeof(BITMAPINFOHEADER):
+        case sizeof(BITMAPV4HEADER):
+        case sizeof(BITMAPV5HEADER):
+#ifdef WORDS_BIGENDIAN
+            type |= FL_SIZEBE;
+#endif
+            break;
+        case BYTESWAP_DWORD( sizeof(BITMAPOS2HEADER) ):
+        case BYTESWAP_DWORD( sizeof(BITMAPINFOHEADER) ):
+        case BYTESWAP_DWORD( sizeof(BITMAPV4HEADER) ):
+        case BYTESWAP_DWORD( sizeof(BITMAPV5HEADER) ):
+#ifndef WORDS_BIGENDIAN
+            type |= FL_SIZEBE;
+#endif
+            bmsize = BYTESWAP_DWORD( bmsize );
+            break;
+        case ICO_PNG_MAGIC:
+        case BYTESWAP_DWORD( ICO_PNG_MAGIC ):
+            return 0;  /* nothing to convert */
+        default:
+		parser_error("Invalid bitmap format, bih->biSize = %d", bih->bV5Size);
+        }
 
 	switch(type)
 	{
-	default:
-		break;
 	case FL_SIZEBE:
-	case FL_SIZEBE | FL_V4:
-	case FL_SIZEBE | FL_OS2:
-		yywarning("Bitmap v%c signature little-endian, but size big-endian", type & FL_V4 ? '4' : '3');
-		break;
+            parser_warning("Bitmap signature little-endian, but size big-endian\n");
+            break;
 	case FL_SIGBE:
-	case FL_SIGBE | FL_V4:
-	case FL_SIGBE | FL_OS2:
-		yywarning("Bitmap v%c signature big-endian, but size little-endian", type & FL_V4 ? '4' : '3');
-		break;
+            parser_warning("Bitmap signature big-endian, but size little-endian\n");
+            break;
 	}
 
 	switch(byteorder)
@@ -352,14 +443,10 @@ static int convert_bitmap(char *data, int size)
 	case WRC_BO_BIG:
 		if(!(type & FL_SIZEBE))
 		{
-			if(type & FL_V4)
-				convert_bitmap_swap_v4(b4h);
-			else if(type & FL_OS2)
-			{
-				convert_bitmap_swap_os2(boh);
-			}
-			else
-				convert_bitmap_swap_v3(bih);
+                    if (bmsize == sizeof(BITMAPOS2HEADER))
+                        convert_bitmap_swap_os2(boh);
+                    else
+                        convert_bitmap_swap(bih, bmsize);
 		}
 		break;
 #ifndef WORDS_BIGENDIAN
@@ -368,14 +455,10 @@ static int convert_bitmap(char *data, int size)
 	case WRC_BO_LITTLE:
 		if(type & FL_SIZEBE)
 		{
-			if(type & FL_V4)
-				convert_bitmap_swap_v4(b4h);
-			else if(type & FL_OS2)
-			{
-				convert_bitmap_swap_os2(boh);
-			}
-			else
-				convert_bitmap_swap_v3(bih);
+                    if (bmsize == sizeof(BITMAPOS2HEADER))
+                        convert_bitmap_swap_os2(boh);
+                    else
+                        convert_bitmap_swap(bih, bmsize);
 		}
 		break;
 	}
@@ -390,7 +473,6 @@ static int convert_bitmap(char *data, int size)
 }
 #undef FL_SIGBE
 #undef FL_SIZEBE
-#undef FL_V4
 
 /*
  * Cursor and icon splitter functions used when allocating
@@ -410,7 +492,7 @@ static int get_new_id(id_alloc_t **list, int *n, language_t *lan)
 
 	if(!*list)
 	{
-		*list = (id_alloc_t *)xmalloc(sizeof(id_alloc_t));
+		*list = xmalloc(sizeof(id_alloc_t));
 		*n = 1;
 		(*list)[0].lan = *lan;
 		(*list)[0].id = 1;
@@ -423,7 +505,7 @@ static int get_new_id(id_alloc_t **list, int *n, language_t *lan)
 			return ++((*list)[i].id);
 	}
 
-	*list = (id_alloc_t *)xrealloc(*list, sizeof(id_alloc_t) * (*n+1));
+	*list = xrealloc(*list, sizeof(id_alloc_t) * (*n+1));
 	(*list)[*n].lan = *lan;
 	(*list)[*n].id = 1;
 	*n += 1;
@@ -460,7 +542,7 @@ static void split_icons(raw_data_t *rd, icon_group_t *icog, int *nico)
 	else if(BYTESWAP_WORD(ih->type) == 1)
 		swap = 1;
 	else
-		yyerror("Icon resource data has invalid type id %d", ih->type);
+		parser_error("Icon resource data has invalid type id %d", ih->type);
 
 	cnt = swap ? BYTESWAP_WORD(ih->count) : ih->count;
 	for(i = 0; i < cnt; i++)
@@ -480,7 +562,7 @@ static void split_icons(raw_data_t *rd, icon_group_t *icog, int *nico)
 		}
 		if(ide.offset > rd->size
 		|| ide.offset + ide.ressize > rd->size)
-			yyerror("Icon resource data corrupt");
+			parser_error("Icon resource data corrupt");
 		ico->width = ide.width;
 		ico->height = ide.height;
 		ico->nclr = ide.nclr;
@@ -555,7 +637,7 @@ static void split_cursors(raw_data_t *rd, cursor_group_t *curg, int *ncur)
 	else if(BYTESWAP_WORD(ch->type) == 2)
 		swap = 1;
 	else
-		yyerror("Cursor resource data has invalid type id %d", ch->type);
+		parser_error("Cursor resource data has invalid type id %d", ch->type);
 	cnt = swap ? BYTESWAP_WORD(ch->count) : ch->count;
 	for(i = 0; i < cnt; i++)
 	{
@@ -574,7 +656,7 @@ static void split_cursors(raw_data_t *rd, cursor_group_t *curg, int *ncur)
 		}
 		if(cde.offset > rd->size
 		|| cde.offset + cde.ressize > rd->size)
-			yyerror("Cursor resource data corrupt");
+			parser_error("Cursor resource data corrupt");
 		cur->width = cde.width;
 		cur->height = cde.height;
 		cur->nclr = cde.nclr;
@@ -597,7 +679,7 @@ static void split_cursors(raw_data_t *rd, cursor_group_t *curg, int *ncur)
 			cur->bits = info.biBitCount;
 		}
 		if(!win32 && (cur->planes != 1 || cur->bits != 1))
-			yywarning("Win16 cursor contains colors");
+			parser_warning("Win16 cursor contains colors\n");
 		cur->xhot = swap ? BYTESWAP_WORD(cde.xhot) : cde.xhot;
 		cur->yhot = swap ? BYTESWAP_WORD(cde.yhot) : cde.yhot;
 		cur->data = new_raw_data();
@@ -620,7 +702,7 @@ static void split_cursors(raw_data_t *rd, cursor_group_t *curg, int *ncur)
 
 icon_group_t *new_icon_group(raw_data_t *rd, int *memopt)
 {
-	icon_group_t *icog = (icon_group_t *)xmalloc(sizeof(icon_group_t));
+	icon_group_t *icog = xmalloc(sizeof(icon_group_t));
 	if(memopt)
 	{
 		icog->memopt = *memopt;
@@ -637,7 +719,7 @@ icon_group_t *new_icon_group(raw_data_t *rd, int *memopt)
 
 cursor_group_t *new_cursor_group(raw_data_t *rd, int *memopt)
 {
-	cursor_group_t *curg = (cursor_group_t *)xmalloc(sizeof(cursor_group_t));
+	cursor_group_t *curg = xmalloc(sizeof(cursor_group_t));
 	if(memopt)
 	{
 		curg->memopt = *memopt;
@@ -744,21 +826,21 @@ static void handle_ani_icon(riff_tag_t *rtp, enum res_e type, int isswapped)
 
 	if(type == res_anicur && ctype != 2 && !once)
 	{
-		yywarning("Animated cursor contains invalid \"icon\" tag cursor-file (%d->%s)",
+		parser_warning("Animated cursor contains invalid \"icon\" tag cursor-file (%d->%s)\n",
 				ctype,
 				ctype == 1 ? "icontype" : "?");
 		once++;
 	}
 	else if(type == res_aniico && ctype != 1 && !once)
 	{
-		yywarning("Animated icon contains invalid \"icon\" tag icon-file (%d->%s)",
+		parser_warning("Animated icon contains invalid \"icon\" tag icon-file (%d->%s)\n",
 				ctype,
 				ctype == 2 ? "cursortype" : "?");
 		once++;
 	}
 	else if(ctype != 1 && ctype != 2 && !once)
 	{
-		yywarning("Animated %s contains invalid \"icon\" tag file-type (%d; neither icon nor cursor)", anistr, ctype);
+		parser_warning("Animated %s contains invalid \"icon\" tag file-type (%d; neither icon nor cursor)\n", anistr, ctype);
 		once++;
 	}
 
@@ -767,7 +849,7 @@ static void handle_ani_icon(riff_tag_t *rtp, enum res_e type, int isswapped)
 		DWORD ofs = isswapped ? BYTESWAP_DWORD(cdp[i].offset) : cdp[i].offset;
 		DWORD sze = isswapped ? BYTESWAP_DWORD(cdp[i].ressize) : cdp[i].ressize;
 		if(ofs > rtp->size || ofs+sze > rtp->size)
-			yyerror("Animated %s's data corrupt", anistr);
+			parser_error("Animated %s's data corrupt", anistr);
 		convert_bitmap((char *)chp + ofs, 0);
 		cdp[i].xhot	= BYTESWAP_WORD(cdp->xhot);
 		cdp[i].yhot	= BYTESWAP_WORD(cdp->yhot);
@@ -788,12 +870,12 @@ static void handle_ani_list(riff_tag_t *lst, enum res_e type, int isswapped)
 		}
 		else if(!memcmp(rtp->tag, inam, sizeof(inam)))
 		{
-			/* Ignore the icon/cursor name; its a string */
+                        /* Ignore the icon/cursor name; it's a string */
 			rtp = NEXT_TAG(rtp);
 		}
 		else if(!memcmp(rtp->tag, iart, sizeof(iart)))
 		{
-			/* Ignore the author's name; its a string */
+			/* Ignore the author's name; it's a string */
 			rtp = NEXT_TAG(rtp);
 		}
 		else if(!memcmp(rtp->tag, fram, sizeof(fram)))
@@ -810,7 +892,7 @@ static void handle_ani_list(riff_tag_t *lst, enum res_e type, int isswapped)
 			rtp = NEXT_TAG(rtp);
 		}
 		else
-			internal_error(__FILE__, __LINE__, "Unknown tag \"%c%c%c%c\" in RIFF file",
+			internal_error(__FILE__, __LINE__, "Unknown tag \"%c%c%c%c\" in RIFF file\n",
 				       isprint(rtp->tag[0]) ? rtp->tag[0] : '.',
 				       isprint(rtp->tag[1]) ? rtp->tag[1] : '.',
 				       isprint(rtp->tag[2]) ? rtp->tag[2] : '.',
@@ -823,7 +905,7 @@ static void handle_ani_list(riff_tag_t *lst, enum res_e type, int isswapped)
 
 ani_curico_t *new_ani_curico(enum res_e type, raw_data_t *rd, int *memopt)
 {
-	ani_curico_t *ani = (ani_curico_t *)xmalloc(sizeof(ani_curico_t));
+	ani_curico_t *ani = xmalloc(sizeof(ani_curico_t));
 	riff_tag_t *rtp;
 	int isswapped = 0;
 	int doswap;
@@ -839,7 +921,7 @@ ani_curico_t *new_ani_curico(enum res_e type, raw_data_t *rd, int *memopt)
 	else if(rtp->size + 2*sizeof(DWORD) == rd->size)
 		isswapped = 0;
 	else
-		yyerror("Animated %s has an invalid RIFF length", anistr);
+		parser_error("Animated %s has an invalid RIFF length", anistr);
 
 	switch(byteorder)
 	{
@@ -920,7 +1002,7 @@ ani_curico_t *new_ani_curico(enum res_e type, raw_data_t *rd, int *memopt)
 				rtp = NEXT_TAG(rtp);
 			}
 			else
-				internal_error(__FILE__, __LINE__, "Unknown tag \"%c%c%c%c\" in RIFF file",
+				internal_error(__FILE__, __LINE__, "Unknown tag \"%c%c%c%c\" in RIFF file\n",
 				       isprint(rtp->tag[0]) ? rtp->tag[0] : '.',
 				       isprint(rtp->tag[1]) ? rtp->tag[1] : '.',
 				       isprint(rtp->tag[2]) ? rtp->tag[2] : '.',
@@ -932,7 +1014,7 @@ ani_curico_t *new_ani_curico(enum res_e type, raw_data_t *rd, int *memopt)
 
 		/* We must end correctly here */
 		if((char *)rtp != (char *)rd->data + rd->size)
-			yyerror("Animated %s contains invalid field size(s)", anistr);
+			parser_error("Animated %s contains invalid field size(s)", anistr);
 	}
 
 	ani->data = rd;
@@ -950,7 +1032,7 @@ ani_curico_t *new_ani_curico(enum res_e type, raw_data_t *rd, int *memopt)
 /* Bitmaps */
 bitmap_t *new_bitmap(raw_data_t *rd, int *memopt)
 {
-	bitmap_t *bmp = (bitmap_t *)xmalloc(sizeof(bitmap_t));
+	bitmap_t *bmp = xmalloc(sizeof(bitmap_t));
 
 	bmp->data = rd;
 	if(memopt)
@@ -966,8 +1048,8 @@ bitmap_t *new_bitmap(raw_data_t *rd, int *memopt)
 
 ver_words_t *new_ver_words(int i)
 {
-	ver_words_t *w = (ver_words_t *)xmalloc(sizeof(ver_words_t));
-	w->words = (WORD *)xmalloc(sizeof(WORD));
+	ver_words_t *w = xmalloc(sizeof(ver_words_t));
+	w->words = xmalloc(sizeof(WORD));
 	w->words[0] = (WORD)i;
 	w->nwords = 1;
 	return w;
@@ -975,7 +1057,7 @@ ver_words_t *new_ver_words(int i)
 
 ver_words_t *add_ver_words(ver_words_t *w, int i)
 {
-	w->words = (WORD *)xrealloc(w->words, (w->nwords+1) * sizeof(WORD));
+	w->words = xrealloc(w->words, (w->nwords+1) * sizeof(WORD));
 	w->words[w->nwords] = (WORD)i;
 	w->nwords++;
 	return w;
@@ -984,7 +1066,7 @@ ver_words_t *add_ver_words(ver_words_t *w, int i)
 #define MSGTAB_BAD_PTR(p, b, l, r)	(((l) - ((char *)(p) - (char *)(b))) > (r))
 messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 {
-	messagetable_t *msg = (messagetable_t *)xmalloc(sizeof(messagetable_t));
+	messagetable_t *msg = xmalloc(sizeof(messagetable_t));
  	msgtab_block_t *mbp;
 	DWORD nblk;
 	DWORD i;
@@ -1001,7 +1083,7 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 		msg->memopt = WRC_MO_MOVEABLE | WRC_MO_PURE;
 
 	if(rd->size < sizeof(DWORD))
-		yyerror("Invalid messagetable, size too small");
+		parser_error("Invalid messagetable, size too small");
 
 	nblk = *(DWORD *)rd->data;
 	lo = WRC_LOWORD(nblk);
@@ -1016,9 +1098,9 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 	 * the ID, offset and length (and flag) fields to be very sure.
 	 */
 	if(hi && lo)
-		internal_error(__FILE__, __LINE__, "Messagetable contains more than 65535 blocks; cannot determine endian");
+		internal_error(__FILE__, __LINE__, "Messagetable contains more than 65535 blocks; cannot determine endian\n");
 	if(!hi && !lo)
-		yyerror("Invalid messagetable block count 0");
+		parser_error("Invalid messagetable block count 0");
 
 	if(!hi && lo)  /* Messagetable byteorder == native byteorder */
 	{
@@ -1031,7 +1113,7 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 
 		mbp = (msgtab_block_t *)&(((DWORD *)rd->data)[1]);
 		if(MSGTAB_BAD_PTR(mbp, rd->data, rd->size, nblk * sizeof(*mbp)))
-			yyerror("Messagetable's blocks are outside of defined data");
+			parser_error("Messagetable's blocks are outside of defined data");
 		for(i = 0; i < nblk; i++)
 		{
 			msgtab_entry_t *mep, *next_mep;
@@ -1042,7 +1124,7 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 			for(id = mbp[i].idlo; id <= mbp[i].idhi; id++)
 			{
 				if(MSGTAB_BAD_PTR(mep, rd->data, rd->size, mep->length))
-					yyerror("Messagetable's data for block %d, ID 0x%08lx is outside of defined data", (int)i, id);
+					parser_error("Messagetable's data for block %d, ID 0x%08x is outside of defined data", i, id);
 				if(mep->flags == 1)	/* Docu says 'flags == 0x0001' for unicode */
 				{
 					WORD *wp = (WORD *)&mep[1];
@@ -1050,7 +1132,7 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 					int n;
 
 					if(mep->length & 1)
-						yyerror("Message 0x%08lx is unicode (block %d), but has odd length (%d)", id, (int)i, mep->length);
+						parser_error("Message 0x%08x is unicode (block %d), but has odd length (%d)", id, i, mep->length);
 					for(n = 0; n < l; n++)
 						wp[n] = BYTESWAP_WORD(wp[n]);
 
@@ -1078,7 +1160,7 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 		mbp = (msgtab_block_t *)&(((DWORD *)rd->data)[1]);
 		nblk = BYTESWAP_DWORD(nblk);
 		if(MSGTAB_BAD_PTR(mbp, rd->data, rd->size, nblk * sizeof(*mbp)))
-			yyerror("Messagetable's blocks are outside of defined data");
+			parser_error("Messagetable's blocks are outside of defined data");
 		for(i = 0; i < nblk; i++)
 		{
 			msgtab_entry_t *mep;
@@ -1095,7 +1177,7 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 				mep->flags  = BYTESWAP_WORD(mep->flags);
 
 				if(MSGTAB_BAD_PTR(mep, rd->data, rd->size, mep->length))
-					yyerror("Messagetable's data for block %d, ID 0x%08lx is outside of defined data", (int)i, id);
+					parser_error("Messagetable's data for block %d, ID 0x%08x is outside of defined data", i, id);
 				if(mep->flags == 1)	/* Docu says 'flags == 0x0001' for unicode */
 				{
 					WORD *wp = (WORD *)&mep[1];
@@ -1103,7 +1185,7 @@ messagetable_t *new_messagetable(raw_data_t *rd, int *memopt)
 					int n;
 
 					if(mep->length & 1)
-						yyerror("Message 0x%08lx is unicode (block %d), but has odd length (%d)", id, (int)i, mep->length);
+						parser_error("Message 0x%08x is unicode (block %d), but has odd length (%d)", id, i, mep->length);
 					for(n = 0; n < l; n++)
 						wp[n] = BYTESWAP_WORD(wp[n]);
 
@@ -1124,11 +1206,11 @@ void copy_raw_data(raw_data_t *dst, raw_data_t *src, unsigned int offs, int len)
 	assert(offs + len <= src->size);
 	if(!dst->data)
 	{
-		dst->data = (char *)xmalloc(len);
+		dst->data = xmalloc(len);
 		dst->size = 0;
 	}
 	else
-		dst->data = (char *)xrealloc(dst->data, dst->size + len);
+		dst->data = xrealloc(dst->data, dst->size + len);
 	/* dst->size holds the offset to copy to */
 	memcpy(dst->data + dst->size, src->data + offs, len);
 	dst->size += len;
@@ -1136,15 +1218,16 @@ void copy_raw_data(raw_data_t *dst, raw_data_t *src, unsigned int offs, int len)
 
 int *new_int(int i)
 {
-	int *ip = (int *)xmalloc(sizeof(int));
+	int *ip = xmalloc(sizeof(int));
 	*ip = i;
 	return ip;
 }
 
 stringtable_t *new_stringtable(lvc_t *lvc)
 {
-	stringtable_t *stt = (stringtable_t *)xmalloc(sizeof(stringtable_t));
+	stringtable_t *stt = xmalloc(sizeof(stringtable_t));
 
+	memset( stt, 0, sizeof(*stt) );
 	if(lvc)
 		stt->lvc = *lvc;
 
@@ -1153,7 +1236,8 @@ stringtable_t *new_stringtable(lvc_t *lvc)
 
 toolbar_t *new_toolbar(int button_width, int button_height, toolbar_item_t *items, int nitems)
 {
-	toolbar_t *tb = (toolbar_t *)xmalloc(sizeof(toolbar_t));
+	toolbar_t *tb = xmalloc(sizeof(toolbar_t));
+	memset( tb, 0, sizeof(*tb) );
 	tb->button_width = button_width;
 	tb->button_height = button_height;
 	tb->nitems = nitems;
@@ -1163,7 +1247,7 @@ toolbar_t *new_toolbar(int button_width, int button_height, toolbar_item_t *item
 
 dlginit_t *new_dlginit(raw_data_t *rd, int *memopt)
 {
-	dlginit_t *di = (dlginit_t *)xmalloc(sizeof(dlginit_t));
+	dlginit_t *di = xmalloc(sizeof(dlginit_t));
 	di->data = rd;
 	if(memopt)
 	{
@@ -1178,7 +1262,7 @@ dlginit_t *new_dlginit(raw_data_t *rd, int *memopt)
 
 style_pair_t *new_style_pair(style_t *style, style_t *exstyle)
 {
-	style_pair_t *sp = (style_pair_t *)xmalloc(sizeof(style_pair_t));
+	style_pair_t *sp = xmalloc(sizeof(style_pair_t));
 	sp->style = style;
 	sp->exstyle = exstyle;
 	return sp;
@@ -1186,7 +1270,7 @@ style_pair_t *new_style_pair(style_t *style, style_t *exstyle)
 
 style_t *new_style(DWORD or_mask, DWORD and_mask)
 {
-	style_t *st = (style_t *)xmalloc(sizeof(style_t));
+	style_t *st = xmalloc(sizeof(style_t));
 	st->or_mask = or_mask;
 	st->and_mask = and_mask;
 	return st;

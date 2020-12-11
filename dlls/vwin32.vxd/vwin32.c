@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -29,23 +29,49 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(vxd);
 
-extern void WINAPI CallBuiltinHandler( CONTEXT86 *context, BYTE intnum );  /* from winedos */
+typedef struct tagDIOCRegs {
+    DWORD   reg_EBX;
+    DWORD   reg_EDX;
+    DWORD   reg_ECX;
+    DWORD   reg_EAX;
+    DWORD   reg_EDI;
+    DWORD   reg_ESI;
+    DWORD   reg_Flags;
+} DIOC_REGISTERS, *PDIOC_REGISTERS;
+
+#define VWIN32_DIOC_DOS_IOCTL     1 /* This is the specified MS-DOS device I/O ctl - Interrupt 21h Function 4400h - 4411h */
+#define VWIN32_DIOC_DOS_INT25     2 /* This is the Absolute Disk Read command - Interrupt 25h */
+#define VWIN32_DIOC_DOS_INT26     3 /* This is the Absolute Disk Write command - Interrupt 25h */
+#define VWIN32_DIOC_DOS_INT13     4 /* This is Interrupt 13h commands */
+#define VWIN32_DIOC_SIMCTRLC      5 /* Simulate Ctrl-C */
+#define VWIN32_DIOC_DOS_DRIVEINFO 6 /* This is Interrupt 21h Function 730X commands */
+
+#include <pshpack1.h>
+typedef struct tagMID {
+    WORD  midInfoLevel;
+    DWORD midSerialNum;
+    BYTE  midVolLabel[11];
+    BYTE  midFileSysType[8];
+} MID, *PMID;
+#include <poppack.h>
+
+extern void __wine_call_int_handler( CONTEXT *context, BYTE intnum );
 
 /* Pop a DWORD from the 32-bit stack */
-static inline DWORD stack32_pop( CONTEXT86 *context )
+static inline DWORD stack32_pop( CONTEXT *context )
 {
     DWORD ret = *(DWORD *)context->Esp;
     context->Esp += sizeof(DWORD);
     return ret;
 }
 
-static void DIOCRegs_2_CONTEXT( DIOC_REGISTERS *pIn, CONTEXT86 *pCxt )
+static void DIOCRegs_2_CONTEXT( DIOC_REGISTERS *pIn, CONTEXT *pCxt )
 {
     memset( pCxt, 0, sizeof(*pCxt) );
     /* Note: segment registers == 0 means that CTX_SEG_OFF_TO_LIN
              will interpret 32-bit register contents as linear pointers */
 
-    pCxt->ContextFlags=CONTEXT86_INTEGER|CONTEXT86_CONTROL;
+    pCxt->ContextFlags=CONTEXT_INTEGER|CONTEXT_CONTROL;
     pCxt->Eax = pIn->reg_EAX;
     pCxt->Ebx = pIn->reg_EBX;
     pCxt->Ecx = pIn->reg_ECX;
@@ -53,12 +79,12 @@ static void DIOCRegs_2_CONTEXT( DIOC_REGISTERS *pIn, CONTEXT86 *pCxt )
     pCxt->Esi = pIn->reg_ESI;
     pCxt->Edi = pIn->reg_EDI;
 
-    /* FIXME: Only partial CONTEXT86_CONTROL */
+    /* FIXME: Only partial CONTEXT_CONTROL */
 
     pCxt->EFlags = pIn->reg_Flags & ~0x00020000; /* clear vm86 mode */
 }
 
-static void CONTEXT_2_DIOCRegs( CONTEXT86 *pCxt, DIOC_REGISTERS *pOut )
+static void CONTEXT_2_DIOCRegs( CONTEXT *pCxt, DIOC_REGISTERS *pOut )
 {
     memset( pOut, 0, sizeof(DIOC_REGISTERS) );
 
@@ -69,23 +95,9 @@ static void CONTEXT_2_DIOCRegs( CONTEXT86 *pCxt, DIOC_REGISTERS *pOut )
     pOut->reg_ESI = pCxt->Esi;
     pOut->reg_EDI = pCxt->Edi;
 
-    /* FIXME: Only partial CONTEXT86_CONTROL */
+    /* FIXME: Only partial CONTEXT_CONTROL */
     pOut->reg_Flags = pCxt->EFlags;
 }
-
-#define DIOC_AH(regs) (((unsigned char*)&((regs)->reg_EAX))[1])
-#define DIOC_AL(regs) (((unsigned char*)&((regs)->reg_EAX))[0])
-#define DIOC_BH(regs) (((unsigned char*)&((regs)->reg_EBX))[1])
-#define DIOC_BL(regs) (((unsigned char*)&((regs)->reg_EBX))[0])
-#define DIOC_DH(regs) (((unsigned char*)&((regs)->reg_EDX))[1])
-#define DIOC_DL(regs) (((unsigned char*)&((regs)->reg_EDX))[0])
-
-#define DIOC_AX(regs) (((unsigned short*)&((regs)->reg_EAX))[0])
-#define DIOC_BX(regs) (((unsigned short*)&((regs)->reg_EBX))[0])
-#define DIOC_CX(regs) (((unsigned short*)&((regs)->reg_ECX))[0])
-#define DIOC_DX(regs) (((unsigned short*)&((regs)->reg_EDX))[0])
-
-#define DIOC_SET_CARRY(regs) (((regs)->reg_Flags)|=0x00000001)
 
 /***********************************************************************
  *           DeviceIoControl   (VWIN32.VXD.@)
@@ -105,14 +117,14 @@ BOOL WINAPI VWIN32_DeviceIoControl(DWORD dwIoControlCode,
     case 0x29: /* Int 0x31 call, call it VWIN_DIOC_INT31 ? */
     case VWIN32_DIOC_DOS_DRIVEINFO:
         {
-            CONTEXT86 cxt;
-            DIOC_REGISTERS *pIn  = (DIOC_REGISTERS *)lpvInBuffer;
-            DIOC_REGISTERS *pOut = (DIOC_REGISTERS *)lpvOutBuffer;
+            CONTEXT cxt;
+            DIOC_REGISTERS *pIn  = lpvInBuffer;
+            DIOC_REGISTERS *pOut = lpvOutBuffer;
             BYTE intnum = 0;
 
             TRACE( "Control '%s': "
-                   "eax=0x%08lx, ebx=0x%08lx, ecx=0x%08lx, "
-                   "edx=0x%08lx, esi=0x%08lx, edi=0x%08lx \n",
+                   "eax=0x%08x, ebx=0x%08x, ecx=0x%08x, "
+                   "edx=0x%08x, esi=0x%08x, edi=0x%08x\n",
                    (dwIoControlCode == VWIN32_DIOC_DOS_IOCTL)? "VWIN32_DIOC_DOS_IOCTL" :
                    (dwIoControlCode == VWIN32_DIOC_DOS_INT25)? "VWIN32_DIOC_DOS_INT25" :
                    (dwIoControlCode == VWIN32_DIOC_DOS_INT26)? "VWIN32_DIOC_DOS_INT26" :
@@ -143,7 +155,7 @@ BOOL WINAPI VWIN32_DeviceIoControl(DWORD dwIoControlCode,
                 break;
             }
 
-            CallBuiltinHandler( &cxt, intnum );
+            __wine_call_int_handler( &cxt, intnum );
             CONTEXT_2_DIOCRegs( &cxt, pOut );
         }
         return TRUE;
@@ -153,7 +165,7 @@ BOOL WINAPI VWIN32_DeviceIoControl(DWORD dwIoControlCode,
         return FALSE;
 
     default:
-        FIXME( "Unknown Control %ld\n", dwIoControlCode);
+        FIXME( "Unknown Control %d\n", dwIoControlCode);
         return FALSE;
     }
 }
@@ -166,7 +178,7 @@ BOOL WINAPI VWIN32_DeviceIoControl(DWORD dwIoControlCode,
  *  Programming Secrets".  Parameters from experimentation on real Win98.
  *
  */
-DWORD WINAPI VWIN32_VxDCall( DWORD service, CONTEXT86 *context )
+DWORD WINAPI VWIN32_VxDCall( DWORD service, CONTEXT *context )
 {
     switch ( LOWORD(service) )
     {
@@ -179,7 +191,7 @@ DWORD WINAPI VWIN32_VxDCall( DWORD service, CONTEXT86 *context )
         {
             DWORD parm = stack32_pop(context);
 
-            FIXME("Get VMCPD Version(%08lx): partial stub!\n", parm);
+            FIXME("Get VMCPD Version(%08x): partial stub!\n", parm);
 
             /* FIXME: This is what Win98 returns, it may
              *        not be correct in all situations.
@@ -192,11 +204,11 @@ DWORD WINAPI VWIN32_VxDCall( DWORD service, CONTEXT86 *context )
             DWORD callnum = stack32_pop(context);
             DWORD parm    = stack32_pop(context);
 
-            TRACE("Int31/DPMI dispatch(%08lx)\n", callnum);
+            TRACE("Int31/DPMI dispatch(%08x)\n", callnum);
 
             context->Eax = callnum;
             context->Ecx = parm;
-            CallBuiltinHandler( context, 0x31 );
+            __wine_call_int_handler( context, 0x31 );
             return LOWORD(context->Eax);
         }
     case 0x002a: /* Int41 dispatch - parm = int41 service number */
@@ -205,7 +217,7 @@ DWORD WINAPI VWIN32_VxDCall( DWORD service, CONTEXT86 *context )
             return callnum; /* FIXME: should really call INT_Int41Handler() */
         }
     default:
-        FIXME("Unknown service %08lx\n", service);
+        FIXME("Unknown service %08x\n", service);
         return 0xffffffff;
     }
 }

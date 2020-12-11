@@ -1,5 +1,5 @@
 101 stub -noname DoConnectoidsExist
-102 stub -noname GetDiskInfoA
+102 stdcall -noname GetDiskInfoA(str ptr ptr ptr)
 103 stub -noname PerformOperationOverUrlCacheA
 104 stub -noname HttpCheckDavComplianceA
 105 stub -noname HttpCheckDavComplianceW
@@ -9,15 +9,15 @@
 111 stub -noname ExportCookieFileW
 112 stub -noname IsProfilesEnabled
 116 stub -noname IsDomainlegalCookieDomainA
-117 stub -noname IsDomainLegalCookieDomainW
+117 stdcall -noname IsDomainLegalCookieDomainW(wstr wstr)
 118 stub -noname FindP3PPolicySymbol
 120 stub -noname MapResourceToPolicy
 121 stub -noname GetP3PPolicy
 122 stub -noname FreeP3PObject
 123 stub -noname GetP3PRequestStatus
 
-@ stdcall CommitUrlCacheEntryA(str str double double long str long str str)
-@ stdcall CommitUrlCacheEntryW(wstr wstr double double long wstr long wstr wstr)
+@ stdcall CommitUrlCacheEntryA(str str int64 int64 long str long str str)
+@ stdcall CommitUrlCacheEntryW(wstr wstr int64 int64 long wstr long wstr wstr)
 @ stdcall CreateMD5SSOHash(wstr wstr wstr ptr)
 @ stdcall CreateUrlCacheContainerA(long long long long long long long long)
 @ stdcall CreateUrlCacheContainerW(long long long long long long long long)
@@ -30,15 +30,16 @@
 @ stdcall DeleteUrlCacheEntry(str) DeleteUrlCacheEntryA
 @ stdcall DeleteUrlCacheEntryA(str)
 @ stdcall DeleteUrlCacheEntryW(wstr)
-@ stdcall DeleteUrlCacheGroup(double long ptr)
+@ stdcall DeleteUrlCacheGroup(int64 long ptr)
+@ stdcall DeleteWpadCacheForNetworks(long)
 @ stdcall DetectAutoProxyUrl(str long long)
 @ stdcall -private DllInstall(long wstr)
 @ stdcall FindCloseUrlCache(long)
 @ stdcall FindFirstUrlCacheContainerA(ptr ptr ptr long)
 @ stdcall FindFirstUrlCacheContainerW(ptr ptr ptr long)
 @ stdcall FindFirstUrlCacheEntryA(str ptr ptr)
-@ stdcall FindFirstUrlCacheEntryExA(str long long double ptr ptr ptr ptr ptr)
-@ stdcall FindFirstUrlCacheEntryExW(wstr long long double ptr ptr ptr ptr ptr)
+@ stdcall FindFirstUrlCacheEntryExA(str long long int64 ptr ptr ptr ptr ptr)
+@ stdcall FindFirstUrlCacheEntryExW(wstr long long int64 ptr ptr ptr ptr ptr)
 @ stdcall FindFirstUrlCacheEntryW(wstr ptr ptr)
 @ stdcall FindFirstUrlCacheGroup(long long ptr long ptr ptr)
 @ stdcall FindNextUrlCacheContainerA(long ptr ptr)
@@ -50,10 +51,10 @@
 @ stdcall FindNextUrlCacheGroup(long ptr ptr)
 @ stub ForceNexusLookup
 @ stub ForceNexusLookupExW
-@ stub FreeUrlCacheSpaceA
-@ stub FreeUrlCacheSpaceW
-@ stdcall FtpCommandA(long long long str ptr ptr)
-@ stdcall FtpCommandW(long long long wstr ptr ptr)
+@ stdcall FreeUrlCacheSpaceA(str long long)
+@ stdcall FreeUrlCacheSpaceW(wstr long long)
+@ stdcall FtpCommandA(long long long str long ptr)
+@ stdcall FtpCommandW(long long long wstr long ptr)
 @ stdcall FtpCreateDirectoryA(ptr str)
 @ stdcall FtpCreateDirectoryW(ptr wstr)
 @ stdcall FtpDeleteFileA(ptr str)
@@ -79,12 +80,12 @@
 @ stdcall FtpSetCurrentDirectoryW(ptr wstr)
 @ stdcall GetUrlCacheConfigInfoA(ptr ptr long)
 @ stdcall GetUrlCacheConfigInfoW(ptr ptr long)
-@ stdcall GetUrlCacheEntryInfoA(str ptr long)
+@ stdcall GetUrlCacheEntryInfoA(str ptr ptr)
 @ stdcall GetUrlCacheEntryInfoExA(str ptr ptr str ptr ptr long)
 @ stdcall GetUrlCacheEntryInfoExW(wstr ptr ptr wstr ptr ptr long)
-@ stdcall GetUrlCacheEntryInfoW(wstr ptr long)
-@ stdcall GetUrlCacheGroupAttributeA(double long long ptr ptr ptr)
-@ stdcall GetUrlCacheGroupAttributeW(double long long ptr ptr ptr)
+@ stdcall GetUrlCacheEntryInfoW(wstr ptr ptr)
+@ stdcall GetUrlCacheGroupAttributeA(int64 long long ptr ptr ptr)
+@ stdcall GetUrlCacheGroupAttributeW(int64 long long ptr ptr ptr)
 @ stub GetUrlCacheHeaderData
 @ stdcall GopherCreateLocatorA(str long str str long str ptr)
 @ stdcall GopherCreateLocatorW(wstr long wstr wstr long wstr ptr)
@@ -109,17 +110,17 @@
 @ stdcall HttpSendRequestExA(long ptr ptr long long)
 @ stdcall HttpSendRequestExW(long ptr ptr long long)
 @ stdcall HttpSendRequestW(ptr wstr long ptr long)
-@ stub IncrementUrlCacheHeaderData
+@ stdcall IncrementUrlCacheHeaderData(long ptr)
 @ stub InternetAlgIdToStringA
 @ stub InternetAlgIdToStringW
 @ stdcall InternetAttemptConnect(long)
 @ stdcall InternetAutodial(long ptr)
 @ stub InternetAutodialCallback
 @ stdcall InternetAutodialHangup(long)
-@ stdcall InternetCanonicalizeUrlA(str str ptr long)
-@ stdcall InternetCanonicalizeUrlW(wstr wstr ptr long)
-@ stdcall InternetCheckConnectionA(ptr long long)
-@ stdcall InternetCheckConnectionW(ptr long long)
+@ stdcall InternetCanonicalizeUrlA(str ptr ptr long)
+@ stdcall InternetCanonicalizeUrlW(wstr ptr ptr long)
+@ stdcall InternetCheckConnectionA(str long long)
+@ stdcall InternetCheckConnectionW(wstr long long)
 @ stdcall InternetClearAllPerSiteCookieDecisions()
 @ stdcall InternetCloseHandle(long)
 @ stdcall InternetCombineUrlA(str str str ptr long)
@@ -149,14 +150,17 @@
 @ stdcall InternetGetConnectedStateEx(ptr ptr long long) InternetGetConnectedStateExA
 @ stdcall InternetGetConnectedStateExA(ptr ptr long long)
 @ stdcall InternetGetConnectedStateExW(ptr ptr long long)
-@ stdcall InternetGetCookieA(str str ptr long)
+@ stdcall InternetGetCookieA(str str ptr ptr)
 @ stdcall InternetGetCookieExA(str str ptr ptr long ptr)
 @ stdcall InternetGetCookieExW(wstr wstr ptr ptr long ptr)
-@ stdcall InternetGetCookieW(wstr wstr ptr long)
+@ stdcall InternetGetCookieW(wstr wstr ptr ptr)
 @ stdcall InternetGetLastResponseInfoA(ptr ptr ptr)
 @ stdcall InternetGetLastResponseInfoW(ptr ptr ptr)
 @ stdcall InternetGetPerSiteCookieDecisionA(str ptr)
 @ stdcall InternetGetPerSiteCookieDecisionW(wstr ptr)
+@ stdcall InternetGetSecurityInfoByURL(str ptr ptr) InternetGetSecurityInfoByURLA
+@ stdcall InternetGetSecurityInfoByURLA(str ptr ptr)
+@ stdcall InternetGetSecurityInfoByURLW(wstr ptr ptr)
 @ stdcall InternetGoOnline(str long long) InternetGoOnlineA
 @ stdcall InternetGoOnlineA(str long long)
 @ stdcall InternetGoOnlineW(wstr long long)
@@ -169,7 +173,7 @@
 @ stdcall InternetOpenUrlW(ptr wstr wstr long long long)
 @ stdcall InternetOpenW(wstr long wstr wstr long)
 @ stdcall InternetQueryDataAvailable(ptr ptr long long)
-@ stub InternetQueryFortezzaStatus
+@ stdcall InternetQueryFortezzaStatus(ptr long)
 @ stdcall InternetQueryOptionA(ptr long ptr ptr)
 @ stdcall InternetQueryOptionW(ptr long ptr ptr)
 @ stdcall InternetReadFile(ptr ptr long ptr)
@@ -179,8 +183,8 @@
 @ stub InternetSecurityProtocolToStringW
 @ stub InternetServerPushParse
 @ stdcall InternetSetCookieA(str str str)
-@ stdcall InternetSetCookieExA(str str str long ptr)
-@ stdcall InternetSetCookieExW(wstr wstr wstr long ptr)
+@ stdcall InternetSetCookieExA(str str str long long)
+@ stdcall InternetSetCookieExW(wstr wstr wstr long long)
 @ stdcall InternetSetCookieW(wstr wstr wstr)
 @ stub InternetSetDialState
 @ stub InternetSetDialStateA
@@ -195,9 +199,9 @@
 @ stdcall InternetSetStatusCallback(ptr ptr) InternetSetStatusCallbackA
 @ stdcall InternetSetStatusCallbackA(ptr ptr)
 @ stdcall InternetSetStatusCallbackW(ptr ptr)
-@ stub InternetShowSecurityInfoByURL
-@ stub InternetShowSecurityInfoByURLA
-@ stub InternetShowSecurityInfoByURLW
+@ stdcall InternetShowSecurityInfoByURL(str ptr) InternetShowSecurityInfoByURLA
+@ stdcall InternetShowSecurityInfoByURLA(str ptr)
+@ stdcall InternetShowSecurityInfoByURLW(wstr ptr)
 @ stdcall InternetTimeFromSystemTime(ptr long ptr long) InternetTimeFromSystemTimeA
 @ stdcall InternetTimeFromSystemTimeA(ptr long ptr long)
 @ stdcall InternetTimeFromSystemTimeW(ptr long ptr long)
@@ -209,34 +213,34 @@
 @ stub InternetWriteFileExA
 @ stub InternetWriteFileExW
 @ stdcall IsHostInProxyBypassList(long str long)
-@ stub IsUrlCacheEntryExpiredA
-@ stub IsUrlCacheEntryExpiredW
-@ stub LoadUrlCacheContent
-@ stub ParseX509EncodedCertificateForListBoxEntry
-@ stub PrivacyGetZonePreferenceW # (long long ptr ptr ptr)
-@ stub PrivacySetZonePreferenceW # (long long long wstr)
+@ stdcall IsUrlCacheEntryExpiredA(str long ptr)
+@ stdcall IsUrlCacheEntryExpiredW(wstr long ptr)
+@ stdcall LoadUrlCacheContent()
+@ stdcall ParseX509EncodedCertificateForListBoxEntry(ptr long str ptr)
+@ stdcall PrivacyGetZonePreferenceW(long long ptr ptr ptr)
+@ stdcall PrivacySetZonePreferenceW(long long long wstr)
 @ stdcall ReadUrlCacheEntryStream(ptr long ptr ptr long)
-@ stub RegisterUrlCacheNotification
+@ stdcall RegisterUrlCacheNotification(ptr long long long long long)
 @ stdcall ResumeSuspendedDownload(long long)
 @ stdcall RetrieveUrlCacheEntryFileA(str ptr ptr long)
 @ stdcall RetrieveUrlCacheEntryFileW(wstr ptr ptr long)
 @ stdcall RetrieveUrlCacheEntryStreamA(str ptr ptr long long)
 @ stdcall RetrieveUrlCacheEntryStreamW(wstr ptr ptr long long)
-@ stub RunOnceUrlCache
+@ stdcall RunOnceUrlCache(ptr ptr str long)
 @ stdcall SetUrlCacheConfigInfoA(ptr long)
 @ stdcall SetUrlCacheConfigInfoW(ptr long)
-@ stdcall SetUrlCacheEntryGroup(str long double ptr long ptr) SetUrlCacheEntryGroupA
-@ stdcall SetUrlCacheEntryGroupA(str long double ptr long ptr)
-@ stdcall SetUrlCacheEntryGroupW(wstr long double ptr long ptr)
+@ stdcall SetUrlCacheEntryGroup(str long int64 ptr long ptr) SetUrlCacheEntryGroupA
+@ stdcall SetUrlCacheEntryGroupA(str long int64 ptr long ptr)
+@ stdcall SetUrlCacheEntryGroupW(wstr long int64 ptr long ptr)
 @ stdcall SetUrlCacheEntryInfoA(str ptr long)
 @ stdcall SetUrlCacheEntryInfoW(wstr ptr long)
-@ stdcall SetUrlCacheGroupAttributeA(double long long ptr ptr)
-@ stdcall SetUrlCacheGroupAttributeW(double long long ptr ptr)
+@ stdcall SetUrlCacheGroupAttributeA(int64 long long ptr ptr)
+@ stdcall SetUrlCacheGroupAttributeW(int64 long long ptr ptr)
 @ stub SetUrlCacheHeaderData
 @ stub ShowCertificate
-@ stub ShowClientAuthCerts
+@ stdcall ShowClientAuthCerts(ptr)
 @ stub ShowSecurityInfo
-@ stub ShowX509EncodedCertificate
+@ stdcall ShowX509EncodedCertificate(ptr ptr long)
 @ stdcall UnlockUrlCacheEntryFile(str long) UnlockUrlCacheEntryFileA
 @ stdcall UnlockUrlCacheEntryFileA(str long)
 @ stdcall UnlockUrlCacheEntryFileW(wstr long)

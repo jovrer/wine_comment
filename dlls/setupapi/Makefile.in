@@ -1,38 +1,22 @@
 EXTRADEFS = -D_SETUPAPI_
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = setupapi.dll
-IMPORTLIB = libsetupapi.$(IMPLIBEXT)
-IMPORTS   = user32 version advapi32 rpcrt4 kernel32 ntdll
-DELAYIMPORTS = shell32
-EXTRALIBS = $(LIBUNICODE)
+IMPORTLIB = setupapi
+IMPORTS   = uuid user32 version advapi32 rpcrt4
+DELAYIMPORTS = shell32 wintrust ole32 winspool comdlg32
 
 C_SRCS = \
 	devinst.c \
+	dialog.c \
 	dirid.c \
 	diskspace.c \
+	fakedll.c \
 	install.c \
 	misc.c \
 	parser.c \
+	query.c \
 	queue.c \
 	setupcab.c \
 	stringtable.c \
 	stubs.c
 
-C_SRCS16 = \
-	devinst16.c \
-	infparse.c \
-	setupx_main.c \
-	virtcopy.c
-
-SPEC_SRCS16 = setupx.spec
-
-RC_SRCS= setupapi.rc
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = setupapi.rc

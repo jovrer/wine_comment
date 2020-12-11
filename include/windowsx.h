@@ -12,7 +12,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _INC_WINDOWSX
@@ -20,6 +20,11 @@
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#ifdef __WINESRC__
+/* This file contains macros that cause warnings on gcc 4.1, so avoid it. */
+#error Please avoid use of windowsx.h in Wine source code.
 #endif
 
 #ifndef SNDMSG
@@ -227,7 +232,7 @@ extern "C" {
 	((UINT)SendMessage((hwndCtl), BM_SETSTATE, (WPARAM)(int)(state), 0L))
 
 #define Button_SetStyle(hwndCtl, style, fRedraw) \
-	((void)SendMessage((hwndCtl), BM_SETSTYLE, (WPARAM)LOWORD(style), MAKELPARAM(((fRedraw) ? TRUE : FALSE), 0)))
+	((void)SendMessage((hwndCtl), BM_SETSTYLE, (WPARAM)LOWORD(style), MAKELPARAM((fRedraw) != 0, 0)))
 
 #define Button_SetText(hwndCtl, lpsz) \
 	SetWindowText((hwndCtl), (lpsz))
@@ -407,7 +412,7 @@ extern "C" {
 	((BOOL)SendMessage((hwndCtl), EM_SCROLLCARET, 0, 0L))
 
 #define Edit_SetHandle(hwndCtl, h) \
-	((void)SendMessage((hwndCtl), EM_SETHANDLE, (WPARAM)(UINT)(HLOCAL)(h), 0L))
+	((void)SendMessage((hwndCtl), EM_SETHANDLE, (WPARAM)(HLOCAL)(h), 0L))
 
 #define Edit_SetModify(hwndCtl, fModified) \
 	((void)SendMessage((hwndCtl), EM_SETMODIFY, (WPARAM)(UINT)(fModified), 0L))
@@ -1076,9 +1081,9 @@ extern "C" {
 
 /* HANDLE Cls_OnRenderFormat(HWND hwnd, UINT fmt) */
 #define HANDLE_WM_RENDERFORMAT(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HANDLE)(fn)((hwnd), (UINT)(wParam))
+    (LRESULT)(UINT_PTR)(HANDLE)(fn)((hwnd), (UINT)(wParam))
 #define FORWARD_WM_RENDERFORMAT(hwnd, fmt, fn) \
-    (HANDLE)(UINT)(DWORD)(fn)((hwnd), WM_RENDERFORMAT, (WPARAM)(UINT)(fmt), 0L)
+    (HANDLE)(UINT_PTR)(fn)((hwnd), WM_RENDERFORMAT, (WPARAM)(UINT)(fmt), 0L)
 
 /* void Cls_OnRenderAllFormats(HWND hwnd) */
 #define HANDLE_WM_RENDERALLFORMATS(hwnd, wParam, lParam, fn)  ((fn)(hwnd), 0L)
@@ -1169,7 +1174,7 @@ extern "C" {
 #define HANDLE_WM_MDINEXT(hwnd, wParam, lParam, fn) \
     (LRESULT)(HWND)(fn)((hwnd), (HWND)(wParam), (BOOL)lParam)
 #define FORWARD_WM_MDINEXT(hwnd, hwndCur, fPrev, fn) \
-    (HWND)(UINT)(DWORD)(fn)((hwnd), WM_MDINEXT, (WPARAM)(hwndCur), (LPARAM)(fPrev))
+    (HWND)(UINT_PTR)(fn)((hwnd), WM_MDINEXT, (WPARAM)(hwndCur), (LPARAM)(fPrev))
 
 /* void Cls_MDIMaximize(HWND hwnd, HWND hwndMaximize) */
 #define HANDLE_WM_MDIMAXIMIZE(hwnd, wParam, lParam, fn) \
@@ -1197,15 +1202,15 @@ extern "C" {
 
 /* HWND Cls_MDIGetActive(HWND hwnd) */
 #define HANDLE_WM_MDIGETACTIVE(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(fn)(hwnd)
+    (LRESULT)(UINT_PTR)(fn)(hwnd)
 #define FORWARD_WM_MDIGETACTIVE(hwnd, fn) \
-    (HWND)(UINT)(DWORD)(fn)((hwnd), WM_MDIGETACTIVE, 0L, 0L)
+    (HWND)(UINT_PTR)(fn)((hwnd), WM_MDIGETACTIVE, 0L, 0L)
 
 /* HMENU Cls_MDISetMenu(HWND hwnd, BOOL fRefresh, HMENU hmenuFrame, HMENU hmenuWindow) */
 #define HANDLE_WM_MDISETMENU(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(fn)((hwnd), (BOOL)(wParam), (HMENU)(wParam), (HMENU)(lParam))
+    (LRESULT)(UINT_PTR)(fn)((hwnd), (BOOL)(wParam), (HMENU)(wParam), (HMENU)(lParam))
 #define FORWARD_WM_MDISETMENU(hwnd, fRefresh, hmenuFrame, hmenuWindow, fn) \
-    (HMENU)(UINT)(DWORD)(fn)((hwnd), WM_MDISETMENU, (WPARAM)((fRefresh) ? (hmenuFrame) : 0), (LPARAM)(hmenuWindow))
+    (HMENU)(UINT_PTR)(fn)((hwnd), WM_MDISETMENU, (WPARAM)((fRefresh) ? (hmenuFrame) : 0), (LPARAM)(hmenuWindow))
 
 /* void Cls_OnChildActivate(HWND hwnd) */
 #define HANDLE_WM_CHILDACTIVATE(hwnd, wParam, lParam, fn) \
@@ -1221,9 +1226,9 @@ extern "C" {
 
 /* HWND Cls_OnNextDlgCtl(HWND hwnd, HWND hwndSetFocus, BOOL fNext) */
 #define HANDLE_WM_NEXTDLGCTL(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HWND)(fn)((hwnd), (HWND)(wParam), (BOOL)(lParam))
+    (LRESULT)(UINT_PTR)(HWND)(fn)((hwnd), (HWND)(wParam), (BOOL)(lParam))
 #define FORWARD_WM_NEXTDLGCTL(hwnd, hwndSetFocus, fNext, fn) \
-    (HWND)(UINT)(DWORD)(fn)((hwnd), WM_NEXTDLGCTL, (WPARAM)(HWND)(hwndSetFocus), (LPARAM)(fNext))
+    (HWND)(UINT_PTR)(fn)((hwnd), WM_NEXTDLGCTL, (WPARAM)(HWND)(hwndSetFocus), (LPARAM)(fNext))
 
 /* void Cls_OnParentNotify(HWND hwnd, UINT msg, HWND hwndChild, int idChild) */
 #define HANDLE_WM_PARENTNOTIFY(hwnd, wParam, lParam, fn) \
@@ -1245,39 +1250,39 @@ extern "C" {
 
 /* HBRUSH Cls_OnCtlColor(HWND hwnd, HDC hdc, HWND hwndChild, int type) */
 #define HANDLE_WM_CTLCOLORMSGBOX(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_MSGBOX)
+    (LRESULT)(UINT_PTR)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_MSGBOX)
 #define FORWARD_WM_CTLCOLORMSGBOX(hwnd, hdc, hwndChild, fn) \
-    (HBRUSH)(UINT)(DWORD)(fn)((hwnd), WM_CTLCOLORMSGBOX, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
+    (HBRUSH)(UINT_PTR)(fn)((hwnd), WM_CTLCOLORMSGBOX, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
 
 #define HANDLE_WM_CTLCOLOREDIT(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_EDIT)
+    (LRESULT)(UINT_PTR)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_EDIT)
 #define FORWARD_WM_CTLCOLOREDIT(hwnd, hdc, hwndChild, fn) \
-    (HBRUSH)(UINT)(DWORD)(fn)((hwnd), WM_CTLCOLOREDIT, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
+    (HBRUSH)(UINT_PTR)(fn)((hwnd), WM_CTLCOLOREDIT, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
 
 #define HANDLE_WM_CTLCOLORLISTBOX(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_LISTBOX)
+    (LRESULT)(UINT_PTR)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_LISTBOX)
 #define FORWARD_WM_CTLCOLORLISTBOX(hwnd, hdc, hwndChild, fn) \
-    (HBRUSH)(UINT)(DWORD)(fn)((hwnd), WM_CTLCOLORLISTBOX, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
+    (HBRUSH)(UINT_PTR)(fn)((hwnd), WM_CTLCOLORLISTBOX, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
 
 #define HANDLE_WM_CTLCOLORBTN(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_BTN)
+    (LRESULT)(UINT_PTR)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_BTN)
 #define FORWARD_WM_CTLCOLORBTN(hwnd, hdc, hwndChild, fn) \
-    (HBRUSH)(UINT)(DWORD)(fn)((hwnd), WM_CTLCOLORBTN, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
+    (HBRUSH)(UINT_PTR)(fn)((hwnd), WM_CTLCOLORBTN, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
 
 #define HANDLE_WM_CTLCOLORDLG(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_DLG)
+    (LRESULT)(UINT_PTR)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_DLG)
 #define FORWARD_WM_CTLCOLORDLG(hwnd, hdc, hwndChild, fn) \
-    (HBRUSH)(UINT)(DWORD)(fn)((hwnd), WM_CTLCOLORDLG, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
+    (HBRUSH)(UINT_PTR)(fn)((hwnd), WM_CTLCOLORDLG, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
 
 #define HANDLE_WM_CTLCOLORSCROLLBAR(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_SCROLLBAR)
+    (LRESULT)(UINT_PTR)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_SCROLLBAR)
 #define FORWARD_WM_CTLCOLORSCROLLBAR(hwnd, hdc, hwndChild, fn) \
-    (HBRUSH)(UINT)(DWORD)(fn)((hwnd), WM_CTLCOLORSCROLLBAR, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
+    (HBRUSH)(UINT_PTR)(fn)((hwnd), WM_CTLCOLORSCROLLBAR, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
 
 #define HANDLE_WM_CTLCOLORSTATIC(hwnd, wParam, lParam, fn) \
-    (LRESULT)(DWORD)(UINT)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_STATIC)
+    (LRESULT)(UINT_PTR)(HBRUSH)(fn)((hwnd), (HDC)(wParam), (HWND)(lParam), CTLCOLOR_STATIC)
 #define FORWARD_WM_CTLCOLORSTATIC(hwnd, hdc, hwndChild, fn) \
-    (HBRUSH)(UINT)(DWORD)(fn)((hwnd), WM_CTLCOLORSTATIC, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
+    (HBRUSH)(UINT_PTR)(fn)((hwnd), WM_CTLCOLORSTATIC, (WPARAM)(HDC)(hdc), (LPARAM)(HWND)(hwndChild))
 
 /* void Cls_OnDeleteItem(HWND hwnd, const DELETEITEMSTRUCT * lpDeleteItem) */
 #define HANDLE_WM_DELETEITEM(hwnd, wParam, lParam, fn) \
@@ -1316,7 +1321,7 @@ extern "C" {
 
 /* void Cls_OnDisplayChange(HWND hwnd, UINT bitsPerPixel, UINT cxScreen, UINT cyScreen) */
 #define HANDLE_WM_DISPLAYCHANGE(hwnd, wParam, lParam, fn) \
-    ((fn)((hwnd), (UINT)(wParam), (UINT)LOWORD(lParam), (UINT)HIWORD(wParam)), 0L)
+    ((fn)((hwnd), (UINT)(wParam), (UINT)LOWORD(lParam), (UINT)HIWORD(lParam)), 0L)
 #define FORWARD_WM_DISPLAYCHANGE(hwnd, bitsPerPixel, cxScreen, cyScreen, fn) \
     (void)(fn)((hwnd), WM_DISPLAYCHANGE, (WPARAM)(UINT)(bitsPerPixel), (LPARAM)MAKELPARAM((UINT)(cxScreen), (UINT)(cyScreen)))
 
@@ -1361,8 +1366,8 @@ extern "C" {
 	(UINT)(DWORD)(fn)((hwnd), WM_NCHITTEST, 0L, MAKELPARAM((x), (y)))
 
 /* HFONT Cls_OnGetFont(HWND hwnd) */
-#define HANDLE_WM_GETFONT(hwnd, wParam, lParam, fn)  (LRESULT)(DWORD)(UINT)(HFONT)(fn)(hwnd)
-#define FORWARD_WM_GETFONT(hwnd, fn)  (HFONT)(UINT)(DWORD)(fn)((hwnd), WM_GETFONT, 0L, 0L)
+#define HANDLE_WM_GETFONT(hwnd, wParam, lParam, fn)  (LRESULT)(UINT_PTR)(HFONT)(fn)(hwnd)
+#define FORWARD_WM_GETFONT(hwnd, fn)  (HFONT)(UINT_PTR)(fn)((hwnd), WM_GETFONT, 0L, 0L)
 
 /* void Cls_OnSetFont(HWND hwndCtl, HFONT hfont, BOOL fRedraw) */
 #define HANDLE_WM_SETFONT(hwnd, wParam, lParam, fn) \

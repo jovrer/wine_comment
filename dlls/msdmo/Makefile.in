@@ -1,20 +1,10 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = msdmo.dll
-IMPORTLIB = libmsdmo.$(IMPLIBEXT)
-IMPORTS   = ole32 user32 advapi32 kernel32 
-EXTRALIBS = -luuid
+IMPORTLIB = msdmo
+IMPORTS   = dmoguids uuid ole32 user32 advapi32
 
 C_SRCS = \
 	dmoreg.c \
-	dmort.c \
-	msdmo_main.c
+	dmort.c
 
 RC_SRCS = \
 	rsrc.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

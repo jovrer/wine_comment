@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DDEML_H
@@ -25,6 +25,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif /* defined(__cplusplus) */
+
+#ifdef _USER32_
+#define WINUSERAPI
+#else
+#define WINUSERAPI DECLSPEC_IMPORT
+#endif
 
 /* Codepage Constants
  */
@@ -44,14 +50,45 @@ extern "C" {
 
 #define EXPENTRY CALLBACK
 
-#define SZDDESYS_TOPIC		TEXT("System")
-#define SZDDESYS_ITEM_TOPICS	TEXT("Topics")
-#define SZDDESYS_ITEM_SYSITEMS	TEXT("SysItems")
-#define SZDDESYS_ITEM_RTNMSG	TEXT("ReturnMessage")
-#define SZDDESYS_ITEM_STATUS	TEXT("Status")
-#define SZDDESYS_ITEM_FORMATS	TEXT("Formats")
-#define SZDDESYS_ITEM_HELP	TEXT("Help")
-#define SZDDE_ITEM_ITEMLIST	TEXT("TopicItemList")
+#ifdef UNICODE
+#if defined(_MSC_VER)
+#define SZDDESYS_TOPIC          L"System"
+#define SZDDESYS_ITEM_TOPICS    L"Topics"
+#define SZDDESYS_ITEM_SYSITEMS  L"SysItems"
+#define SZDDESYS_ITEM_RTNMSG    L"ReturnMessage"
+#define SZDDESYS_ITEM_STATUS    L"Status"
+#define SZDDESYS_ITEM_FORMATS   L"Formats"
+#define SZDDESYS_ITEM_HELP      L"Help"
+#define SZDDE_ITEM_ITEMLIST     L"TopicItemList"
+#elif defined(__GNUC__)
+#define SZDDESYS_TOPIC          (const WCHAR []){'S','y','s','t','e','m',0}
+#define SZDDESYS_ITEM_TOPICS    (const WCHAR []){'T','o','p','i','c','s',0}
+#define SZDDESYS_ITEM_SYSITEMS  (const WCHAR []){'S','y','s','I','t','e','m','s',0}
+#define SZDDESYS_ITEM_RTNMSG    (const WCHAR []){'R','e','t','u','r','n','M','e','s','s','a','g','e',0}
+#define SZDDESYS_ITEM_STATUS    (const WCHAR []){'S','t','a','t','u','s',0}
+#define SZDDESYS_ITEM_FORMATS   (const WCHAR []){'F','o','r','m','a','t','s',0}
+#define SZDDESYS_ITEM_HELP      (const WCHAR []){'H','e','l','p',0}
+#define SZDDE_ITEM_ITEMLIST     (const WCHAR []){'T','o','p','i','c','I','t','e','m','L','i','s','t',0}
+#else /* _MSC_VER/__GNUC__ */
+static const WCHAR SZDDESYS_TOPIC[] = {'S','y','s','t','e','m',0};
+static const WCHAR SZDDESYS_ITEM_TOPICS[] = {'T','o','p','i','c','s',0};
+static const WCHAR SZDDESYS_ITEM_SYSITEMS[] = {'S','y','s','I','t','e','m','s',0};
+static const WCHAR SZDDESYS_ITEM_RTNMSG[] = {'R','e','t','u','r','n','M','e','s','s','a','g','e',0};
+static const WCHAR SZDDESYS_ITEM_STATUS[] = {'S','t','a','t','u','s',0};
+static const WCHAR SZDDESYS_ITEM_FORMATS[] = {'F','o','r','m','a','t','s',0};
+static const WCHAR SZDDESYS_ITEM_HELP[] = {'H','e','l','p',0};
+static const WCHAR SZDDE_ITEM_ITEMLIST[] = {'T','o','p','i','c','I','t','e','m','L','i','s','t',0};
+#endif
+#else /* UNICODE */
+#define SZDDESYS_TOPIC          "System"
+#define SZDDESYS_ITEM_TOPICS    "Topics"
+#define SZDDESYS_ITEM_SYSITEMS  "SysItems"
+#define SZDDESYS_ITEM_RTNMSG    "ReturnMessage"
+#define SZDDESYS_ITEM_STATUS    "Status"
+#define SZDDESYS_ITEM_FORMATS   "Formats"
+#define SZDDESYS_ITEM_HELP      "Help"
+#define SZDDE_ITEM_ITEMLIST     "TopicItemList"
+#endif
 
 /***************************************************
 
@@ -114,22 +151,22 @@ extern "C" {
 #define     CBF_SKIP_DISCONNECTS         0x00200000
 #define     CBF_SKIP_ALLNOTIFICATIONS    0x003c0000
 
-#define     CBR_BLOCK                    ((HDDEDATA)~0UL)
+#define     CBR_BLOCK                    ((HDDEDATA)-1)
 
 /*
  * Application command flags
  */
-#define     APPCMD_CLIENTONLY            0x00000010L
-#define     APPCMD_FILTERINITS           0x00000020L
-#define     APPCMD_MASK                  0x00000FF0L
+#define     APPCMD_CLIENTONLY            __MSABI_LONG(0x00000010)
+#define     APPCMD_FILTERINITS           __MSABI_LONG(0x00000020)
+#define     APPCMD_MASK                  __MSABI_LONG(0x00000FF0)
 
 /*
  * Application classification flags
  */
 
-#define     APPCLASS_STANDARD            0x00000000L
-#define     APPCLASS_MONITOR             0x00000001L
-#define     APPCLASS_MASK                0x0000000FL
+#define     APPCLASS_STANDARD            __MSABI_LONG(0x00000000)
+#define     APPCLASS_MONITOR             __MSABI_LONG(0x00000001)
+#define     APPCLASS_MASK                __MSABI_LONG(0x0000000F)
 
 /*
  * Callback filter flags for use with MONITOR apps - 0 implies no monitor
@@ -192,6 +229,7 @@ extern "C" {
 #define XTYP_DISCONNECT		(0x00C0 | XCLASS_NOTIFICATION | XTYPF_NOBLOCK )
 #define XTYP_UNREGISTER		(0x00D0 | XCLASS_NOTIFICATION | XTYPF_NOBLOCK )
 #define XTYP_WILDCONNECT	(0x00E0 | XCLASS_DATA | XTYPF_NOBLOCK)
+#define XTYP_MONITOR		(0x00F0 | XCLASS_NOTIFICATION | XTYPF_NOBLOCK)
 
 #define XTYP_MASK		0x00F0
 #define XTYP_SHIFT		4
@@ -307,14 +345,15 @@ typedef struct tagCONVCONTEXT
     UINT  wFlags;
     UINT  wCountryID;
     INT   iCodePage;
-    DWORD   dwLangID;
-    DWORD   dwSecurity;
+    DWORD dwLangID;
+    DWORD dwSecurity;
+    SECURITY_QUALITY_OF_SERVICE qos;
 } CONVCONTEXT, *PCONVCONTEXT;
 
 typedef struct tagCONVINFO
 {
     DWORD		cb;
-    DWORD 		hUser;
+    DWORD_PTR 		hUser;
     HCONV		hConvPartner;
     HSZ			hszSvcPartner;
     HSZ			hszServiceReq;
@@ -333,42 +372,40 @@ typedef struct tagCONVINFO
 
 /*            Interface Definitions		*/
 
-
-UINT    WINAPI DdeInitializeA(LPDWORD,PFNCALLBACK,DWORD,DWORD);
-UINT    WINAPI DdeInitializeW(LPDWORD,PFNCALLBACK,DWORD,DWORD);
-#define   DdeInitialize WINELIB_NAME_AW(DdeInitialize)
-BOOL    WINAPI DdeUninitialize(DWORD);
-HCONVLIST WINAPI DdeConnectList(DWORD,HSZ,HSZ,HCONVLIST,PCONVCONTEXT);
-HCONV     WINAPI DdeQueryNextServer(HCONVLIST, HCONV);
-DWORD     WINAPI DdeQueryStringA(DWORD, HSZ, LPSTR, DWORD, INT);
-DWORD     WINAPI DdeQueryStringW(DWORD, HSZ, LPWSTR, DWORD, INT);
-#define   DdeQueryString WINELIB_NAME_AW(DdeQueryString)
-BOOL      WINAPI DdeDisconnectList(HCONVLIST);
-HCONV     WINAPI DdeConnect(DWORD,HSZ,HSZ,PCONVCONTEXT);
-BOOL      WINAPI DdeDisconnect(HCONV);
-HDDEDATA  WINAPI DdeCreateDataHandle(DWORD,LPBYTE,DWORD,DWORD,HSZ,UINT,UINT);
-HCONV     WINAPI DdeReconnect(HCONV);
-HSZ       WINAPI DdeCreateStringHandleA(DWORD,LPCSTR,INT);
-HSZ       WINAPI DdeCreateStringHandleW(DWORD,LPCWSTR,INT);
-#define   DdeCreateStringHandle WINELIB_NAME_AW(DdeCreateStringHandle)
-BOOL      WINAPI DdeFreeStringHandle(DWORD,HSZ);
-BOOL      WINAPI DdeFreeDataHandle(HDDEDATA);
-BOOL      WINAPI DdeKeepStringHandle(DWORD,HSZ);
-HDDEDATA  WINAPI DdeClientTransaction(LPBYTE,DWORD,HCONV,HSZ,UINT,UINT,DWORD,LPDWORD);
-BOOL	  WINAPI DdeAbandonTransaction(DWORD idInst, HCONV hConv, DWORD idTransaction);
-BOOL      WINAPI DdeImpersonateClient(HCONV);
-BOOL      WINAPI DdePostAdvise(DWORD,HSZ,HSZ);
-HDDEDATA  WINAPI DdeAddData(HDDEDATA,LPBYTE,DWORD,DWORD);
-DWORD     WINAPI DdeGetData(HDDEDATA,LPBYTE,DWORD,DWORD);
-LPBYTE    WINAPI DdeAccessData(HDDEDATA,LPDWORD);
-BOOL      WINAPI DdeUnaccessData(HDDEDATA);
-BOOL      WINAPI DdeEnableCallback(DWORD,HCONV,UINT);
-INT       WINAPI DdeCmpStringHandles(HSZ,HSZ);
-BOOL      WINAPI DdeSetUserHandle(HCONV,DWORD,DWORD);
-
-HDDEDATA  WINAPI DdeNameService(DWORD,HSZ,HSZ,UINT);
-UINT      WINAPI DdeGetLastError(DWORD);
-UINT      WINAPI DdeQueryConvInfo(HCONV,DWORD,PCONVINFO);
+WINUSERAPI BOOL      WINAPI DdeAbandonTransaction(DWORD idInst, HCONV hConv, DWORD idTransaction);
+WINUSERAPI LPBYTE    WINAPI DdeAccessData(HDDEDATA,LPDWORD);
+WINUSERAPI HDDEDATA  WINAPI DdeAddData(HDDEDATA,LPBYTE,DWORD,DWORD);
+WINUSERAPI HDDEDATA  WINAPI DdeClientTransaction(LPBYTE,DWORD,HCONV,HSZ,UINT,UINT,DWORD,LPDWORD);
+WINUSERAPI INT       WINAPI DdeCmpStringHandles(HSZ,HSZ);
+WINUSERAPI HCONV     WINAPI DdeConnect(DWORD,HSZ,HSZ,PCONVCONTEXT);
+WINUSERAPI HCONVLIST WINAPI DdeConnectList(DWORD,HSZ,HSZ,HCONVLIST,PCONVCONTEXT);
+WINUSERAPI HDDEDATA  WINAPI DdeCreateDataHandle(DWORD,LPBYTE,DWORD,DWORD,HSZ,UINT,UINT);
+WINUSERAPI HSZ       WINAPI DdeCreateStringHandleA(DWORD,LPCSTR,INT);
+WINUSERAPI HSZ       WINAPI DdeCreateStringHandleW(DWORD,LPCWSTR,INT);
+#define                     DdeCreateStringHandle WINELIB_NAME_AW(DdeCreateStringHandle)
+WINUSERAPI BOOL      WINAPI DdeDisconnect(HCONV);
+WINUSERAPI BOOL      WINAPI DdeDisconnectList(HCONVLIST);
+WINUSERAPI BOOL      WINAPI DdeEnableCallback(DWORD,HCONV,UINT);
+WINUSERAPI BOOL      WINAPI DdeFreeDataHandle(HDDEDATA);
+WINUSERAPI BOOL      WINAPI DdeFreeStringHandle(DWORD,HSZ);
+WINUSERAPI DWORD     WINAPI DdeGetData(HDDEDATA,LPBYTE,DWORD,DWORD);
+WINUSERAPI UINT      WINAPI DdeGetLastError(DWORD);
+WINUSERAPI BOOL      WINAPI DdeImpersonateClient(HCONV);
+WINUSERAPI UINT      WINAPI DdeInitializeA(LPDWORD,PFNCALLBACK,DWORD,DWORD);
+WINUSERAPI UINT      WINAPI DdeInitializeW(LPDWORD,PFNCALLBACK,DWORD,DWORD);
+#define                     DdeInitialize WINELIB_NAME_AW(DdeInitialize)
+WINUSERAPI BOOL      WINAPI DdeKeepStringHandle(DWORD,HSZ);
+WINUSERAPI HDDEDATA  WINAPI DdeNameService(DWORD,HSZ,HSZ,UINT);
+WINUSERAPI BOOL      WINAPI DdePostAdvise(DWORD,HSZ,HSZ);
+WINUSERAPI UINT      WINAPI DdeQueryConvInfo(HCONV,DWORD,PCONVINFO);
+WINUSERAPI HCONV     WINAPI DdeQueryNextServer(HCONVLIST, HCONV);
+WINUSERAPI DWORD     WINAPI DdeQueryStringA(DWORD, HSZ, LPSTR, DWORD, INT);
+WINUSERAPI DWORD     WINAPI DdeQueryStringW(DWORD, HSZ, LPWSTR, DWORD, INT);
+#define                     DdeQueryString WINELIB_NAME_AW(DdeQueryString)
+WINUSERAPI HCONV     WINAPI DdeReconnect(HCONV);
+WINUSERAPI BOOL      WINAPI DdeSetUserHandle(HCONV,DWORD,DWORD);
+WINUSERAPI BOOL      WINAPI DdeUnaccessData(HDDEDATA);
+WINUSERAPI BOOL      WINAPI DdeUninitialize(DWORD);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __EDITSTR_H
@@ -29,6 +29,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
+
+#define COBJMACROS
 
 #include <windef.h>
 #include <winbase.h>
@@ -38,56 +41,78 @@
 #include <winuser.h>
 #include <richedit.h>
 #include <commctrl.h>
+#include <ole2.h>
+#include <richole.h>
+#include "imm.h"
+#include <textserv.h>
+#include "usp10.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
+#include "wine/list.h"
+
+#ifdef __i386__
+extern const struct ITextHostVtbl itextHostStdcallVtbl DECLSPEC_HIDDEN;
+#endif /* __i386__ */
 
 typedef struct tagME_String
 {
   WCHAR *szData;
   int nLen, nBuffer;
+  void (*free)(struct tagME_String *);
 } ME_String;
+
+typedef struct tagME_FontCacheItem
+{
+  LOGFONTW lfSpecs;
+  HFONT hFont;
+  int nRefs;
+  int nAge;
+} ME_FontCacheItem;
+
+#define HFONT_CACHE_SIZE 10
 
 typedef struct tagME_Style
 {
   CHARFORMAT2W fmt;
 
-  HFONT hFont; /* cached font for the style */
+  ME_FontCacheItem *font_cache; /* cached font for the style */
   TEXTMETRICW tm; /* cached font metrics for the style */
   int nRefs; /* reference count */
-  int nSequence; /* incremented when cache needs to be rebuilt, ie. every screen redraw */
+  SCRIPT_CACHE script_cache;
+  struct list entry;
 } ME_Style;
 
 typedef enum {
+  diInvalid,
   diTextStart, /* start of the text buffer */
   diParagraph, /* paragraph start */
+  diCell, /* cell start */
   diRun, /* run (sequence of chars with the same character format) */
   diStartRow, /* start of the row (line of text on the screen) */
   diTextEnd, /* end of the text buffer */
   
   /********************* these below are meant for finding only *********************/
-  diStartRowOrParagraph, /* 5 */
+  diStartRowOrParagraph, /* 7 */
   diStartRowOrParagraphOrEnd,
   diRunOrParagraph,
   diRunOrStartRow,
   diParagraphOrEnd,
-  diRunOrParagraphOrEnd, /* 10 */
-  
-  diUndoInsertRun, /* 11 */
-  diUndoDeleteRun, /* 12 */
-  diUndoJoinParagraphs, /* 13 */
-  diUndoSplitParagraph, /* 14 */
-  diUndoSetParagraphFormat, /* 15 */
-  diUndoSetCharFormat, /* 16 */
-  diUndoEndTransaction, /* 17 */
-  diUndoSetDefaultCharFormat, /* 18 */
+  diRunOrParagraphOrEnd, /* 12 */
 } ME_DIType;
+
+#define SELECTIONBAR_WIDTH 8
 
 /******************************** run flags *************************/
 #define MERF_STYLEFLAGS 0x0FFF
 /* run contains non-text content, which has its own rules for wrapping, sizing etc */
-#define MERF_GRAPHICS 1
+#define MERF_GRAPHICS   0x001
 /* run is a tab (or, in future, any kind of content whose size is dependent on run position) */
-#define MERF_TAB 2
+#define MERF_TAB        0x002
+/* run is a cell boundary */
+#define MERF_ENDCELL    0x004 /* v4.1 */
+
+#define MERF_NONTEXT (MERF_GRAPHICS | MERF_TAB | MERF_ENDCELL)
 
 /* run is splittable (contains white spaces in the middle or end) */
 #define MERF_SPLITTABLE 0x001000
@@ -97,17 +122,19 @@ typedef enum {
 #define MERF_ENDWHITE   0x004000
 /* run is completely made of whitespaces */
 #define MERF_WHITESPACE 0x008000
-/* run is a last (dummy) run in the paragraph */
-#define MERF_SKIPPED    0x010000
-/* flags that are calculated during text wrapping */
-#define MERF_CALCBYWRAP 0x0F0000
 /* the "end of paragraph" run, contains 1 character */
 #define MERF_ENDPARA    0x100000
+/* forcing the "end of row" run, contains 1 character */
+#define MERF_ENDROW     0x200000
+/* run is hidden */
+#define MERF_HIDDEN     0x400000
+/* start of a table row has an empty paragraph that should be skipped over. */
+#define MERF_TABLESTART 0x800000 /* v4.1 */
 
 /* runs with any of these flags set cannot be joined */
-#define MERF_NOJOIN (MERF_GRAPHICS|MERF_TAB|MERF_ENDPARA)
+#define MERF_NOJOIN (MERF_GRAPHICS|MERF_TAB|MERF_ENDPARA|MERF_ENDROW)
 /* runs that don't contain real text */
-#define MERF_NOTEXT (MERF_GRAPHICS|MERF_TAB|MERF_ENDPARA)
+#define MERF_NOTEXT (MERF_GRAPHICS|MERF_TAB|MERF_ENDPARA|MERF_ENDROW)
 
 /* those flags are kept when the row is split */
 #define MERF_SPLITMASK (~(0))
@@ -115,41 +142,96 @@ typedef enum {
 /******************************** para flags *************************/
 
 /* this paragraph was already wrapped and hasn't changed, every change resets that flag */
-#define MEPF_REWRAP 1
-#define MEPF_REPAINT 2
+#define MEPF_REWRAP   0x01
+/* v4.1 */
+#define MEPF_CELL     0x04 /* The paragraph is nested in a cell */
+#define MEPF_ROWSTART 0x08 /* Hidden empty paragraph at the start of the row */
+#define MEPF_ROWEND   0x10 /* Visible empty paragraph at the end of the row */
+#define MEPF_COMPLEX  0x20 /* Use uniscribe */
 
 /******************************** structures *************************/
 
 struct tagME_DisplayItem;
 
+struct re_object
+{
+  struct list entry;
+  REOBJECT obj;
+};
+
 typedef struct tagME_Run
 {
-  ME_String *strText;
   ME_Style *style;
+  struct tagME_Paragraph *para; /* ptr to the run's paragraph */
   int nCharOfs; /* relative to para's offset */
+  int len;      /* length of run's text */
   int nWidth; /* width of full run, width of leading&trailing ws */
   int nFlags;
   int nAscent, nDescent; /* pixels above/below baseline */
   POINT pt; /* relative to para's position */
+  struct re_object *reobj; /* FIXME: should be a union with strText (at least) */
+
+  SCRIPT_ANALYSIS script_analysis;
+  int num_glyphs, max_glyphs;
+  WORD *glyphs;
+  SCRIPT_VISATTR *vis_attrs;
+  int *advances;
+  GOFFSET *offsets;
+  int max_clusters;
+  WORD *clusters;
 } ME_Run;
 
-typedef struct tagME_Document {
-  struct tagME_DisplayItem *def_char_style;
-  struct tagME_DisplayItem *def_para_style;
-  int last_wrapped_line;
-} ME_Document;
+typedef struct tagME_Border
+{
+  int width;
+  COLORREF colorRef;
+} ME_Border;
+
+typedef struct tagME_BorderRect
+{
+  ME_Border top;
+  ME_Border left;
+  ME_Border bottom;
+  ME_Border right;
+} ME_BorderRect;
+
+struct para_num
+{
+    ME_Style *style;
+    ME_String *text;
+    INT width;
+    POINT pt;
+};
 
 typedef struct tagME_Paragraph
 {
-  PARAFORMAT2 *pFmt;
-  int nLeftMargin, nRightMargin, nFirstMargin;
+  PARAFORMAT2 fmt;
+  ME_String *text;
+
+  struct tagME_DisplayItem *pCell; /* v4.1 */
+  ME_BorderRect border;
+
   int nCharOfs;
   int nFlags;
-  int nYPos, nHeight;
-  int nLastPaintYPos, nLastPaintHeight;
+  POINT pt;
+  int nHeight, nWidth;
   int nRows;
-  struct tagME_DisplayItem *prev_para, *next_para, *document;
+  struct para_num para_num;
+  ME_Run *eop_run; /* ptr to the end-of-para run */
+  struct tagME_DisplayItem *prev_para, *next_para;
+  struct tagME_DisplayItem *prev_marked, *next_marked;
 } ME_Paragraph;
+
+typedef struct tagME_Cell /* v4.1 */
+{
+  int nNestingLevel; /* 0 for normal cells, and greater for nested cells */
+  int nRightBoundary;
+  ME_BorderRect border;
+  POINT pt;
+  int nHeight, nWidth;
+  int yTextOffset; /* The text offset is caused by the largest top border. */
+  struct tagME_DisplayItem *prev_cell, *next_cell, *parent_cell;
+} ME_Cell;
 
 typedef struct tagME_Row
 {
@@ -158,7 +240,7 @@ typedef struct tagME_Row
   int nWidth;
   int nLMargin;
   int nRMargin;
-  int nYPos;
+  POINT pt;
 } ME_Row;
 
 /* the display item list layout is like this:
@@ -180,17 +262,10 @@ typedef struct tagME_DisplayItem
   union {
     ME_Run run;
     ME_Row row;
+    ME_Cell cell;
     ME_Paragraph para;
-    ME_Document doc; /* not used */
-    ME_Style *ustyle; /* used by diUndoSetCharFormat */
   } member;
 } ME_DisplayItem;
-
-typedef struct tagME_UndoItem
-{
-  ME_DisplayItem di;
-  int nStart, nLen;
-} ME_UndoItem;
 
 typedef struct tagME_TextBuffer
 {
@@ -201,6 +276,7 @@ typedef struct tagME_TextBuffer
 
 typedef struct tagME_Cursor
 {
+  ME_DisplayItem *pPara;
   ME_DisplayItem *pRun;
   int nOffset;
 } ME_Cursor;
@@ -211,6 +287,83 @@ typedef enum {
   umIgnore,
   umAddBackToUndo
 } ME_UndoMode;
+
+enum undo_type
+{
+    undo_insert_run,
+    undo_delete_run,
+    undo_join_paras,
+    undo_split_para,
+    undo_set_para_fmt,
+    undo_set_char_fmt,
+    undo_end_transaction,          /* marks the end of a group of changes for undo */
+    undo_potential_end_transaction /* allows grouping typed chars for undo */
+};
+
+struct insert_run_item
+{
+    int pos, len;
+    WCHAR *str;
+    ME_Style *style;
+    DWORD flags;
+};
+
+struct delete_run_item
+{
+    int pos, len;
+};
+
+struct join_paras_item
+{
+    int pos;
+};
+
+struct split_para_item
+{
+    int pos;
+    PARAFORMAT2 fmt;
+    ME_BorderRect border;
+    ME_String *eol_str;
+    DWORD flags;
+    ME_BorderRect cell_border;
+    int cell_right_boundary;
+};
+
+struct set_para_fmt_item
+{
+    int pos;
+    PARAFORMAT2 fmt;
+    ME_BorderRect border;
+};
+
+struct set_char_fmt_item
+{
+    int pos, len;
+    CHARFORMAT2W fmt;
+};
+
+struct undo_item
+{
+    struct list entry;
+    enum undo_type type;
+    union
+    {
+        struct insert_run_item insert_run;
+        struct delete_run_item delete_run;
+        struct join_paras_item join_paras;
+        struct split_para_item split_para;
+        struct set_para_fmt_item set_para_fmt;
+        struct set_char_fmt_item set_char_fmt;
+    } u;
+};
+
+typedef enum {
+  stPosition = 0,
+  stWord,
+  stLine,
+  stParagraph,
+  stDocument
+} ME_SelectionType;
 
 typedef struct tagME_FontTableItem {
   BYTE bCharSet;
@@ -228,92 +381,83 @@ struct tagME_InStream {
 };
 typedef struct tagME_InStream ME_InStream;
 
-
-#define STREAMOUT_BUFFER_SIZE 4096
-#define STREAMOUT_FONTTBL_SIZE 8192
-#define STREAMOUT_COLORTBL_SIZE 1024
-
-typedef struct tagME_OutStream {
-  EDITSTREAM *stream;
-  char buffer[STREAMOUT_BUFFER_SIZE];
-  UINT pos, written;
-  UINT nCodePage;
-  UINT nFontTblLen;
-  ME_FontTableItem fonttbl[STREAMOUT_FONTTBL_SIZE];
-  UINT nColorTblLen;
-  COLORREF colortbl[STREAMOUT_COLORTBL_SIZE];
-  UINT nDefaultFont;
-  UINT nDefaultCodePage;
-} ME_OutStream;
-
-typedef struct tagME_FontCacheItem
-{
-  LOGFONTW lfSpecs;
-  HFONT hFont;
-  int nRefs;
-  int nAge;
-} ME_FontCacheItem;
-
-#define HFONT_CACHE_SIZE 10
-
 typedef struct tagME_TextEditor
 {
-  HWND hWnd;
+  HWND hWnd, hwndParent;
+  ITextHost *texthost;
+  IUnknown *reOle;
   BOOL bEmulateVersion10;
-  BOOL bCaretShown;
   ME_TextBuffer *pBuffer;
   ME_Cursor *pCursors;
+  DWORD styleFlags;
+  DWORD exStyleFlags;
   int nCursors;
   SIZE sizeWindow;
   int nTotalLength, nLastTotalLength;
+  int nTotalWidth, nLastTotalWidth;
+  int nAvailWidth; /* 0 = wrap to client area, else wrap width in twips */
   int nUDArrowX;
-  int nSequence;
-  int nOldSelFrom, nOldSelTo;
+  int total_rows;
   COLORREF rgbBackColor;
   HBRUSH hbrBackground;
   BOOL bCaretAtEnd;
   int nEventMask;
   int nModifyStep;
-  ME_DisplayItem *pUndoStack, *pRedoStack;
+  struct list undo_stack;
+  struct list redo_stack;
+  int nUndoStackSize;
+  int nUndoLimit;
   ME_UndoMode nUndoMode;
   int nParagraphs;
   int nLastSelStart, nLastSelEnd;
+  ME_DisplayItem *pLastSelStartPara, *pLastSelEndPara;
   ME_FontCacheItem pFontCache[HFONT_CACHE_SIZE];
-  ME_OutStream *pStream;
-  BOOL bScrollX, bScrollY;
-  int nScrollPosY;
   int nZoomNumerator, nZoomDenominator;
+  RECT prevClientRect;
   RECT rcFormat;
-  BOOL bRedraw;
+  BOOL bDefaultFormatRect;
+  BOOL bWordWrap;
+  int nTextLimit;
+  EDITWORDBREAKPROCW pfnWordBreak;
+  LPRICHEDITOLECALLBACK lpOleCallback;
+  /*TEXTMODE variable; contains only one of each of the following options:
+   *TM_RICHTEXT or TM_PLAINTEXT
+   *TM_SINGLELEVELUNDO or TM_MULTILEVELUNDO
+   *TM_SINGLECODEPAGE or TM_MULTICODEPAGE*/
+  int mode;
+  BOOL bHideSelection;
+  BOOL AutoURLDetect_bEnable;
+  WCHAR cPasswordMask;
+  BOOL bHaveFocus;
+  BOOL bDialogMode; /* Indicates that we are inside a dialog window */
+  /*for IME */
+  int imeStartIndex;
+  DWORD selofs; /* The size of the selection bar on the left side of control */
+  ME_SelectionType nSelectionType;
+  ME_DisplayItem *first_marked_para;
+
+  /* Track previous notified selection */
+  CHARRANGE notified_cr;
+
+  /* Cache previously set scrollbar info */
+  SCROLLINFO vert_si, horz_si;
+
+  BOOL bMouseCaptured;
+  int wheel_remain;
+  struct list style_list;
+  struct list reobj_list;
 } ME_TextEditor;
 
 typedef struct tagME_Context
 {
   HDC hDC;
   POINT pt;
-  POINT ptRowOffset;
   RECT rcView;
-  HBRUSH hbrMargin;
+  SIZE dpi;
+  int nAvailWidth;
 
   /* those are valid inside ME_WrapTextParagraph and related */
-  POINT ptFirstRun;
   ME_TextEditor *editor;
-  int nSequence;
 } ME_Context;
-
-typedef struct tagME_WrapContext
-{
-  ME_Style *style;
-  ME_Context *context;
-  int nLeftMargin, nRightMargin, nFirstMargin;
-  int nTotalWidth, nAvailWidth;
-  int nRow;
-  POINT pt;
-  BOOL bOverflown;
-  ME_DisplayItem *pRowStart;
-  
-  ME_DisplayItem *pLastSplittableRun;
-  POINT ptLastSplittableRun;
-} ME_WrapContext;  
 
 #endif

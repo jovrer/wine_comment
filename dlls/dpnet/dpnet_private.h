@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DPNET_PRIVATE_H
@@ -25,15 +25,22 @@
 # error You must include config.h to use this header
 #endif
 
+#include "wine/heap.h"
+#include <wine/list.h>
+#include "winsock2.h"
+#include "wine/unicode.h"
+
 #include "dplay8.h"
+#include "dplobby8.h"
 /*
- *#include "dplobby8.h"
  *#include "dplay8sp.h"
  */
 
 /* DirectPlay8 Interfaces: */
 typedef struct IDirectPlay8ClientImpl IDirectPlay8ClientImpl;
 typedef struct IDirectPlay8AddressImpl IDirectPlay8AddressImpl;
+typedef struct IDirectPlay8LobbiedApplicationImpl IDirectPlay8LobbiedApplicationImpl;
+typedef struct IDirectPlay8ThreadPoolImpl IDirectPlay8ThreadPoolImpl;
 
 /* ------------------ */
 /* IDirectPlay8Client */
@@ -44,53 +51,95 @@ typedef struct IDirectPlay8AddressImpl IDirectPlay8AddressImpl;
  */
 struct IDirectPlay8ClientImpl
 {
-  /* IUnknown fields */
-  const IDirectPlay8ClientVtbl *lpVtbl;
-  LONG          ref;
-  /* IDirectPlay8Client fields */
-};
+    IDirectPlay8Client IDirectPlay8Client_iface;
+    LONG ref;
 
-/* IUnknown: */
-extern ULONG WINAPI IDirectPlay8ClientImpl_AddRef(PDIRECTPLAY8CLIENT iface);
+    /* IDirectPlay8Client fields */
+    PFNDPNMESSAGEHANDLER msghandler;
+    DWORD flags;
+    void *usercontext;
+    WCHAR *username;
+    void  *data;
+    DWORD datasize;
+
+    DPN_SP_CAPS spcaps;
+};
 
 /* ------------------- */
 /* IDirectPlay8Address */
 /* ------------------- */
+struct component
+{
+    struct list entry;
+
+    WCHAR *name;
+    DWORD type;
+    DWORD size;
+
+    union
+    {
+        DWORD value;            /* DPNA_DATATYPE_DWORD       */
+        GUID guid;              /* DPNA_DATATYPE_GUID        */
+        WCHAR *string;          /* DPNA_DATATYPE_STRING      */
+        char *ansi;             /* DPNA_DATATYPE_STRING_ANSI */
+        void *binary;           /* DPNA_DATATYPE_BINARY      */
+    } data;
+};
 
 /*****************************************************************************
  * IDirectPlay8Address implementation structure
  */
 struct IDirectPlay8AddressImpl
 {
-  /* IUnknown fields */
-  const IDirectPlay8AddressVtbl *lpVtbl;
-  LONG          ref;
-  /* IDirectPlay8Address fields */
-  GUID SP_guid;
-  const WCHAR *url;
+    IDirectPlay8Address IDirectPlay8Address_iface;
+    LONG ref;
+    /* IDirectPlay8Address fields */
+    GUID SP_guid;
+    BOOL init;
+
+    struct component **components;
+    DWORD comp_count;
+    DWORD comp_array_size;
 };
 
-/* IUnknown: */
-extern HRESULT WINAPI IDirectPlay8AddressImpl_QueryInterface(PDIRECTPLAY8ADDRESS iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI IDirectPlay8AddressImpl_AddRef(PDIRECTPLAY8ADDRESS iface);
-extern ULONG WINAPI IDirectPlay8AddressImpl_Release(PDIRECTPLAY8ADDRESS iface);
+/*****************************************************************************
+ * IDirectPlay8LobbiedApplication implementation structure
+ */
+struct IDirectPlay8LobbiedApplicationImpl
+{
+    IDirectPlay8LobbiedApplication IDirectPlay8LobbiedApplication_iface;
+    LONG ref;
 
-/* IDirectPlay8Address: */
+    PFNDPNMESSAGEHANDLER msghandler;
+    DWORD flags;
+    void *usercontext;
+    DPNHANDLE *connection;
+};
 
-
+/*****************************************************************************
+ * IDirectPlay8ThreadPool implementation structure
+ */
+struct IDirectPlay8ThreadPoolImpl
+{
+    IDirectPlay8ThreadPool IDirectPlay8ThreadPool_iface;
+    LONG ref;
+};
 
 /**
  * factories
  */
-extern HRESULT DPNET_CreateDirectPlay8Client(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj);
-extern HRESULT DPNET_CreateDirectPlay8Server(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj);
-extern HRESULT DPNET_CreateDirectPlay8Peer(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj);
-extern HRESULT DPNET_CreateDirectPlay8Address(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj);
+extern HRESULT DPNET_CreateDirectPlay8Client(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT DPNET_CreateDirectPlay8Server(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT DPNET_CreateDirectPlay8Peer(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT DPNET_CreateDirectPlay8Address(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT DPNET_CreateDirectPlay8LobbiedApp(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT DPNET_CreateDirectPlay8ThreadPool(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT DPNET_CreateDirectPlay8LobbyClient(IClassFactory *iface, IUnknown *pUnkOuter, REFIID riid, void **ppobj) DECLSPEC_HIDDEN;
 
-/**
- * debug
- */
-extern const char *debugstr_SP(const GUID *id);
+extern void init_dpn_sp_caps(DPN_SP_CAPS *dpnspcaps) DECLSPEC_HIDDEN;
+extern void init_winsock(void) DECLSPEC_HIDDEN;
+extern HRESULT enum_services_providers(const GUID * const service, DPN_SERVICE_PROVIDER_INFO * const info_buffer,
+        DWORD * const buf_size, DWORD * const returned) DECLSPEC_HIDDEN;
 
 /* used for generic dumping (copied from ddraw) */
 typedef struct {
@@ -106,6 +155,12 @@ typedef struct {
 #define FE(x) { x, #x }	
 #define GE(x) { &x, #x }
 
-
+static inline WCHAR *heap_strdupW( const WCHAR *src )
+{
+    WCHAR *dst;
+    if (!src) return NULL;
+    if ((dst = heap_alloc( (strlenW( src ) + 1) * sizeof(WCHAR) ))) strcpyW( dst, src );
+    return dst;
+}
 
 #endif

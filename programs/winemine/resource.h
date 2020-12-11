@@ -15,9 +15,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <windef.h>
+#include <winuser.h>
 
 #define ID_TIMER        1000
 
@@ -45,7 +47,23 @@
 #define IDC_EDITROWS   1032
 #define IDC_EDITMINES  1033
 
+#define IDC_RESET           1041
+#define IDC_CONFIRMTITLE    1042
+#define IDC_CONFIRMTEXT     1043
+
 #define IDS_APPNAME    1101
 #define IDS_NOBODY     1102
+#define IDS_ABOUT      1103
 
 #define IDA_WINEMINE   1201
+
+#define IDM_WINEMINE   1
+
+#define IDI_WINEMINE   1
+#define IDI_FACES      2
+#define IDI_LEDS       3
+#define IDI_MINES      4
+
+#define DLG_TIMES      1
+#define DLG_CONGRATS   2
+#define DLG_CUSTOM     3

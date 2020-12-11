@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package config;
@@ -108,11 +108,8 @@ sub file_skip($) {
 
     $_ = file_absolutize($_);
 
-    m%^(?:libs|programs|server|tools)/% && return 1;
-    m%^dlls/wineps/data/% && return 1;
-    m%^dlls/winmm/wineoss/midipatch\.c$% && return 1;
-    m%spec\.c$% && return 1;
-
+    m%^(?:dlls|include)/% || return 1;
+    m%^dlls/wineps\.drv/data/% && return 1;
     return 0;
 }
 
@@ -155,7 +152,7 @@ sub _get_files($$;$) {
 
     my @dirs = ($dir);
     while(defined(my $dir = shift @dirs)) {
-	opendir(DIR, $dir);
+	opendir(DIR, $dir) || die "Can't open directory $dir: $!\n";
 	my @entries= readdir(DIR);
 	closedir(DIR);
 	foreach (@entries) {

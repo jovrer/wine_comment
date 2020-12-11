@@ -17,25 +17,23 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
-#include <stdarg.h>
 #include <stdio.h>
 
+#define WIN32_LEAN_AND_MEAN
 #define COBJMACROS
 
-#include <windef.h>
-#include <winbase.h>
-#include <winreg.h>
+#include <windows.h>
 #include <shellapi.h>
 #include <objbase.h>
 #include <shlguid.h>
 #include <shlwapi.h>
 #include <shlobj.h>
-#include <winuser.h>
 
+#include <wine/unicode.h>
 #include <wine/debug.h>
 
 #include "winecfg.h"
@@ -43,165 +41,132 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winecfg);
 
-#define BOX_MODE_CD_ASSIGN 1
-#define BOX_MODE_CD_AUTODETECT 2
-#define BOX_MODE_NONE 3
-#define BOX_MODE_NORMAL 4
+#define BOX_MODE_DEVICE 1
+#define BOX_MODE_NORMAL 2
 
 static BOOL advanced = FALSE;
 static BOOL updating_ui = FALSE;
 static struct drive* current_drive;
 
-static void get_etched_rect(HWND dialog, RECT *rect);
 static void update_controls(HWND dialog);
+
+static DWORD driveui_msgbox (HWND parent, UINT messageId, DWORD flags)
+{
+  WCHAR* caption = load_string (IDS_WINECFG_TITLE);
+  WCHAR* text = load_string (messageId);
+  DWORD result = MessageBoxW (parent, text, caption, flags);
+  HeapFree (GetProcessHeap(), 0, caption);
+  HeapFree (GetProcessHeap(), 0, text);
+  return result;
+}
 
 /**** listview helper functions ****/
 
 /* clears the item at index in the listview */
 static void lv_clear_curr_select(HWND dialog, int index)
 {
-    ListView_SetItemState(GetDlgItem(dialog, IDC_LIST_DRIVES), index, 0, LVIS_SELECTED);
+    LVITEMW item;
+
+    item.mask = LVIF_STATE;
+    item.state = 0;
+    item.stateMask = LVIS_SELECTED;
+    SendDlgItemMessageW( dialog, IDC_LIST_DRIVES, LVM_SETITEMSTATE, index, (LPARAM)&item );
 }
 
 /* selects the item at index in the listview */
 static void lv_set_curr_select(HWND dialog, int index)
 {
+    LVITEMW item;
+
     /* no more than one item can be selected in our listview */
     lv_clear_curr_select(dialog, -1);
-    ListView_SetItemState(GetDlgItem(dialog, IDC_LIST_DRIVES), index, LVIS_SELECTED, LVIS_SELECTED);
+    item.mask = LVIF_STATE;
+    item.state = LVIS_SELECTED;
+    item.stateMask = LVIS_SELECTED;
+    SendDlgItemMessageW( dialog, IDC_LIST_DRIVES, LVM_SETITEMSTATE, index, (LPARAM)&item );
 }
 
 /* returns the currently selected item in the listview */
 static int lv_get_curr_select(HWND dialog)
 {
-    return SendDlgItemMessage(dialog, IDC_LIST_DRIVES, LVM_GETNEXTITEM, -1, LVNI_SELECTED);
+    return SendDlgItemMessageW(dialog, IDC_LIST_DRIVES, LVM_GETNEXTITEM, -1, LVNI_SELECTED);
 }
 
 /* sets the item in the listview at item->iIndex */
-static void lv_set_item(HWND dialog, LVITEM *item)
+static void lv_set_item(HWND dialog, LVITEMW *item)
 {
-    SendDlgItemMessage(dialog, IDC_LIST_DRIVES, LVM_SETITEM, 0, (LPARAM) item);
+    SendDlgItemMessageW(dialog, IDC_LIST_DRIVES, LVM_SETITEMW, 0, (LPARAM) item);
 }
 
 /* sets specified item's text */
-static void lv_set_item_text(HWND dialog, int item, int subItem, char *text)
+static void lv_set_item_text(HWND dialog, int item, int subItem, WCHAR *text)
 {
-    LVITEM lvItem;
+    LVITEMW lvItem;
     if (item < 0 || subItem < 0) return;
     lvItem.mask = LVIF_TEXT;
     lvItem.iItem = item;
     lvItem.iSubItem = subItem;
     lvItem.pszText = text;
-    lvItem.cchTextMax = lstrlen(lvItem.pszText);
+    lvItem.cchTextMax = lstrlenW(lvItem.pszText);
     lv_set_item(dialog, &lvItem);
 }
 
 /* inserts an item into the listview */
-static void lv_insert_item(HWND dialog, LVITEM *item)
+static void lv_insert_item(HWND dialog, LVITEMW *item)
 {
-    SendDlgItemMessage(dialog, IDC_LIST_DRIVES, LVM_INSERTITEM, 0, (LPARAM) item);
+    SendDlgItemMessageW(dialog, IDC_LIST_DRIVES, LVM_INSERTITEMW, 0, (LPARAM) item);
 }
 
 /* retrieve the item at index item->iIndex */
-static void lv_get_item(HWND dialog, LVITEM *item)
+static void lv_get_item(HWND dialog, LVITEMW *item)
 {
-    SendDlgItemMessage(dialog, IDC_LIST_DRIVES, LVM_GETITEM, 0, (LPARAM) item);
+    SendDlgItemMessageW(dialog, IDC_LIST_DRIVES, LVM_GETITEMW, 0, (LPARAM) item);
 }
 
 static void set_advanced(HWND dialog)
 {
     int state;
-    char text[256];
-    RECT rect;
+    WCHAR text[256];
 
     if (advanced)
     {
         state = SW_NORMAL;
-        LoadString(GetModuleHandle(NULL), IDS_HIDE_ADVANCED, text, 256);
+        LoadStringW(GetModuleHandleW(NULL), IDS_HIDE_ADVANCED, text, 256);
     }
     else
     {
         state = SW_HIDE;
-        LoadString(GetModuleHandle(NULL), IDS_SHOW_ADVANCED, text, 256);
+        LoadStringW(GetModuleHandleW(NULL), IDS_SHOW_ADVANCED, text, 256);
     }
 
-    ShowWindow(GetDlgItem(dialog, IDC_RADIO_AUTODETECT), state);
-    ShowWindow(GetDlgItem(dialog, IDC_RADIO_ASSIGN), state);
-    ShowWindow(GetDlgItem(dialog, IDC_EDIT_LABEL), state);
     ShowWindow(GetDlgItem(dialog, IDC_EDIT_DEVICE), state);
+    ShowWindow(GetDlgItem(dialog, IDC_STATIC_DEVICE), state);
+    ShowWindow(GetDlgItem(dialog, IDC_EDIT_LABEL), state);
     ShowWindow(GetDlgItem(dialog, IDC_STATIC_LABEL), state);
     ShowWindow(GetDlgItem(dialog, IDC_BUTTON_BROWSE_DEVICE), state);
     ShowWindow(GetDlgItem(dialog, IDC_EDIT_SERIAL), state);
     ShowWindow(GetDlgItem(dialog, IDC_STATIC_SERIAL), state);
-    ShowWindow(GetDlgItem(dialog, IDC_LABELSERIAL_STATIC), state);
     ShowWindow(GetDlgItem(dialog, IDC_COMBO_TYPE), state);
     ShowWindow(GetDlgItem(dialog, IDC_STATIC_TYPE), state);
 
     /* update the button text based on the state */
-    SetWindowText(GetDlgItem(dialog, IDC_BUTTON_SHOW_HIDE_ADVANCED), text);
-
-    /* redraw for the etched line */
-    get_etched_rect(dialog, &rect);
-    InflateRect(&rect, 5, 5);
-    InvalidateRect(dialog, &rect, TRUE);
+    SetWindowTextW(GetDlgItem(dialog, IDC_BUTTON_SHOW_HIDE_ADVANCED), text);
 }
 
 struct drive_typemap {
     unsigned int sCode;
-    const char *sDesc;
+    UINT idDesc;
 };
 
 static const struct drive_typemap type_pairs[] = {
-  { DRIVE_UNKNOWN,    "Autodetect"      },
-  { DRIVE_FIXED,      "Local hard disk" },
-  { DRIVE_REMOTE,     "Network share"   },
-  { DRIVE_REMOVABLE,  "Floppy disk"     },
-  { DRIVE_CDROM,      "CD-ROM"          }
+  { DRIVE_UNKNOWN,    IDS_DRIVE_UNKNOWN   },
+  { DRIVE_FIXED,      IDS_DRIVE_FIXED     },
+  { DRIVE_REMOTE,     IDS_DRIVE_REMOTE    },
+  { DRIVE_REMOVABLE,  IDS_DRIVE_REMOVABLE },
+  { DRIVE_CDROM,      IDS_DRIVE_CDROM     }
 };
 
 #define DRIVE_TYPE_DEFAULT 0
-
-static void fill_drive_droplist(long mask, char curletter, HWND dialog)
-{
-    int i;
-    int selection;
-    int count;
-    int next_letter;
-    char sName[4];
-
-    strcpy(sName, "A:");
-    for (i = 0, count = 0, selection = -1, next_letter = -1; i <= 'Z'-'A'; ++i)
-    {
-        if (mask & DRIVE_MASK_BIT('A' + i))
-        {
-            int index;
-
-            sName[0] = 'A' + i;
-            index = SendDlgItemMessage(dialog, IDC_COMBO_LETTER, CB_ADDSTRING, 0, (LPARAM) sName);
-
-            if (toupper(curletter) == 'A' + i)
-            {
-                selection = count;
-            }
-
-            if (i >= 2 && next_letter == -1)
-            {
-                /* default drive is first one of C-Z */
-                next_letter = count;
-            }
-
-            count++;
-        }
-    }
-
-    if (selection == -1)
-    {
-        selection = next_letter;
-    }
-
-    SendDlgItemMessage(dialog, IDC_COMBO_LETTER, CB_SETCURSEL, selection, 0);
-}
-
 
 static void enable_labelserial_box(HWND dialog, int mode)
 {
@@ -209,44 +174,19 @@ static void enable_labelserial_box(HWND dialog, int mode)
 
     switch (mode)
     {
-        case BOX_MODE_CD_ASSIGN:
-            enable(IDC_RADIO_ASSIGN);
-            disable(IDC_EDIT_DEVICE);
-            disable(IDC_BUTTON_BROWSE_DEVICE);
-            enable(IDC_EDIT_SERIAL);
-            enable(IDC_EDIT_LABEL);
-            enable(IDC_STATIC_SERIAL);
-            enable(IDC_STATIC_LABEL);
-            break;
-
-        case BOX_MODE_CD_AUTODETECT:
-            enable(IDC_RADIO_ASSIGN);
-            enable(IDC_EDIT_DEVICE);
-            enable(IDC_BUTTON_BROWSE_DEVICE);
-            disable(IDC_EDIT_SERIAL);
-            disable(IDC_EDIT_LABEL);
-            disable(IDC_STATIC_SERIAL);
-            disable(IDC_STATIC_LABEL);
-            break;
-
-        case BOX_MODE_NONE:
-            disable(IDC_RADIO_ASSIGN);
+        case BOX_MODE_DEVICE:
+            /* FIXME: enable device editing */
             disable(IDC_EDIT_DEVICE);
             disable(IDC_BUTTON_BROWSE_DEVICE);
             disable(IDC_EDIT_SERIAL);
             disable(IDC_EDIT_LABEL);
-            disable(IDC_STATIC_SERIAL);
-            disable(IDC_STATIC_LABEL);
             break;
 
         case BOX_MODE_NORMAL:
-            enable(IDC_RADIO_ASSIGN);
             disable(IDC_EDIT_DEVICE);
             disable(IDC_BUTTON_BROWSE_DEVICE);
             enable(IDC_EDIT_SERIAL);
             enable(IDC_EDIT_LABEL);
-            enable(IDC_STATIC_SERIAL);
-            enable(IDC_STATIC_LABEL);
             break;
     }
 }
@@ -265,13 +205,13 @@ static int fill_drives_list(HWND dialog)
     prevsel = lv_get_curr_select(dialog); 
 
     /* Clear the listbox */
-    SendDlgItemMessage(dialog, IDC_LIST_DRIVES, LVM_DELETEALLITEMS, 0, 0);
+    SendDlgItemMessageW(dialog, IDC_LIST_DRIVES, LVM_DELETEALLITEMS, 0, 0);
 
     for(i = 0; i < 26; i++)
     {
-        LVITEM item;
-        char *letter = 0;
-        int len;
+        LVITEMW item;
+        WCHAR *path;
+        char letter[4];
 
         /* skip over any unused drives */
         if (!drives[i].in_use)
@@ -280,34 +220,24 @@ static int fill_drives_list(HWND dialog)
         if (drives[i].letter == 'C')
             drivec_present = TRUE;
 
-        len = snprintf(letter, 0, "%c:", 'A' + i);
-        len++; /* add a byte for the trailing null */
+        letter[0] = 'A' + i;
+        letter[1] = ':';
+        letter[2] = 0;
 
-        letter = HeapAlloc(GetProcessHeap(), 0, len);
-        snprintf(letter, len, "%c:", 'A' + i);
-
-        memset(&item, 0, sizeof(item));
-        item.mask = LVIF_TEXT;
+        item.mask = LVIF_TEXT | LVIF_PARAM;
         item.iItem = count;
         item.iSubItem = 0;
-        item.pszText = letter;
-        item.cchTextMax = lstrlen(item.pszText);
+        item.pszText = strdupU2W(letter);
+        item.cchTextMax = lstrlenW(item.pszText);
+        item.lParam = (LPARAM) &drives[i];
 
         lv_insert_item(dialog, &item);
+        HeapFree(GetProcessHeap(), 0, item.pszText);
 
-        item.iSubItem = 1;
-        item.pszText = drives[i].unixpath;
-        item.cchTextMax = lstrlen(item.pszText);
+        path = strdupU2W(drives[i].unixpath);
+        lv_set_item_text(dialog, count, 1, path);
+        HeapFree(GetProcessHeap(), 0, path);
 
-        lv_set_item(dialog, &item);
-
-        item.mask = LVIF_PARAM;
-        item.iSubItem = 0;
-        item.lParam = (LPARAM) &drives[i];
-        
-        lv_set_item(dialog, &item);
-
-        HeapFree(GetProcessHeap(), 0, letter);
         count++;
     }
 
@@ -331,6 +261,49 @@ static void on_options_click(HWND dialog)
         set_reg_key(config_key, "", "ShowDotFiles", "Y");
     else
         set_reg_key(config_key, "", "ShowDotFiles", "N");
+
+    SendMessageW(GetParent(dialog), PSM_CHANGED, 0, 0);
+}
+
+static INT_PTR CALLBACK drivechoose_dlgproc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    static int i, sel;
+    char c;
+    char drive[] = "X:";
+
+    switch(uMsg)
+    {
+    case WM_INITDIALOG:
+        {
+        ULONG mask = ~drive_available_mask(0); /* the mask is now which drives aren't available */
+        for( c = 'A'; c<= 'Z'; c++){
+            drive[0] = c;
+            if(!( mask & (1 << (c - 'A'))))
+                SendDlgItemMessageA( hwndDlg, IDC_DRIVESA2Z, CB_ADDSTRING, 0, (LPARAM) drive);
+        }
+        drive[0] = lParam;
+        SendDlgItemMessageA( hwndDlg, IDC_DRIVESA2Z, CB_SELECTSTRING, 0, (LPARAM) drive);
+        return TRUE;
+        }
+    case WM_COMMAND:
+        if(HIWORD(wParam) != BN_CLICKED) break;
+        switch (LOWORD(wParam))
+        {
+        case IDOK:
+            i = SendDlgItemMessageA( hwndDlg, IDC_DRIVESA2Z, CB_GETCURSEL, 0, 0);
+            if( i != CB_ERR){
+                SendDlgItemMessageA( hwndDlg, IDC_DRIVESA2Z, CB_GETLBTEXT, i, (LPARAM) drive);
+                sel = drive[0];
+            } else
+                sel = -1;
+            EndDialog(hwndDlg, sel);
+            return TRUE;
+        case IDCANCEL:
+            EndDialog(hwndDlg, -1);
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 static void on_add_click(HWND dialog)
@@ -342,23 +315,35 @@ static void on_add_click(HWND dialog)
        then invoke the directory chooser dialog. */
 
     char new = 'C'; /* we skip A and B, they are historically floppy drives */
-    long mask = ~drive_available_mask(0); /* the mask is now which drives aren't available */
+    ULONG mask = ~drive_available_mask(0); /* the mask is now which drives aren't available */
     int i, c;
+    INT_PTR ret;
 
     while (mask & (1 << (new - 'A')))
     {
         new++;
         if (new > 'Z')
         {
-            MessageBox(dialog, "You cannot add any more drives.\n\nEach drive must have a letter, from A to Z, so you cannot have more than 26", "", MB_OK | MB_ICONEXCLAMATION);
+            driveui_msgbox (dialog, IDS_DRIVE_LETTERS_EXCEEDED, MB_OK | MB_ICONEXCLAMATION);
             return;
         }
     }
 
-    WINE_TRACE("allocating drive letter %c\n", new);
 
-    if (new == 'C') add_drive(new, "../drive_c", "System Drive", "", DRIVE_FIXED);
-    else add_drive(new, "/", "", "", DRIVE_FIXED);
+    ret = DialogBoxParamW(0, MAKEINTRESOURCEW(IDD_DRIVECHOOSE), dialog, drivechoose_dlgproc, new);
+
+    if( ret == -1) return;
+    new = ret;
+
+    WINE_TRACE("selected drive letter %c\n", new);
+
+    if (new == 'C')
+    {
+        WCHAR label[64];
+        LoadStringW(GetModuleHandleW(NULL), IDS_SYSTEM_DRIVE_LABEL, label, ARRAY_SIZE(label));
+        add_drive(new, "../drive_c", NULL, label, 0, DRIVE_FIXED);
+    }
+    else add_drive(new, "/", NULL, NULL, 0, DRIVE_UNKNOWN);
 
     fill_drives_list(dialog);
 
@@ -375,18 +360,18 @@ static void on_add_click(HWND dialog)
     SetFocus(GetDlgItem(dialog, IDC_LIST_DRIVES));
 
     update_controls(dialog);
+    SendMessageW(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
 }
 
 static void on_remove_click(HWND dialog)
 {
     int itemIndex;
     struct drive *drive;
-    LVITEM item;
+    LVITEMW item;
 
     itemIndex = lv_get_curr_select(dialog);
     if (itemIndex == -1) return; /* no selection */
 
-    memset(&item, 0, sizeof(item));
     item.mask = LVIF_PARAM;
     item.iItem = itemIndex;
     item.iSubItem = 0;
@@ -395,11 +380,11 @@ static void on_remove_click(HWND dialog)
 
     drive = (struct drive *) item.lParam;
 
-    WINE_ERR("unixpath: %s\n", drive->unixpath);
+    WINE_TRACE("unixpath: %s\n", drive->unixpath);
 
     if (drive->letter == 'C')
     {
-        DWORD result = MessageBox(dialog, "Are you sure you want to delete drive C?\n\nMost Windows applications expect drive C to exist, and will die messily if it doesn't. If you proceed remember to recreate it!", "", MB_YESNO | MB_ICONEXCLAMATION);
+        DWORD result = driveui_msgbox (dialog, IDS_CONFIRM_DELETE_C, MB_YESNO | MB_ICONEXCLAMATION);
         if (result == IDNO) return;
     }
 
@@ -414,17 +399,17 @@ static void on_remove_click(HWND dialog)
     SetFocus(GetDlgItem(dialog, IDC_LIST_DRIVES));
 
     update_controls(dialog);
+    SendMessageW(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
 }
 
 static void update_controls(HWND dialog)
 {
-    char *path;
+    static const WCHAR emptyW[1];
+    WCHAR *path;
     unsigned int type;
-    char *label;
-    char *serial;
-    const char *device;
+    char serial[16];
     int i, selection = -1;
-    LVITEM item;
+    LVITEMW item;
 
     updating_ui = TRUE;
 
@@ -436,7 +421,6 @@ static void update_controls(HWND dialog)
         return;
     }
 
-    memset(&item, 0, sizeof(item));
     item.mask = LVIF_PARAM;
     item.iItem = i;
     item.iSubItem = 0;
@@ -446,21 +430,21 @@ static void update_controls(HWND dialog)
 
     WINE_TRACE("Updating sheet for drive %c\n", current_drive->letter);
 
-    /* Drive letters */
-    fill_drive_droplist(drive_available_mask(current_drive->letter), current_drive->letter, dialog);
-
     /* path */
-    path = current_drive->unixpath;
-    WINE_TRACE("set path control text to '%s'\n", path);
-    set_text(dialog, IDC_EDIT_PATH, path);
+    WINE_TRACE("set path control text to '%s'\n", current_drive->unixpath);
+    path = strdupU2W(current_drive->unixpath);
+    set_textW(dialog, IDC_EDIT_PATH, path);
+    HeapFree(GetProcessHeap(), 0, path);
 
     /* drive type */
     type = current_drive->type;
-    SendDlgItemMessage(dialog, IDC_COMBO_TYPE, CB_RESETCONTENT, 0, 0);
+    SendDlgItemMessageW(dialog, IDC_COMBO_TYPE, CB_RESETCONTENT, 0, 0);
 
-    for (i = 0; i < sizeof(type_pairs) / sizeof(struct drive_typemap); i++)
+    for (i = 0; i < ARRAY_SIZE(type_pairs); i++)
     {
-        SendDlgItemMessage(dialog, IDC_COMBO_TYPE, CB_ADDSTRING, 0, (LPARAM) type_pairs[i].sDesc);
+        WCHAR driveDesc[64];
+        LoadStringW(GetModuleHandleW(NULL), type_pairs[i].idDesc, driveDesc, ARRAY_SIZE(driveDesc));
+        SendDlgItemMessageW (dialog, IDC_COMBO_TYPE, CB_ADDSTRING, 0, (LPARAM)driveDesc);
 
         if (type_pairs[i].sCode ==  type)
         {
@@ -469,42 +453,26 @@ static void update_controls(HWND dialog)
     }
 
     if (selection == -1) selection = DRIVE_TYPE_DEFAULT;
-    SendDlgItemMessage(dialog, IDC_COMBO_TYPE, CB_SETCURSEL, selection, 0);
+    SendDlgItemMessageW(dialog, IDC_COMBO_TYPE, CB_SETCURSEL, selection, 0);
 
-    /* removeable media properties */
-    label = current_drive->label;
-    set_text(dialog, IDC_EDIT_LABEL, label);
+    EnableWindow( GetDlgItem( dialog, IDC_BUTTON_REMOVE ), (current_drive->letter != 'C') );
+    EnableWindow( GetDlgItem( dialog, IDC_EDIT_PATH ), (current_drive->letter != 'C') );
+    EnableWindow( GetDlgItem( dialog, IDC_BUTTON_BROWSE_PATH ), (current_drive->letter != 'C') );
+    EnableWindow( GetDlgItem( dialog, IDC_COMBO_TYPE ), (current_drive->letter != 'C') );
+
+    /* removable media properties */
+    set_textW(dialog, IDC_EDIT_LABEL, current_drive->label ? current_drive->label : emptyW);
 
     /* set serial edit text */
-    serial = current_drive->serial;
+    sprintf( serial, "%X", current_drive->serial );
     set_text(dialog, IDC_EDIT_SERIAL, serial);
 
-    /* TODO: get the device here to put into the edit box */
-    device = "Not implemented yet";
-    set_text(dialog, IDC_EDIT_DEVICE, device);
-    device = NULL;
+    set_text(dialog, IDC_EDIT_DEVICE, current_drive->device);
 
-    selection = IDC_RADIO_ASSIGN;
     if ((type == DRIVE_CDROM) || (type == DRIVE_REMOVABLE))
-    {
-        if (device)
-        {
-            selection = IDC_RADIO_AUTODETECT;
-            enable_labelserial_box(dialog, BOX_MODE_CD_AUTODETECT);
-        }
-        else
-        {
-            selection = IDC_RADIO_ASSIGN;
-            enable_labelserial_box(dialog, BOX_MODE_CD_ASSIGN);
-        }
-    }
+        enable_labelserial_box(dialog, BOX_MODE_DEVICE);
     else
-    {
         enable_labelserial_box(dialog, BOX_MODE_NORMAL);
-        selection = IDC_RADIO_ASSIGN;
-    }
-
-    CheckRadioButton(dialog, IDC_RADIO_AUTODETECT, IDC_RADIO_ASSIGN, selection);
 
     updating_ui = FALSE;
 
@@ -521,34 +489,48 @@ static void on_edit_changed(HWND dialog, WORD id)
     {
         case IDC_EDIT_LABEL:
         {
-            char *label;
-
-            label = get_text(dialog, id);
+            WCHAR *label = get_textW(dialog, id);
             HeapFree(GetProcessHeap(), 0, current_drive->label);
-            current_drive->label = label ? label :  strdupA("");
+            current_drive->label = label;
+            current_drive->modified = TRUE;
 
-            WINE_TRACE("set label to %s\n", current_drive->label);
+            WINE_TRACE("set label to %s\n", wine_dbgstr_w(current_drive->label));
 
             /* enable the apply button  */
-            SendMessage(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
+            SendMessageW(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
             break;
         }
 
         case IDC_EDIT_PATH:
         {
+            WCHAR *wpath;
             char *path;
+            int lenW;
 
-            path = get_text(dialog, id);
+            wpath = get_textW(dialog, id);
+            if( (lenW = WideCharToMultiByte(CP_UNIXCP, 0, wpath, -1, NULL, 0, NULL, NULL)) )
+            {
+                path = HeapAlloc(GetProcessHeap(), 0, lenW);
+                WideCharToMultiByte(CP_UNIXCP, 0, wpath, -1, path, lenW, NULL, NULL);
+            }
+            else
+            {
+                path = NULL;
+                wpath = strdupU2W("drive_c");
+            }
+
             HeapFree(GetProcessHeap(), 0, current_drive->unixpath);
             current_drive->unixpath = path ? path : strdupA("drive_c");
+            current_drive->modified = TRUE;
 
             WINE_TRACE("set path to %s\n", current_drive->unixpath);
 
             lv_set_item_text(dialog, lv_get_curr_select(dialog), 1,
-                             current_drive->unixpath);
+                             wpath);
+            HeapFree(GetProcessHeap(), 0, wpath);
 
             /* enable the apply button  */
-            SendMessage(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
+            SendMessageW(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
             break;
         }
 
@@ -557,13 +539,14 @@ static void on_edit_changed(HWND dialog, WORD id)
             char *serial;
 
             serial = get_text(dialog, id);
-            HeapFree(GetProcessHeap(), 0, current_drive->serial);
-            current_drive->serial = serial ? serial : strdupA("");
+            current_drive->serial = serial ? strtoul( serial, NULL, 16 ) : 0;
+            HeapFree(GetProcessHeap(), 0, serial);
+            current_drive->modified = TRUE;
 
-            WINE_TRACE("set serial to %s", current_drive->serial);
+            WINE_TRACE("set serial to %08X\n", current_drive->serial);
 
             /* enable the apply button  */
-            SendMessage(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
+            SendMessageW(GetParent(dialog), PSM_CHANGED, (WPARAM) dialog, 0);
             break;
         }
 
@@ -577,43 +560,13 @@ static void on_edit_changed(HWND dialog, WORD id)
     }
 }
 
-static void get_etched_rect(HWND dialog, RECT *rect)
-{
-    GetClientRect(dialog, rect);
-
-    /* these dimensions from the labelserial static in En.rc  */
-    rect->top = 265;
-    rect->bottom = 265;
-    rect->left += 25;
-    rect->right -= 25;
-}
-
-/* this just draws a nice line to separate the advanced gui from the n00b gui :) */
-static void paint(HWND dialog)
-{
-    PAINTSTRUCT ps;
-
-    BeginPaint(dialog, &ps);
-
-    if (advanced)
-    {
-        RECT rect;
-
-        get_etched_rect(dialog, &rect);
-
-        DrawEdge(ps.hdc, &rect, EDGE_ETCHED, BF_TOP);
-    }
-
-    EndPaint(dialog, &ps);
-}
-
-static void browse_for_folder(HWND dialog)
+BOOL browse_for_unix_folder(HWND dialog, WCHAR *pszPath)
 {
     static WCHAR wszUnixRootDisplayName[] = 
         { ':',':','{','C','C','7','0','2','E','B','2','-','7','D','C','5','-','1','1','D','9','-',
           'C','6','8','7','-','0','0','0','4','2','3','8','A','0','1','C','D','}', 0 };
-    char pszChoosePath[256];
-    BROWSEINFOA bi = {
+    WCHAR pszChoosePath[FILENAME_MAX];
+    BROWSEINFOW bi = {
         dialog,
         NULL,
         NULL,
@@ -626,70 +579,72 @@ static void browse_for_folder(HWND dialog)
     IShellFolder *pDesktop;
     LPITEMIDLIST pidlUnixRoot, pidlSelectedPath;
     HRESULT hr;
-   
-    LoadString(GetModuleHandle(NULL), IDS_CHOOSE_PATH, pszChoosePath, 256);
-    
+
+    LoadStringW(GetModuleHandleW(NULL), IDS_CHOOSE_PATH, pszChoosePath, FILENAME_MAX);
+
     hr = SHGetDesktopFolder(&pDesktop);
-    if (!SUCCEEDED(hr)) return;
+    if (FAILED(hr)) return FALSE;
 
     hr = IShellFolder_ParseDisplayName(pDesktop, NULL, NULL, wszUnixRootDisplayName, NULL, 
                                        &pidlUnixRoot, NULL);
-    if (!SUCCEEDED(hr)) {
+    if (FAILED(hr)) {
         IShellFolder_Release(pDesktop);
-        return;
+        return FALSE;
     }
 
     bi.pidlRoot = pidlUnixRoot;
-    pidlSelectedPath = SHBrowseForFolderA(&bi);
+    pidlSelectedPath = SHBrowseForFolderW(&bi);
     SHFree(pidlUnixRoot);
     
     if (pidlSelectedPath) {
         STRRET strSelectedPath;
-        char *pszSelectedPath;
+        WCHAR *pszSelectedPath;
         HRESULT hr;
         
         hr = IShellFolder_GetDisplayNameOf(pDesktop, pidlSelectedPath, SHGDN_FORPARSING, 
                                            &strSelectedPath);
         IShellFolder_Release(pDesktop);
-        if (!SUCCEEDED(hr)) {
+        if (FAILED(hr)) {
             SHFree(pidlSelectedPath);
-            return;
+            return FALSE;
         }
 
-        hr = StrRetToStr(&strSelectedPath, pidlSelectedPath, &pszSelectedPath);
+        hr = StrRetToStrW(&strSelectedPath, pidlSelectedPath, &pszSelectedPath);
         SHFree(pidlSelectedPath);
-        if (!SUCCEEDED(hr)) return;
-    
-        HeapFree(GetProcessHeap(), 0, current_drive->unixpath);
-        current_drive->unixpath = strdupA(pszSelectedPath);
-        fill_drives_list(dialog);
-        update_controls(dialog);   
+        if (FAILED(hr)) return FALSE;
+
+        lstrcpyW(pszPath, pszSelectedPath);
         
         CoTaskMemFree(pszSelectedPath);
+        return TRUE;
     }
+    return FALSE;
 }
 
 static void init_listview_columns(HWND dialog)
 {
-    LVCOLUMN listColumn;
+    LVCOLUMNW listColumn;
     RECT viewRect;
     int width;
+    WCHAR column[64];
 
     GetClientRect(GetDlgItem(dialog, IDC_LIST_DRIVES), &viewRect);
     width = (viewRect.right - viewRect.left) / 6 - 5;
 
+    LoadStringW(GetModuleHandleW(NULL), IDS_COL_DRIVELETTER, column, ARRAY_SIZE(column));
     listColumn.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
-    listColumn.pszText = (char*) "Letter";
-    listColumn.cchTextMax = lstrlen(listColumn.pszText);
+    listColumn.pszText = column;
+    listColumn.cchTextMax = lstrlenW (listColumn.pszText);
     listColumn.cx = width;
 
-    SendDlgItemMessage(dialog, IDC_LIST_DRIVES, LVM_INSERTCOLUMN, 0, (LPARAM) &listColumn);
+    SendDlgItemMessageW (dialog, IDC_LIST_DRIVES, LVM_INSERTCOLUMNW, 0, (LPARAM) &listColumn);
 
+    LoadStringW(GetModuleHandleW(NULL), IDS_COL_DRIVEMAPPING, column, ARRAY_SIZE(column));
     listColumn.cx = viewRect.right - viewRect.left - width;
-    listColumn.pszText = (char*) "Drive Mapping";
-    listColumn.cchTextMax = lstrlen(listColumn.pszText);
+    listColumn.pszText = column;
+    listColumn.cchTextMax = lstrlenW (listColumn.pszText);
 
-    SendDlgItemMessage(dialog, IDC_LIST_DRIVES, LVM_INSERTCOLUMN, 1, (LPARAM) &listColumn);
+    SendDlgItemMessageW (dialog, IDC_LIST_DRIVES, LVM_INSERTCOLUMNW, 1, (LPARAM) &listColumn);
 }
 
 static void load_drive_options(HWND dialog)
@@ -702,17 +657,31 @@ INT_PTR CALLBACK
 DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     int item;
-    struct drive *drive;
 
     switch (msg)
     {
         case WM_INITDIALOG:
             init_listview_columns(dialog);
-            load_drives();
+            if (!load_drives())
+            {
+                ShowWindow( GetDlgItem( dialog, IDC_STATIC_MOUNTMGR_ERROR ), SW_SHOW );
+                ShowWindow( GetDlgItem( dialog, IDC_LIST_DRIVES ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_BUTTON_ADD ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_BUTTON_REMOVE ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_BUTTON_AUTODETECT ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_STATIC_PATH ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_EDIT_PATH ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_BUTTON_BROWSE_PATH ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_COMBO_TYPE ), SW_HIDE );
+                ShowWindow( GetDlgItem( dialog, IDC_BUTTON_SHOW_HIDE_ADVANCED ), SW_HIDE );
+                set_advanced(dialog);
+                break;
+            }
+            ShowWindow( GetDlgItem( dialog, IDC_STATIC_MOUNTMGR_ERROR ), SW_HIDE );
             load_drive_options(dialog);
 
             if (!drives[2].in_use)
-                MessageBox(dialog, "You don't have a drive C. This is not so great.\n\nRemember to click 'Add' in the Drives tab to create one!\n", "", MB_OK | MB_ICONEXCLAMATION);
+                driveui_msgbox (dialog, IDS_NO_DRIVE_C, MB_OK | MB_ICONEXCLAMATION);
 
             fill_drives_list(dialog);
             update_controls(dialog);
@@ -724,10 +693,6 @@ DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
             set_window_title(dialog);
             break;
 
-        case WM_PAINT:
-            paint(dialog);
-            break;
-
         case WM_COMMAND:
             switch (HIWORD(wParam))
             {
@@ -736,8 +701,6 @@ DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
                     break;
 
                 case BN_CLICKED:
-                    SendMessage(GetParent(dialog), PSM_CHANGED, 0, 0);
-
                     switch (LOWORD(wParam))
                     {
                         case IDC_SHOW_DOT_FILES:
@@ -747,7 +710,7 @@ DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
                     break;
 
                 case CBN_SELCHANGE:
-                    SendMessage(GetParent(dialog), PSM_CHANGED, 0, 0);
+                    SendMessageW(GetParent(dialog), PSM_CHANGED, 0, 0);
                     break;
             }
 
@@ -765,14 +728,14 @@ DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
 
                 case IDC_BUTTON_EDIT:
                     if (HIWORD(wParam) != BN_CLICKED) break;
-                    item = SendMessage(GetDlgItem(dialog, IDC_LIST_DRIVES),  LB_GETCURSEL, 0, 0);
-                    drive = (struct drive *) SendMessage(GetDlgItem(dialog, IDC_LIST_DRIVES), LB_GETITEMDATA, item, 0);
-                    /*DialogBoxParam(NULL, MAKEINTRESOURCE(IDD_DRIVE_EDIT), NULL, (DLGPROC) DriveEditDlgProc, (LPARAM) drive); */
+                    item = SendMessageW(GetDlgItem(dialog, IDC_LIST_DRIVES),  LB_GETCURSEL, 0, 0);
+                    SendMessageW(GetDlgItem(dialog, IDC_LIST_DRIVES), LB_GETITEMDATA, item, 0);
                     break;
 
                 case IDC_BUTTON_AUTODETECT:
                     autodetect_drives();
                     fill_drives_list(dialog);
+                    SendMessageW(GetParent(dialog), PSM_CHANGED, 0, 0);
                     break;
 
                 case IDC_BUTTON_SHOW_HIDE_ADVANCED:
@@ -781,28 +744,12 @@ DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
                     break;
 
                 case IDC_BUTTON_BROWSE_PATH:
-                    browse_for_folder(dialog);
-                    break;
-
-                case IDC_RADIO_ASSIGN:
                 {
-                    char *str;
-
-                    str = get_text(dialog, IDC_EDIT_LABEL);
-                    HeapFree(GetProcessHeap(), 0, current_drive->label);
-                    current_drive->label = str ? str : strdupA("");
-
-                    str = get_text(dialog, IDC_EDIT_SERIAL);
-                    HeapFree(GetProcessHeap(), 0, current_drive->serial);
-                    current_drive->serial = str ? str : strdupA("");
-
-                    /* TODO: we don't have a device at this point */
-
-                    enable_labelserial_box(dialog, BOX_MODE_CD_ASSIGN);
-
+                    WCHAR szTargetPath[FILENAME_MAX];
+                    if (browse_for_unix_folder(dialog, szTargetPath)) 
+                        set_textW(dialog, IDC_EDIT_PATH, szTargetPath);
                     break;
                 }
-
 
                 case IDC_COMBO_TYPE:
                 {
@@ -811,21 +758,19 @@ DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
 
                     if (HIWORD(wParam) != CBN_SELCHANGE) break;
 
-                    selection = SendDlgItemMessage(dialog, IDC_COMBO_TYPE, CB_GETCURSEL, 0, 0);
+                    selection = SendDlgItemMessageW(dialog, IDC_COMBO_TYPE, CB_GETCURSEL, 0, 0);
 
                     if (selection >= 0 &&
                         (type_pairs[selection].sCode == DRIVE_CDROM ||
                          type_pairs[selection].sCode == DRIVE_REMOVABLE))
-                    {
-                        if (IsDlgButtonChecked(dialog, IDC_RADIO_AUTODETECT))
-                            mode = BOX_MODE_CD_AUTODETECT;
-                        else
-                            mode = BOX_MODE_CD_ASSIGN;
-                    }
+                        mode = BOX_MODE_DEVICE;
+                    else
+                        mode = BOX_MODE_NORMAL;
 
                     enable_labelserial_box(dialog, mode);
 
                     current_drive->type = type_pairs[selection].sCode;
+                    current_drive->modified = TRUE;
                     break;
                 }
 
@@ -837,11 +782,11 @@ DriveDlgProc (HWND dialog, UINT msg, WPARAM wParam, LPARAM lParam)
             {
                 case PSN_KILLACTIVE:
                     WINE_TRACE("PSN_KILLACTIVE\n");
-                    SetWindowLongPtr(dialog, DWLP_MSGRESULT, FALSE);
+                    SetWindowLongPtrW(dialog, DWLP_MSGRESULT, FALSE);
                     break;
                 case PSN_APPLY:
                     apply_drive_changes();
-                    SetWindowLongPtr(dialog, DWLP_MSGRESULT, PSNRET_NOERROR);
+                    SetWindowLongPtrW(dialog, DWLP_MSGRESULT, PSNRET_NOERROR);
                     break;
                 case PSN_SETACTIVE:
                     break;

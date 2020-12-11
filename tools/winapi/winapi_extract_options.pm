@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package winapi_extract_options;
@@ -40,16 +40,14 @@ my %options_long = (
     "win16" => { default => 1, description => "Win16 extraction" },
     "win32" => { default => 1, description => "Win32 extraction" },
 
-    "old" => { default => 0, description => "use the old parser" },
     "headers" => { default => 0, description => "parse the .h files as well" },
 
-    "implemented" => { default => 0, parent => "old", description => "implemented functions extraction" },
+    "implemented" => { default => 0, description => "implemented functions extraction" },
     "pseudo-implemented" => { default => 0, parent => "implemented", description => "pseudo implemented functions extraction" },
     "struct" => { default => 0, parent => "headers", description => "struct extraction" },
-    "spec-files" => { default => 0, parent => "old", description => "spec files extraction" },
-    "stub-statistics" => { default => 0, parent => "old", description => "stub statistics" },
+    "stub-statistics" => { default => 0, description => "stub statistics" },
     "pseudo-stub-statistics" => { default => 0, parent => "stub-statistics", description => "pseudo stub statistics" },
-    "winetest" => { default => 0, parent => "old", description => "winetest extraction" },
+    "winetest" => { default => 0, description => "winetest extraction" },
 );
 
 my %options_short = (

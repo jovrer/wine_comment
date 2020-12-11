@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef PROGMAN_H
@@ -26,7 +26,8 @@
 #define MAX_PATHNAME_LEN    1024
 #define MAX_LANGUAGE_NUMBER (PM_LAST_LANGUAGE - PM_FIRST_LANGUAGE)
 
-#include "windows.h"
+#include <windows.h>
+#include <windef.h>
 
 /* Fallback icon */
 #define DEFAULTICON OIC_WINLOGO
@@ -144,10 +145,10 @@ HLOCAL GRPFILE_ReadGroupFile(const char* path);
 BOOL   GRPFILE_WriteGroupFile(HLOCAL hGroup);
 
 ATOM   GROUP_RegisterGroupWinClass(void);
-HLOCAL GROUP_AddGroup(LPCSTR lpszName, LPCSTR lpszGrpFile, INT showcmd,
-		      INT x, INT y, INT width, INT heiht,
+HLOCAL GROUP_AddGroup(LPCSTR lpszName, LPCSTR lpszGrpFile, INT nCmdShow,
+		      INT x, INT y, INT width, INT height,
 		      INT iconx, INT icony,
-		      BOOL bModifiedFileName, BOOL bOverwriteFileOk,
+		      BOOL bFileNameModified, BOOL bOverwriteFileOk,
 		      /* FIXME shouldn't be necessary */
 		      BOOL bSuppressShowWindow);
 VOID   GROUP_NewGroup(void);
@@ -184,30 +185,29 @@ BOOL   DIALOG_ProgramAttributes(LPSTR lpszTitle, LPSTR lpszCmdLine,
 				LPSTR lpszWorkDir, LPSTR lpszIconFile,
 				HICON *lphIcon, INT *nIconIndex,
 				INT *lpnHotKey, INT *lpnCmdShow, INT nSize);
-VOID   DIALOG_Symbol(HICON *lphIcon, LPSTR lpszIconFile,
-		     INT *lpnIconIndex, INT nSize);
 VOID   DIALOG_Execute(void);
 
 VOID   STRING_LoadMenus(VOID);
 
 /* Class names */
-extern CHAR STRING_MAIN_WIN_CLASS_NAME[];
-extern CHAR STRING_MDI_WIN_CLASS_NAME[];
-extern CHAR STRING_GROUP_WIN_CLASS_NAME[];
-extern CHAR STRING_PROGRAM_WIN_CLASS_NAME[];
+extern WCHAR STRING_MAIN_WIN_CLASS_NAME[];
+extern WCHAR STRING_MDI_WIN_CLASS_NAME[];
+extern WCHAR STRING_GROUP_WIN_CLASS_NAME[];
+extern WCHAR STRING_PROGRAM_WIN_CLASS_NAME[];
 
 /* Resource names */
-extern CHAR STRING_ACCEL[];
-extern CHAR STRING_MAIN[];
-extern CHAR STRING_NEW[];
-extern CHAR STRING_OPEN[];
-extern CHAR STRING_MOVE[];
-extern CHAR STRING_COPY[];
-extern CHAR STRING_DELETE[];
-extern CHAR STRING_GROUP[];
-extern CHAR STRING_PROGRAM[];
-extern CHAR STRING_SYMBOL[];
-extern CHAR STRING_EXECUTE[];
+#define IDD_MAIN      1
+#define IDD_NEW       2
+#define IDD_OPEN      3
+#define IDD_MOVE      4
+#define IDD_COPY      5
+#define IDD_DELETE    6
+#define IDD_GROUP     7
+#define IDD_PROGRAM   8
+#define IDD_SYMBOL    9
+#define IDD_EXECUTE   10
+
+#define IDA_ACCEL     1
 
 /* Stringtable index */
 #define IDS_PROGRAM_MANAGER            0x02
@@ -260,12 +260,7 @@ extern CHAR STRING_EXECUTE[];
  */
 
 #define PM_CONTENTS         0x131
-#define PM_SEARCH           0x132
-#define PM_HELPONHELP       0x133
-#define PM_TUTORIAL         0x134
 
-#define PM_LICENSE          0x140
-#define PM_NO_WARRANTY      0x141
 #define PM_ABOUT_WINE       0x142
 
 /* Dialog `New' */

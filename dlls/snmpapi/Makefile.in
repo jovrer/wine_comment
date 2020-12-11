@@ -1,14 +1,5 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = snmpapi.dll
-IMPORTLIB = libsnmpapi.$(IMPLIBEXT)
-IMPORTS   = kernel32
+IMPORTLIB = snmpapi
 
 C_SRCS = \
 	main.c
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

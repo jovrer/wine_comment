@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -44,12 +44,10 @@ const char *get_typename(const resource_t* r)
 	case res_cur:	return "CURSOR";
 	case res_curg:	return "GROUP_CURSOR";
 	case res_dlg:	return "DIALOG";
-	case res_dlgex:	return "DIALOGEX";
 	case res_fnt:	return "FONT";
 	case res_ico:	return "ICON";
 	case res_icog:	return "GROUP_ICON";
 	case res_men:	return "MENU";
-	case res_menex:	return "MENUEX";
 	case res_rdt:	return "RCDATA";
 	case res_stt:	return "STRINGTABLE";
 	case res_usr:   return "UserResource";
@@ -203,12 +201,12 @@ static void dump_lvc(const lvc_t *l)
 		printf("LANGUAGE <not set>\n");
 
 	if(l->version)
-		printf("VERSION %08lx\n", *(l->version));
+		printf("VERSION %08x\n", *(l->version));
 	else
 		printf("VERSION <not set>\n");
 
 	if(l->characts)
-		printf("CHARACTERISTICS %08lx\n", *(l->characts));
+		printf("CHARACTERISTICS %08x\n", *(l->characts));
 	else
 		printf("CHARACTERISTICS <not set>\n");
 }
@@ -537,16 +535,16 @@ static void dump_control(const control_t *ctrl)
 	{
 		assert(ctrl->style != NULL);
 		assert(ctrl->style->and_mask == 0);
-		printf("\tStyle: %08lx\n", ctrl->style->or_mask);
+		printf("\tStyle: %08x\n", ctrl->style->or_mask);
 	}
 	if(ctrl->gotexstyle)
 	{
 		assert(ctrl->exstyle != NULL);
 		assert(ctrl->exstyle->and_mask == 0);
-		printf("\tExStyle: %08lx\n", ctrl->exstyle->or_mask);
+		printf("\tExStyle: %08x\n", ctrl->exstyle->or_mask);
 	}
 	if(ctrl->gothelpid)
-		printf("\tHelpid: %ld\n", ctrl->helpid);
+		printf("\tHelpid: %d\n", ctrl->helpid);
 	if(ctrl->extra)
 	{
 		printf("\t");
@@ -577,14 +575,14 @@ static void dump_dialog(const dialog_t *dlg)
 	{
 		assert(dlg->style != NULL);
 		assert(dlg->style->and_mask == 0);
-		printf("Style: %08lx\n", dlg->style->or_mask);
+		printf("Style: %08x\n", dlg->style->or_mask);
 
 	}
 	if(dlg->gotexstyle)
 	{
 		assert(dlg->exstyle != NULL);
 		assert(dlg->exstyle->and_mask == 0);
-		printf("ExStyle: %08lx\n", dlg->exstyle->or_mask);
+		printf("ExStyle: %08x\n", dlg->exstyle->or_mask);
 	}
 	printf("Menu: %s\n", get_nameid_str(dlg->menu));
 	printf("Class: %s\n", get_nameid_str(dlg->dlgclass));
@@ -607,59 +605,8 @@ static void dump_dialog(const dialog_t *dlg)
 
 /*
  *****************************************************************************
- * Function	: dump_dialogex
- * Syntax	: void dump_dialogex(const dialogex_t *dlgex)
- * Input	:
- *	dlgex	- DialogEx resource descriptor
- * Output	:
- * Description	:
- * Remarks	:
- *****************************************************************************
-*/
-static void dump_dialogex(const dialogex_t *dlgex)
-{
-	const control_t *c = dlgex->controls;
-
-	dump_memopt(dlgex->memopt);
-	dump_lvc(&(dlgex->lvc));
-	printf("x, y, w, h: %d, %d, %d, %d\n", dlgex->x, dlgex->y, dlgex->width, dlgex->height);
-	if(dlgex->gotstyle)
-	{
-		assert(dlgex->style != NULL);
-		assert(dlgex->style->and_mask == 0);
-		printf("Style: %08lx\n", dlgex->style->or_mask);
-	}
-	if(dlgex->gotexstyle)
-	{
-		assert(dlgex->exstyle != NULL);
-		assert(dlgex->exstyle->and_mask == 0);
-		printf("ExStyle: %08lx\n", dlgex->exstyle->or_mask);
-	}
-	if(dlgex->gothelpid)
-		printf("Helpid: %ld\n", dlgex->helpid);
-	printf("Menu: %s\n", get_nameid_str(dlgex->menu));
-	printf("Class: %s\n", get_nameid_str(dlgex->dlgclass));
-	printf("Title: "); print_string(dlgex->title); printf("\n");
-	printf("Font: ");
-	if(!dlgex->font)
-		printf("<none>\n");
-	else
-	{
-		printf("%d, ", dlgex->font->size);
-		print_string(dlgex->font->name);
-		printf(", %d, %d\n", dlgex->font->weight, dlgex->font->italic);
-	}
-	while(c)
-	{
-		dump_control(c);
-		c = c->next;
-	}
-}
-
-/*
- *****************************************************************************
  * Function	: dump_menu_item
- * Syntax	: void dump_menu_item(const menu_item_t *item)
+ * Syntax	: void dump_menu_item(const menuex_item_t *item)
  * Input	:
  * Output	:
  * Description	:
@@ -674,6 +621,14 @@ static void dump_menu_item(const menu_item_t *item)
 		{
 			printf("POPUP ");
 			print_string(item->name);
+			if(item->gotid)
+				printf(", Id=%d", item->id);
+			if(item->gottype)
+				printf(", Type=%d", item->type);
+			if(item->gotstate)
+				printf(", State=%08x", item->state);
+			if(item->gothelpid)
+				printf(", HelpId=%d", item->helpid);
 			printf("\n");
 			dump_menu_item(item->popup);
 		}
@@ -683,7 +638,14 @@ static void dump_menu_item(const menu_item_t *item)
 			if(item->name)
 			{
 				print_string(item->name);
-				printf(", %d, %08lx", item->id, item->state);
+				if(item->gotid)
+					printf(", Id=%d", item->id);
+				if(item->gottype)
+					printf(", Type=%d", item->type);
+				if(item->gotstate)
+					printf(", State=%08x", item->state);
+				if(item->gothelpid)
+					printf(", HelpId=%d", item->helpid);
 			}
 			else
 				printf("SEPARATOR");
@@ -709,76 +671,6 @@ static void dump_menu(const menu_t *men)
 	dump_memopt(men->memopt);
 	dump_lvc(&(men->lvc));
 	dump_menu_item(men->items);
-}
-
-/*
- *****************************************************************************
- * Function	: dump_menuex_item
- * Syntax	: void dump_menuex_item(const menuex_item_t *item)
- * Input	:
- * Output	:
- * Description	:
- * Remarks	:
- *****************************************************************************
-*/
-static void dump_menuex_item(const menuex_item_t *item)
-{
-	while(item)
-	{
-		if(item->popup)
-		{
-			printf("POPUP ");
-			print_string(item->name);
-			if(item->gotid)
-				printf(", Id=%d", item->id);
-			if(item->gottype)
-				printf(", Type=%ld", item->type);
-			if(item->gotstate)
-				printf(", State=%08lx", item->state);
-			if(item->gothelpid)
-				printf(", HelpId=%d", item->helpid);
-			printf("\n");
-			dump_menuex_item(item->popup);
-		}
-		else
-		{
-			printf("MENUITEM ");
-			if(item->name)
-			{
-				print_string(item->name);
-				if(item->gotid)
-					printf(", Id=%d", item->id);
-				if(item->gottype)
-					printf(", Type=%ld", item->type);
-				if(item->gotstate)
-					printf(", State=%08lx", item->state);
-				if(item->gothelpid)
-					printf(", HelpId=%d", item->helpid);
-			}
-			else
-				printf("SEPARATOR");
-			printf("\n");
-		}
-		item = item->next;
-	}
-}
-
-/*
- *****************************************************************************
- * Function	: dump_menuex
- * Syntax	: void dump_menuex(const menuex_t *menex)
- * Input	:
- *	menex	- MenuEx resource descriptor
- * Output	:
- * Description	:
- * Remarks	:
- *****************************************************************************
-*/
-static void dump_menuex(const menuex_t *menex)
-{
-	dump_memopt(menex->memopt);
-	dump_lvc(&(menex->lvc));
-	dump_menuex_item(menex->items);
 }
 
 /*
@@ -986,9 +878,6 @@ void dump_resources(const resource_t *top)
 		case res_dlg:
 			dump_dialog(top->res.dlg);
 			break;
-		case res_dlgex:
-			dump_dialogex(top->res.dlgex);
-			break;
 		case res_fnt:
 			dump_font(top->res.fnt);
 			break;
@@ -1000,9 +889,6 @@ void dump_resources(const resource_t *top)
 			break;
 		case res_men:
 			dump_menu(top->res.men);
-			break;
-		case res_menex:
-			dump_menuex(top->res.menex);
 			break;
 		case res_rdt:
 			dump_rcdata(top->res.rdt);

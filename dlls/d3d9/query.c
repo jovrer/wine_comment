@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -25,129 +25,198 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d9);
 
-/* IDirect3DQuery9 IUnknown parts follow: */
-HRESULT WINAPI IDirect3DQuery9Impl_QueryInterface(LPDIRECT3DQUERY9 iface, REFIID riid, LPVOID* ppobj) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
+static inline struct d3d9_query *impl_from_IDirect3DQuery9(IDirect3DQuery9 *iface)
+{
+    return CONTAINING_RECORD(iface, struct d3d9_query, IDirect3DQuery9_iface);
+}
 
-    if (IsEqualGUID(riid, &IID_IUnknown)
-        || IsEqualGUID(riid, &IID_IDirect3DQuery9)) {
-        IUnknown_AddRef(iface);
-        *ppobj = This;
-        return D3D_OK;
+static HRESULT WINAPI d3d9_query_QueryInterface(IDirect3DQuery9 *iface, REFIID riid, void **out)
+{
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
+
+    if (IsEqualGUID(riid, &IID_IDirect3DQuery9)
+            || IsEqualGUID(riid, &IID_IUnknown))
+    {
+        IDirect3DQuery9_AddRef(iface);
+        *out = iface;
+        return S_OK;
     }
 
-    WARN("(%p)->(%s,%p),not found\n", This, debugstr_guid(riid), ppobj);
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(riid));
+
+    *out = NULL;
     return E_NOINTERFACE;
 }
 
-ULONG WINAPI IDirect3DQuery9Impl_AddRef(LPDIRECT3DQUERY9 iface) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    ULONG ref = InterlockedIncrement(&This->ref);
+static ULONG WINAPI d3d9_query_AddRef(IDirect3DQuery9 *iface)
+{
+    struct d3d9_query *query = impl_from_IDirect3DQuery9(iface);
+    ULONG refcount = InterlockedIncrement(&query->refcount);
 
-    TRACE("(%p) : AddRef from %ld\n", This, ref - 1);
-    return ref;
+    TRACE("%p increasing refcount to %u.\n", iface, refcount);
+
+    return refcount;
 }
 
-ULONG WINAPI IDirect3DQuery9Impl_Release(LPDIRECT3DQUERY9 iface) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    ULONG ref = InterlockedDecrement(&This->ref);
+static ULONG WINAPI d3d9_query_Release(IDirect3DQuery9 *iface)
+{
+    struct d3d9_query *query = impl_from_IDirect3DQuery9(iface);
+    ULONG refcount = InterlockedDecrement(&query->refcount);
 
-    TRACE("(%p) : ReleaseRef to %ld\n", This, ref);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
-    if (ref == 0) {
-        HeapFree(GetProcessHeap(), 0, This);
+    if (!refcount)
+    {
+        wined3d_mutex_lock();
+        wined3d_query_decref(query->wined3d_query);
+        wined3d_mutex_unlock();
+
+        IDirect3DDevice9Ex_Release(query->parent_device);
+        heap_free(query);
     }
-    return ref;
+    return refcount;
 }
 
-/* IDirect3DQuery9 Interface follow: */
-HRESULT WINAPI IDirect3DQuery9Impl_GetDevice(LPDIRECT3DQUERY9 iface, IDirect3DDevice9** ppDevice) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    IWineD3DDevice* pDevice;
+static HRESULT WINAPI d3d9_query_GetDevice(IDirect3DQuery9 *iface, IDirect3DDevice9 **device)
+{
+    struct d3d9_query *query = impl_from_IDirect3DQuery9(iface);
+
+    TRACE("iface %p, device %p.\n", iface, device);
+
+    *device = (IDirect3DDevice9 *)query->parent_device;
+    IDirect3DDevice9_AddRef(*device);
+
+    TRACE("Returning device %p.\n", *device);
+
+    return D3D_OK;
+}
+
+static D3DQUERYTYPE WINAPI d3d9_query_GetType(IDirect3DQuery9 *iface)
+{
+    struct d3d9_query *query = impl_from_IDirect3DQuery9(iface);
+    D3DQUERYTYPE type;
+
+    TRACE("iface %p.\n", iface);
+
+    wined3d_mutex_lock();
+    type = wined3d_query_get_type(query->wined3d_query);
+    wined3d_mutex_unlock();
+
+    return type;
+}
+
+static DWORD WINAPI d3d9_query_GetDataSize(IDirect3DQuery9 *iface)
+{
+    struct d3d9_query *query = impl_from_IDirect3DQuery9(iface);
+
+    TRACE("iface %p.\n", iface);
+
+    return query->data_size;
+}
+
+static HRESULT WINAPI d3d9_query_Issue(IDirect3DQuery9 *iface, DWORD flags)
+{
+    struct d3d9_query *query = impl_from_IDirect3DQuery9(iface);
     HRESULT hr;
 
-    TRACE("(%p) Relay\n", This);
+    TRACE("iface %p, flags %#x.\n", iface, flags);
 
-    hr = IWineD3DQuery_GetDevice(This->wineD3DQuery, &pDevice);
-    if(hr != D3D_OK){
-        *ppDevice = NULL;
-    }else{
-        hr = IWineD3DDevice_GetParent(pDevice, (IUnknown **)ppDevice);
-        IWineD3DDevice_Release(pDevice);
+    wined3d_mutex_lock();
+    hr = wined3d_query_issue(query->wined3d_query, flags);
+    wined3d_mutex_unlock();
+
+    return hr;
+}
+
+static HRESULT WINAPI d3d9_query_GetData(IDirect3DQuery9 *iface, void *data, DWORD size, DWORD flags)
+{
+    struct d3d9_query *query = impl_from_IDirect3DQuery9(iface);
+    enum wined3d_query_type type;
+    HRESULT hr;
+
+    TRACE("iface %p, data %p, size %u, flags %#x.\n",
+            iface, data, size, flags);
+
+    wined3d_mutex_lock();
+    type = wined3d_query_get_type(query->wined3d_query);
+    if (type == WINED3D_QUERY_TYPE_TIMESTAMP_DISJOINT && data)
+    {
+        struct wined3d_query_data_timestamp_disjoint data_disjoint;
+
+        if (size > sizeof(data_disjoint.disjoint))
+            size = sizeof(data_disjoint.disjoint);
+
+        hr = wined3d_query_get_data(query->wined3d_query, &data_disjoint, sizeof(data_disjoint), flags);
+        if (SUCCEEDED(hr))
+            memcpy(data, &data_disjoint.disjoint, size);
+    }
+    else
+    {
+        hr = wined3d_query_get_data(query->wined3d_query, data, size, flags);
+    }
+    wined3d_mutex_unlock();
+
+    if (hr == D3DERR_INVALIDCALL)
+    {
+        if (data)
+        {
+            memset(data, 0, size);
+            memset(data, 0xdd, min(size, query->data_size));
+        }
+        return S_OK;
     }
     return hr;
 }
 
-D3DQUERYTYPE WINAPI IDirect3DQuery9Impl_GetType(LPDIRECT3DQUERY9 iface) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
-    return IWineD3DQuery_GetType(This->wineD3DQuery);
-}
 
-DWORD WINAPI IDirect3DQuery9Impl_GetDataSize(LPDIRECT3DQUERY9 iface) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
-    return IWineD3DQuery_GetDataSize(This->wineD3DQuery);
-}
-
-HRESULT WINAPI IDirect3DQuery9Impl_Issue(LPDIRECT3DQUERY9 iface, DWORD dwIssueFlags) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
-    return IWineD3DQuery_Issue(This->wineD3DQuery, dwIssueFlags);
-}
-
-HRESULT WINAPI IDirect3DQuery9Impl_GetData(LPDIRECT3DQUERY9 iface, void* pData, DWORD dwSize, DWORD dwGetDataFlags) {
-    IDirect3DQuery9Impl *This = (IDirect3DQuery9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
-    return IWineD3DQuery_GetData(This->wineD3DQuery, pData, dwSize, dwGetDataFlags);
-}
-
-
-const IDirect3DQuery9Vtbl Direct3DQuery9_Vtbl =
+static const struct IDirect3DQuery9Vtbl d3d9_query_vtbl =
 {
-    IDirect3DQuery9Impl_QueryInterface,
-    IDirect3DQuery9Impl_AddRef,
-    IDirect3DQuery9Impl_Release,
-    IDirect3DQuery9Impl_GetDevice,
-    IDirect3DQuery9Impl_GetType,
-    IDirect3DQuery9Impl_GetDataSize,
-    IDirect3DQuery9Impl_Issue,
-    IDirect3DQuery9Impl_GetData
+    d3d9_query_QueryInterface,
+    d3d9_query_AddRef,
+    d3d9_query_Release,
+    d3d9_query_GetDevice,
+    d3d9_query_GetType,
+    d3d9_query_GetDataSize,
+    d3d9_query_Issue,
+    d3d9_query_GetData,
 };
 
+HRESULT query_init(struct d3d9_query *query, struct d3d9_device *device, D3DQUERYTYPE type)
+{
+    HRESULT hr;
 
-/* IDirect3DDevice9 IDirect3DQuery9 Methods follow: */
-HRESULT WINAPI IDirect3DDevice9Impl_CreateQuery(LPDIRECT3DDEVICE9 iface, D3DQUERYTYPE Type, IDirect3DQuery9** ppQuery) {
-    IDirect3DDevice9Impl *This = (IDirect3DDevice9Impl *)iface;
-    IDirect3DQuery9Impl *object = NULL;
-    HRESULT hr = D3D_OK;
+    if (type > D3DQUERYTYPE_MEMORYPRESSURE)
+    {
+        if (type == 0x16)
+            FIXME("Undocumented query %#x created.\n", type);
+        else
+            WARN("Invalid query type %#x.\n", type);
 
-    TRACE("(%p) Relay\n", This);
-
-    if (!ppQuery)
-        return IWineD3DDevice_CreateQuery(This->WineD3DDevice, Type, NULL, NULL);
-
-    /* Allocate the storage for the device */
-    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirect3DQuery9Impl));
-    if (NULL == object) {
-        FIXME("Allocation of memory failed\n");
-        *ppQuery = NULL;
-        return D3DERR_OUTOFVIDEOMEMORY;
+        return D3DERR_NOTAVAILABLE;
     }
 
-    object->lpVtbl = &Direct3DQuery9_Vtbl;
-    object->ref = 1;
-    hr = IWineD3DDevice_CreateQuery(This->WineD3DDevice, Type, &object->wineD3DQuery, (IUnknown *)object);
+    query->IDirect3DQuery9_iface.lpVtbl = &d3d9_query_vtbl;
+    query->refcount = 1;
 
-    if (FAILED(hr)) {
-        /* free up object */
-        FIXME("(%p) call to IWineD3DDevice_CreateQuery failed\n", This);
-        HeapFree(GetProcessHeap(), 0, object);
-        *ppQuery = NULL;
-    } else {
-        *ppQuery = (LPDIRECT3DQUERY9) object;
+    wined3d_mutex_lock();
+    if (FAILED(hr = wined3d_query_create(device->wined3d_device, type,
+            query, &d3d9_null_wined3d_parent_ops, &query->wined3d_query)))
+    {
+        wined3d_mutex_unlock();
+        WARN("Failed to create wined3d query, hr %#x.\n", hr);
+        return hr;
     }
-    TRACE("(%p) : returning %lx\n", This, hr);
-    return hr;
+
+    if (type == D3DQUERYTYPE_OCCLUSION)
+        query->data_size = sizeof(DWORD);
+    else if (type == D3DQUERYTYPE_TIMESTAMPDISJOINT)
+        query->data_size = sizeof(BOOL);
+    else
+        query->data_size = wined3d_query_get_data_size(query->wined3d_query);
+    wined3d_mutex_unlock();
+
+    query->parent_device = &device->IDirect3DDevice9Ex_iface;
+    IDirect3DDevice9Ex_AddRef(query->parent_device);
+
+    return D3D_OK;
 }

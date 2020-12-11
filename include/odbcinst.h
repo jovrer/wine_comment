@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_ODBCINST_H
@@ -33,6 +33,19 @@ extern "C" {
 #define ODBC_REMOVE_DRIVER	2
 #define ODBC_CONFIG_DRIVER	3
 #define ODBC_CONFIG_DRIVER_MAX  100
+
+#define ODBC_ADD_DSN            1
+#define ODBC_CONFIG_DSN         2
+#define ODBC_REMOVE_DSN         3
+#define ODBC_ADD_SYS_DSN        4
+#define ODBC_CONFIG_SYS_DSN     5
+#define ODBC_REMOVE_SYS_DSN     6
+#define ODBC_REMOVE_DEFAULT_DSN 7
+
+/* Mode values for SQLSetConfigMode/SQLGetConfigMode */
+#define ODBC_BOTH_DSN 0
+#define ODBC_USER_DSN 1
+#define ODBC_SYSTEM_DSN 2
 
 /* error values */
 #define ODBC_ERROR_GENERAL_ERR			1
@@ -71,8 +84,8 @@ BOOL WINAPI SQLGetAvailableDriversW(LPCWSTR,LPWSTR,WORD,WORD*);
 BOOL WINAPI SQLGetConfigMode(UWORD*);
 BOOL WINAPI SQLGetInstalledDrivers(LPSTR,WORD,WORD*);
 BOOL WINAPI SQLGetInstalledDriversW(LPWSTR,WORD,WORD*);
-int WINAPI SQLGetPrivateProfileString(LPCSTR,LPCSTR,LPCSTR,LPCSTR,int,LPCSTR);
-int WINAPI SQLGetPrivateProfileStringW(LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR,int,LPCWSTR);
+int WINAPI SQLGetPrivateProfileString(LPCSTR,LPCSTR,LPCSTR,LPSTR,int,LPCSTR);
+int WINAPI SQLGetPrivateProfileStringW(LPCWSTR,LPCWSTR,LPCWSTR,LPWSTR,int,LPCWSTR);
 BOOL WINAPI SQLGetTranslator(HWND,LPSTR,WORD,WORD*,LPSTR,WORD,WORD*,DWORD*);
 BOOL WINAPI SQLGetTranslatorW(HWND,LPWSTR,WORD,WORD*,LPWSTR,WORD,WORD*,DWORD*);
 BOOL WINAPI SQLInstallDriver(LPCSTR,LPCSTR,LPSTR,WORD,WORD*);

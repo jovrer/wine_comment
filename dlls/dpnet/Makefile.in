@@ -1,22 +1,16 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = dpnet.dll
-IMPORTLIB = libdpnet.$(IMPLIBEXT)
-IMPORTS   = ole32 user32 advapi32 kernel32
-EXTRALIBS = -ldxguid -luuid
+IMPORTLIB = dpnet
+IMPORTS   = dxguid uuid ole32 advapi32 ws2_32
 
 C_SRCS = \
 	address.c \
 	client.c \
 	dpnet_main.c \
+	lobbiedapp.c \
 	peer.c \
-	regsvr.c \
-	server.c
+	server.c \
+	threadpool.c
+
+IDL_SRCS = dpnet.idl
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

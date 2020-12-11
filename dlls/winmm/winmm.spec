@@ -1,5 +1,5 @@
 # ordinal exports
-1 stdcall @(ptr long long) PlaySoundA
+2 stdcall @(ptr long long) PlaySoundA
 3 stub @
 4 stub @
 
@@ -26,7 +26,7 @@
 @ stdcall auxGetVolume(long ptr)
 @ stdcall auxOutMessage(long long long long)
 @ stdcall auxSetVolume(long long)
-@ stub joyConfigChanged
+@ stdcall joyConfigChanged(long)
 @ stdcall joyGetDevCapsA(long ptr long)
 @ stdcall joyGetDevCapsW(long ptr long)
 @ stdcall joyGetNumDevs()
@@ -56,8 +56,8 @@
 @ stdcall mciSendStringW(wstr ptr long long)
 @ stdcall mciSetDriverData(long long)
 @ stdcall mciSetYieldProc(long ptr long)
-@ stub midiConnect
-@ stub midiDisconnect
+@ stdcall midiConnect(long long ptr)
+@ stdcall midiDisconnect(long long ptr)
 @ stdcall midiInAddBuffer(long ptr long)
 @ stdcall midiInClose(long)
 @ stdcall midiInGetDevCapsA(long ptr long)
@@ -88,7 +88,7 @@
 @ stdcall midiOutOpen(ptr long long long long)
 @ stdcall midiOutPrepareHeader(long ptr long)
 @ stdcall midiOutReset(long)
-@ stdcall midiOutSetVolume(long ptr)
+@ stdcall midiOutSetVolume(long long)
 @ stdcall midiOutShortMsg(long long)
 @ stdcall midiOutUnprepareHeader(long ptr long)
 @ stdcall midiStreamClose(long)
@@ -147,7 +147,7 @@
 @ stdcall timeEndPeriod(long)
 @ stdcall timeGetDevCaps(ptr long)
 @ stdcall timeGetSystemTime(ptr long)
-@ stdcall timeGetTime()
+@ stdcall timeGetTime() kernel32.GetTickCount
 @ stdcall timeKillEvent(long)
 @ stdcall timeSetEvent(long long ptr long long)
 @ stdcall waveInAddBuffer(long ptr long)

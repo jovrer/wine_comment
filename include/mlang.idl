@@ -13,33 +13,34 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef DO_NO_IMPORTS
 import "unknwn.idl";
+#endif
 
 interface IStream;
 
-/* FIXME: LANDID is defined in winnt.h and mlang.h in the platform SDK */
-cpp_quote("#ifndef _WINNT_")
-typedef WORD LANGID;
-cpp_quote("#endif")
+cpp_quote("#define CPIOD_PEEK          0x40000000")
+cpp_quote("#define CPIOD_FORCE_PROMPT  0x80000000")
 
 [
   object,
+  uuid(359f3443-bd4a-11d0-b188-00aa0038c969),
   pointer_default(unique)
 ]
 interface IMLangCodePages : IUnknown
 {
     HRESULT GetCharCodePages(      
         [in] WCHAR chSrc,
-        DWORD *pdwCodePages);
+        [out] DWORD *pdwCodePages);
     HRESULT GetStrCodePages(      
         [in, size_is(cchSrc)] const WCHAR *pszSrc,
-        [in] long cchSrc,
+        [in] LONG cchSrc,
         [in] DWORD dwPriorityCodePages,
         [out] DWORD *pdwCodePages,
-        [out] long *pcchCodePages);
+        [out] LONG *pcchCodePages);
     HRESULT CodePageToCodePages(      
         [in] UINT uCodePage,
         [out] DWORD *pdwCodePages);
@@ -47,10 +48,11 @@ interface IMLangCodePages : IUnknown
         [in] DWORD dwCodePages,
         [in] UINT uDefaultCodePage,
         [out] UINT *puCodePage);
-};
+}
 
 [
   object,
+  uuid(359f3441-bd4a-11d0-b188-00aa0038c969),
   pointer_default(unique)
 ]
 interface IMLangFontLink : IMLangCodePages
@@ -70,10 +72,11 @@ interface IMLangFontLink : IMLangCodePages
         [in] HFONT hFont);
 
     HRESULT ResetFontMapping();
-};
+}
 
 [
   object,
+  uuid(ae5f1430-388b-11d2-8380-00c04f8f5da1),
   pointer_default(unique)
 ]
 interface IEnumScript : IUnknown
@@ -167,10 +170,146 @@ interface IEnumScript : IUnknown
 
     HRESULT Skip(      
         [in] ULONG celt);
-};
+}
 
 [
   object,
+  uuid(dccfc162-2b38-11d2-b7ec-00c04f8f5d9a),
+  pointer_default(unique)
+]
+interface IMLangFontLink2 : IMLangCodePages
+{
+    typedef struct tagUNICODERANGE
+    {
+        WCHAR wcFrom;
+        WCHAR wcTo;
+    } UNICODERANGE;
+
+    typedef [unique] IMLangFontLink2 *PMLANGFONTLINK2;
+
+    HRESULT GetFontCodePages(
+        [in] HDC hDC,
+        [in] HFONT hFont,
+        [out] DWORD *pdwCodePages );
+
+    HRESULT ReleaseFont(
+        [in] HFONT hFont);
+
+    HRESULT ResetFontMapping();
+
+    HRESULT MapFont(
+        [in] HDC hDC,
+        [in] DWORD dwCodePages,
+        [in] WCHAR chSrc,
+        [out] HFONT *pFont);
+
+    HRESULT GetFontUnicodeRanges(
+        [in] HDC hDC,
+        [in,out] UINT *puiRanges,
+        [out] UNICODERANGE* pUranges);
+
+    HRESULT GetScriptFontInfo(
+        [in] SCRIPT_ID sid,
+        [in] DWORD dwFlags,
+        [in,out] UINT *puiFonts,
+        [out] SCRIPTFONTINFO* pScriptFont);
+
+    HRESULT CodePageToScriptID(
+        [in] UINT uiCodePage,
+        [out] SCRIPT_ID *pSid);
+}
+
+[
+ object,
+ uuid(c04d65ce-b70d-11d0-b188-00aa0038c969),
+ pointer_default(unique)
+]
+interface IMLangString : IUnknown
+{
+#ifdef NEWMLSTR
+    HRESULT LockMLStr(
+        [in] LONG lPos,
+        [in] DWORD dwFlags,
+        [out] DWORD* pdwCookie,
+        [out] LONG* plActualPos,
+        [out] LONG* plActualLen);
+
+    HRESULT UnlockMLStr(
+        [in] DWORD dwCookie);
+#else
+    HRESULT Sync(
+        [in] BOOL fNoAccess);
+#endif
+    HRESULT GetLength(
+        [out, retval] LONG* plLen);
+    HRESULT SetMLStr(
+        [in] LONG lDestPos,
+        [in] LONG lDestLen,
+        [in] IUnknown *pSrcMLStr,
+        [in] LONG lSrcPos,
+        [in] LONG lSrcLen);
+#ifdef NEWMLSTR
+    HRESULT RegisterAttr(
+        [in] IUnknown *pUnk,
+        [out] DWORD* pdwCookie);
+    HRESULT UnregisterAttr(
+        [in] DWORD dwCookie);
+    HRESULT EnumAttr(
+        [out] IEnumUnknown **ppEnumUnk);
+    HRESULT FindAttr(
+        [in] REFIID riid,
+        [in] LPARAM lParam,
+        [out] IUnknown **ppUnk);
+#else
+    HRESULT GetMLStr(
+        [in] LONG lSrcPos,
+        [in] LONG lSrcLen,
+        [in] IUnknown *pUnkOuter,
+        [in] DWORD dwClsContext,
+        [in] const IID* piid,
+        [out] IUnknown** ppDestMLStr,
+        [out] LONG* plDestPos,
+        [out] LONG* plDestLen);
+#endif
+}
+
+[
+ object,
+ uuid(f5be2ee1-bfd7-11d0-b188-00aa0038c969),
+ pointer_default(unique)
+]
+interface IMLangLineBreakConsole : IUnknown
+{
+    HRESULT BreakLineML(
+        [in] IMLangString* pSrcMLStr,
+        [in] LONG lSrcPos,
+        [in] LONG lSrcLen,
+        [in] LONG cMinColumns,
+        [in] LONG cMaxColumns,
+        [out] LONG* plLineLen,
+        [out] LONG* plSkipLen);
+
+    HRESULT BreakLineW(
+        [in] LCID locale,
+        [in, size_is(cchSrc)] const WCHAR* pszSrc,
+        [in] LONG cchSrc,
+        [in] LONG cMaxColumns,
+        [out] LONG* pcchLine,
+        [out] LONG* pcchSkip );
+
+    HRESULT BreakLineA(
+        [in] LCID locale,
+        [in] UINT uCodePage,
+        [in, size_is(cchSrc)] const CHAR* pszSrc,
+        [in] LONG cchSrc,
+        [in] LONG cMaxColumns,
+        [out] LONG* pcchLine,
+        [out] LONG* pcchSkip);
+}
+
+[
+  object,
+  uuid(275c23e3-3747-11d0-9fea-00aa003f8646),
   pointer_default(unique)
 ]
 interface IEnumCodePage : IUnknown
@@ -227,14 +366,38 @@ interface IEnumCodePage : IUnknown
 
     HRESULT Skip(      
         [in] ULONG celt);
-};
+}
 
 [
   object,
+  uuid(d66d6f98-cdaa-11d0-b822-00c04fc9b31f),
   pointer_default(unique)
 ]
 interface IMLangConvertCharset : IUnknown
 {
+    typedef enum tagMLCONVCHARF
+    {
+        MLCONVCHARF_AUTODETECT      = 1,
+        MLCONVCHARF_ENTITIZE        = 2,
+        MLCONVCHARF_NCR_ENTITIZE    = 2,
+        MLCONVCHARF_NAME_ENTITIZE   = 4,
+        MLCONVCHARF_USEDEFCHAR      = 8,
+        MLCONVCHARF_NOBESTFITCHARS  = 16,
+        MLCONVCHARF_DETECTJPN       = 32
+    } MLCONVCHAR;
+
+    typedef enum tagMLCPF
+    {
+        MLDETECTF_MAILNEWS              = 0x0001,
+        MLDETECTF_BROWSER               = 0x0002,
+        MLDETECTF_VALID                 = 0x0004,
+        MLDETECTF_VALID_NLS             = 0x0008,
+        MLDETECTF_PRESERVE_ORDER        = 0x0010,
+        MLDETECTF_PREFERRED_ONLY        = 0x0020,
+        MLDETECTF_FILTER_SPECIALCHAR    = 0x0040,
+        MLDETECTF_EURO_UTF8             = 0x0080
+    } MLCP;
+
     HRESULT Initialize(      
         [in] UINT uiSrcCodePage,
         [in] UINT uiDstCodePage,
@@ -266,14 +429,26 @@ interface IMLangConvertCharset : IUnknown
         [in,out] UINT *pcSrcSize,
         [in] CHAR *pDstStr,
         [in,out] UINT *pcDstSize);
-};
+}
+
+[
+    uuid(d66d6f99-cdaa-11d0-b822-00c04fc9b31f)
+]
+coclass CMLangConvertCharset
+{
+    [default] interface IMLangConvertCharset;
+}
 
 [
   object,
+  uuid(3dc39d1d-c030-11d0-b81b-00c04fc9b31f),
   pointer_default(unique)
 ]
 interface IEnumRfc1766 : IUnknown
 {
+    const USHORT MAX_RFC1766_NAME = 6;
+    const USHORT MAX_LOCALE_NAME = 32;
+
     typedef struct tagRFC1766INFO
     {
         LCID lcid;
@@ -293,10 +468,11 @@ interface IEnumRfc1766 : IUnknown
 
     HRESULT Skip(      
         [in] ULONG celt);
-};
+}
 
 [
   object,
+  uuid(275c23e1-3747-11d0-9fea-00aa003f8646),
   pointer_default(unique)
 ]
 interface IMultiLanguage : IUnknown
@@ -372,10 +548,11 @@ interface IMultiLanguage : IUnknown
         [in] DWORD dwProperty,
         [out] IMLangConvertCharset **ppMLangConvertCharset);
 
-};
+}
 
 [
   object,
+  uuid(dccfc164-2b38-11d2-b7ec-00c04f8f5d9a),
   pointer_default(unique)
 ]
 interface IMultiLanguage2 : IUnknown
@@ -514,7 +691,7 @@ interface IMultiLanguage2 : IUnknown
     HRESULT GetCodePageDescription(      
         [in] UINT uiCodePage,
         [in] LCID lcid,
-        [in,out] LPWSTR lpWideCharStr,
+        [in,out,size_is(cchWideChar)] LPWSTR lpWideCharStr,
         [in] int cchWideChar);
 
     HRESULT IsCodePageInstallable(
@@ -535,7 +712,35 @@ interface IMultiLanguage2 : IUnknown
         [in] UINT uiCodePage,
         [in] HWND hwnd,
         [in] DWORD dwfIODControl);
-};
+}
+
+[
+    object,
+    uuid(4e5868ab-b157-4623-9acc-6a1d9caebe04),
+    pointer_default(unique)
+]
+interface IMultiLanguage3 : IMultiLanguage2
+{
+    typedef [unique] IMultiLanguage3 *LPMULTILANGUAGE3;
+    HRESULT DetectOutboundCodePage(
+        [in] DWORD dwFlags,
+        [in] LPCWSTR lpWideCharStr,
+        [in] UINT cchWideChar,
+        [in] UINT *puiPreferredCodePages,
+        [in] UINT nPreferredCodePages,
+        [in] UINT *puiDetectedCodePages,
+        [in, out] UINT *pnDetectedCodePages,
+        [in] WCHAR *lpSpecialChar);
+
+    HRESULT DetectOutboundCodePageInIStream(
+        [in] DWORD dwFlags,
+        [in] IStream *pStrIn,
+        [in] UINT *puiPreferredCodePages,
+        [in] UINT nPreferredCodePages,
+        [in] UINT *puiDetectedCodePages,
+        [in, out] UINT *pnDetectedCodePages,
+        [in] WCHAR *lpSpecialChar);
+}
 
 [
     uuid(275C23E2-3747-11d0-9FEA-00AA003f8646)
@@ -546,7 +751,8 @@ coclass CMultiLanguage
     interface IMLangCodePages;
     interface IMLangFontLink;
     /* interface IMLangLineBreakConsole; */
-};
+    interface IMLangFontLink2;
+}
 
 cpp_quote("STDAPI LcidToRfc1766A(LCID, LPSTR, INT);")
 cpp_quote("STDAPI LcidToRfc1766W(LCID, LPWSTR, INT);")
@@ -556,15 +762,8 @@ cpp_quote("STDAPI Rfc1766ToLcidA(LCID *, LPCSTR);")
 cpp_quote("STDAPI Rfc1766ToLcidW(LCID *, LPCWSTR);")
 cpp_quote("#define Rfc1766ToLcid WINELIB_NAME_AW(Rfc1766ToLcid)")
 
-cpp_quote("STDAPI GetGlobalFontLinkObject(void);")
+cpp_quote("STDAPI GetGlobalFontLinkObject(void **unknown);")
 cpp_quote("STDAPI IsConvertINetStringAvailable(DWORD, DWORD);")
 cpp_quote("STDAPI ConvertINetString(LPDWORD, DWORD, DWORD, LPCSTR, LPINT, LPSTR, LPINT);")
 cpp_quote("STDAPI ConvertINetMultiByteToUnicode(LPDWORD, DWORD, LPCSTR, LPINT, LPWSTR, LPINT);")
 cpp_quote("STDAPI ConvertINetUnicodeToMultiByte(LPDWORD, DWORD, LPCWSTR, LPINT, LPSTR, LPINT);")
-
-cpp_quote("DEFINE_GUID(IID_IMLangCodePages, 0x359F3443,0xBD4A,0x11D0,0xB1,0x88,0x00,0xAA,0x00,0x38,0xC9,0x69);")
-cpp_quote("DEFINE_GUID(IID_IMLangFontLink, 0x359F3441,0xBD4A,0x11D0,0xB1,0x88,0x00,0xAA,0x00,0x38,0xC9,0x69);")
-cpp_quote("DEFINE_GUID(IID_IMultiLanguage2, 0xDCCFC164,0x2B38,0x11d2,0xB7,0xEC,0x00,0xC0,0x4F,0x8F,0x5D,0x9A);")
-cpp_quote("DEFINE_GUID(IID_IMultiLanguage, 0x275c23e1,0x3747,0x11d0,0x9f,0xea,0x00,0xaa,0x00,0x3f,0x86,0x46);")
-cpp_quote("DEFINE_GUID(IID_IEnumCodePage, 0x275c23e3,0x3747,0x11d0,0x9f,0xea,0x00,0xaa,0x00,0x3f,0x86,0x46);")
-cpp_quote("DEFINE_GUID(IID_IEnumScript, 0xae5f1430,0x388b,0x11d2,0x83,0x80,0x00,0xc0,0x4f,0x8f,0x5d,0xa1);")

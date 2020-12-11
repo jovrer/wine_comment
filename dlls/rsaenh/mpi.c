@@ -6,7 +6,7 @@
  * Based on public domain code by Tom St Denis (tomstdenis@iahu.ca)
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public 
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /*
@@ -29,7 +29,280 @@
  */
 
 #include <stdarg.h>
+
+#include "windef.h"
+#include "winbase.h"
 #include "tomcrypt.h"
+
+/* Known optimal configurations
+ CPU                    /Compiler     /MUL CUTOFF/SQR CUTOFF
+-------------------------------------------------------------
+ Intel P4 Northwood     /GCC v3.4.1   /        88/       128/LTM 0.32 ;-)
+*/
+static const int KARATSUBA_MUL_CUTOFF = 88,  /* Min. number of digits before Karatsuba multiplication is used. */
+                 KARATSUBA_SQR_CUTOFF = 128; /* Min. number of digits before Karatsuba squaring is used. */
+
+
+/* trim unused digits */
+static void mp_clamp(mp_int *a);
+
+/* compare |a| to |b| */
+static int mp_cmp_mag(const mp_int *a, const mp_int *b);
+
+/* Counts the number of lsbs which are zero before the first zero bit */
+static int mp_cnt_lsb(const mp_int *a);
+
+/* computes a = B**n mod b without division or multiplication useful for
+ * normalizing numbers in a Montgomery system.
+ */
+static int mp_montgomery_calc_normalization(mp_int *a, const mp_int *b);
+
+/* computes x/R == x (mod N) via Montgomery Reduction */
+static int mp_montgomery_reduce(mp_int *a, const mp_int *m, mp_digit mp);
+
+/* setups the montgomery reduction */
+static int mp_montgomery_setup(const mp_int *a, mp_digit *mp);
+
+/* Barrett Reduction, computes a (mod b) with a precomputed value c
+ *
+ * Assumes that 0 < a <= b*b, note if 0 > a > -(b*b) then you can merely
+ * compute the reduction as -1 * mp_reduce(mp_abs(a)) [pseudo code].
+ */
+static int mp_reduce(mp_int *a, const mp_int *b, const mp_int *c);
+
+/* reduces a modulo b where b is of the form 2**p - k [0 <= a] */
+static int mp_reduce_2k(mp_int *a, const mp_int *n, mp_digit d);
+
+/* determines k value for 2k reduction */
+static int mp_reduce_2k_setup(const mp_int *a, mp_digit *d);
+
+/* used to setup the Barrett reduction for a given modulus b */
+static int mp_reduce_setup(mp_int *a, const mp_int *b);
+
+/* set to a digit */
+static void mp_set(mp_int *a, mp_digit b);
+
+/* b = a*a  */
+static int mp_sqr(const mp_int *a, mp_int *b);
+
+/* c = a * a (mod b) */
+static int mp_sqrmod(const mp_int *a, mp_int *b, mp_int *c);
+
+
+static void bn_reverse(unsigned char *s, int len);
+static int s_mp_add(mp_int *a, mp_int *b, mp_int *c);
+static int s_mp_exptmod (const mp_int * G, const mp_int * X, mp_int * P, mp_int * Y);
+#define s_mp_mul(a, b, c) s_mp_mul_digs(a, b, c, (a)->used + (b)->used + 1)
+static int s_mp_mul_digs(const mp_int *a, const mp_int *b, mp_int *c, int digs);
+static int s_mp_mul_high_digs(const mp_int *a, const mp_int *b, mp_int *c, int digs);
+static int s_mp_sqr(const mp_int *a, mp_int *b);
+static int s_mp_sub(const mp_int *a, const mp_int *b, mp_int *c);
+static int mp_exptmod_fast(const mp_int *G, const mp_int *X, mp_int *P, mp_int *Y, int mode);
+static int mp_invmod_slow (const mp_int * a, mp_int * b, mp_int * c);
+static int mp_karatsuba_mul(const mp_int *a, const mp_int *b, mp_int *c);
+static int mp_karatsuba_sqr(const mp_int *a, mp_int *b);
+
+/* grow as required */
+static int mp_grow (mp_int * a, int size)
+{
+  int     i;
+  mp_digit *tmp;
+
+  /* if the alloc size is smaller alloc more ram */
+  if (a->alloc < size) {
+    /* ensure there are always at least MP_PREC digits extra on top */
+    size += (MP_PREC * 2) - (size % MP_PREC);
+
+    /* reallocate the array a->dp
+     *
+     * We store the return in a temporary variable
+     * in case the operation failed we don't want
+     * to overwrite the dp member of a.
+     */
+    tmp = HeapReAlloc(GetProcessHeap(), 0, a->dp, sizeof (mp_digit) * size);
+    if (tmp == NULL) {
+      /* reallocation failed but "a" is still valid [can be freed] */
+      return MP_MEM;
+    }
+
+    /* reallocation succeeded so set a->dp */
+    a->dp = tmp;
+
+    /* zero excess digits */
+    i        = a->alloc;
+    a->alloc = size;
+    for (; i < a->alloc; i++) {
+      a->dp[i] = 0;
+    }
+  }
+  return MP_OKAY;
+}
+
+/* b = a/2 */
+static int mp_div_2(const mp_int * a, mp_int * b)
+{
+  int     x, res, oldused;
+
+  /* copy */
+  if (b->alloc < a->used) {
+    if ((res = mp_grow (b, a->used)) != MP_OKAY) {
+      return res;
+    }
+  }
+
+  oldused = b->used;
+  b->used = a->used;
+  {
+    register mp_digit r, rr, *tmpa, *tmpb;
+
+    /* source alias */
+    tmpa = a->dp + b->used - 1;
+
+    /* dest alias */
+    tmpb = b->dp + b->used - 1;
+
+    /* carry */
+    r = 0;
+    for (x = b->used - 1; x >= 0; x--) {
+      /* get the carry for the next iteration */
+      rr = *tmpa & 1;
+
+      /* shift the current digit, add in carry and store */
+      *tmpb-- = (*tmpa-- >> 1) | (r << (DIGIT_BIT - 1));
+
+      /* forward carry to next iteration */
+      r = rr;
+    }
+
+    /* zero excess digits */
+    tmpb = b->dp + b->used;
+    for (x = b->used; x < oldused; x++) {
+      *tmpb++ = 0;
+    }
+  }
+  b->sign = a->sign;
+  mp_clamp (b);
+  return MP_OKAY;
+}
+
+/* swap the elements of two integers, for cases where you can't simply swap the
+ * mp_int pointers around
+ */
+static void
+mp_exch (mp_int * a, mp_int * b)
+{
+  mp_int  t;
+
+  t  = *a;
+  *a = *b;
+  *b = t;
+}
+
+/* init a new mp_int */
+static int mp_init (mp_int * a)
+{
+  int i;
+
+  /* allocate memory required and clear it */
+  a->dp = HeapAlloc(GetProcessHeap(), 0, sizeof (mp_digit) * MP_PREC);
+  if (a->dp == NULL) {
+    return MP_MEM;
+  }
+
+  /* set the digits to zero */
+  for (i = 0; i < MP_PREC; i++) {
+      a->dp[i] = 0;
+  }
+
+  /* set the used to zero, allocated digits to the default precision
+   * and sign to positive */
+  a->used  = 0;
+  a->alloc = MP_PREC;
+  a->sign  = MP_ZPOS;
+
+  return MP_OKAY;
+}
+
+/* init an mp_init for a given size */
+static int mp_init_size (mp_int * a, int size)
+{
+  int x;
+
+  /* pad size so there are always extra digits */
+  size += (MP_PREC * 2) - (size % MP_PREC);
+
+  /* alloc mem */
+  a->dp = HeapAlloc(GetProcessHeap(), 0, sizeof (mp_digit) * size);
+  if (a->dp == NULL) {
+    return MP_MEM;
+  }
+
+  /* set the members */
+  a->used  = 0;
+  a->alloc = size;
+  a->sign  = MP_ZPOS;
+
+  /* zero the digits */
+  for (x = 0; x < size; x++) {
+      a->dp[x] = 0;
+  }
+
+  return MP_OKAY;
+}
+
+/* clear one (frees)  */
+static void
+mp_clear (mp_int * a)
+{
+  int i;
+
+  /* only do anything if a hasn't been freed previously */
+  if (a->dp != NULL) {
+    /* first zero the digits */
+    for (i = 0; i < a->used; i++) {
+        a->dp[i] = 0;
+    }
+
+    /* free ram */
+    HeapFree(GetProcessHeap(), 0, a->dp);
+
+    /* reset members to make debugging easier */
+    a->dp    = NULL;
+    a->alloc = a->used = 0;
+    a->sign  = MP_ZPOS;
+  }
+}
+
+/* set to zero */
+static void
+mp_zero (mp_int * a)
+{
+  a->sign = MP_ZPOS;
+  a->used = 0;
+  memset (a->dp, 0, sizeof (mp_digit) * a->alloc);
+}
+
+/* b = |a|
+ *
+ * Simple function copies the input and fixes the sign to positive
+ */
+static int
+mp_abs (const mp_int * a, mp_int * b)
+{
+  int     res;
+
+  /* copy a to b */
+  if (a != b) {
+     if ((res = mp_copy (a, b)) != MP_OKAY) {
+       return res;
+     }
+  }
+
+  /* force the sign of b to positive */
+  b->sign = MP_ZPOS;
+
+  return MP_OKAY;
+}
 
 /* computes the modular inverse via binary extended euclidean algorithm, 
  * that is c = 1/a mod b 
@@ -37,8 +310,8 @@
  * Based on slow invmod except this is optimized for the case where b is 
  * odd as per HAC Note 14.64 on pp. 610
  */
-int
-fast_mp_invmod (mp_int * a, mp_int * b, mp_int * c)
+static int
+fast_mp_invmod (const mp_int * a, mp_int * b, mp_int * c)
 {
   mp_int  x, y, u, v, B, D;
   int     res, neg;
@@ -167,8 +440,8 @@ __ERR:mp_clear_multi (&x, &y, &u, &v, &B, &D, NULL);
  *
  * Based on Algorithm 14.32 on pp.601 of HAC.
 */
-int
-fast_mp_montgomery_reduce (mp_int * x, mp_int * n, mp_digit rho)
+static int
+fast_mp_montgomery_reduce (mp_int * x, const mp_int * n, mp_digit rho)
 {
   int     ix, res, olduse;
   mp_word W[MP_WARRAY];
@@ -223,7 +496,7 @@ fast_mp_montgomery_reduce (mp_int * x, mp_int * n, mp_digit rho)
     /* a = a + mu * m * b**i
      *
      * This is computed in place and on the fly.  The multiplication
-     * by b**i is handled by offseting which columns the results
+     * by b**i is handled by offsetting which columns the results
      * are added to.
      *
      * Note the comba method normally doesn't handle carries in the
@@ -327,8 +600,8 @@ fast_mp_montgomery_reduce (mp_int * x, mp_int * n, mp_digit rho)
  * Based on Algorithm 14.12 on pp.595 of HAC.
  *
  */
-int
-fast_s_mp_mul_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
+static int
+fast_s_mp_mul_digs (const mp_int * a, const mp_int * b, mp_int * c, int digs)
 {
   int     olduse, res, pa, ix, iz;
   mp_digit W[MP_WARRAY];
@@ -359,7 +632,7 @@ fast_s_mp_mul_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
       tmpx = a->dp + tx;
       tmpy = b->dp + ty;
 
-      /* this is the number of times the loop will iterrate, essentially its 
+      /* This is the number of times the loop will iterate, essentially it's
          while (tx++ < a->used && ty-- >= 0) { ... }
        */
       iy = MIN(a->used-tx, ty+1);
@@ -406,8 +679,8 @@ fast_s_mp_mul_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
  *
  * Based on Algorithm 14.12 on pp.595 of HAC.
  */
-int
-fast_s_mp_mul_high_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
+static int
+fast_s_mp_mul_high_digs (const mp_int * a, const mp_int * b, mp_int * c, int digs)
 {
   int     olduse, res, pa, ix, iz;
   mp_digit W[MP_WARRAY];
@@ -436,7 +709,7 @@ fast_s_mp_mul_high_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
       tmpx = a->dp + tx;
       tmpy = b->dp + ty;
 
-      /* this is the number of times the loop will iterrate, essentially its 
+      /* This is the number of times the loop will iterate, essentially it's
          while (tx++ < a->used && ty-- >= 0) { ... }
        */
       iy = MIN(a->used-tx, ty+1);
@@ -504,7 +777,7 @@ Remove W2 and don't memset W
 
 */
 
-int fast_s_mp_sqr (mp_int * a, mp_int * b)
+static int fast_s_mp_sqr (const mp_int * a, mp_int * b)
 {
   int       olduse, res, pa, ix, iz;
   mp_digit   W[MP_WARRAY], *tmpx;
@@ -536,7 +809,7 @@ int fast_s_mp_sqr (mp_int * a, mp_int * b)
       tmpx = a->dp + tx;
       tmpy = a->dp + ty;
 
-      /* this is the number of times the loop will iterrate, essentially its 
+      /* This is the number of times the loop will iterate, essentially it's
          while (tx++ < a->used && ty-- >= 0) { ... }
        */
       iy = MIN(a->used-tx, ty+1);
@@ -592,7 +865,7 @@ int fast_s_mp_sqr (mp_int * a, mp_int * b)
  * Simple algorithm which zeroes the int, grows it then just sets one bit
  * as required.
  */
-int
+static int
 mp_2expt (mp_int * a, int b)
 {
   int     res;
@@ -610,28 +883,6 @@ mp_2expt (mp_int * a, int b)
 
   /* put the single bit in its place */
   a->dp[b / DIGIT_BIT] = ((mp_digit)1) << (b % DIGIT_BIT);
-
-  return MP_OKAY;
-}
-
-/* b = |a| 
- *
- * Simple function copies the input and fixes the sign to positive
- */
-int
-mp_abs (mp_int * a, mp_int * b)
-{
-  int     res;
-
-  /* copy a to b */
-  if (a != b) {
-     if ((res = mp_copy (a, b)) != MP_OKAY) {
-       return res;
-     }
-  }
-
-  /* force the sign of b to positive */
-  b->sign = MP_ZPOS;
 
   return MP_OKAY;
 }
@@ -669,7 +920,7 @@ int mp_add (mp_int * a, mp_int * b, mp_int * c)
 
 
 /* single digit addition */
-int
+static int
 mp_add_d (mp_int * a, mp_digit b, mp_int * c)
 {
   int     res, ix, oldused;
@@ -778,30 +1029,6 @@ mp_clamp (mp_int * a)
   }
 }
 
-/* clear one (frees)  */
-void
-mp_clear (mp_int * a)
-{
-  int i;
-
-  /* only do anything if a hasn't been freed previously */
-  if (a->dp != NULL) {
-    /* first zero the digits */
-    for (i = 0; i < a->used; i++) {
-        a->dp[i] = 0;
-    }
-
-    /* free ram */
-    free(a->dp);
-
-    /* reset members to make debugging easier */
-    a->dp    = NULL;
-    a->alloc = a->used = 0;
-    a->sign  = MP_ZPOS;
-  }
-}
-
-
 void mp_clear_multi(mp_int *mp, ...) 
 {
     mp_int* next_mp = mp;
@@ -816,7 +1043,7 @@ void mp_clear_multi(mp_int *mp, ...)
 
 /* compare two ints (signed)*/
 int
-mp_cmp (mp_int * a, mp_int * b)
+mp_cmp (const mp_int * a, const mp_int * b)
 {
   /* compare based on sign */
   if (a->sign != b->sign) {
@@ -837,7 +1064,7 @@ mp_cmp (mp_int * a, mp_int * b)
 }
 
 /* compare a digit */
-int mp_cmp_d(mp_int * a, mp_digit b)
+int mp_cmp_d(const mp_int * a, mp_digit b)
 {
   /* compare based on sign */
   if (a->sign == MP_NEG) {
@@ -860,7 +1087,7 @@ int mp_cmp_d(mp_int * a, mp_digit b)
 }
 
 /* compare maginitude of two ints (unsigned) */
-int mp_cmp_mag (mp_int * a, mp_int * b)
+int mp_cmp_mag (const mp_int * a, const mp_int * b)
 {
   int     n;
   mp_digit *tmpa, *tmpb;
@@ -898,7 +1125,7 @@ static const int lnz[16] = {
 };
 
 /* Counts the number of lsbs which are zero before the first zero bit */
-int mp_cnt_lsb(mp_int *a)
+int mp_cnt_lsb(const mp_int *a)
 {
    int x;
    mp_digit q, qq;
@@ -973,7 +1200,7 @@ mp_copy (const mp_int * a, mp_int * b)
 
 /* returns the number of bits in an int */
 int
-mp_count_bits (mp_int * a)
+mp_count_bits (const mp_int * a)
 {
   int     r;
   mp_digit q;
@@ -988,11 +1215,338 @@ mp_count_bits (mp_int * a)
   
   /* take the last digit and count the bits in it */
   q = a->dp[a->used - 1];
-  while (q > ((mp_digit) 0)) {
+  while (q > 0) {
     ++r;
     q >>= ((mp_digit) 1);
   }
   return r;
+}
+
+/* calc a value mod 2**b */
+static int
+mp_mod_2d (const mp_int * a, int b, mp_int * c)
+{
+  int     x, res;
+
+  /* if b is <= 0 then zero the int */
+  if (b <= 0) {
+    mp_zero (c);
+    return MP_OKAY;
+  }
+
+  /* if the modulus is larger than the value than return */
+  if (b > a->used * DIGIT_BIT) {
+    res = mp_copy (a, c);
+    return res;
+  }
+
+  /* copy */
+  if ((res = mp_copy (a, c)) != MP_OKAY) {
+    return res;
+  }
+
+  /* zero digits above the last digit of the modulus */
+  for (x = (b / DIGIT_BIT) + ((b % DIGIT_BIT) == 0 ? 0 : 1); x < c->used; x++) {
+    c->dp[x] = 0;
+  }
+  /* clear the digit that is not completely outside/inside the modulus */
+  c->dp[b / DIGIT_BIT] &= (1 << ((mp_digit)b % DIGIT_BIT)) - 1;
+  mp_clamp (c);
+  return MP_OKAY;
+}
+
+/* shift right a certain amount of digits */
+static void mp_rshd (mp_int * a, int b)
+{
+  int     x;
+
+  /* if b <= 0 then ignore it */
+  if (b <= 0) {
+    return;
+  }
+
+  /* if b > used then simply zero it and return */
+  if (a->used <= b) {
+    mp_zero (a);
+    return;
+  }
+
+  {
+    register mp_digit *bottom, *top;
+
+    /* shift the digits down */
+
+    /* bottom */
+    bottom = a->dp;
+
+    /* top [offset into digits] */
+    top = a->dp + b;
+
+    /* this is implemented as a sliding window where
+     * the window is b-digits long and digits from
+     * the top of the window are copied to the bottom
+     *
+     * e.g.
+
+     b-2 | b-1 | b0 | b1 | b2 | ... | bb |   ---->
+                 /\                   |      ---->
+                  \-------------------/      ---->
+     */
+    for (x = 0; x < (a->used - b); x++) {
+      *bottom++ = *top++;
+    }
+
+    /* zero the top digits */
+    for (; x < a->used; x++) {
+      *bottom++ = 0;
+    }
+  }
+
+  /* remove excess digits */
+  a->used -= b;
+}
+
+/* shift right by a certain bit count (store quotient in c, optional remainder in d) */
+static int mp_div_2d (const mp_int * a, int b, mp_int * c, mp_int * d)
+{
+  mp_digit D, r, rr;
+  int     x, res;
+  mp_int  t;
+
+
+  /* if the shift count is <= 0 then we do no work */
+  if (b <= 0) {
+    res = mp_copy (a, c);
+    if (d != NULL) {
+      mp_zero (d);
+    }
+    return res;
+  }
+
+  if ((res = mp_init (&t)) != MP_OKAY) {
+    return res;
+  }
+
+  /* get the remainder */
+  if (d != NULL) {
+    if ((res = mp_mod_2d (a, b, &t)) != MP_OKAY) {
+      mp_clear (&t);
+      return res;
+    }
+  }
+
+  /* copy */
+  if ((res = mp_copy (a, c)) != MP_OKAY) {
+    mp_clear (&t);
+    return res;
+  }
+
+  /* shift by as many digits in the bit count */
+  if (b >= DIGIT_BIT) {
+    mp_rshd (c, b / DIGIT_BIT);
+  }
+
+  /* shift any bit count < DIGIT_BIT */
+  D = (mp_digit) (b % DIGIT_BIT);
+  if (D != 0) {
+    register mp_digit *tmpc, mask, shift;
+
+    /* mask */
+    mask = (((mp_digit)1) << D) - 1;
+
+    /* shift for lsb */
+    shift = DIGIT_BIT - D;
+
+    /* alias */
+    tmpc = c->dp + (c->used - 1);
+
+    /* carry */
+    r = 0;
+    for (x = c->used - 1; x >= 0; x--) {
+      /* get the lower  bits of this word in a temp */
+      rr = *tmpc & mask;
+
+      /* shift the current word and mix in the carry bits from the previous word */
+      *tmpc = (*tmpc >> D) | (r << shift);
+      --tmpc;
+
+      /* set the carry to the carry bits of the current word found above */
+      r = rr;
+    }
+  }
+  mp_clamp (c);
+  if (d != NULL) {
+    mp_exch (&t, d);
+  }
+  mp_clear (&t);
+  return MP_OKAY;
+}
+
+/* shift left a certain amount of digits */
+static int mp_lshd (mp_int * a, int b)
+{
+  int     x, res;
+
+  /* if it's less than zero return */
+  if (b <= 0) {
+    return MP_OKAY;
+  }
+
+  /* grow to fit the new digits */
+  if (a->alloc < a->used + b) {
+     if ((res = mp_grow (a, a->used + b)) != MP_OKAY) {
+       return res;
+     }
+  }
+
+  {
+    register mp_digit *top, *bottom;
+
+    /* increment the used by the shift amount then copy upwards */
+    a->used += b;
+
+    /* top */
+    top = a->dp + a->used - 1;
+
+    /* base */
+    bottom = a->dp + a->used - 1 - b;
+
+    /* much like mp_rshd this is implemented using a sliding window
+     * except the window goes the other way around.  Copying from
+     * the bottom to the top.  see bn_mp_rshd.c for more info.
+     */
+    for (x = a->used - 1; x >= b; x--) {
+      *top-- = *bottom--;
+    }
+
+    /* zero the lower digits */
+    top = a->dp;
+    for (x = 0; x < b; x++) {
+      *top++ = 0;
+    }
+  }
+  return MP_OKAY;
+}
+
+/* shift left by a certain bit count */
+static int mp_mul_2d (const mp_int * a, int b, mp_int * c)
+{
+  mp_digit d;
+  int      res;
+
+  /* copy */
+  if (a != c) {
+     if ((res = mp_copy (a, c)) != MP_OKAY) {
+       return res;
+     }
+  }
+
+  if (c->alloc < c->used + b/DIGIT_BIT + 1) {
+     if ((res = mp_grow (c, c->used + b / DIGIT_BIT + 1)) != MP_OKAY) {
+       return res;
+     }
+  }
+
+  /* shift by as many digits in the bit count */
+  if (b >= DIGIT_BIT) {
+    if ((res = mp_lshd (c, b / DIGIT_BIT)) != MP_OKAY) {
+      return res;
+    }
+  }
+
+  /* shift any bit count < DIGIT_BIT */
+  d = (mp_digit) (b % DIGIT_BIT);
+  if (d != 0) {
+    register mp_digit *tmpc, shift, mask, r, rr;
+    register int x;
+
+    /* bitmask for carries */
+    mask = (((mp_digit)1) << d) - 1;
+
+    /* shift for msbs */
+    shift = DIGIT_BIT - d;
+
+    /* alias */
+    tmpc = c->dp;
+
+    /* carry */
+    r    = 0;
+    for (x = 0; x < c->used; x++) {
+      /* get the higher bits of the current word */
+      rr = (*tmpc >> shift) & mask;
+
+      /* shift the current word and OR in the carry */
+      *tmpc = ((*tmpc << d) | r) & MP_MASK;
+      ++tmpc;
+
+      /* set the carry to the carry bits of the current word */
+      r = rr;
+    }
+
+    /* set final carry */
+    if (r != 0) {
+       c->dp[(c->used)++] = r;
+    }
+  }
+  mp_clamp (c);
+  return MP_OKAY;
+}
+
+/* multiply by a digit */
+static int
+mp_mul_d (const mp_int * a, mp_digit b, mp_int * c)
+{
+  mp_digit u, *tmpa, *tmpc;
+  mp_word  r;
+  int      ix, res, olduse;
+
+  /* make sure c is big enough to hold a*b */
+  if (c->alloc < a->used + 1) {
+    if ((res = mp_grow (c, a->used + 1)) != MP_OKAY) {
+      return res;
+    }
+  }
+
+  /* get the original destinations used count */
+  olduse = c->used;
+
+  /* set the sign */
+  c->sign = a->sign;
+
+  /* alias for a->dp [source] */
+  tmpa = a->dp;
+
+  /* alias for c->dp [dest] */
+  tmpc = c->dp;
+
+  /* zero carry */
+  u = 0;
+
+  /* compute columns */
+  for (ix = 0; ix < a->used; ix++) {
+    /* compute product and carry sum for this term */
+    r       = ((mp_word) u) + ((mp_word)*tmpa++) * ((mp_word)b);
+
+    /* mask off higher bits to get a single digit */
+    *tmpc++ = (mp_digit) (r & ((mp_word) MP_MASK));
+
+    /* send carry into next iteration */
+    u       = (mp_digit) (r >> ((mp_word) DIGIT_BIT));
+  }
+
+  /* store final carry [if any] */
+  *tmpc++ = u;
+
+  /* now zero digits above the top */
+  while (ix++ < olduse) {
+     *tmpc++ = 0;
+  }
+
+  /* set used count */
+  c->used = a->used + 1;
+  mp_clamp(c);
+
+  return MP_OKAY;
 }
 
 /* integer signed division. 
@@ -1008,7 +1562,7 @@ mp_count_bits (mp_int * a)
  * The overall algorithm is as described as 
  * 14.20 from HAC but fixed to treat these cases.
 */
-int mp_div (mp_int * a, mp_int * b, mp_int * c, mp_int * d)
+static int mp_div (const mp_int * a, const mp_int * b, mp_int * c, mp_int * d)
 {
   mp_int  q, x, y, t1, t2;
   int     res, n, t, i, norm, neg;
@@ -1058,7 +1612,7 @@ int mp_div (mp_int * a, mp_int * b, mp_int * c, mp_int * d)
 
   /* normalize both x and y, ensure that y >= b/2, [b == 2**DIGIT_BIT] */
   norm = mp_count_bits(&y) % DIGIT_BIT;
-  if (norm < (int)(DIGIT_BIT-1)) {
+  if (norm < DIGIT_BIT-1) {
      norm = (DIGIT_BIT-1) - norm;
      if ((res = mp_mul_2d (&x, norm, &x)) != MP_OKAY) {
        goto __Y;
@@ -1070,7 +1624,7 @@ int mp_div (mp_int * a, mp_int * b, mp_int * c, mp_int * d)
      norm = 0;
   }
 
-  /* note hac does 0 based, so if used==5 then its 0,1,2,3,4, e.g. use 4 */
+  /* note hac does 0 based, so if used==5 then it's 0,1,2,3,4, e.g. use 4 */
   n = x.used - 1;
   t = y.used - 1;
 
@@ -1191,144 +1745,21 @@ __Q:mp_clear (&q);
   return res;
 }
 
-/* b = a/2 */
-int mp_div_2(mp_int * a, mp_int * b)
-{
-  int     x, res, oldused;
-
-  /* copy */
-  if (b->alloc < a->used) {
-    if ((res = mp_grow (b, a->used)) != MP_OKAY) {
-      return res;
-    }
-  }
-
-  oldused = b->used;
-  b->used = a->used;
-  {
-    register mp_digit r, rr, *tmpa, *tmpb;
-
-    /* source alias */
-    tmpa = a->dp + b->used - 1;
-
-    /* dest alias */
-    tmpb = b->dp + b->used - 1;
-
-    /* carry */
-    r = 0;
-    for (x = b->used - 1; x >= 0; x--) {
-      /* get the carry for the next iteration */
-      rr = *tmpa & 1;
-
-      /* shift the current digit, add in carry and store */
-      *tmpb-- = (*tmpa-- >> 1) | (r << (DIGIT_BIT - 1));
-
-      /* forward carry to next iteration */
-      r = rr;
-    }
-
-    /* zero excess digits */
-    tmpb = b->dp + b->used;
-    for (x = b->used; x < oldused; x++) {
-      *tmpb++ = 0;
-    }
-  }
-  b->sign = a->sign;
-  mp_clamp (b);
-  return MP_OKAY;
-}
-
-/* shift right by a certain bit count (store quotient in c, optional remainder in d) */
-int mp_div_2d (mp_int * a, int b, mp_int * c, mp_int * d)
-{
-  mp_digit D, r, rr;
-  int     x, res;
-  mp_int  t;
-
-
-  /* if the shift count is <= 0 then we do no work */
-  if (b <= 0) {
-    res = mp_copy (a, c);
-    if (d != NULL) {
-      mp_zero (d);
-    }
-    return res;
-  }
-
-  if ((res = mp_init (&t)) != MP_OKAY) {
-    return res;
-  }
-
-  /* get the remainder */
-  if (d != NULL) {
-    if ((res = mp_mod_2d (a, b, &t)) != MP_OKAY) {
-      mp_clear (&t);
-      return res;
-    }
-  }
-
-  /* copy */
-  if ((res = mp_copy (a, c)) != MP_OKAY) {
-    mp_clear (&t);
-    return res;
-  }
-
-  /* shift by as many digits in the bit count */
-  if (b >= (int)DIGIT_BIT) {
-    mp_rshd (c, b / DIGIT_BIT);
-  }
-
-  /* shift any bit count < DIGIT_BIT */
-  D = (mp_digit) (b % DIGIT_BIT);
-  if (D != 0) {
-    register mp_digit *tmpc, mask, shift;
-
-    /* mask */
-    mask = (((mp_digit)1) << D) - 1;
-
-    /* shift for lsb */
-    shift = DIGIT_BIT - D;
-
-    /* alias */
-    tmpc = c->dp + (c->used - 1);
-
-    /* carry */
-    r = 0;
-    for (x = c->used - 1; x >= 0; x--) {
-      /* get the lower  bits of this word in a temp */
-      rr = *tmpc & mask;
-
-      /* shift the current word and mix in the carry bits from the previous word */
-      *tmpc = (*tmpc >> D) | (r << shift);
-      --tmpc;
-
-      /* set the carry to the carry bits of the current word found above */
-      r = rr;
-    }
-  }
-  mp_clamp (c);
-  if (d != NULL) {
-    mp_exch (&t, d);
-  }
-  mp_clear (&t);
-  return MP_OKAY;
-}
-
-static int s_is_power_of_two(mp_digit b, int *p)
+static BOOL s_is_power_of_two(mp_digit b, int *p)
 {
    int x;
 
    for (x = 1; x < DIGIT_BIT; x++) {
       if (b == (((mp_digit)1)<<x)) {
          *p = x;
-         return 1;
+         return TRUE;
       }
    }
-   return 0;
+   return FALSE;
 }
 
 /* single digit division (based on routine from MPI) */
-int mp_div_d (mp_int * a, mp_digit b, mp_int * c, mp_digit * d)
+static int mp_div_d (const mp_int * a, mp_digit b, mp_int * c, mp_digit * d)
 {
   mp_int  q;
   mp_word w;
@@ -1352,7 +1783,7 @@ int mp_div_d (mp_int * a, mp_digit b, mp_int * c, mp_digit * d)
   }
 
   /* power of two ? */
-  if (s_is_power_of_two(b, &ix) == 1) {
+  if (s_is_power_of_two(b, &ix)) {
      if (d != NULL) {
         *d = a->dp[0] & ((((mp_digit)1)<<ix) - 1);
      }
@@ -1379,9 +1810,9 @@ int mp_div_d (mp_int * a, mp_digit b, mp_int * c, mp_digit * d)
       } else {
         t = 0;
       }
-      q.dp[ix] = (mp_digit)t;
+      q.dp[ix] = t;
   }
-  
+
   if (d != NULL) {
      *d = (mp_digit)w;
   }
@@ -1409,8 +1840,8 @@ int mp_div_d (mp_int * a, mp_digit b, mp_int * c, mp_digit * d)
  *
  * Input x must be in the range 0 <= x <= (n-1)**2
  */
-int
-mp_dr_reduce (mp_int * x, mp_int * n, mp_digit k)
+static int
+mp_dr_reduce (mp_int * x, const mp_int * n, mp_digit k)
 {
   int      err, i, m;
   mp_word  r;
@@ -1468,8 +1899,8 @@ top:
   return MP_OKAY;
 }
 
-/* determines the setup value */
-void mp_dr_setup(mp_int *a, mp_digit *d)
+/* sets the value of "d" required for mp_dr_reduce */
+static void mp_dr_setup(const mp_int *a, mp_digit *d)
 {
    /* the casts are required if DIGIT_BIT is one less than
     * the number of bits in a mp_digit [e.g. DIGIT_BIT==31]
@@ -1478,25 +1909,12 @@ void mp_dr_setup(mp_int *a, mp_digit *d)
         ((mp_word)a->dp[0]));
 }
 
-/* swap the elements of two integers, for cases where you can't simply swap the 
- * mp_int pointers around
- */
-void
-mp_exch (mp_int * a, mp_int * b)
-{
-  mp_int  t;
-
-  t  = *a;
-  *a = *b;
-  *b = t;
-}
-
 /* this is a shell function that calls either the normal or Montgomery
  * exptmod functions.  Originally the call to the montgomery code was
  * embedded in the normal function but that wasted a lot of stack space
  * for nothing (since 99% of the time the Montgomery code would be called)
  */
-int mp_exptmod (mp_int * G, mp_int * X, mp_int * P, mp_int * Y)
+int mp_exptmod (const mp_int * G, const mp_int * X, mp_int * P, mp_int * Y)
 {
   int dr;
 
@@ -1537,8 +1955,8 @@ int mp_exptmod (mp_int * G, mp_int * X, mp_int * P, mp_int * Y)
 
   dr = 0;
 
-  /* if the modulus is odd or dr != 0 use the fast method */
-  if (mp_isodd (P) == 1 || dr !=  0) {
+  /* if the modulus is odd use the fast method */
+  if (mp_isodd (P) == 1) {
     return mp_exptmod_fast (G, X, P, Y, dr);
   } else {
     /* otherwise use the generic Barrett reduction technique */
@@ -1555,7 +1973,7 @@ int mp_exptmod (mp_int * G, mp_int * X, mp_int * P, mp_int * Y)
  */
 
 int
-mp_exptmod_fast (mp_int * G, mp_int * X, mp_int * P, mp_int * Y, int redmode)
+mp_exptmod_fast (const mp_int * G, const mp_int * X, mp_int * P, mp_int * Y, int redmode)
 {
   mp_int  M[256], res;
   mp_digit buf, mp;
@@ -1565,7 +1983,7 @@ mp_exptmod_fast (mp_int * G, mp_int * X, mp_int * P, mp_int * Y, int redmode)
    * one of many reduction algorithms without modding the guts of
    * the code with if statements everywhere.
    */
-  int     (*redux)(mp_int*,mp_int*,mp_digit);
+  int     (*redux)(mp_int*,const mp_int*,mp_digit);
 
   /* find window size */
   x = mp_count_bits (X);
@@ -1699,11 +2117,11 @@ mp_exptmod_fast (mp_int * G, mp_int * X, mp_int * P, mp_int * Y, int redmode)
       }
       /* read next digit and reset bitcnt */
       buf    = X->dp[digidx--];
-      bitcnt = (int)DIGIT_BIT;
+      bitcnt = DIGIT_BIT;
     }
 
     /* grab the next msb from the exponent */
-    y     = (mp_digit)(buf >> (DIGIT_BIT - 1)) & 1;
+    y     = (buf >> (DIGIT_BIT - 1)) & 1;
     buf <<= (mp_digit)1;
 
     /* if the bit is zero and mode == 0 then we ignore it
@@ -1807,7 +2225,7 @@ __M:
 }
 
 /* Greatest Common Divisor using the binary method */
-int mp_gcd (mp_int * a, mp_int * b, mp_int * c)
+int mp_gcd (const mp_int * a, const mp_int * b, mp_int * c)
 {
   mp_int  u, v;
   int     k, u_lsb, v_lsb, res;
@@ -1899,7 +2317,7 @@ __U:mp_clear (&v);
 }
 
 /* get the lower 32-bits of an mp_int */
-unsigned long mp_get_int(mp_int * a) 
+unsigned long mp_get_int(const mp_int * a)
 {
   int i;
   unsigned long res;
@@ -1920,67 +2338,6 @@ unsigned long mp_get_int(mp_int * a)
 
   /* force result to 32-bits always so it is consistent on non 32-bit platforms */
   return res & 0xFFFFFFFFUL;
-}
-
-/* grow as required */
-int mp_grow (mp_int * a, int size)
-{
-  int     i;
-  mp_digit *tmp;
-
-  /* if the alloc size is smaller alloc more ram */
-  if (a->alloc < size) {
-    /* ensure there are always at least MP_PREC digits extra on top */
-    size += (MP_PREC * 2) - (size % MP_PREC);
-
-    /* reallocate the array a->dp
-     *
-     * We store the return in a temporary variable
-     * in case the operation failed we don't want
-     * to overwrite the dp member of a.
-     */
-    tmp = realloc (a->dp, sizeof (mp_digit) * size);
-    if (tmp == NULL) {
-      /* reallocation failed but "a" is still valid [can be freed] */
-      return MP_MEM;
-    }
-
-    /* reallocation succeeded so set a->dp */
-    a->dp = tmp;
-
-    /* zero excess digits */
-    i        = a->alloc;
-    a->alloc = size;
-    for (; i < a->alloc; i++) {
-      a->dp[i] = 0;
-    }
-  }
-  return MP_OKAY;
-}
-
-/* init a new mp_int */
-int mp_init (mp_int * a)
-{
-  int i;
-
-  /* allocate memory required and clear it */
-  a->dp = malloc (sizeof (mp_digit) * MP_PREC);
-  if (a->dp == NULL) {
-    return MP_MEM;
-  }
-
-  /* set the digits to zero */
-  for (i = 0; i < MP_PREC; i++) {
-      a->dp[i] = 0;
-  }
-
-  /* set the used to zero, allocated digits to the default precision
-   * and sign to positive */
-  a->used  = 0;
-  a->alloc = MP_PREC;
-  a->sign  = MP_ZPOS;
-
-  return MP_OKAY;
 }
 
 /* creates "a" then copies b into it */
@@ -2008,11 +2365,8 @@ int mp_init_multi(mp_int *mp, ...)
                succeeded in init-ing, then return error.
             */
             va_list clean_args;
-            
-            /* end the current list */
-            va_end(args);
-            
-            /* now start cleaning up */            
+
+            /* now start cleaning up */
             cur_arg = mp;
             va_start(clean_args, mp);
             while (n--) {
@@ -2030,35 +2384,8 @@ int mp_init_multi(mp_int *mp, ...)
     return res;                /* Assumed ok, if error flagged above. */
 }
 
-/* init an mp_init for a given size */
-int mp_init_size (mp_int * a, int size)
-{
-  int x;
-
-  /* pad size so there are always extra digits */
-  size += (MP_PREC * 2) - (size % MP_PREC);    
-  
-  /* alloc mem */
-  a->dp = malloc (sizeof (mp_digit) * size);
-  if (a->dp == NULL) {
-    return MP_MEM;
-  }
-
-  /* set the members */
-  a->used  = 0;
-  a->alloc = size;
-  a->sign  = MP_ZPOS;
-
-  /* zero the digits */
-  for (x = 0; x < size; x++) {
-      a->dp[x] = 0;
-  }
-
-  return MP_OKAY;
-}
-
 /* hac 14.61, pp608 */
-int mp_invmod (mp_int * a, mp_int * b, mp_int * c)
+int mp_invmod (const mp_int * a, mp_int * b, mp_int * c)
 {
   /* b cannot be negative */
   if (b->sign == MP_NEG || mp_iszero(b) == 1) {
@@ -2074,7 +2401,7 @@ int mp_invmod (mp_int * a, mp_int * b, mp_int * c)
 }
 
 /* hac 14.61, pp608 */
-int mp_invmod_slow (mp_int * a, mp_int * b, mp_int * c)
+int mp_invmod_slow (const mp_int * a, mp_int * b, mp_int * c)
 {
   mp_int  x, y, u, v, A, B, C, D;
   int     res;
@@ -2206,7 +2533,7 @@ top:
     goto __ERR;
   }
 
-  /* if its too low */
+  /* if it's too low */
   while (mp_cmp_d(&C, 0) == MP_LT) {
       if ((res = mp_add(&C, b, &C)) != MP_OKAY) {
          goto __ERR;
@@ -2251,12 +2578,12 @@ __ERR:mp_clear_multi (&x, &y, &u, &v, &A, &B, &C, &D, NULL);
  * are saved.  Note also that the call to mp_mul can end up back 
  * in this function if the a0, a1, b0, or b1 are above the threshold.  
  * This is known as divide-and-conquer and leads to the famous 
- * O(N**lg(3)) or O(N**1.584) work which is asymptopically lower than 
+ * O(N**lg(3)) or O(N**1.584) work which is asymptotically lower than
  * the standard O(N**2) that the baseline/comba methods use.  
  * Generally though the overhead of this method doesn't pay off 
  * until a certain size (N ~ 80) is reached.
  */
-int mp_karatsuba_mul (mp_int * a, mp_int * b, mp_int * c)
+int mp_karatsuba_mul (const mp_int * a, const mp_int * b, mp_int * c)
 {
   mp_int  x0, x1, y0, y1, t1, x0y0, x1y1;
   int     B, err;
@@ -2380,7 +2707,7 @@ ERR:
  * is essentially the same algorithm but merely 
  * tuned to perform recursive squarings.
  */
-int mp_karatsuba_sqr (mp_int * a, mp_int * b)
+int mp_karatsuba_sqr (const mp_int * a, mp_int * b)
 {
   mp_int  x0, x1, t1, t2, x0x0, x1x1;
   int     B, err;
@@ -2474,7 +2801,7 @@ ERR:
 }
 
 /* computes least common multiple as |a*b|/(a, b) */
-int mp_lcm (mp_int * a, mp_int * b, mp_int * c)
+int mp_lcm (const mp_int * a, const mp_int * b, mp_int * c)
 {
   int     res;
   mp_int  t1, t2;
@@ -2491,13 +2818,13 @@ int mp_lcm (mp_int * a, mp_int * b, mp_int * c)
 
   /* divide the smallest by the GCD */
   if (mp_cmp_mag(a, b) == MP_LT) {
-     /* store quotient in t2 such that t2 * b is the LCM */
+     /* store quotient in t2 so that t2 * b is the LCM */
      if ((res = mp_div(a, &t1, &t2, NULL)) != MP_OKAY) {
         goto __T;
      }
      res = mp_mul(b, &t2, c);
   } else {
-     /* store quotient in t2 such that t2 * a is the LCM */
+     /* store quotient in t2 so that t2 * a is the LCM */
      if ((res = mp_div(b, &t1, &t2, NULL)) != MP_OKAY) {
         goto __T;
      }
@@ -2512,55 +2839,9 @@ __T:
   return res;
 }
 
-/* shift left a certain amount of digits */
-int mp_lshd (mp_int * a, int b)
-{
-  int     x, res;
-
-  /* if its less than zero return */
-  if (b <= 0) {
-    return MP_OKAY;
-  }
-
-  /* grow to fit the new digits */
-  if (a->alloc < a->used + b) {
-     if ((res = mp_grow (a, a->used + b)) != MP_OKAY) {
-       return res;
-     }
-  }
-
-  {
-    register mp_digit *top, *bottom;
-
-    /* increment the used by the shift amount then copy upwards */
-    a->used += b;
-
-    /* top */
-    top = a->dp + a->used - 1;
-
-    /* base */
-    bottom = a->dp + a->used - 1 - b;
-
-    /* much like mp_rshd this is implemented using a sliding window
-     * except the window goes the otherway around.  Copying from
-     * the bottom to the top.  see bn_mp_rshd.c for more info.
-     */
-    for (x = a->used - 1; x >= b; x--) {
-      *top-- = *bottom--;
-    }
-
-    /* zero the lower digits */
-    top = a->dp;
-    for (x = 0; x < b; x++) {
-      *top++ = 0;
-    }
-  }
-  return MP_OKAY;
-}
-
 /* c = a mod b, 0 <= c < b */
 int
-mp_mod (mp_int * a, mp_int * b, mp_int * c)
+mp_mod (const mp_int * a, mp_int * b, mp_int * c)
 {
   mp_int  t;
   int     res;
@@ -2585,53 +2866,80 @@ mp_mod (mp_int * a, mp_int * b, mp_int * c)
   return res;
 }
 
-/* calc a value mod 2**b */
-int
-mp_mod_2d (mp_int * a, int b, mp_int * c)
-{
-  int     x, res;
-
-  /* if b is <= 0 then zero the int */
-  if (b <= 0) {
-    mp_zero (c);
-    return MP_OKAY;
-  }
-
-  /* if the modulus is larger than the value than return */
-  if (b > (int) (a->used * DIGIT_BIT)) {
-    res = mp_copy (a, c);
-    return res;
-  }
-
-  /* copy */
-  if ((res = mp_copy (a, c)) != MP_OKAY) {
-    return res;
-  }
-
-  /* zero digits above the last digit of the modulus */
-  for (x = (b / DIGIT_BIT) + ((b % DIGIT_BIT) == 0 ? 0 : 1); x < c->used; x++) {
-    c->dp[x] = 0;
-  }
-  /* clear the digit that is not completely outside/inside the modulus */
-  c->dp[b / DIGIT_BIT] &=
-    (mp_digit) ((((mp_digit) 1) << (((mp_digit) b) % DIGIT_BIT)) - ((mp_digit) 1));
-  mp_clamp (c);
-  return MP_OKAY;
-}
-
-int
-mp_mod_d (mp_int * a, mp_digit b, mp_digit * c)
+static int
+mp_mod_d (const mp_int * a, mp_digit b, mp_digit * c)
 {
   return mp_div_d(a, b, NULL, c);
+}
+
+/* b = a*2 */
+static int mp_mul_2(const mp_int * a, mp_int * b)
+{
+  int     x, res, oldused;
+
+  /* grow to accommodate result */
+  if (b->alloc < a->used + 1) {
+    if ((res = mp_grow (b, a->used + 1)) != MP_OKAY) {
+      return res;
+    }
+  }
+
+  oldused = b->used;
+  b->used = a->used;
+
+  {
+    register mp_digit r, rr, *tmpa, *tmpb;
+
+    /* alias for source */
+    tmpa = a->dp;
+
+    /* alias for dest */
+    tmpb = b->dp;
+
+    /* carry */
+    r = 0;
+    for (x = 0; x < a->used; x++) {
+
+      /* get what will be the *next* carry bit from the
+       * MSB of the current digit
+       */
+      rr = *tmpa >> ((mp_digit)(DIGIT_BIT - 1));
+
+      /* now shift up this digit, add in the carry [from the previous] */
+      *tmpb++ = ((*tmpa++ << ((mp_digit)1)) | r) & MP_MASK;
+
+      /* copy the carry that would be from the source
+       * digit into the next iteration
+       */
+      r = rr;
+    }
+
+    /* new leading digit? */
+    if (r != 0) {
+      /* add a MSB which is always 1 at this point */
+      *tmpb = 1;
+      ++(b->used);
+    }
+
+    /* now zero any excess digits on the destination
+     * that we didn't write to
+     */
+    tmpb = b->dp + b->used;
+    for (x = b->used; x < oldused; x++) {
+      *tmpb++ = 0;
+    }
+  }
+  b->sign = a->sign;
+  return MP_OKAY;
 }
 
 /*
  * shifts with subtractions when the result is greater than b.
  *
- * The method is slightly modified to shift B unconditionally upto just under
+ * The method is slightly modified to shift B unconditionally up to just under
  * the leading bit of b.  This saves a lot of multiple precision shifting.
  */
-int mp_montgomery_calc_normalization (mp_int * a, mp_int * b)
+int mp_montgomery_calc_normalization (mp_int * a, const mp_int * b)
 {
   int     x, bits, res;
 
@@ -2650,7 +2958,7 @@ int mp_montgomery_calc_normalization (mp_int * a, mp_int * b)
 
 
   /* now compute C = A * B mod b */
-  for (x = bits - 1; x < (int)DIGIT_BIT; x++) {
+  for (x = bits - 1; x < DIGIT_BIT; x++) {
     if ((res = mp_mul_2 (a, a)) != MP_OKAY) {
       return res;
     }
@@ -2666,7 +2974,7 @@ int mp_montgomery_calc_normalization (mp_int * a, mp_int * b)
 
 /* computes xR**-1 == x (mod N) via Montgomery Reduction */
 int
-mp_montgomery_reduce (mp_int * x, mp_int * n, mp_digit rho)
+mp_montgomery_reduce (mp_int * x, const mp_int * n, mp_digit rho)
 {
   int     ix, res, digs;
   mp_digit mu;
@@ -2763,7 +3071,7 @@ mp_montgomery_reduce (mp_int * x, mp_int * n, mp_digit rho)
 
 /* setups the montgomery reduction stuff */
 int
-mp_montgomery_setup (mp_int * n, mp_digit * rho)
+mp_montgomery_setup (const mp_int * n, mp_digit * rho)
 {
   mp_digit x, b;
 
@@ -2793,7 +3101,7 @@ mp_montgomery_setup (mp_int * n, mp_digit * rho)
 }
 
 /* high level multiplication (handles sign) */
-int mp_mul (mp_int * a, mp_int * b, mp_int * c)
+int mp_mul (const mp_int * a, const mp_int * b, mp_int * c)
 {
   int     res, neg;
   neg = (a->sign == b->sign) ? MP_ZPOS : MP_NEG;
@@ -2822,191 +3130,9 @@ int mp_mul (mp_int * a, mp_int * b, mp_int * c)
   return res;
 }
 
-/* b = a*2 */
-int mp_mul_2(mp_int * a, mp_int * b)
-{
-  int     x, res, oldused;
-
-  /* grow to accommodate result */
-  if (b->alloc < a->used + 1) {
-    if ((res = mp_grow (b, a->used + 1)) != MP_OKAY) {
-      return res;
-    }
-  }
-
-  oldused = b->used;
-  b->used = a->used;
-
-  {
-    register mp_digit r, rr, *tmpa, *tmpb;
-
-    /* alias for source */
-    tmpa = a->dp;
-    
-    /* alias for dest */
-    tmpb = b->dp;
-
-    /* carry */
-    r = 0;
-    for (x = 0; x < a->used; x++) {
-    
-      /* get what will be the *next* carry bit from the 
-       * MSB of the current digit 
-       */
-      rr = *tmpa >> ((mp_digit)(DIGIT_BIT - 1));
-      
-      /* now shift up this digit, add in the carry [from the previous] */
-      *tmpb++ = ((*tmpa++ << ((mp_digit)1)) | r) & MP_MASK;
-      
-      /* copy the carry that would be from the source 
-       * digit into the next iteration 
-       */
-      r = rr;
-    }
-
-    /* new leading digit? */
-    if (r != 0) {
-      /* add a MSB which is always 1 at this point */
-      *tmpb = 1;
-      ++(b->used);
-    }
-
-    /* now zero any excess digits on the destination 
-     * that we didn't write to 
-     */
-    tmpb = b->dp + b->used;
-    for (x = b->used; x < oldused; x++) {
-      *tmpb++ = 0;
-    }
-  }
-  b->sign = a->sign;
-  return MP_OKAY;
-}
-
-/* shift left by a certain bit count */
-int mp_mul_2d (mp_int * a, int b, mp_int * c)
-{
-  mp_digit d;
-  int      res;
-
-  /* copy */
-  if (a != c) {
-     if ((res = mp_copy (a, c)) != MP_OKAY) {
-       return res;
-     }
-  }
-
-  if (c->alloc < (int)(c->used + b/DIGIT_BIT + 1)) {
-     if ((res = mp_grow (c, c->used + b / DIGIT_BIT + 1)) != MP_OKAY) {
-       return res;
-     }
-  }
-
-  /* shift by as many digits in the bit count */
-  if (b >= (int)DIGIT_BIT) {
-    if ((res = mp_lshd (c, b / DIGIT_BIT)) != MP_OKAY) {
-      return res;
-    }
-  }
-
-  /* shift any bit count < DIGIT_BIT */
-  d = (mp_digit) (b % DIGIT_BIT);
-  if (d != 0) {
-    register mp_digit *tmpc, shift, mask, r, rr;
-    register int x;
-
-    /* bitmask for carries */
-    mask = (((mp_digit)1) << d) - 1;
-
-    /* shift for msbs */
-    shift = DIGIT_BIT - d;
-
-    /* alias */
-    tmpc = c->dp;
-
-    /* carry */
-    r    = 0;
-    for (x = 0; x < c->used; x++) {
-      /* get the higher bits of the current word */
-      rr = (*tmpc >> shift) & mask;
-
-      /* shift the current word and OR in the carry */
-      *tmpc = ((*tmpc << d) | r) & MP_MASK;
-      ++tmpc;
-
-      /* set the carry to the carry bits of the current word */
-      r = rr;
-    }
-    
-    /* set final carry */
-    if (r != 0) {
-       c->dp[(c->used)++] = r;
-    }
-  }
-  mp_clamp (c);
-  return MP_OKAY;
-}
-
-/* multiply by a digit */
-int
-mp_mul_d (mp_int * a, mp_digit b, mp_int * c)
-{
-  mp_digit u, *tmpa, *tmpc;
-  mp_word  r;
-  int      ix, res, olduse;
-
-  /* make sure c is big enough to hold a*b */
-  if (c->alloc < a->used + 1) {
-    if ((res = mp_grow (c, a->used + 1)) != MP_OKAY) {
-      return res;
-    }
-  }
-
-  /* get the original destinations used count */
-  olduse = c->used;
-
-  /* set the sign */
-  c->sign = a->sign;
-
-  /* alias for a->dp [source] */
-  tmpa = a->dp;
-
-  /* alias for c->dp [dest] */
-  tmpc = c->dp;
-
-  /* zero carry */
-  u = 0;
-
-  /* compute columns */
-  for (ix = 0; ix < a->used; ix++) {
-    /* compute product and carry sum for this term */
-    r       = ((mp_word) u) + ((mp_word)*tmpa++) * ((mp_word)b);
-
-    /* mask off higher bits to get a single digit */
-    *tmpc++ = (mp_digit) (r & ((mp_word) MP_MASK));
-
-    /* send carry into next iteration */
-    u       = (mp_digit) (r >> ((mp_word) DIGIT_BIT));
-  }
-
-  /* store final carry [if any] */
-  *tmpc++ = u;
-
-  /* now zero digits above the top */
-  while (ix++ < olduse) {
-     *tmpc++ = 0;
-  }
-
-  /* set used count */
-  c->used = a->used + 1;
-  mp_clamp(c);
-
-  return MP_OKAY;
-}
-
 /* d = a * b (mod c) */
 int
-mp_mulmod (mp_int * a, mp_int * b, mp_int * c, mp_int * d)
+mp_mulmod (const mp_int * a, const mp_int * b, mp_int * c, mp_int * d)
 {
   int     res;
   mp_int  t;
@@ -3024,12 +3150,51 @@ mp_mulmod (mp_int * a, mp_int * b, mp_int * c, mp_int * d)
   return res;
 }
 
+/* table of first PRIME_SIZE primes */
+static const mp_digit __prime_tab[] = {
+  0x0002, 0x0003, 0x0005, 0x0007, 0x000B, 0x000D, 0x0011, 0x0013,
+  0x0017, 0x001D, 0x001F, 0x0025, 0x0029, 0x002B, 0x002F, 0x0035,
+  0x003B, 0x003D, 0x0043, 0x0047, 0x0049, 0x004F, 0x0053, 0x0059,
+  0x0061, 0x0065, 0x0067, 0x006B, 0x006D, 0x0071, 0x007F, 0x0083,
+  0x0089, 0x008B, 0x0095, 0x0097, 0x009D, 0x00A3, 0x00A7, 0x00AD,
+  0x00B3, 0x00B5, 0x00BF, 0x00C1, 0x00C5, 0x00C7, 0x00D3, 0x00DF,
+  0x00E3, 0x00E5, 0x00E9, 0x00EF, 0x00F1, 0x00FB, 0x0101, 0x0107,
+  0x010D, 0x010F, 0x0115, 0x0119, 0x011B, 0x0125, 0x0133, 0x0137,
+
+  0x0139, 0x013D, 0x014B, 0x0151, 0x015B, 0x015D, 0x0161, 0x0167,
+  0x016F, 0x0175, 0x017B, 0x017F, 0x0185, 0x018D, 0x0191, 0x0199,
+  0x01A3, 0x01A5, 0x01AF, 0x01B1, 0x01B7, 0x01BB, 0x01C1, 0x01C9,
+  0x01CD, 0x01CF, 0x01D3, 0x01DF, 0x01E7, 0x01EB, 0x01F3, 0x01F7,
+  0x01FD, 0x0209, 0x020B, 0x021D, 0x0223, 0x022D, 0x0233, 0x0239,
+  0x023B, 0x0241, 0x024B, 0x0251, 0x0257, 0x0259, 0x025F, 0x0265,
+  0x0269, 0x026B, 0x0277, 0x0281, 0x0283, 0x0287, 0x028D, 0x0293,
+  0x0295, 0x02A1, 0x02A5, 0x02AB, 0x02B3, 0x02BD, 0x02C5, 0x02CF,
+
+  0x02D7, 0x02DD, 0x02E3, 0x02E7, 0x02EF, 0x02F5, 0x02F9, 0x0301,
+  0x0305, 0x0313, 0x031D, 0x0329, 0x032B, 0x0335, 0x0337, 0x033B,
+  0x033D, 0x0347, 0x0355, 0x0359, 0x035B, 0x035F, 0x036D, 0x0371,
+  0x0373, 0x0377, 0x038B, 0x038F, 0x0397, 0x03A1, 0x03A9, 0x03AD,
+  0x03B3, 0x03B9, 0x03C7, 0x03CB, 0x03D1, 0x03D7, 0x03DF, 0x03E5,
+  0x03F1, 0x03F5, 0x03FB, 0x03FD, 0x0407, 0x0409, 0x040F, 0x0419,
+  0x041B, 0x0425, 0x0427, 0x042D, 0x043F, 0x0443, 0x0445, 0x0449,
+  0x044F, 0x0455, 0x045D, 0x0463, 0x0469, 0x047F, 0x0481, 0x048B,
+
+  0x0493, 0x049D, 0x04A3, 0x04A9, 0x04B1, 0x04BD, 0x04C1, 0x04C7,
+  0x04CD, 0x04CF, 0x04D5, 0x04E1, 0x04EB, 0x04FD, 0x04FF, 0x0503,
+  0x0509, 0x050B, 0x0511, 0x0515, 0x0517, 0x051B, 0x0527, 0x0529,
+  0x052F, 0x0551, 0x0557, 0x055D, 0x0565, 0x0577, 0x0581, 0x058F,
+  0x0593, 0x0595, 0x0599, 0x059F, 0x05A7, 0x05AB, 0x05AD, 0x05B3,
+  0x05BF, 0x05C9, 0x05CB, 0x05CF, 0x05D1, 0x05D5, 0x05DB, 0x05E7,
+  0x05F3, 0x05FB, 0x0607, 0x060D, 0x0611, 0x0617, 0x061F, 0x0623,
+  0x062B, 0x062F, 0x063D, 0x0641, 0x0647, 0x0649, 0x064D, 0x0653
+};
+
 /* determines if an integers is divisible by one 
  * of the first PRIME_SIZE primes or not
  *
  * sets result to 0 if not, 1 if yes
  */
-int mp_prime_is_divisible (mp_int * a, int *result)
+static int mp_prime_is_divisible (const mp_int * a, int *result)
 {
   int     err, ix;
   mp_digit res;
@@ -3053,68 +3218,6 @@ int mp_prime_is_divisible (mp_int * a, int *result)
   return MP_OKAY;
 }
 
-/* performs a variable number of rounds of Miller-Rabin
- *
- * Probability of error after t rounds is no more than
-
- *
- * Sets result to 1 if probably prime, 0 otherwise
- */
-int mp_prime_is_prime (mp_int * a, int t, int *result)
-{
-  mp_int  b;
-  int     ix, err, res;
-
-  /* default to no */
-  *result = MP_NO;
-
-  /* valid value of t? */
-  if (t <= 0 || t > PRIME_SIZE) {
-    return MP_VAL;
-  }
-
-  /* is the input equal to one of the primes in the table? */
-  for (ix = 0; ix < PRIME_SIZE; ix++) {
-      if (mp_cmp_d(a, __prime_tab[ix]) == MP_EQ) {
-         *result = 1;
-         return MP_OKAY;
-      }
-  }
-
-  /* first perform trial division */
-  if ((err = mp_prime_is_divisible (a, &res)) != MP_OKAY) {
-    return err;
-  }
-
-  /* return if it was trivially divisible */
-  if (res == MP_YES) {
-    return MP_OKAY;
-  }
-
-  /* now perform the miller-rabin rounds */
-  if ((err = mp_init (&b)) != MP_OKAY) {
-    return err;
-  }
-
-  for (ix = 0; ix < t; ix++) {
-    /* set the prime */
-    mp_set (&b, __prime_tab[ix]);
-
-    if ((err = mp_prime_miller_rabin (a, &b, &res)) != MP_OKAY) {
-      goto __B;
-    }
-
-    if (res == MP_NO) {
-      goto __B;
-    }
-  }
-
-  /* passed the test */
-  *result = MP_YES;
-__B:mp_clear (&b);
-  return err;
-}
-
 /* Miller-Rabin test of "a" to the base of "b" as described in 
  * HAC pp. 139 Algorithm 4.24
  *
@@ -3122,7 +3225,7 @@ __B:mp_clear (&b);
  * Randomly the chance of error is no more than 1/4 and often 
  * very much lower.
  */
-int mp_prime_miller_rabin (mp_int * a, mp_int * b, int *result)
+static int mp_prime_miller_rabin (mp_int * a, const mp_int * b, int *result)
 {
   mp_int  n1, y, r;
   int     s, j, err;
@@ -3197,6 +3300,68 @@ __N1:mp_clear (&n1);
   return err;
 }
 
+/* performs a variable number of rounds of Miller-Rabin
+ *
+ * Probability of error after t rounds is no more than
+
+ *
+ * Sets result to 1 if probably prime, 0 otherwise
+ */
+static int mp_prime_is_prime (mp_int * a, int t, int *result)
+{
+  mp_int  b;
+  int     ix, err, res;
+
+  /* default to no */
+  *result = MP_NO;
+
+  /* valid value of t? */
+  if (t <= 0 || t > PRIME_SIZE) {
+    return MP_VAL;
+  }
+
+  /* is the input equal to one of the primes in the table? */
+  for (ix = 0; ix < PRIME_SIZE; ix++) {
+      if (mp_cmp_d(a, __prime_tab[ix]) == MP_EQ) {
+         *result = 1;
+         return MP_OKAY;
+      }
+  }
+
+  /* first perform trial division */
+  if ((err = mp_prime_is_divisible (a, &res)) != MP_OKAY) {
+    return err;
+  }
+
+  /* return if it was trivially divisible */
+  if (res == MP_YES) {
+    return MP_OKAY;
+  }
+
+  /* now perform the miller-rabin rounds */
+  if ((err = mp_init (&b)) != MP_OKAY) {
+    return err;
+  }
+
+  for (ix = 0; ix < t; ix++) {
+    /* set the prime */
+    mp_set (&b, __prime_tab[ix]);
+
+    if ((err = mp_prime_miller_rabin (a, &b, &res)) != MP_OKAY) {
+      goto __B;
+    }
+
+    if (res == MP_NO) {
+      goto __B;
+    }
+  }
+
+  /* passed the test */
+  *result = MP_YES;
+__B:mp_clear (&b);
+  return err;
+}
+
 static const struct {
    int k, t;
 } sizes[] = {
@@ -3213,9 +3378,9 @@ static const struct {
 /* returns # of RM trials required for a given bit size */
 int mp_prime_rabin_miller_trials(int size)
 {
-   int x;
+   unsigned int x;
 
-   for (x = 0; x < (int)(sizeof(sizes)/(sizeof(sizes[0]))); x++) {
+   for (x = 0; x < ARRAY_SIZE(sizes); x++) {
        if (sizes[x].k == size) {
           return sizes[x].t;
        } else if (sizes[x].k > size) {
@@ -3260,7 +3425,7 @@ int mp_prime_random_ex(mp_int *a, int t, int size, int flags, ltm_prime_callback
    bsize = (size>>3)+((size&7)?1:0);
 
    /* we need a buffer of bsize bytes */
-   tmp = malloc(bsize);
+   tmp = HeapAlloc(GetProcessHeap(), 0, bsize);
    if (tmp == NULL) {
       return MP_MEM;
    }
@@ -3325,13 +3490,13 @@ int mp_prime_random_ex(mp_int *a, int t, int size, int flags, ltm_prime_callback
 
    err = MP_OKAY;
 error:
-   free(tmp);
+   HeapFree(GetProcessHeap(), 0, tmp);
    return err;
 }
 
 /* reads an unsigned char array, assumes the msb is stored first [big endian] */
 int
-mp_read_unsigned_bin (mp_int * a, unsigned char *b, int c)
+mp_read_unsigned_bin (mp_int * a, const unsigned char *b, int c)
 {
   int     res;
 
@@ -3351,8 +3516,8 @@ mp_read_unsigned_bin (mp_int * a, unsigned char *b, int c)
       return res;
     }
 
-      a->dp[0] |= *b++;
-      a->used += 1;
+    a->dp[0] |= *b++;
+    a->used += 1;
   }
   mp_clamp (a);
   return MP_OKAY;
@@ -3363,7 +3528,7 @@ mp_read_unsigned_bin (mp_int * a, unsigned char *b, int c)
  * From HAC pp.604 Algorithm 14.42
  */
 int
-mp_reduce (mp_int * x, mp_int * m, mp_int * mu)
+mp_reduce (mp_int * x, const mp_int * m, const mp_int * mu)
 {
   mp_int  q;
   int     res, um = m->used;
@@ -3429,7 +3594,7 @@ CLEANUP:
 
 /* reduces a modulo n where n is of the form 2**p - d */
 int
-mp_reduce_2k(mp_int *a, mp_int *n, mp_digit d)
+mp_reduce_2k(mp_int *a, const mp_int *n, mp_digit d)
 {
    mp_int q;
    int    p, res;
@@ -3468,8 +3633,8 @@ ERR:
 }
 
 /* determines the setup value */
-int 
-mp_reduce_2k_setup(mp_int *a, mp_digit *d)
+static int
+mp_reduce_2k_setup(const mp_int *a, mp_digit *d)
 {
    int res, p;
    mp_int tmp;
@@ -3495,67 +3660,16 @@ mp_reduce_2k_setup(mp_int *a, mp_digit *d)
 }
 
 /* pre-calculate the value required for Barrett reduction
- * For a given modulus "b" it calulates the value required in "a"
+ * For a given modulus "b" it calculates the value required in "a"
  */
-int mp_reduce_setup (mp_int * a, mp_int * b)
+int mp_reduce_setup (mp_int * a, const mp_int * b)
 {
   int     res;
-  
+
   if ((res = mp_2expt (a, b->used * 2 * DIGIT_BIT)) != MP_OKAY) {
     return res;
   }
   return mp_div (a, b, a, NULL);
-}
-
-/* shift right a certain amount of digits */
-void mp_rshd (mp_int * a, int b)
-{
-  int     x;
-
-  /* if b <= 0 then ignore it */
-  if (b <= 0) {
-    return;
-  }
-
-  /* if b > used then simply zero it and return */
-  if (a->used <= b) {
-    mp_zero (a);
-    return;
-  }
-
-  {
-    register mp_digit *bottom, *top;
-
-    /* shift the digits down */
-
-    /* bottom */
-    bottom = a->dp;
-
-    /* top [offset into digits] */
-    top = a->dp + b;
-
-    /* this is implemented as a sliding window where 
-     * the window is b-digits long and digits from 
-     * the top of the window are copied to the bottom
-     *
-     * e.g.
-
-     b-2 | b-1 | b0 | b1 | b2 | ... | bb |   ---->
-                 /\                   |      ---->
-                  \-------------------/      ---->
-     */
-    for (x = 0; x < (a->used - b); x++) {
-      *bottom++ = *top++;
-    }
-
-    /* zero the top digits */
-    for (; x < a->used; x++) {
-      *bottom++ = 0;
-    }
-  }
-  
-  /* remove excess digits */
-  a->used -= b;
 }
 
 /* set to a digit */
@@ -3598,7 +3712,7 @@ int mp_shrink (mp_int * a)
 {
   mp_digit *tmp;
   if (a->alloc != a->used && a->used > 0) {
-    if ((tmp = realloc (a->dp, sizeof (mp_digit) * a->used)) == NULL) {
+    if ((tmp = HeapReAlloc(GetProcessHeap(), 0, a->dp, sizeof (mp_digit) * a->used)) == NULL) {
       return MP_MEM;
     }
     a->dp    = tmp;
@@ -3607,15 +3721,9 @@ int mp_shrink (mp_int * a)
   return MP_OKAY;
 }
 
-/* get the size for an signed equivalent */
-int mp_signed_bin_size (mp_int * a)
-{
-  return 1 + mp_unsigned_bin_size (a);
-}
-
 /* computes b = a*a */
 int
-mp_sqr (mp_int * a, mp_int * b)
+mp_sqr (const mp_int * a, mp_int * b)
 {
   int     res;
 
@@ -3637,7 +3745,7 @@ if (a->used >= KARATSUBA_SQR_CUTOFF) {
 
 /* c = a * a (mod b) */
 int
-mp_sqrmod (mp_int * a, mp_int * b, mp_int * c)
+mp_sqrmod (const mp_int * a, mp_int * b, mp_int * c)
 {
   int     res;
   mp_int  t;
@@ -3761,7 +3869,7 @@ mp_sub_d (mp_int * a, mp_digit b, mp_int * c)
 
 /* store in unsigned [big endian] format */
 int
-mp_to_unsigned_bin (mp_int * a, unsigned char *b)
+mp_to_unsigned_bin (const mp_int * a, unsigned char *b)
 {
   int     x, res;
   mp_int  t;
@@ -3785,61 +3893,14 @@ mp_to_unsigned_bin (mp_int * a, unsigned char *b)
 
 /* get the size for an unsigned equivalent */
 int
-mp_unsigned_bin_size (mp_int * a)
+mp_unsigned_bin_size (const mp_int * a)
 {
   int     size = mp_count_bits (a);
   return (size / 8 + ((size & 7) != 0 ? 1 : 0));
 }
 
-/* set to zero */
-void
-mp_zero (mp_int * a)
-{
-  a->sign = MP_ZPOS;
-  a->used = 0;
-  memset (a->dp, 0, sizeof (mp_digit) * a->alloc);
-}
-
-const mp_digit __prime_tab[] = {
-  0x0002, 0x0003, 0x0005, 0x0007, 0x000B, 0x000D, 0x0011, 0x0013,
-  0x0017, 0x001D, 0x001F, 0x0025, 0x0029, 0x002B, 0x002F, 0x0035,
-  0x003B, 0x003D, 0x0043, 0x0047, 0x0049, 0x004F, 0x0053, 0x0059,
-  0x0061, 0x0065, 0x0067, 0x006B, 0x006D, 0x0071, 0x007F, 0x0083,
-  0x0089, 0x008B, 0x0095, 0x0097, 0x009D, 0x00A3, 0x00A7, 0x00AD,
-  0x00B3, 0x00B5, 0x00BF, 0x00C1, 0x00C5, 0x00C7, 0x00D3, 0x00DF,
-  0x00E3, 0x00E5, 0x00E9, 0x00EF, 0x00F1, 0x00FB, 0x0101, 0x0107,
-  0x010D, 0x010F, 0x0115, 0x0119, 0x011B, 0x0125, 0x0133, 0x0137,
-
-  0x0139, 0x013D, 0x014B, 0x0151, 0x015B, 0x015D, 0x0161, 0x0167,
-  0x016F, 0x0175, 0x017B, 0x017F, 0x0185, 0x018D, 0x0191, 0x0199,
-  0x01A3, 0x01A5, 0x01AF, 0x01B1, 0x01B7, 0x01BB, 0x01C1, 0x01C9,
-  0x01CD, 0x01CF, 0x01D3, 0x01DF, 0x01E7, 0x01EB, 0x01F3, 0x01F7,
-  0x01FD, 0x0209, 0x020B, 0x021D, 0x0223, 0x022D, 0x0233, 0x0239,
-  0x023B, 0x0241, 0x024B, 0x0251, 0x0257, 0x0259, 0x025F, 0x0265,
-  0x0269, 0x026B, 0x0277, 0x0281, 0x0283, 0x0287, 0x028D, 0x0293,
-  0x0295, 0x02A1, 0x02A5, 0x02AB, 0x02B3, 0x02BD, 0x02C5, 0x02CF,
-
-  0x02D7, 0x02DD, 0x02E3, 0x02E7, 0x02EF, 0x02F5, 0x02F9, 0x0301,
-  0x0305, 0x0313, 0x031D, 0x0329, 0x032B, 0x0335, 0x0337, 0x033B,
-  0x033D, 0x0347, 0x0355, 0x0359, 0x035B, 0x035F, 0x036D, 0x0371,
-  0x0373, 0x0377, 0x038B, 0x038F, 0x0397, 0x03A1, 0x03A9, 0x03AD,
-  0x03B3, 0x03B9, 0x03C7, 0x03CB, 0x03D1, 0x03D7, 0x03DF, 0x03E5,
-  0x03F1, 0x03F5, 0x03FB, 0x03FD, 0x0407, 0x0409, 0x040F, 0x0419,
-  0x041B, 0x0425, 0x0427, 0x042D, 0x043F, 0x0443, 0x0445, 0x0449,
-  0x044F, 0x0455, 0x045D, 0x0463, 0x0469, 0x047F, 0x0481, 0x048B,
-
-  0x0493, 0x049D, 0x04A3, 0x04A9, 0x04B1, 0x04BD, 0x04C1, 0x04C7,
-  0x04CD, 0x04CF, 0x04D5, 0x04E1, 0x04EB, 0x04FD, 0x04FF, 0x0503,
-  0x0509, 0x050B, 0x0511, 0x0515, 0x0517, 0x051B, 0x0527, 0x0529,
-  0x052F, 0x0551, 0x0557, 0x055D, 0x0565, 0x0577, 0x0581, 0x058F,
-  0x0593, 0x0595, 0x0599, 0x059F, 0x05A7, 0x05AB, 0x05AD, 0x05B3,
-  0x05BF, 0x05C9, 0x05CB, 0x05CF, 0x05D1, 0x05D5, 0x05DB, 0x05E7,
-  0x05F3, 0x05FB, 0x0607, 0x060D, 0x0611, 0x0617, 0x061F, 0x0623,
-  0x062B, 0x062F, 0x063D, 0x0641, 0x0647, 0x0649, 0x064D, 0x0653
-};
-
 /* reverse an array, used for radix code */
-void
+static void
 bn_reverse (unsigned char *s, int len)
 {
   int     ix, iy;
@@ -3857,7 +3918,7 @@ bn_reverse (unsigned char *s, int len)
 }
 
 /* low level addition, based on HAC pp.594, Algorithm 14.7 */
-int
+static int
 s_mp_add (mp_int * a, mp_int * b, mp_int * c)
 {
   mp_int *x;
@@ -3944,7 +4005,7 @@ s_mp_add (mp_int * a, mp_int * b, mp_int * c)
   return MP_OKAY;
 }
 
-int s_mp_exptmod (mp_int * G, mp_int * X, mp_int * P, mp_int * Y)
+static int s_mp_exptmod (const mp_int * G, const mp_int * X, mp_int * P, mp_int * Y)
 {
   mp_int  M[256], res, mu;
   mp_digit buf;
@@ -4057,7 +4118,7 @@ int s_mp_exptmod (mp_int * G, mp_int * X, mp_int * P, mp_int * Y)
       }
       /* read next digit and reset the bitcnt */
       buf    = X->dp[digidx--];
-      bitcnt = (int) DIGIT_BIT;
+      bitcnt = DIGIT_BIT;
     }
 
     /* grab the next msb from the exponent */
@@ -4151,12 +4212,12 @@ __M:
   return err;
 }
 
-/* multiplies |a| * |b| and only computes upto digs digits of result
+/* multiplies |a| * |b| and only computes up to digs digits of result
  * HAC pp. 595, Algorithm 14.12  Modified so you can control how 
  * many digits of output are created.
  */
-int
-s_mp_mul_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
+static int
+s_mp_mul_digs (const mp_int * a, const mp_int * b, mp_int * c, int digs)
 {
   mp_int  t;
   int     res, pa, pb, ix, iy;
@@ -4224,8 +4285,8 @@ s_mp_mul_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
 /* multiplies |a| * |b| and does not compute the lower digs digits
  * [meant to get the higher part of the product]
  */
-int
-s_mp_mul_high_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
+static int
+s_mp_mul_high_digs (const mp_int * a, const mp_int * b, mp_int * c, int digs)
 {
   mp_int  t;
   int     res, pa, pb, ix, iy;
@@ -4280,8 +4341,8 @@ s_mp_mul_high_digs (mp_int * a, mp_int * b, mp_int * c, int digs)
 }
 
 /* low level squaring, b = a*a, HAC pp.596-597, Algorithm 14.16 */
-int
-s_mp_sqr (mp_int * a, mp_int * b)
+static int
+s_mp_sqr (const mp_int * a, mp_int * b)
 {
   mp_int  t;
   int     res, ix, iy, pa;
@@ -4330,7 +4391,7 @@ s_mp_sqr (mp_int * a, mp_int * b)
       u       = (mp_digit)(r >> ((mp_word) DIGIT_BIT));
     }
     /* propagate upwards */
-    while (u != ((mp_digit) 0)) {
+    while (u != 0) {
       r       = ((mp_word) *tmpt) + ((mp_word) u);
       *tmpt++ = (mp_digit) (r & ((mp_word) MP_MASK));
       u       = (mp_digit)(r >> ((mp_word) DIGIT_BIT));
@@ -4345,7 +4406,7 @@ s_mp_sqr (mp_int * a, mp_int * b)
 
 /* low level subtraction (assumes |a| > |b|), HAC pp.595 Algorithm 14.9 */
 int
-s_mp_sub (mp_int * a, mp_int * b, mp_int * c)
+s_mp_sub (const mp_int * a, const mp_int * b, mp_int * c)
 {
   int     olduse, res, min, max;
 
@@ -4409,14 +4470,3 @@ s_mp_sub (mp_int * a, mp_int * b, mp_int * c)
   mp_clamp (c);
   return MP_OKAY;
 }
-
-/* Known optimal configurations
-
- CPU                    /Compiler     /MUL CUTOFF/SQR CUTOFF
--------------------------------------------------------------
- Intel P4 Northwood     /GCC v3.4.1   /        88/       128/LTM 0.32 ;-)
- 
-*/
-
-int     KARATSUBA_MUL_CUTOFF = 88,      /* Min. number of digits before Karatsuba multiplication is used. */
-        KARATSUBA_SQR_CUTOFF = 128;     /* Min. number of digits before Karatsuba squaring is used. */

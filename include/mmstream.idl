@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 import "unknwn.idl";
@@ -90,7 +90,7 @@ pointer_default(unique)
 interface IMultiMediaStream : IUnknown {
 
 	HRESULT GetInformation(
-		[out, optional] char *pdwFlags,
+		[out, optional] DWORD *pdwFlags,
 		[out, optional] STREAM_TYPE *pStreamType);
 
 	HRESULT GetMediaStream(
@@ -118,7 +118,7 @@ interface IMultiMediaStream : IUnknown {
 
 	HRESULT GetEndOfStreamEventHandle(
 		[out] HANDLE *phEOS);
-};
+}
 
 
 [
@@ -149,7 +149,7 @@ interface IMediaStream : IUnknown {
 		[out] IStreamSample **ppNewSample);
 
 	HRESULT SendEndOfStream(DWORD dwFlags);
-};
+}
 
 
 [
@@ -181,4 +181,4 @@ interface IStreamSample : IUnknown {
 	HRESULT CompletionStatus(
 		[in] DWORD dwFlags,
 		[in, optional] DWORD dwMilliseconds);
-};
+}

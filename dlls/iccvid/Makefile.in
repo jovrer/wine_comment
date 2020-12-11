@@ -1,13 +1,7 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = iccvid.dll
-IMPORTS   = kernel32
+IMPORTS   = user32
 
 C_SRCS = \
 	iccvid.c
 
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = iccvid.rc

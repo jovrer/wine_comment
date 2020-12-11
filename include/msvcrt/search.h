@@ -15,39 +15,30 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_SEARCH_H
 #define __WINE_SEARCH_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
 
-#ifndef _SIZE_T_DEFINED
-typedef unsigned int size_t;
-#define _SIZE_T_DEFINED
-#endif
-
+#include <crtdefs.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void*       _lfind(const void*,const void*,unsigned int*,unsigned int,
-                   int (*)(const void*,const void*));
-void*       _lsearch(const void*,void*,unsigned int*,unsigned int,
-                     int (*)(const void*,const void*));
-void*       bsearch(const void*,const void*,size_t,size_t,
-                            int (*)(const void*,const void*));
-void        qsort(void*,size_t,size_t,
-                          int (*)(const void*,const void*));
+void* __cdecl _lfind(const void*,const void*,unsigned int*,unsigned int,int (__cdecl *)(const void*,const void*));
+void* __cdecl _lsearch(const void*,void*,unsigned int*,unsigned int,int (__cdecl *)(const void*,const void*));
+void* __cdecl bsearch(const void*,const void*,size_t,size_t,int (__cdecl *)(const void*,const void*));
+void  __cdecl qsort(void*,size_t,size_t,int (__cdecl *)(const void*,const void*));
 
 #ifdef __cplusplus
 }
 #endif
 
 
-static inline void* lfind(const void* match, const void* start, unsigned int* array_size, unsigned int elem_size, int (*cf)(const void*,const void*)) { return _lfind(match, start, array_size, elem_size, cf); }
-static inline void* lsearch(const void* match, void* start, unsigned int* array_size, unsigned int elem_size, int (*cf)(const void*,const void*) ) { return _lsearch(match, start, array_size, elem_size, cf); }
+static inline void* lfind(const void* match, const void* start, unsigned int* array_size, unsigned int elem_size, int (__cdecl *cf)(const void*,const void*))
+    { return _lfind(match, start, array_size, elem_size, cf); }
+static inline void* lsearch(const void* match, void* start, unsigned int* array_size, unsigned int elem_size, int (__cdecl *cf)(const void*,const void*) )
+    { return _lsearch(match, start, array_size, elem_size, cf); }
 
 #endif /* __WINE_SEARCH_H */

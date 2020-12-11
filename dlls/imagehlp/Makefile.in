@@ -1,19 +1,10 @@
 EXTRADEFS = -D_IMAGEHLP_SOURCE_
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = imagehlp.dll
-IMPORTLIB = libimagehlp.$(IMPLIBEXT)
-IMPORTS   = dbghelp kernel32 ntdll
+IMPORTLIB = imagehlp
+IMPORTS   = dbghelp
 
 C_SRCS = \
 	access.c \
 	imagehlp_main.c \
 	integrity.c \
-	internal.c \
 	modify.c
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

@@ -13,14 +13,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_ERRNO_H
 #define __WINE_ERRNO_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
 
 #  define EPERM   1
 #  define ENOENT  2
@@ -60,12 +59,59 @@
 #  define ENOLCK  39
 #  define ENOSYS  40
 #  define ENOTEMPTY 41
+#  define EILSEQ    42
+
+#  define STRUNCATE 80
+
+#ifndef _CRT_NO_POSIX_ERROR_CODES
+#  define EADDRINUSE 100
+#  define EADDRNOTAVAIL 101
+#  define EAFNOSUPPORT 102
+#  define EALREADY 103
+#  define EBADMSG 104
+#  define ECANCELED 105
+#  define ECONNABORTED 106
+#  define ECONNREFUSED 107
+#  define ECONNRESET 108
+#  define EDESTADDRREQ 109
+#  define EHOSTUNREACH 110
+#  define EIDRM 111
+#  define EINPROGRESS 112
+#  define EISCONN 113
+#  define ELOOP 114
+#  define EMSGSIZE 115
+#  define ENETDOWN 116
+#  define ENETRESET 117
+#  define ENETUNREACH 118
+#  define ENOBUFS 119
+#  define ENODATA 120
+#  define ENOLINK 121
+#  define ENOMSG 122
+#  define ENOPROTOOPT 123
+#  define ENOSR 124
+#  define ENOSTR 125
+#  define ENOTCONN 126
+#  define ENOTRECOVERABLE 127
+#  define ENOTSOCK 128
+#  define ENOTSUP 129
+#  define EOPNOTSUPP 130
+#  define EOTHER 131
+#  define EOVERFLOW 132
+#  define EOWNERDEAD 133
+#  define EPROTO 134
+#  define EPROTONOSUPPORT 135
+#  define EPROTOTYPE 136
+#  define ETIME 137
+#  define ETIMEDOUT 138
+#  define ETXTBSY 139
+#  define EWOULDBLOCK 140
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-extern int* _errno(void);
+extern int* __cdecl _errno(void);
 
 #ifdef __cplusplus
 }

@@ -17,36 +17,24 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
-#include "config.h"
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdarg.h>
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-
+#define WIN32_LEAN_AND_MEAN
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
-#include <windef.h>
-#include <winbase.h>
-#include <winuser.h>
+#include <windows.h>
 #include <commctrl.h>
 #include <objbase.h>
 #include <wine/debug.h>
 
-#include "properties.h"
 #include "resource.h"
 #include "winecfg.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winecfg);
 
-static void CALLBACK
+static INT CALLBACK
 PropSheetCallback (HWND hWnd, UINT uMsg, LPARAM lParam)
 {
     switch (uMsg)
@@ -58,47 +46,16 @@ PropSheetCallback (HWND hWnd, UINT uMsg, LPARAM lParam)
 	break;
 
     case PSCB_INITIALIZED:
+        /* Set the window icon */
+        SendMessageW( hWnd, WM_SETICON, ICON_BIG,
+                      (LPARAM)LoadIconW( (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE),
+                                         MAKEINTRESOURCEW(IDI_WINECFG) ));
 	break;
 
     default:
 	break;
     }
-}
-
-static INT_PTR CALLBACK
-AboutDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-    switch (uMsg) {
-
-	case WM_NOTIFY:
-	    if (((LPNMHDR)lParam)->code != PSN_SETACTIVE) break;
-	    /* otherwise fall through, we want to refresh the page as well */
-	case WM_INITDIALOG:
-	    break;
-
-	case WM_COMMAND:
-	    break;
-	    
-	default:
-	    break;
-	    
-    }
-    return FALSE;
-}
-
-static WCHAR* load_string (UINT id)
-{
-    WCHAR buf[100];
-    int len;
-    WCHAR* newStr;
-
-    LoadStringW (GetModuleHandle (NULL), id, buf, sizeof(buf)/sizeof(buf[0]));
-
-    len = lstrlenW (buf);
-    newStr = HeapAlloc (GetProcessHeap(), 0, (len + 1) * sizeof (WCHAR));
-    memcpy (newStr, buf, len * sizeof (WCHAR));
-    newStr[len] = 0;
-    return newStr;
+    return 0;
 }
 
 #define NUM_PROPERTY_PAGES 7
@@ -155,10 +112,10 @@ doPropertySheet (HINSTANCE hInstance, HWND hOwner)
     psp[pg].dwSize = sizeof (PROPSHEETPAGEW);
     psp[pg].dwFlags = PSP_USETITLE;
     psp[pg].hInstance = hInstance;
-    psp[pg].u.pszTemplate = MAKEINTRESOURCEW (IDD_APPEARANCE);
+    psp[pg].u.pszTemplate = MAKEINTRESOURCEW (IDD_DESKTOP_INTEGRATION);
     psp[pg].u2.pszIcon = NULL;
     psp[pg].pfnDlgProc = ThemeDlgProc;
-    psp[pg].pszTitle =  load_string (IDS_TAB_APPEARANCE);
+    psp[pg].pszTitle =  load_string (IDS_TAB_DESKTOP_INTEGRATION);
     psp[pg].lParam = 0;
     pg++;
 
@@ -203,11 +160,11 @@ doPropertySheet (HINSTANCE hInstance, HWND hOwner)
     psh.dwFlags = PSH_PROPSHEETPAGE | PSH_USEICONID | PSH_USECALLBACK;
     psh.hwndParent = hOwner;
     psh.hInstance = hInstance;
-    psh.u.pszIcon = NULL;
+    psh.u.pszIcon = MAKEINTRESOURCEW (IDI_WINECFG);
     psh.pszCaption =  load_string (IDS_WINECFG_TITLE);
     psh.nPages = NUM_PROPERTY_PAGES;
-    psh.u3.ppsp = (LPCPROPSHEETPAGEW) & psp;
-    psh.pfnCallback = (PFNPROPSHEETCALLBACK) PropSheetCallback;
+    psh.u3.ppsp = psp;
+    psh.pfnCallback = PropSheetCallback;
     psh.u2.nStartPage = 0;
 
     /*
@@ -255,11 +212,37 @@ ProcessCmdLine(LPSTR lpCmdLine)
 int WINAPI
 WinMain (HINSTANCE hInstance, HINSTANCE hPrev, LPSTR szCmdLine, int nShow)
 {
+    BOOL is_wow64;
+
+    if (IsWow64Process( GetCurrentProcess(), &is_wow64 ) && is_wow64)
+    {
+        STARTUPINFOW si;
+        PROCESS_INFORMATION pi;
+        WCHAR filename[MAX_PATH];
+        void *redir;
+        DWORD exit_code;
+
+        memset( &si, 0, sizeof(si) );
+        si.cb = sizeof(si);
+        GetModuleFileNameW( 0, filename, MAX_PATH );
+
+        Wow64DisableWow64FsRedirection( &redir );
+        if (CreateProcessW( filename, GetCommandLineW(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi ))
+        {
+            WINE_TRACE( "restarting %s\n", wine_dbgstr_w(filename) );
+            WaitForSingleObject( pi.hProcess, INFINITE );
+            GetExitCodeProcess( pi.hProcess, &exit_code );
+            ExitProcess( exit_code );
+        }
+        else WINE_ERR( "failed to restart 64-bit %s, err %d\n", wine_dbgstr_w(filename), GetLastError() );
+        Wow64RevertWow64FsRedirection( redir );
+    }
+
     if (ProcessCmdLine(szCmdLine)) {
         return 0;
     }
 
-    if (initialize() != 0) {
+    if (initialize(hInstance)) {
 	WINE_ERR("initialization failed, aborting\n");
 	ExitProcess(1);
     }

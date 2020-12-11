@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifdef __powerpc__
@@ -28,10 +28,10 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <sys/types.h>
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
@@ -42,15 +42,15 @@
 #  include <sys/syscall.h>
 # endif
 #endif
-
-#ifdef HAVE_SYS_VM86_H
-# include <sys/vm86.h>
-#endif
-
 #ifdef HAVE_SYS_SIGNAL_H
 # include <sys/signal.h>
 #endif
+#ifdef HAVE_SYS_UCONTEXT_H
+# include <sys/ucontext.h>
+#endif
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "wine/library.h"
@@ -59,17 +59,14 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(relay);
 
+static pthread_key_t teb_key;
 
 /***********************************************************************
  * signal context platform-specific definitions
  */
 #ifdef linux
-
-typedef struct ucontext SIGCONTEXT;
-
-# define HANDLER_DEF(name) void name( int __signal, struct siginfo *__siginfo, SIGCONTEXT *__context )
-# define HANDLER_CONTEXT (__context)
 
 /* All Registers access - only for local access */
 # define REG_sig(reg_name, context)		((context)->uc_mcontext.regs->reg_name)
@@ -99,18 +96,6 @@ typedef struct ucontext SIGCONTEXT;
 #endif /* linux */
 
 #ifdef __APPLE__
-
-# include <sys/ucontext.h>
-
-# include <sys/types.h>
-# include <signal.h>
-typedef siginfo_t siginfo;
-
-typedef struct ucontext SIGCONTEXT;
-
-
-# define HANDLER_DEF(name) void name( int __signal, siginfo *__siginfo, SIGCONTEXT *__context )
-# define HANDLER_CONTEXT (__context)
 
 /* All Registers access - only for local access */
 # define REG_sig(reg_name, context)		((context)->uc_mcontext->ss.reg_name)
@@ -167,7 +152,7 @@ static wine_signal_handler handlers[256];
 /***********************************************************************
  *           dispatch_signal
  */
-inline static int dispatch_signal(unsigned int sig)
+static inline int dispatch_signal(unsigned int sig)
 {
     if (handlers[sig] == NULL) return 0;
     return handlers[sig](sig);
@@ -178,7 +163,7 @@ inline static int dispatch_signal(unsigned int sig)
  *
  * Set the register values from a sigcontext.
  */
-static void save_context( CONTEXT *context, const SIGCONTEXT *sigcontext )
+static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
 {
 
 #define C(x) context->Gpr##x = GPR_sig(x,sigcontext)
@@ -209,7 +194,7 @@ static void save_context( CONTEXT *context, const SIGCONTEXT *sigcontext )
  *
  * Build a sigcontext from the register values.
  */
-static void restore_context( const CONTEXT *context, SIGCONTEXT *sigcontext )
+static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
 {
 
 #define C(x)  GPR_sig(x,sigcontext) = context->Gpr##x
@@ -239,7 +224,7 @@ static void restore_context( const CONTEXT *context, SIGCONTEXT *sigcontext )
  *
  * Set the FPU context from a sigcontext.
  */
-inline static void save_fpu( CONTEXT *context, const SIGCONTEXT *sigcontext )
+static inline void save_fpu( CONTEXT *context, const ucontext_t *sigcontext )
 {
 #define C(x)   context->Fpr##x = FLOAT_sig(x,sigcontext)
         C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9); C(10);
@@ -256,7 +241,7 @@ inline static void save_fpu( CONTEXT *context, const SIGCONTEXT *sigcontext )
  *
  * Restore the FPU context to a sigcontext.
  */
-inline static void restore_fpu( CONTEXT *context, const SIGCONTEXT *sigcontext )
+static inline void restore_fpu( CONTEXT *context, const ucontext_t *sigcontext )
 {
 #define C(x)  FLOAT_sig(x,sigcontext) = context->Fpr##x
         C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9); C(10);
@@ -268,86 +253,532 @@ inline static void restore_fpu( CONTEXT *context, const SIGCONTEXT *sigcontext )
 }
 
 
-/**********************************************************************
- *		get_fpu_code
- *
- * Get the FPU exception code from the FPU status.
+/***********************************************************************
+ *		RtlCaptureContext (NTDLL.@)
  */
-static inline DWORD get_fpu_code( const CONTEXT *context )
+void WINAPI RtlCaptureContext( CONTEXT *context )
 {
-    DWORD status  = context->Fpscr;
-
-    if (status & 0x01)  /* IE */
-    {
-        if (status & 0x40)  /* SF */
-            return EXCEPTION_FLT_STACK_CHECK;
-        else
-            return EXCEPTION_FLT_INVALID_OPERATION;
-    }
-    if (status & 0x02) return EXCEPTION_FLT_DENORMAL_OPERAND;  /* DE flag */
-    if (status & 0x04) return EXCEPTION_FLT_DIVIDE_BY_ZERO;    /* ZE flag */
-    if (status & 0x08) return EXCEPTION_FLT_OVERFLOW;          /* OE flag */
-    if (status & 0x10) return EXCEPTION_FLT_UNDERFLOW;         /* UE flag */
-    if (status & 0x20) return EXCEPTION_FLT_INEXACT_RESULT;    /* PE flag */
-    return EXCEPTION_FLT_INVALID_OPERATION;  /* generic error */
+    FIXME("not implemented\n");
+    memset( context, 0, sizeof(*context) );
 }
 
-/**********************************************************************
- *		do_segv
+
+/***********************************************************************
+ *           set_cpu_context
  *
- * Implementation of SIGSEGV handler.
+ * Set the new CPU context.
  */
-static void do_segv( CONTEXT *context, int trap, int err, int code, void * addr )
+static void set_cpu_context( const CONTEXT *context )
+{
+    FIXME("not implemented\n");
+}
+
+
+/***********************************************************************
+ *           get_server_context_flags
+ *
+ * Convert CPU-specific flags to generic server flags
+ */
+static unsigned int get_server_context_flags( DWORD flags )
+{
+    unsigned int ret = 0;
+
+    if (flags & CONTEXT_CONTROL) ret |= SERVER_CTX_CONTROL;
+    if (flags & CONTEXT_INTEGER) ret |= SERVER_CTX_INTEGER;
+    if (flags & CONTEXT_FLOATING_POINT) ret |= SERVER_CTX_FLOATING_POINT;
+    if (flags & CONTEXT_DEBUG_REGISTERS) ret |= SERVER_CTX_DEBUG_REGISTERS;
+    return ret;
+}
+
+
+/***********************************************************************
+ *           copy_context
+ *
+ * Copy a register context according to the flags.
+ */
+static void copy_context( CONTEXT *to, const CONTEXT *from, DWORD flags )
+{
+    if (flags & CONTEXT_CONTROL)
+    {
+        to->Msr   = from->Msr;
+        to->Ctr   = from->Ctr;
+        to->Iar   = from->Iar;
+        to->Lr    = from->Lr;
+        to->Dar   = from->Dar;
+        to->Dsisr = from->Dsisr;
+        to->Trap  = from->Trap;
+    }
+    if (flags & CONTEXT_INTEGER)
+    {
+        to->Gpr0  = from->Gpr0;
+        to->Gpr1  = from->Gpr1;
+        to->Gpr2  = from->Gpr2;
+        to->Gpr3  = from->Gpr3;
+        to->Gpr4  = from->Gpr4;
+        to->Gpr5  = from->Gpr5;
+        to->Gpr6  = from->Gpr6;
+        to->Gpr7  = from->Gpr7;
+        to->Gpr8  = from->Gpr8;
+        to->Gpr9  = from->Gpr9;
+        to->Gpr10 = from->Gpr10;
+        to->Gpr11 = from->Gpr11;
+        to->Gpr12 = from->Gpr12;
+        to->Gpr13 = from->Gpr13;
+        to->Gpr14 = from->Gpr14;
+        to->Gpr15 = from->Gpr15;
+        to->Gpr16 = from->Gpr16;
+        to->Gpr17 = from->Gpr17;
+        to->Gpr18 = from->Gpr18;
+        to->Gpr19 = from->Gpr19;
+        to->Gpr20 = from->Gpr20;
+        to->Gpr21 = from->Gpr21;
+        to->Gpr22 = from->Gpr22;
+        to->Gpr23 = from->Gpr23;
+        to->Gpr24 = from->Gpr24;
+        to->Gpr25 = from->Gpr25;
+        to->Gpr26 = from->Gpr26;
+        to->Gpr27 = from->Gpr27;
+        to->Gpr28 = from->Gpr28;
+        to->Gpr29 = from->Gpr29;
+        to->Gpr30 = from->Gpr30;
+        to->Gpr31 = from->Gpr31;
+        to->Xer   = from->Xer;
+        to->Cr    = from->Cr;
+    }
+    if (flags & CONTEXT_FLOATING_POINT)
+    {
+        to->Fpr0  = from->Fpr0;
+        to->Fpr1  = from->Fpr1;
+        to->Fpr2  = from->Fpr2;
+        to->Fpr3  = from->Fpr3;
+        to->Fpr4  = from->Fpr4;
+        to->Fpr5  = from->Fpr5;
+        to->Fpr6  = from->Fpr6;
+        to->Fpr7  = from->Fpr7;
+        to->Fpr8  = from->Fpr8;
+        to->Fpr9  = from->Fpr9;
+        to->Fpr10 = from->Fpr10;
+        to->Fpr11 = from->Fpr11;
+        to->Fpr12 = from->Fpr12;
+        to->Fpr13 = from->Fpr13;
+        to->Fpr14 = from->Fpr14;
+        to->Fpr15 = from->Fpr15;
+        to->Fpr16 = from->Fpr16;
+        to->Fpr17 = from->Fpr17;
+        to->Fpr18 = from->Fpr18;
+        to->Fpr19 = from->Fpr19;
+        to->Fpr20 = from->Fpr20;
+        to->Fpr21 = from->Fpr21;
+        to->Fpr22 = from->Fpr22;
+        to->Fpr23 = from->Fpr23;
+        to->Fpr24 = from->Fpr24;
+        to->Fpr25 = from->Fpr25;
+        to->Fpr26 = from->Fpr26;
+        to->Fpr27 = from->Fpr27;
+        to->Fpr28 = from->Fpr28;
+        to->Fpr29 = from->Fpr29;
+        to->Fpr30 = from->Fpr30;
+        to->Fpr31 = from->Fpr31;
+        to->Fpscr = from->Fpscr;
+    }
+}
+
+
+/***********************************************************************
+ *           context_to_server
+ *
+ * Convert a register context to the server format.
+ */
+NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
+{
+    DWORD flags = from->ContextFlags;  /* no CPU id? */
+
+    memset( to, 0, sizeof(*to) );
+    to->cpu = CPU_POWERPC;
+
+    if (flags & CONTEXT_CONTROL)
+    {
+        to->flags |= SERVER_CTX_CONTROL;
+        to->ctl.powerpc_regs.iar   = from->Iar;
+        to->ctl.powerpc_regs.msr   = from->Msr;
+        to->ctl.powerpc_regs.ctr   = from->Ctr;
+        to->ctl.powerpc_regs.lr    = from->Lr;
+        to->ctl.powerpc_regs.dar   = from->Dar;
+        to->ctl.powerpc_regs.dsisr = from->Dsisr;
+        to->ctl.powerpc_regs.trap  = from->Trap;
+    }
+    if (flags & CONTEXT_INTEGER)
+    {
+        to->flags |= SERVER_CTX_INTEGER;
+        to->integer.powerpc_regs.gpr[0]  = from->Gpr0;
+        to->integer.powerpc_regs.gpr[1]  = from->Gpr1;
+        to->integer.powerpc_regs.gpr[2]  = from->Gpr2;
+        to->integer.powerpc_regs.gpr[3]  = from->Gpr3;
+        to->integer.powerpc_regs.gpr[4]  = from->Gpr4;
+        to->integer.powerpc_regs.gpr[5]  = from->Gpr5;
+        to->integer.powerpc_regs.gpr[6]  = from->Gpr6;
+        to->integer.powerpc_regs.gpr[7]  = from->Gpr7;
+        to->integer.powerpc_regs.gpr[8]  = from->Gpr8;
+        to->integer.powerpc_regs.gpr[9]  = from->Gpr9;
+        to->integer.powerpc_regs.gpr[10] = from->Gpr10;
+        to->integer.powerpc_regs.gpr[11] = from->Gpr11;
+        to->integer.powerpc_regs.gpr[12] = from->Gpr12;
+        to->integer.powerpc_regs.gpr[13] = from->Gpr13;
+        to->integer.powerpc_regs.gpr[14] = from->Gpr14;
+        to->integer.powerpc_regs.gpr[15] = from->Gpr15;
+        to->integer.powerpc_regs.gpr[16] = from->Gpr16;
+        to->integer.powerpc_regs.gpr[17] = from->Gpr17;
+        to->integer.powerpc_regs.gpr[18] = from->Gpr18;
+        to->integer.powerpc_regs.gpr[19] = from->Gpr19;
+        to->integer.powerpc_regs.gpr[20] = from->Gpr20;
+        to->integer.powerpc_regs.gpr[21] = from->Gpr21;
+        to->integer.powerpc_regs.gpr[22] = from->Gpr22;
+        to->integer.powerpc_regs.gpr[23] = from->Gpr23;
+        to->integer.powerpc_regs.gpr[24] = from->Gpr24;
+        to->integer.powerpc_regs.gpr[25] = from->Gpr25;
+        to->integer.powerpc_regs.gpr[26] = from->Gpr26;
+        to->integer.powerpc_regs.gpr[27] = from->Gpr27;
+        to->integer.powerpc_regs.gpr[28] = from->Gpr28;
+        to->integer.powerpc_regs.gpr[29] = from->Gpr29;
+        to->integer.powerpc_regs.gpr[30] = from->Gpr30;
+        to->integer.powerpc_regs.gpr[31] = from->Gpr31;
+        to->integer.powerpc_regs.xer     = from->Xer;
+        to->integer.powerpc_regs.cr      = from->Cr;
+    }
+    if (flags & CONTEXT_FLOATING_POINT)
+    {
+        to->flags |= SERVER_CTX_FLOATING_POINT;
+        to->fp.powerpc_regs.fpr[0]  = from->Fpr0;
+        to->fp.powerpc_regs.fpr[1]  = from->Fpr1;
+        to->fp.powerpc_regs.fpr[2]  = from->Fpr2;
+        to->fp.powerpc_regs.fpr[3]  = from->Fpr3;
+        to->fp.powerpc_regs.fpr[4]  = from->Fpr4;
+        to->fp.powerpc_regs.fpr[5]  = from->Fpr5;
+        to->fp.powerpc_regs.fpr[6]  = from->Fpr6;
+        to->fp.powerpc_regs.fpr[7]  = from->Fpr7;
+        to->fp.powerpc_regs.fpr[8]  = from->Fpr8;
+        to->fp.powerpc_regs.fpr[9]  = from->Fpr9;
+        to->fp.powerpc_regs.fpr[10] = from->Fpr10;
+        to->fp.powerpc_regs.fpr[11] = from->Fpr11;
+        to->fp.powerpc_regs.fpr[12] = from->Fpr12;
+        to->fp.powerpc_regs.fpr[13] = from->Fpr13;
+        to->fp.powerpc_regs.fpr[14] = from->Fpr14;
+        to->fp.powerpc_regs.fpr[15] = from->Fpr15;
+        to->fp.powerpc_regs.fpr[16] = from->Fpr16;
+        to->fp.powerpc_regs.fpr[17] = from->Fpr17;
+        to->fp.powerpc_regs.fpr[18] = from->Fpr18;
+        to->fp.powerpc_regs.fpr[19] = from->Fpr19;
+        to->fp.powerpc_regs.fpr[20] = from->Fpr20;
+        to->fp.powerpc_regs.fpr[21] = from->Fpr21;
+        to->fp.powerpc_regs.fpr[22] = from->Fpr22;
+        to->fp.powerpc_regs.fpr[23] = from->Fpr23;
+        to->fp.powerpc_regs.fpr[24] = from->Fpr24;
+        to->fp.powerpc_regs.fpr[25] = from->Fpr25;
+        to->fp.powerpc_regs.fpr[26] = from->Fpr26;
+        to->fp.powerpc_regs.fpr[27] = from->Fpr27;
+        to->fp.powerpc_regs.fpr[28] = from->Fpr28;
+        to->fp.powerpc_regs.fpr[29] = from->Fpr29;
+        to->fp.powerpc_regs.fpr[30] = from->Fpr30;
+        to->fp.powerpc_regs.fpr[31] = from->Fpr31;
+        to->fp.powerpc_regs.fpscr   = from->Fpscr;
+    }
+    return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *           context_from_server
+ *
+ * Convert a register context from the server format.
+ */
+NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
+{
+    if (from->cpu != CPU_POWERPC) return STATUS_INVALID_PARAMETER;
+
+    to->ContextFlags = 0;  /* no CPU id? */
+    if (from->flags & SERVER_CTX_CONTROL)
+    {
+        to->ContextFlags |= CONTEXT_CONTROL;
+        to->Msr   = from->ctl.powerpc_regs.msr;
+        to->Ctr   = from->ctl.powerpc_regs.ctr;
+        to->Iar   = from->ctl.powerpc_regs.iar;
+        to->Lr    = from->ctl.powerpc_regs.lr;
+        to->Dar   = from->ctl.powerpc_regs.dar;
+        to->Dsisr = from->ctl.powerpc_regs.dsisr;
+        to->Trap  = from->ctl.powerpc_regs.trap;
+    }
+    if (from->flags & SERVER_CTX_INTEGER)
+    {
+        to->ContextFlags |= CONTEXT_INTEGER;
+        to->Gpr0  = from->integer.powerpc_regs.gpr[0];
+        to->Gpr1  = from->integer.powerpc_regs.gpr[1];
+        to->Gpr2  = from->integer.powerpc_regs.gpr[2];
+        to->Gpr3  = from->integer.powerpc_regs.gpr[3];
+        to->Gpr4  = from->integer.powerpc_regs.gpr[4];
+        to->Gpr5  = from->integer.powerpc_regs.gpr[5];
+        to->Gpr6  = from->integer.powerpc_regs.gpr[6];
+        to->Gpr7  = from->integer.powerpc_regs.gpr[7];
+        to->Gpr8  = from->integer.powerpc_regs.gpr[8];
+        to->Gpr9  = from->integer.powerpc_regs.gpr[9];
+        to->Gpr10 = from->integer.powerpc_regs.gpr[10];
+        to->Gpr11 = from->integer.powerpc_regs.gpr[11];
+        to->Gpr12 = from->integer.powerpc_regs.gpr[12];
+        to->Gpr13 = from->integer.powerpc_regs.gpr[13];
+        to->Gpr14 = from->integer.powerpc_regs.gpr[14];
+        to->Gpr15 = from->integer.powerpc_regs.gpr[15];
+        to->Gpr16 = from->integer.powerpc_regs.gpr[16];
+        to->Gpr17 = from->integer.powerpc_regs.gpr[17];
+        to->Gpr18 = from->integer.powerpc_regs.gpr[18];
+        to->Gpr19 = from->integer.powerpc_regs.gpr[19];
+        to->Gpr20 = from->integer.powerpc_regs.gpr[20];
+        to->Gpr21 = from->integer.powerpc_regs.gpr[21];
+        to->Gpr22 = from->integer.powerpc_regs.gpr[22];
+        to->Gpr23 = from->integer.powerpc_regs.gpr[23];
+        to->Gpr24 = from->integer.powerpc_regs.gpr[24];
+        to->Gpr25 = from->integer.powerpc_regs.gpr[25];
+        to->Gpr26 = from->integer.powerpc_regs.gpr[26];
+        to->Gpr27 = from->integer.powerpc_regs.gpr[27];
+        to->Gpr28 = from->integer.powerpc_regs.gpr[28];
+        to->Gpr29 = from->integer.powerpc_regs.gpr[29];
+        to->Gpr30 = from->integer.powerpc_regs.gpr[30];
+        to->Gpr31 = from->integer.powerpc_regs.gpr[31];
+        to->Xer   = from->integer.powerpc_regs.xer;
+        to->Cr    = from->integer.powerpc_regs.cr;
+    }
+    if (from->flags & SERVER_CTX_FLOATING_POINT)
+    {
+        to->ContextFlags |= CONTEXT_FLOATING_POINT;
+        to->Fpr0  = from->fp.powerpc_regs.fpr[0];
+        to->Fpr1  = from->fp.powerpc_regs.fpr[1];
+        to->Fpr2  = from->fp.powerpc_regs.fpr[2];
+        to->Fpr3  = from->fp.powerpc_regs.fpr[3];
+        to->Fpr4  = from->fp.powerpc_regs.fpr[4];
+        to->Fpr5  = from->fp.powerpc_regs.fpr[5];
+        to->Fpr6  = from->fp.powerpc_regs.fpr[6];
+        to->Fpr7  = from->fp.powerpc_regs.fpr[7];
+        to->Fpr8  = from->fp.powerpc_regs.fpr[8];
+        to->Fpr9  = from->fp.powerpc_regs.fpr[9];
+        to->Fpr10 = from->fp.powerpc_regs.fpr[10];
+        to->Fpr11 = from->fp.powerpc_regs.fpr[11];
+        to->Fpr12 = from->fp.powerpc_regs.fpr[12];
+        to->Fpr13 = from->fp.powerpc_regs.fpr[13];
+        to->Fpr14 = from->fp.powerpc_regs.fpr[14];
+        to->Fpr15 = from->fp.powerpc_regs.fpr[15];
+        to->Fpr16 = from->fp.powerpc_regs.fpr[16];
+        to->Fpr17 = from->fp.powerpc_regs.fpr[17];
+        to->Fpr18 = from->fp.powerpc_regs.fpr[18];
+        to->Fpr19 = from->fp.powerpc_regs.fpr[19];
+        to->Fpr20 = from->fp.powerpc_regs.fpr[20];
+        to->Fpr21 = from->fp.powerpc_regs.fpr[21];
+        to->Fpr22 = from->fp.powerpc_regs.fpr[22];
+        to->Fpr23 = from->fp.powerpc_regs.fpr[23];
+        to->Fpr24 = from->fp.powerpc_regs.fpr[24];
+        to->Fpr25 = from->fp.powerpc_regs.fpr[25];
+        to->Fpr26 = from->fp.powerpc_regs.fpr[26];
+        to->Fpr27 = from->fp.powerpc_regs.fpr[27];
+        to->Fpr28 = from->fp.powerpc_regs.fpr[28];
+        to->Fpr29 = from->fp.powerpc_regs.fpr[29];
+        to->Fpr30 = from->fp.powerpc_regs.fpr[30];
+        to->Fpr31 = from->fp.powerpc_regs.fpr[31];
+        to->Fpscr = from->fp.powerpc_regs.fpscr;
+    }
+    return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *              NtSetContextThread  (NTDLL.@)
+ *              ZwSetContextThread  (NTDLL.@)
+ */
+NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
+{
+    NTSTATUS ret;
+    BOOL self;
+    context_t server_context;
+
+    context_to_server( &server_context, context );
+    ret = set_thread_context( handle, &server_context, &self );
+    if (self && ret == STATUS_SUCCESS) set_cpu_context( context );
+    return ret;
+}
+
+
+/***********************************************************************
+ *              NtGetContextThread  (NTDLL.@)
+ *              ZwGetContextThread  (NTDLL.@)
+ */
+NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
+{
+    NTSTATUS ret;
+    DWORD needed_flags = context->ContextFlags;
+    BOOL self = (handle == GetCurrentThread());
+
+    if (!self)
+    {
+        context_t server_context;
+        unsigned int server_flags = get_server_context_flags( context->ContextFlags );
+
+        if ((ret = get_thread_context( handle, &server_context, server_flags, &self ))) return ret;
+        if ((ret = context_from_server( context, &server_context ))) return ret;
+        needed_flags &= ~context->ContextFlags;
+    }
+
+    if (self && needed_flags)
+    {
+        CONTEXT ctx;
+        RtlCaptureContext( &ctx );
+        copy_context( context, &ctx, ctx.ContextFlags & needed_flags );
+        context->ContextFlags |= ctx.ContextFlags & needed_flags;
+    }
+    return STATUS_SUCCESS;
+}
+
+
+/**********************************************************************
+ *           call_stack_handlers
+ *
+ * Call the stack handlers chain.
+ */
+static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
+{
+    EXCEPTION_POINTERS ptrs;
+
+    FIXME( "not implemented on PowerPC\n" );
+
+    /* hack: call unhandled exception filter directly */
+    ptrs.ExceptionRecord = rec;
+    ptrs.ContextRecord = context;
+    call_unhandled_exception_filter( &ptrs );
+    return STATUS_UNHANDLED_EXCEPTION;
+}
+
+
+/*******************************************************************
+ *		raise_exception
+ *
+ * Implementation of NtRaiseException.
+ */
+static NTSTATUS raise_exception( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_chance )
+{
+    NTSTATUS status;
+
+    if (first_chance)
+    {
+        DWORD c;
+
+        TRACE( "code=%x flags=%x addr=%p ip=%x tid=%04x\n",
+               rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
+               context->Iar, GetCurrentThreadId() );
+        for (c = 0; c < rec->NumberParameters; c++)
+            TRACE( " info[%d]=%08lx\n", c, rec->ExceptionInformation[c] );
+        if (rec->ExceptionCode == EXCEPTION_WINE_STUB)
+        {
+            if (rec->ExceptionInformation[1] >> 16)
+                MESSAGE( "wine: Call from %p to unimplemented function %s.%s, aborting\n",
+                         rec->ExceptionAddress,
+                         (char*)rec->ExceptionInformation[0], (char*)rec->ExceptionInformation[1] );
+            else
+                MESSAGE( "wine: Call from %p to unimplemented function %s.%ld, aborting\n",
+                         rec->ExceptionAddress,
+                         (char*)rec->ExceptionInformation[0], rec->ExceptionInformation[1] );
+        }
+        else
+        {
+            /* FIXME: dump context */
+        }
+
+        status = send_debug_event( rec, TRUE, context );
+        if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
+            return STATUS_SUCCESS;
+
+        if (call_vectored_handlers( rec, context ) == EXCEPTION_CONTINUE_EXECUTION)
+            return STATUS_SUCCESS;
+
+        if ((status = call_stack_handlers( rec, context )) != STATUS_UNHANDLED_EXCEPTION)
+            return status;
+    }
+
+    /* last chance exception */
+
+    status = send_debug_event( rec, FALSE, context );
+    if (status != DBG_CONTINUE)
+    {
+        if (rec->ExceptionFlags & EH_STACK_INVALID)
+            ERR("Exception frame is not in stack limits => unable to dispatch exception.\n");
+        else if (rec->ExceptionCode == STATUS_NONCONTINUABLE_EXCEPTION)
+            ERR("Process attempted to continue execution after noncontinuable exception.\n");
+        else
+            ERR("Unhandled exception code %x flags %x addr %p\n",
+                rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
+        NtTerminateProcess( NtCurrentProcess(), rec->ExceptionCode );
+    }
+    return STATUS_SUCCESS;
+}
+
+
+/**********************************************************************
+ *		segv_handler
+ *
+ * Handler for SIGSEGV and related errors.
+ */
+static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec;
-    DWORD page_fault_code = EXCEPTION_ACCESS_VIOLATION;
+    CONTEXT context;
+    NTSTATUS status;
+
+    save_context( &context, sigcontext );
 
     rec.ExceptionRecord  = NULL;
     rec.ExceptionFlags   = EXCEPTION_CONTINUABLE;
-    rec.ExceptionAddress = addr;
+    rec.ExceptionAddress = (LPVOID)context.Iar;
     rec.NumberParameters = 0;
-    
-    switch (trap) {
+
+    switch (signal)
+    {
     case SIGSEGV:
-    	switch ( code & 0xffff ) {
+    	switch (siginfo->si_code & 0xffff)
+        {
 	case SEGV_MAPERR:
 	case SEGV_ACCERR:
-		rec.NumberParameters = 2;
-		rec.ExceptionInformation[0] = 0; /* FIXME ? */
-		rec.ExceptionInformation[1] = (ULONG_PTR)addr;
-		if (!(page_fault_code=VIRTUAL_HandleFault(addr)))
-			return;
-		rec.ExceptionCode = page_fault_code;
-		break;
-	default:FIXME("Unhandled SIGSEGV/%x\n",code);
-		break;
+            rec.NumberParameters = 2;
+            rec.ExceptionInformation[0] = 0; /* FIXME ? */
+            rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+            if (!(rec.ExceptionCode = virtual_handle_fault(siginfo->si_addr, rec.ExceptionInformation[0], FALSE)))
+                goto done;
+            break;
+	default:
+            FIXME("Unhandled SIGSEGV/%x\n",siginfo->si_code);
+            break;
 	}
     	break;
     case SIGBUS:
-    	switch ( code & 0xffff ) {
+    	switch (siginfo->si_code & 0xffff)
+        {
 	case BUS_ADRALN:
-		rec.ExceptionCode = EXCEPTION_DATATYPE_MISALIGNMENT;
-		break;
+            rec.ExceptionCode = EXCEPTION_DATATYPE_MISALIGNMENT;
+            break;
 #ifdef BUS_ADRERR
 	case BUS_ADRERR:
 #endif
 #ifdef BUS_OBJERR
 	case BUS_OBJERR:
-		/* FIXME: correct for all cases ? */
-		rec.NumberParameters = 2;
-		rec.ExceptionInformation[0] = 0; /* FIXME ? */
-		rec.ExceptionInformation[1] = (ULONG_PTR)addr;
-		if (!(page_fault_code=VIRTUAL_HandleFault(addr)))
-			return;
-		rec.ExceptionCode = page_fault_code;
-		break;
+            /* FIXME: correct for all cases ? */
+            rec.NumberParameters = 2;
+            rec.ExceptionInformation[0] = 0; /* FIXME ? */
+            rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+            if (!(rec.ExceptionCode = virtual_handle_fault(siginfo->si_addr, rec.ExceptionInformation[0], FALSE)))
+                goto done;
+            break;
 #endif
-	default:FIXME("Unhandled SIGBUS/%x\n",code);
-		break;
+	default:
+            FIXME("Unhandled SIGBUS/%x\n",siginfo->si_code);
+            break;
 	}
     	break;
     case SIGILL:
-    	switch ( code & 0xffff ) {
+    	switch (siginfo->si_code & 0xffff)
+        {
 	case ILL_ILLOPC: /* illegal opcode */
 #ifdef ILL_ILLOPN
 	case ILL_ILLOPN: /* illegal operand */
@@ -361,43 +792,52 @@ static void do_segv( CONTEXT *context, int trap, int err, int code, void * addr 
 #ifdef ILL_COPROC
 	case ILL_COPROC: /* coprocessor error */
 #endif
-		rec.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
-		break;
+            rec.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
+            break;
 	case ILL_PRVOPC: /* privileged opcode */
 #ifdef ILL_PRVREG
 	case ILL_PRVREG: /* privileged register */
 #endif
-		rec.ExceptionCode = EXCEPTION_PRIV_INSTRUCTION;
-		break;
+            rec.ExceptionCode = EXCEPTION_PRIV_INSTRUCTION;
+            break;
 #ifdef ILL_BADSTK
 	case ILL_BADSTK: /* internal stack error */
-        	rec.ExceptionCode = EXCEPTION_STACK_OVERFLOW;
-		break;
+            rec.ExceptionCode = EXCEPTION_STACK_OVERFLOW;
+            break;
 #endif
-	default:FIXME("Unhandled SIGILL/%x\n", code);
-		break;
+	default:
+            FIXME("Unhandled SIGILL/%x\n", siginfo->si_code);
+            break;
 	}
     	break;
     }
-    __regs_RtlRaiseException( &rec, context );
+    status = raise_exception( &rec, &context, TRUE );
+    if (status) raise_status( status, &rec );
+done:
+    restore_context( &context, sigcontext );
 }
 
 /**********************************************************************
- *		do_trap
+ *		trap_handler
  *
- * Implementation of SIGTRAP handler.
+ * Handler for SIGTRAP.
  */
-static void do_trap( CONTEXT *context, int code, void * addr )
+static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec;
+    CONTEXT context;
+    NTSTATUS status;
+
+    save_context( &context, sigcontext );
 
     rec.ExceptionFlags   = EXCEPTION_CONTINUABLE;
     rec.ExceptionRecord  = NULL;
-    rec.ExceptionAddress = addr;
+    rec.ExceptionAddress = (LPVOID)context.Iar;
     rec.NumberParameters = 0;
 
     /* FIXME: check if we might need to modify PC */
-    switch (code & 0xffff) {
+    switch (siginfo->si_code & 0xffff)
+    {
 #ifdef TRAP_BRKPT
     case TRAP_BRKPT:
         rec.ExceptionCode = EXCEPTION_BREAKPOINT;
@@ -408,22 +848,31 @@ static void do_trap( CONTEXT *context, int code, void * addr )
         rec.ExceptionCode = EXCEPTION_SINGLE_STEP;
     	break;
 #endif
-    default:FIXME("Unhandled SIGTRAP/%x\n", code);
-		break;
+    default:
+        FIXME("Unhandled SIGTRAP/%x\n", siginfo->si_code);
+        break;
     }
-    __regs_RtlRaiseException( &rec, context );
+    status = raise_exception( &rec, &context, TRUE );
+    if (status) raise_status( status, &rec );
+    restore_context( &context, sigcontext );
 }
 
 /**********************************************************************
- *		do_trap
+ *		fpe_handler
  *
- * Implementation of SIGFPE handler.
+ * Handler for SIGFPE.
  */
-static void do_fpe( CONTEXT *context, int code, void * addr )
+static void fpe_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec;
+    CONTEXT context;
+    NTSTATUS status;
 
-    switch ( code  & 0xffff ) {
+    save_fpu( &context, sigcontext );
+    save_context( &context, sigcontext );
+
+    switch (siginfo->si_code & 0xffff )
+    {
 #ifdef FPE_FLTSUB
     case FPE_FLTSUB:
         rec.ExceptionCode = EXCEPTION_ARRAY_BOUNDS_EXCEEDED;
@@ -468,50 +917,13 @@ static void do_fpe( CONTEXT *context, int code, void * addr )
     }
     rec.ExceptionFlags   = EXCEPTION_CONTINUABLE;
     rec.ExceptionRecord  = NULL;
-    rec.ExceptionAddress = addr;
+    rec.ExceptionAddress = (LPVOID)context.Iar;
     rec.NumberParameters = 0;
-    __regs_RtlRaiseException( &rec, context );
-}
+    status = raise_exception( &rec, &context, TRUE );
+    if (status) raise_status( status, &rec );
 
-/**********************************************************************
- *		segv_handler
- *
- * Handler for SIGSEGV and related errors.
- */
-static HANDLER_DEF(segv_handler)
-{
-    CONTEXT context;
-    save_context( &context, HANDLER_CONTEXT );
-    do_segv( &context, __siginfo->si_signo, __siginfo->si_errno, __siginfo->si_code, __siginfo->si_addr );
-    restore_context( &context, HANDLER_CONTEXT );
-}
-
-/**********************************************************************
- *		trap_handler
- *
- * Handler for SIGTRAP.
- */
-static HANDLER_DEF(trap_handler)
-{
-    CONTEXT context;
-    save_context( &context, HANDLER_CONTEXT );
-    do_trap( &context, __siginfo->si_code, __siginfo->si_addr );
-    restore_context( &context, HANDLER_CONTEXT );
-}
-
-/**********************************************************************
- *		fpe_handler
- *
- * Handler for SIGFPE.
- */
-static HANDLER_DEF(fpe_handler)
-{
-    CONTEXT context;
-    save_fpu( &context, HANDLER_CONTEXT );
-    save_context( &context, HANDLER_CONTEXT );
-    do_fpe( &context,  __siginfo->si_code, __siginfo->si_addr );
-    restore_context( &context, HANDLER_CONTEXT );
-    restore_fpu( &context, HANDLER_CONTEXT );
+    restore_context( &context, sigcontext );
+    restore_fpu( &context, sigcontext );
 }
 
 /**********************************************************************
@@ -519,21 +931,23 @@ static HANDLER_DEF(fpe_handler)
  *
  * Handler for SIGINT.
  */
-static HANDLER_DEF(int_handler)
+static void int_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     if (!dispatch_signal(SIGINT))
     {
         EXCEPTION_RECORD rec;
         CONTEXT context;
+        NTSTATUS status;
 
-        save_context( &context, HANDLER_CONTEXT );
+        save_context( &context, sigcontext );
         rec.ExceptionCode    = CONTROL_C_EXIT;
         rec.ExceptionFlags   = EXCEPTION_CONTINUABLE;
         rec.ExceptionRecord  = NULL;
         rec.ExceptionAddress = (LPVOID)context.Iar;
         rec.NumberParameters = 0;
-        __regs_RtlRaiseException( &rec, &context );
-        restore_context( &context, HANDLER_CONTEXT );
+        status = raise_exception( &rec, &context, TRUE );
+        if (status) raise_status( status, &rec );
+        restore_context( &context, sigcontext );
     }
 }
 
@@ -543,30 +957,32 @@ static HANDLER_DEF(int_handler)
  *
  * Handler for SIGABRT.
  */
-static HANDLER_DEF(abrt_handler)
+static void abrt_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec;
     CONTEXT context;
+    NTSTATUS status;
 
-    save_context( &context, HANDLER_CONTEXT );
+    save_context( &context, sigcontext );
     rec.ExceptionCode    = EXCEPTION_WINE_ASSERTION;
     rec.ExceptionFlags   = EH_NONCONTINUABLE;
     rec.ExceptionRecord  = NULL;
     rec.ExceptionAddress = (LPVOID)context.Iar;
     rec.NumberParameters = 0;
-    __regs_RtlRaiseException( &rec, &context ); /* Should never return.. */
-    restore_context( &context, HANDLER_CONTEXT );
+    status = raise_exception( &rec, &context, TRUE );
+    if (status) raise_status( status, &rec );
+    restore_context( &context, sigcontext );
 }
 
 
 /**********************************************************************
- *		term_handler
+ *		quit_handler
  *
- * Handler for SIGTERM.
+ * Handler for SIGQUIT.
  */
-static HANDLER_DEF(term_handler)
+static void quit_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
-    server_abort_thread(0);
+    abort_thread(0);
 }
 
 
@@ -575,54 +991,22 @@ static HANDLER_DEF(term_handler)
  *
  * Handler for SIGUSR1, used to signal a thread that it got suspended.
  */
-static HANDLER_DEF(usr1_handler)
+static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     CONTEXT context;
 
-    save_context( &context, HANDLER_CONTEXT );
+    save_context( &context, sigcontext );
     wait_suspend( &context );
-    restore_context( &context, HANDLER_CONTEXT );
-}
-
-
-/**********************************************************************
- *		get_signal_stack_total_size
- *
- * Retrieve the size to allocate for the signal stack, including the TEB at the bottom.
- * Must be a power of two.
- */
-size_t get_signal_stack_total_size(void)
-{
-    assert( sizeof(TEB) <= getpagesize() );
-    return getpagesize();  /* this is just for the TEB, we don't need a signal stack */
-}
-
-
-/***********************************************************************
- *           set_handler
- *
- * Set a signal handler
- */
-static int set_handler( int sig, void (*func)() )
-{
-    struct sigaction sig_act;
-
-    sig_act.sa_sigaction = func;
-    sigemptyset( &sig_act.sa_mask );
-    sigaddset( &sig_act.sa_mask, SIGINT );
-    sigaddset( &sig_act.sa_mask, SIGALRM );
-
-    sig_act.sa_flags = SA_RESTART | SA_SIGINFO;
-    return sigaction( sig, &sig_act, NULL );
+    restore_context( &context, sigcontext );
 }
 
 
 /***********************************************************************
  *           __wine_set_signal_handler   (NTDLL.@)
  */
-int __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
+int CDECL __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
 {
-    if (sig > sizeof(handlers) / sizeof(handlers[0])) return -1;
+    if (sig >= ARRAY_SIZE(handlers)) return -1;
     if (handlers[sig] != NULL) return -2;
     handlers[sig] = wsh;
     return 0;
@@ -630,38 +1014,233 @@ int __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
 
 
 /**********************************************************************
- *		SIGNAL_Init
+ *		signal_alloc_thread
  */
-BOOL SIGNAL_Init(void)
+NTSTATUS signal_alloc_thread( TEB **teb )
 {
-    if (set_handler( SIGINT,  (void (*)())int_handler ) == -1) goto error;
-    if (set_handler( SIGFPE,  (void (*)())fpe_handler ) == -1) goto error;
-    if (set_handler( SIGSEGV, (void (*)())segv_handler ) == -1) goto error;
-    if (set_handler( SIGILL,  (void (*)())segv_handler ) == -1) goto error;
-    if (set_handler( SIGABRT, (void (*)())abrt_handler ) == -1) goto error;
-    if (set_handler( SIGTERM, (void (*)())term_handler ) == -1) goto error;
-    if (set_handler( SIGUSR1, (void (*)())usr1_handler ) == -1) goto error;
-#ifdef SIGBUS
-    if (set_handler( SIGBUS,  (void (*)())segv_handler ) == -1) goto error;
-#endif
-#ifdef SIGTRAP
-    if (set_handler( SIGTRAP, (void (*)())trap_handler ) == -1) goto error;
-#endif
+    static size_t sigstack_zero_bits;
+    SIZE_T size;
+    NTSTATUS status;
 
-    return TRUE;
+    if (!sigstack_zero_bits)
+    {
+        size_t min_size = page_size;  /* this is just for the TEB, we don't use a signal stack yet */
+        /* find the first power of two not smaller than min_size */
+        while ((1u << sigstack_zero_bits) < min_size) sigstack_zero_bits++;
+        assert( sizeof(TEB) <= min_size );
+    }
 
- error:
-    perror("sigaction");
-    return FALSE;
+    size = 1 << sigstack_zero_bits;
+    *teb = NULL;
+    if (!(status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)teb, sigstack_zero_bits,
+                                            &size, MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE )))
+    {
+        (*teb)->Tib.Self = &(*teb)->Tib;
+        (*teb)->Tib.ExceptionList = (void *)~0UL;
+    }
+    return status;
 }
 
 
 /**********************************************************************
- *              __wine_enter_vm86   (NTDLL.@)
+ *		signal_free_thread
  */
-void __wine_enter_vm86( CONTEXT *context )
+void signal_free_thread( TEB *teb )
 {
-    MESSAGE("vm86 mode not supported on this platform\n");
+    SIZE_T size = 0;
+
+    NtFreeVirtualMemory( NtCurrentProcess(), (void **)&teb, &size, MEM_RELEASE );
+}
+
+
+/**********************************************************************
+ *		signal_init_thread
+ */
+void signal_init_thread( TEB *teb )
+{
+    static BOOL init_done;
+
+    if (!init_done)
+    {
+        pthread_key_create( &teb_key, NULL );
+        init_done = TRUE;
+    }
+    pthread_setspecific( teb_key, teb );
+}
+
+
+/**********************************************************************
+ *		signal_init_process
+ */
+void signal_init_process(void)
+{
+    struct sigaction sig_act;
+
+    sig_act.sa_mask = server_block_set;
+    sig_act.sa_flags = SA_RESTART | SA_SIGINFO;
+
+    sig_act.sa_sigaction = int_handler;
+    if (sigaction( SIGINT, &sig_act, NULL ) == -1) goto error;
+    sig_act.sa_sigaction = fpe_handler;
+    if (sigaction( SIGFPE, &sig_act, NULL ) == -1) goto error;
+    sig_act.sa_sigaction = abrt_handler;
+    if (sigaction( SIGABRT, &sig_act, NULL ) == -1) goto error;
+    sig_act.sa_sigaction = quit_handler;
+    if (sigaction( SIGQUIT, &sig_act, NULL ) == -1) goto error;
+    sig_act.sa_sigaction = usr1_handler;
+    if (sigaction( SIGUSR1, &sig_act, NULL ) == -1) goto error;
+
+    sig_act.sa_sigaction = segv_handler;
+    if (sigaction( SIGSEGV, &sig_act, NULL ) == -1) goto error;
+    if (sigaction( SIGILL, &sig_act, NULL ) == -1) goto error;
+#ifdef SIGBUS
+    if (sigaction( SIGBUS, &sig_act, NULL ) == -1) goto error;
+#endif
+
+#ifdef SIGTRAP
+    sig_act.sa_sigaction = trap_handler;
+    if (sigaction( SIGTRAP, &sig_act, NULL ) == -1) goto error;
+#endif
+    return;
+
+ error:
+    perror("sigaction");
+    exit(1);
+}
+
+
+/***********************************************************************
+ *            RtlUnwind  (NTDLL.@)
+ */
+void WINAPI RtlUnwind( PVOID pEndFrame, PVOID targetIp, PEXCEPTION_RECORD pRecord, PVOID retval )
+{
+    FIXME( "Not implemented on PowerPC\n" );
+}
+
+/*******************************************************************
+ *		NtRaiseException (NTDLL.@)
+ */
+NTSTATUS WINAPI NtRaiseException( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_chance )
+{
+    NTSTATUS status = raise_exception( rec, context, first_chance );
+    if (status == STATUS_SUCCESS) NtSetContextThread( GetCurrentThread(), context );
+    return status;
+}
+
+/***********************************************************************
+ *		RtlRaiseException (NTDLL.@)
+ */
+void WINAPI RtlRaiseException( EXCEPTION_RECORD *rec )
+{
+    CONTEXT context;
+    NTSTATUS status;
+
+    RtlCaptureContext( &context );
+    rec->ExceptionAddress = (void *)context.Iar;
+    status = raise_exception( rec, &context, TRUE );
+    if (status) raise_status( status, rec );
+}
+
+/*************************************************************************
+ *		RtlCaptureStackBackTrace (NTDLL.@)
+ */
+USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, ULONG *hash )
+{
+    FIXME( "(%d, %d, %p, %p) stub!\n", skip, count, buffer, hash );
+    return 0;
+}
+
+/***********************************************************************
+ *           call_thread_entry_point
+ */
+static void WINAPI call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
+{
+    __TRY
+    {
+        TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", entry, arg );
+        RtlExitUserThread( entry( arg ));
+    }
+    __EXCEPT(call_unhandled_exception_filter)
+    {
+        NtTerminateThread( GetCurrentThread(), GetExceptionCode() );
+    }
+    __ENDTRY
+    abort();  /* should not be reached */
+}
+
+typedef void (WINAPI *thread_start_func)(LPTHREAD_START_ROUTINE,void *);
+
+struct startup_info
+{
+    thread_start_func      start;
+    LPTHREAD_START_ROUTINE entry;
+    void                  *arg;
+    BOOL                   suspend;
+};
+
+/***********************************************************************
+ *           thread_startup
+ */
+static void thread_startup( void *param )
+{
+    CONTEXT context = { 0 };
+    struct startup_info *info = param;
+
+    /* build the initial context */
+    context.ContextFlags = CONTEXT_FULL;
+    context.Gpr1 = (DWORD)NtCurrentTeb()->Tib.StackBase;
+    context.Gpr3 = (DWORD)info->entry;
+    context.Gpr4 = (DWORD)info->arg;
+    context.Iar  = (DWORD)info->start;
+
+    if (info->suspend) wait_suspend( &context );
+    attach_dlls( &context, (void **)&context.Gpr3 );
+
+    ((thread_start_func)context.Iar)( (LPTHREAD_START_ROUTINE)context.Gpr3, (void *)context.Gpr4 );
+}
+
+/***********************************************************************
+ *           signal_start_thread
+ *
+ * Thread startup sequence:
+ * signal_start_thread()
+ *   -> thread_startup()
+ *     -> call_thread_entry_point()
+ */
+void signal_start_thread( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend )
+{
+    struct startup_info info = { call_thread_entry_point, entry, arg, suspend };
+    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
+}
+
+/**********************************************************************
+ *		signal_start_process
+ *
+ * Process startup sequence:
+ * signal_start_process()
+ *   -> thread_startup()
+ *     -> kernel32_start_process()
+ */
+void signal_start_process( LPTHREAD_START_ROUTINE entry, BOOL suspend )
+{
+    struct startup_info info = { kernel32_start_process, entry, NtCurrentTeb()->Peb, suspend };
+    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
+}
+
+/***********************************************************************
+ *           signal_exit_thread
+ */
+void signal_exit_thread( int status )
+{
+    exit_thread( status );
+}
+
+/***********************************************************************
+ *           signal_exit_process
+ */
+void signal_exit_process( int status )
+{
+    exit( status );
 }
 
 /**********************************************************************
@@ -678,6 +1257,14 @@ void WINAPI DbgBreakPoint(void)
 void WINAPI DbgUserBreakPoint(void)
 {
      kill(getpid(), SIGTRAP);
+}
+
+/**********************************************************************
+ *           NtCurrentTeb   (NTDLL.@)
+ */
+TEB * WINAPI NtCurrentTeb(void)
+{
+    return pthread_getspecific( teb_key );
 }
 
 #endif  /* __powerpc__ */

@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  *
@@ -264,7 +264,7 @@ VOID WINAPI DrawInsert (HWND hwndParent, HWND hwndLB, INT nItem)
         RedrawWindow(hwndParent, &data->last_drag_icon_rect, NULL,
             RDW_INTERNALPAINT | RDW_ERASE | RDW_INVALIDATE | RDW_UPDATENOW);
 
-        CopyRect(&data->last_drag_icon_rect, &rcDragIcon);
+        data->last_drag_icon_rect = rcDragIcon;
 
         if (nItem >= 0)
         {
@@ -292,7 +292,7 @@ INT WINAPI LBItemFromPt (HWND hwndLB, POINT pt, BOOL bAutoScroll)
     INT nIndex;
     DWORD dwScrollTime;
 
-    TRACE("(%p %ld x %ld %s)\n",
+    TRACE("(%p %d x %d %s)\n",
            hwndLB, pt.x, pt.y, bAutoScroll ? "TRUE" : "FALSE");
 
     ScreenToClient (hwndLB, &pt);
@@ -334,7 +334,7 @@ INT WINAPI LBItemFromPt (HWND hwndLB, POINT pt, BOOL bAutoScroll)
 
         dwLastScrollTime = dwScrollTime;
 
-        SendMessageW (hwndLB, LB_SETTOPINDEX, (WPARAM)nIndex, 0);
+        SendMessageW (hwndLB, LB_SETTOPINDEX, nIndex, 0);
     }
 
     return -1;

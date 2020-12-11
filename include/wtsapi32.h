@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WTSAPI32_H
@@ -23,6 +23,12 @@
 extern "C" {
 #endif
 
+
+typedef enum _WTS_VIRTUAL_CLASS
+{
+    WTSVirtualClientData,
+    WTSVirtualFileHandle
+} WTS_VIRTUAL_CLASS;
 
 typedef enum tagWTS_INFO_CLASS
 {
@@ -129,8 +135,15 @@ typedef struct _WTS_SERVER_INFOW
 DECL_WINELIB_TYPE_AW(WTS_SERVER_INFO)
 DECL_WINELIB_TYPE_AW(PWTS_SERVER_INFO)
 
+#define WTS_CURRENT_SERVER_HANDLE ((HANDLE)NULL)
+#define WTS_CURRENT_SESSION (~0u)
+
 void WINAPI WTSCloseServer(HANDLE);
+BOOL WINAPI WTSConnectSessionA(ULONG, ULONG, PSTR, BOOL);
+BOOL WINAPI WTSConnectSessionW(ULONG, ULONG, PWSTR, BOOL);
+#define     WTSConnectSession WINELIB_NAME_AW(WTSConnectSession)
 BOOL WINAPI WTSDisconnectSession(HANDLE, DWORD, BOOL);
+BOOL WINAPI WTSEnableChildSessions(BOOL);
 BOOL WINAPI WTSEnumerateProcessesA(HANDLE, DWORD, DWORD, PWTS_PROCESS_INFOA *, DWORD *);
 BOOL WINAPI WTSEnumerateProcessesW(HANDLE, DWORD, DWORD, PWTS_PROCESS_INFOW *, DWORD *);
 #define     WTSEnumerateProcesses WINELIB_NAME_AW(WTSEnumerateProcesses)
@@ -140,7 +153,7 @@ BOOL WINAPI WTSEnumerateServersW( LPWSTR, DWORD, DWORD, PWTS_SERVER_INFOW*, DWOR
 BOOL WINAPI WTSEnumerateSessionsA(HANDLE, DWORD, DWORD, PWTS_SESSION_INFOA *, DWORD *);
 BOOL WINAPI WTSEnumerateSessionsW(HANDLE, DWORD, DWORD, PWTS_SESSION_INFOW *, DWORD *);
 #define     WTSEnumerateSessions WINELIB_NAME_AW(WTSEnumerateSessions)
-void WINAPI WTSFreeMemory(PVOID); 
+void WINAPI WTSFreeMemory(PVOID);
 HANDLE WINAPI WTSOpenServerA(LPSTR);
 HANDLE WINAPI WTSOpenServerW(LPWSTR);
 #define     WTSOpenServer WINELIB_NAME_AW(WTSOpenServer)
@@ -152,8 +165,14 @@ BOOL WINAPI WTSQueryUserConfigW(LPWSTR,LPWSTR,WTS_CONFIG_CLASS,LPWSTR*,DWORD*);
 #define     WTSQueryUserConfig WINELIB_NAME_AW(WTSQueryUserConfig)
 BOOL WINAPI WTSQueryUserToken(ULONG, PHANDLE);
 BOOL WINAPI WTSRegisterSessionNotification(HWND, DWORD);
+BOOL WINAPI WTSRegisterSessionNotificationEx(HANDLE, HWND, DWORD);
+BOOL WINAPI WTSStartRemoteControlSessionA(LPSTR, ULONG, BYTE, USHORT);
+BOOL WINAPI WTSStartRemoteControlSessionW(LPWSTR, ULONG, BYTE, USHORT);
+#define     WTSStartRemoteControlSession WINELIB_NAME_AW(WTSStartRemoteControlSession)
+BOOL WINAPI WTSStopRemoteControlSession(ULONG);
 BOOL WINAPI WTSTerminateProcess(HANDLE, DWORD, DWORD);
 BOOL WINAPI WTSUnRegisterSessionNotification(HWND);
+BOOL WINAPI WTSUnRegisterSessionNotificationEx(HANDLE, HWND);
 BOOL WINAPI WTSWaitSystemEvent(HANDLE, DWORD, DWORD*);
 
 #ifdef __cplusplus

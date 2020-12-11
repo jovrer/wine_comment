@@ -1,29 +1,24 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = dinput.dll
-IMPORTLIB = libdinput.$(IMPLIBEXT)
-IMPORTS   = ole32 user32 advapi32 kernel32
-EXTRALIBS = -ldxguid -luuid
+IMPORTLIB = dinput
+IMPORTS   = dxguid uuid comctl32 ole32 user32 advapi32
+EXTRADEFS = -DDIRECTINPUT_VERSION=0x0700
+EXTRALIBS = $(IOKIT_LIBS) $(FORCEFEEDBACK_LIBS)
 
 C_SRCS = \
+	config.c \
 	data_formats.c \
 	device.c \
 	dinput_main.c \
 	effect_linuxinput.c \
+	joystick.c \
 	joystick_linux.c \
 	joystick_linuxinput.c \
+	joystick_osx.c \
 	keyboard.c \
-	mouse.c \
-	regsvr.c
+	mouse.c
 
-IMPLIB_SRCS = data_formats.c
+IDL_SRCS = dinput_classes.idl
 
-RC_SRCS = version.rc
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = \
+	dinput.rc \
+	version.rc

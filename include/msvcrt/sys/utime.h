@@ -15,25 +15,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_SYS_UTIME_H
 #define __WINE_SYS_UTIME_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
 
-#ifndef _WCHAR_T_DEFINED
-#define _WCHAR_T_DEFINED
-#ifndef __cplusplus
-typedef unsigned short wchar_t;
-#endif
-#endif
+#include <crtdefs.h>
 
-#ifndef _TIME_T_DEFINED
-typedef long time_t;
-#define _TIME_T_DEFINED
-#endif
+#include <pshpack8.h>
 
 #ifndef _UTIMBUF_DEFINED
 #define _UTIMBUF_DEFINED
@@ -42,16 +31,38 @@ struct _utimbuf
     time_t actime;
     time_t modtime;
 };
+struct __utimbuf32
+{
+    __time32_t actime;
+    __time32_t modtime;
+};
+struct __utimbuf64
+{
+    __time64_t actime;
+    __time64_t modtime;
+};
 #endif /* _UTIMBUF_DEFINED */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int         _futime(int,struct _utimbuf*);
-int         _utime(const char*,struct _utimbuf*);
+int __cdecl _futime32(int,struct __utimbuf32*);
+int __cdecl _futime64(int,struct __utimbuf64*);
+int __cdecl _utime32(const char*,struct __utimbuf32*);
+int __cdecl _utime64(const char*,struct __utimbuf64*);
+int __cdecl _wutime32(const wchar_t*,struct __utimbuf32*);
+int __cdecl _wutime64(const wchar_t*,struct __utimbuf64*);
 
-int         _wutime(const wchar_t*,struct _utimbuf*);
+#ifdef _USE_32BIT_TIME_T
+static inline int _futime(int fd, struct _utimbuf *buf) { return _futime32(fd, (struct __utimbuf32*)buf); }
+static inline int _utime(const char *s, struct _utimbuf *buf) { return _utime32(s, (struct __utimbuf32*)buf); }
+static inline int _wutime(const wchar_t *s, struct _utimbuf *buf) { return _wutime32(s, (struct __utimbuf32*)buf); }
+#else
+static inline int _futime(int fd, struct _utimbuf *buf) { return _futime64(fd, (struct __utimbuf64*)buf); }
+static inline int _utime(const char *s, struct _utimbuf *buf) { return _utime64(s, (struct __utimbuf64*)buf); }
+static inline int _wutime(const wchar_t *s, struct _utimbuf *buf) { return _wutime64(s, (struct __utimbuf64*)buf); }
+#endif
 
 #ifdef __cplusplus
 }
@@ -61,5 +72,7 @@ int         _wutime(const wchar_t*,struct _utimbuf*);
 #define utimbuf _utimbuf
 
 static inline int utime(const char* path, struct _utimbuf* buf) { return _utime(path, buf); }
+
+#include <poppack.h>
 
 #endif /* __WINE_SYS_UTIME_H */

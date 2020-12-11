@@ -1,5 +1,6 @@
 /*
- * Copyright 2003 Vincent Béron
+ * Copyright 2003 Vincent BÃ©ron
+ * Copyright 2007, 2008 Mikolaj Zalewski
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,16 +14,19 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "dumpres.h"
+#include "utils.h"
 #include "wrc.h"
 
 #define MASTER_LANGUAGE LANG_ENGLISH
+#define MASTER_SUBLANGUAGE SUBLANG_ENGLISH_US
 #define NB_LANG 0x94
 
 enum lang_type_e {
@@ -31,77 +35,61 @@ enum lang_type_e {
 	lang_type_normal
 };
 
-static int present_resources[res_usr+1];
-static char *res_names[res_usr+1];
-static int nb_resources[res_usr+1][lang_type_normal+1];
-static resource_t **list_resources[res_usr+1][lang_type_normal+1];
-
-static int get_language_id(resource_t *resource) {
+static language_t get_language(resource_t *resource) {
 	switch(resource->type) {
 		case res_acc:
-			return resource->res.acc->lvc.language->id;
+			return *resource->res.acc->lvc.language;
 		case res_bmp:
-			return resource->res.bmp->data->lvc.language->id;
+			return *resource->res.bmp->data->lvc.language;
 		case res_cur:
-			return resource->res.cur->lvc.language->id;
+			return *resource->res.cur->lvc.language;
 		case res_curg:
-			return resource->res.curg->lvc.language->id;
+			return *resource->res.curg->lvc.language;
 		case res_dlg:
-			return resource->res.dlg->lvc.language->id;
-		case res_dlgex:
-			return resource->res.dlgex->lvc.language->id;
+			return *resource->res.dlg->lvc.language;
 		case res_fnt:
-			return resource->res.fnt->data->lvc.language->id;
+			return *resource->res.fnt->data->lvc.language;
 		case res_fntdir:
-			return resource->res.fnd->data->lvc.language->id;
+			return *resource->res.fnd->data->lvc.language;
 		case res_ico:
-			return resource->res.ico->lvc.language->id;
+			return *resource->res.ico->lvc.language;
 		case res_icog:
-			return resource->res.icog->lvc.language->id;
+			return *resource->res.icog->lvc.language;
 		case res_men:
-			return resource->res.men->lvc.language->id;
-		case res_menex:
-			return resource->res.menex->lvc.language->id;
+			return *resource->res.men->lvc.language;
 		case res_rdt:
-			return resource->res.rdt->data->lvc.language->id;
+			return *resource->res.rdt->data->lvc.language;
 		case res_stt:
-			return resource->res.stt->lvc.language->id;
+			return *resource->res.stt->lvc.language;
 		case res_usr:
-			return resource->res.usr->data->lvc.language->id;
+			return *resource->res.usr->data->lvc.language;
 		case res_msg:
-			return resource->res.msg->data->lvc.language->id;
+			return *resource->res.msg->data->lvc.language;
 		case res_ver:
-			return resource->res.ver->lvc.language->id;
+			return *resource->res.ver->lvc.language;
 		case res_dlginit:
-			return resource->res.dlgi->data->lvc.language->id;
+			return *resource->res.dlgi->data->lvc.language;
 		case res_toolbar:
-			return resource->res.tbt->lvc.language->id;
+			return *resource->res.tbt->lvc.language;
 		case res_anicur:
 		case res_aniico:
-			return resource->res.ani->data->lvc.language->id;
+			return *resource->res.ani->data->lvc.language;
+                case res_html:
+                        return *resource->res.html->data->lvc.language;
 		default:
 			/* Not supposed to reach here */
 			fprintf(stderr, "Not supposed to reach here (get_language_id())\n");
 			abort();
-			return -1;
 	}
 }
 
-static void add_resource(resource_t *resource) {
-	enum lang_type_e lang_type;
-	enum res_e res_type = resource->type;
-	int lid = get_language_id(resource);
+static int get_language_id(resource_t *resource) {
+    return get_language(resource).id;
+}
 
-	if(lid == MASTER_LANGUAGE) {
-		lang_type = lang_type_master;
-	} else if(lid == LANG_NEUTRAL) {
-		lang_type = lang_type_neutral;
-	} else {
-		lang_type = lang_type_normal;
-	}
-	nb_resources[res_type][lang_type]++;
-	list_resources[res_type][lang_type] = realloc(list_resources[res_type][lang_type], nb_resources[res_type][lang_type]*sizeof(resource_t *));
-	list_resources[res_type][lang_type][nb_resources[res_type][lang_type]-1] = resource;
+static int compare_lang(language_t lang1, language_t lang2)
+{
+    return memcmp(&lang1, &lang2, sizeof(language_t));
 }
 
 #if 0
@@ -146,6 +134,7 @@ static const char *get_language_name(int lid) {
 	PRETTYPRINTLANG(HUNGARIAN)
 	PRETTYPRINTLANG(ICELANDIC)
 	PRETTYPRINTLANG(INDONESIAN)
+	PRETTYPRINTLANG(IRISH)
 	PRETTYPRINTLANG(ITALIAN)
 	PRETTYPRINTLANG(JAPANESE)
 	PRETTYPRINTLANG(KANNADA)
@@ -188,7 +177,7 @@ static const char *get_language_name(int lid) {
 	PRETTYPRINTLANG(URDU)
 	PRETTYPRINTLANG(UZBEK)
 	PRETTYPRINTLANG(VIETNAMESE)
-	PRETTYPRINTLANG(GAELIC)
+	PRETTYPRINTLANG(SCOTTISH_GAELIC)
 	PRETTYPRINTLANG(MALTESE)
 	PRETTYPRINTLANG(MAORI)
 	PRETTYPRINTLANG(RHAETO_ROMANCE)
@@ -205,15 +194,14 @@ static const char *get_language_name(int lid) {
 	PRETTYPRINTLANG(CORNISH)
 	PRETTYPRINTLANG(WELSH)
 	PRETTYPRINTLANG(BRETON)
-	return "Unkown language";
+	return "Unknown language";
 }
 #endif
 
 static int compare_accelerator(accelerator_t *accelerator1, accelerator_t *accelerator2) {
 	int different = 0;
 	event_t *ev1 = NULL, *ev2 = NULL;
-	if(!different &&
-	   ((accelerator1->memopt != accelerator2->memopt) ||
+	if(((accelerator1->memopt != accelerator2->memopt) ||
 	   (accelerator1->lvc.version != accelerator2->lvc.version) ||
 	   (accelerator1->lvc.characts != accelerator2->lvc.characts)))
 		different = 1;
@@ -235,8 +223,7 @@ static int compare_accelerator(accelerator_t *accelerator1, accelerator_t *accel
 
 static int compare_bitmap(bitmap_t *bitmap1, bitmap_t *bitmap2) {
 	int different = 0;
-	if(!different &&
-	   ((bitmap1->memopt != bitmap2->memopt) ||
+	if(((bitmap1->memopt != bitmap2->memopt) ||
 	   (bitmap1->data->lvc.version != bitmap2->data->lvc.version) ||
 	   (bitmap1->data->lvc.characts != bitmap2->data->lvc.characts)))
 		different = 1;
@@ -245,8 +232,7 @@ static int compare_bitmap(bitmap_t *bitmap1, bitmap_t *bitmap2) {
 
 static int compare_cursor(cursor_t *cursor1, cursor_t *cursor2) {
 	int different = 0;
-	if(!different &&
-	   ((cursor1->id != cursor2->id) ||
+	if(((cursor1->id != cursor2->id) ||
 	   (cursor1->width != cursor2->width) ||
 	   (cursor1->height != cursor2->height) ||
 	   (cursor1->xhot != cursor2->xhot) ||
@@ -262,8 +248,7 @@ static int compare_cursor(cursor_t *cursor1, cursor_t *cursor2) {
 static int compare_cursor_group(cursor_group_t *cursor_group1, cursor_group_t *cursor_group2) {
 	int different = 0;
 	cursor_t *cursor1 = NULL, *cursor2 = NULL;
-	if(!different &&
-	   ((cursor_group1->memopt != cursor_group2->memopt) ||
+	if(((cursor_group1->memopt != cursor_group2->memopt) ||
 	   (cursor_group1->lvc.version != cursor_group2->lvc.version) ||
 	   (cursor_group1->lvc.characts != cursor_group2->lvc.characts)))
 		different = 1;
@@ -289,23 +274,29 @@ static int compare_cursor_group(cursor_group_t *cursor_group1, cursor_group_t *c
 static int compare_control(control_t *control1, control_t *control2) {
 	int different = 0;
 	char *nameid = NULL;
-	if(!different &&
-		((control1 && !control2) ||
-		(!control1 && control2)))
-			different = 1;
+	int ignore_style;
+	if(((control1 && !control2) || (!control1 && control2)))
+		different = 1;
 	if(different || !control1 || !control2)
 		return different;
 	nameid = strdup(get_nameid_str(control1->ctlclass));
-	if(!different && strcmp(nameid, get_nameid_str(control2->ctlclass)))
+	if(strcmp(nameid, get_nameid_str(control2->ctlclass)))
 		different = 1;
 	free(nameid);
-	if(!different && 
-	   (control1->id != control2->id))
+        if (different)
+            return different;
+
+        /* allow the translators to set some styles */
+        ignore_style = 0;
+        if (control1->ctlclass->type == name_ord && control1->ctlclass->name.i_name == CT_BUTTON)
+            ignore_style = 0x2000;          /* BS_MULTILINE*/
+
+	if((control1->id != control2->id))
 		different = 1;
 	if(!different && control1->gotstyle && control2->gotstyle) {
 		if((!control1->style || !control2->style) ||
 		   (control1->style->and_mask || control2->style->and_mask) ||
-		   (control1->style->or_mask != control2->style->or_mask))
+		   ((control1->style->or_mask & ~ignore_style) != (control2->style->or_mask & ~ignore_style)))
 			different = 1;
 	} else if(!different &&
 		  ((control1->gotstyle && !control2->gotstyle) ||
@@ -333,8 +324,8 @@ static int compare_control(control_t *control1, control_t *control2) {
 static int compare_dialog(dialog_t *dialog1, dialog_t *dialog2) {
 	int different = 0;
 	char *nameid = NULL;
-	if(!different &&
-	   ((dialog1->memopt != dialog2->memopt) ||
+	control_t *ctrl1, *ctrl2;
+	if(((dialog1->memopt != dialog2->memopt) ||
 	   (dialog1->lvc.version != dialog2->lvc.version) ||
 	   (dialog1->lvc.characts != dialog2->lvc.characts)))
 		different = 1;
@@ -356,6 +347,13 @@ static int compare_dialog(dialog_t *dialog1, dialog_t *dialog2) {
 		  ((dialog1->gotexstyle && !dialog2->gotexstyle) ||
 		  (!dialog1->gotexstyle && dialog2->gotexstyle)))
 			different = 1;
+	if(!different && dialog1->gothelpid && dialog2->gothelpid) {
+		if(dialog1->helpid != dialog2->helpid)
+			different = 1;
+	} else if(!different &&
+		  ((dialog1->gothelpid && !dialog2->gothelpid) ||
+		  (!dialog1->gothelpid && dialog2->gothelpid)))
+			different = 1;
 	nameid = strdup(get_nameid_str(dialog1->menu));
 	if(!different && strcmp(nameid, get_nameid_str(dialog2->menu)))
 		different = 1;
@@ -364,61 +362,21 @@ static int compare_dialog(dialog_t *dialog1, dialog_t *dialog2) {
 	if(!different && strcmp(nameid, get_nameid_str(dialog2->dlgclass)))
 		different = 1;
 	free(nameid);
-	if(!different)
-		different = compare_control(dialog1->controls, dialog2->controls);
-	return different;
-}
 
-static int compare_dialogex(dialogex_t *dialogex1, dialogex_t *dialogex2) {
-	int different = 0;
-	char *nameid = NULL;
-	if(!different &&
-	   ((dialogex1->memopt != dialogex2->memopt) ||
-	   (dialogex1->lvc.version != dialogex2->lvc.version) ||
-	   (dialogex1->lvc.characts != dialogex2->lvc.characts)))
-		different = 1;
-	if(!different && dialogex1->gotstyle && dialogex2->gotstyle) {
-		if((!dialogex1->style || !dialogex2->style) ||
-		   (dialogex1->style->and_mask || dialogex2->style->and_mask) ||
-		   (dialogex1->style->or_mask != dialogex2->style->or_mask))
-			different = 1;
-	} else if(!different &&
-		  ((dialogex1->gotstyle && !dialogex2->gotstyle) ||
-		  (!dialogex1->gotstyle && dialogex2->gotstyle)))
-			different = 1;
-	if(!different && dialogex1->gotexstyle && dialogex2->gotexstyle) {
-		if((!dialogex1->exstyle || !dialogex2->exstyle) ||
-		   (dialogex1->exstyle->and_mask || dialogex2->exstyle->and_mask) ||
-		   (dialogex1->exstyle->or_mask != dialogex2->exstyle->or_mask))
-			different = 1;
-	} else if(!different &&
-		  ((dialogex1->gotexstyle && !dialogex2->gotexstyle) ||
-		  (!dialogex1->gotexstyle && dialogex2->gotexstyle)))
-			different = 1;
-	if(!different && dialogex1->gothelpid && dialogex2->gothelpid) {
-		if(dialogex1->helpid != dialogex2->helpid)
-			different = 1;
-	} else if(!different &&
-		  ((dialogex1->gothelpid && !dialogex2->gothelpid) ||
-		  (!dialogex1->gothelpid && dialogex2->gothelpid)))
-			different = 1;
-	nameid = strdup(get_nameid_str(dialogex1->menu));
-	if(!different && strcmp(nameid, get_nameid_str(dialogex2->menu)))
-		different = 1;
-	free(nameid);
-	nameid = strdup(get_nameid_str(dialogex1->dlgclass));
-	if(!different && strcmp(nameid, get_nameid_str(dialogex2->dlgclass)))
-		different = 1;
-	free(nameid);
-	if(!different)
-		different = compare_control(dialogex1->controls, dialogex2->controls);
+        ctrl1 = dialog1->controls;
+        ctrl2 = dialog2->controls;
+        while(!different && (ctrl1 || ctrl2))
+        {
+            different = compare_control(ctrl1, ctrl2);
+            if (ctrl1) ctrl1 = ctrl1->next;
+            if (ctrl2) ctrl2 = ctrl2->next;
+        }
 	return different;
 }
 
 static int compare_font(font_t *font1, font_t *font2) {
 	int different = 0;
-	if(!different &&
-	   ((font1->memopt != font2->memopt) ||
+	if(((font1->memopt != font2->memopt) ||
 	   (font1->data->lvc.version != font2->data->lvc.version) ||
 	   (font1->data->lvc.characts != font2->data->lvc.characts)))
 		different = 1;
@@ -427,8 +385,7 @@ static int compare_font(font_t *font1, font_t *font2) {
 
 static int compare_fontdir(fontdir_t *fontdir1, fontdir_t *fontdir2) {
 	int different = 0;
-	if(!different &&
-	   ((fontdir1->memopt != fontdir2->memopt) ||
+	if(((fontdir1->memopt != fontdir2->memopt) ||
 	   (fontdir1->data->lvc.version != fontdir2->data->lvc.version) ||
 	   (fontdir1->data->lvc.characts != fontdir2->data->lvc.characts)))
 		different = 1;
@@ -437,8 +394,7 @@ static int compare_fontdir(fontdir_t *fontdir1, fontdir_t *fontdir2) {
 
 static int compare_icon(icon_t *icon1, icon_t *icon2) {
 	int different = 0;
-	if(!different &&
-	   ((icon1->id != icon2->id) ||
+	if(((icon1->id != icon2->id) ||
 	   (icon1->width != icon2->width) ||
 	   (icon1->height != icon2->height)))
 		different = 1;
@@ -452,8 +408,7 @@ static int compare_icon(icon_t *icon1, icon_t *icon2) {
 static int compare_icon_group(icon_group_t *icon_group1, icon_group_t *icon_group2) {
 	int different = 0;
 	icon_t *icon1 = NULL, *icon2 = NULL;
-	if(!different &&
-	   ((icon_group1->memopt != icon_group2->memopt) ||
+	if(((icon_group1->memopt != icon_group2->memopt) ||
 	   (icon_group1->lvc.version != icon_group2->lvc.version) ||
 	   (icon_group1->lvc.characts != icon_group2->lvc.characts)))
 		different = 1;
@@ -479,13 +434,67 @@ static int compare_icon_group(icon_group_t *icon_group1, icon_group_t *icon_grou
 static int compare_menu_item(menu_item_t *menu_item1, menu_item_t *menu_item2) {
 	int different = 0;
 	while(!different && menu_item1 && menu_item2) {
-		if(menu_item1->popup && menu_item2->popup)
-			different = compare_menu_item(menu_item1->popup, menu_item2->popup);
-		else if(!menu_item1->popup && !menu_item2->popup) {
-			if(menu_item1->name && menu_item2->name) {
-				if((menu_item1->id != menu_item2->id) ||
-				   (menu_item1->state != menu_item2->state))
+		if(menu_item1->popup && menu_item2->popup) {
+			if(!different && menu_item1->gotid && menu_item2->gotid) {
+				if(menu_item1->id != menu_item2->id)
 					different = 1;
+			} else if(!different &&
+				  ((menu_item1->gotid && !menu_item2->gotid) ||
+				  (!menu_item1->gotid && menu_item2->gotid)))
+					different = 1;
+			if(!different && menu_item1->gottype && menu_item2->gottype) {
+				if(menu_item1->type != menu_item2->type)
+					different = 1;
+			} else if(!different &&
+				  ((menu_item1->gottype && !menu_item2->gottype) ||
+				  (!menu_item1->gottype && menu_item2->gottype)))
+					different = 1;
+			if(!different && menu_item1->gotstate && menu_item2->gotstate) {
+				if(menu_item1->state != menu_item2->state)
+					different = 1;
+			} else if(!different &&
+				  ((menu_item1->gotstate && !menu_item2->gotstate) ||
+				  (!menu_item1->gotstate && menu_item2->gotstate)))
+					different = 1;
+			if(!different && menu_item1->gothelpid && menu_item2->gothelpid) {
+				if(menu_item1->helpid != menu_item2->helpid)
+					different = 1;
+			} else if(!different &&
+				  ((menu_item1->gothelpid && !menu_item2->gothelpid) ||
+				  (!menu_item1->gothelpid && menu_item2->gothelpid)))
+					different = 1;
+			if(!different)
+				different = compare_menu_item(menu_item1->popup, menu_item2->popup);
+		} else if(!menu_item1->popup && !menu_item2->popup) {
+			if(menu_item1->name && menu_item2->name) {
+				if(!different && menu_item1->gotid && menu_item2->gotid) {
+					if(menu_item1->id != menu_item2->id)
+						different = 1;
+				} else if(!different &&
+					  ((menu_item1->gotid && !menu_item2->gotid) ||
+					  (!menu_item1->gotid && menu_item2->gotid)))
+						different = 1;
+				if(!different && menu_item1->gottype && menu_item2->gottype) {
+					if(menu_item1->type != menu_item2->type)
+						different = 1;
+				} else if(!different &&
+					  ((menu_item1->gottype && !menu_item2->gottype) ||
+					  (!menu_item1->gottype && menu_item2->gottype)))
+						different = 1;
+				if(!different && menu_item1->gotstate && menu_item2->gotstate) {
+					if(menu_item1->state != menu_item2->state)
+						different = 1;
+				} else if(!different &&
+					  ((menu_item1->gotstate && !menu_item2->gotstate) ||
+					  (!menu_item1->gotstate && menu_item2->gotstate)))
+						different = 1;
+				if(!different && menu_item1->gothelpid && menu_item2->gothelpid) {
+					if(menu_item1->helpid != menu_item2->helpid)
+						different = 1;
+				} else if(!different &&
+					  ((menu_item1->gothelpid && !menu_item2->gothelpid) ||
+					  (!menu_item1->gothelpid && menu_item2->gothelpid)))
+						different = 1;
 			} else if((menu_item1->name && !menu_item2->name) ||
 				  (!menu_item1->name && menu_item2->name))
 					different = 1;
@@ -503,8 +512,7 @@ static int compare_menu_item(menu_item_t *menu_item1, menu_item_t *menu_item2) {
 
 static int compare_menu(menu_t *menu1, menu_t *menu2) {
 	int different = 0;
-	if(!different &&
-	   ((menu1->memopt != menu2->memopt) ||
+	if(((menu1->memopt != menu2->memopt) ||
 	   (menu1->lvc.version != menu2->lvc.version) ||
 	   (menu1->lvc.characts != menu2->lvc.characts)))
 		different = 1;
@@ -513,105 +521,22 @@ static int compare_menu(menu_t *menu1, menu_t *menu2) {
 	return different;
 }
 
-static int compare_menuex_item(menuex_item_t *menuex_item1, menuex_item_t *menuex_item2) {
-	int different = 0;
-	while(!different && menuex_item1 && menuex_item2) {
-		if(menuex_item1->popup && menuex_item2->popup) {
-			if(!different && menuex_item1->gotid && menuex_item2->gotid) {
-				if(menuex_item1->id != menuex_item2->id)
-					different = 1;
-			} else if(!different &&
-				  ((menuex_item1->gotid && !menuex_item2->gotid) ||
-				  (!menuex_item2->gotid && menuex_item2->gotid)))
-					different = 1;
-			if(!different && menuex_item1->gottype && menuex_item2->gottype) {
-				if(menuex_item1->type != menuex_item2->type)
-					different = 1;
-			} else if(!different &&
-				  ((menuex_item1->gottype && !menuex_item2->gottype) ||
-				  (!menuex_item2->gottype && menuex_item2->gottype)))
-					different = 1;
-			if(!different && menuex_item1->gotstate && menuex_item2->gotstate) {
-				if(menuex_item1->state != menuex_item2->state)
-					different = 1;
-			} else if(!different &&
-				  ((menuex_item1->gotstate && !menuex_item2->gotstate) ||
-				  (!menuex_item2->gotstate && menuex_item2->gotstate)))
-					different = 1;
-			if(!different && menuex_item1->gothelpid && menuex_item2->gothelpid) {
-				if(menuex_item1->helpid != menuex_item2->helpid)
-					different = 1;
-			} else if(!different &&
-				  ((menuex_item1->gothelpid && !menuex_item2->gothelpid) ||
-				  (!menuex_item2->gothelpid && menuex_item2->gothelpid)))
-					different = 1;
-			if(!different)
-				different = compare_menuex_item(menuex_item1->popup, menuex_item2->popup);
-		} else if(!menuex_item1->popup && !menuex_item2->popup) {
-			if(menuex_item1->name && menuex_item2->name) {
-				if(!different && menuex_item1->gotid && menuex_item2->gotid) {
-					if(menuex_item1->id != menuex_item2->id)
-						different = 1;
-				} else if(!different &&
-					  ((menuex_item1->gotid && !menuex_item2->gotid) ||
-					  (!menuex_item2->gotid && menuex_item2->gotid)))
-						different = 1;
-				if(!different && menuex_item1->gottype && menuex_item2->gottype) {
-					if(menuex_item1->type != menuex_item2->type)
-						different = 1;
-				} else if(!different &&
-					  ((menuex_item1->gottype && !menuex_item2->gottype) ||
-					  (!menuex_item2->gottype && menuex_item2->gottype)))
-						different = 1;
-				if(!different && menuex_item1->gotstate && menuex_item2->gotstate) {
-					if(menuex_item1->state != menuex_item2->state)
-						different = 1;
-				} else if(!different &&
-					  ((menuex_item1->gotstate && !menuex_item2->gotstate) ||
-					  (!menuex_item2->gotstate && menuex_item2->gotstate)))
-						different = 1;
-				if(!different && menuex_item1->gothelpid && menuex_item2->gothelpid) {
-					if(menuex_item1->helpid != menuex_item2->helpid)
-						different = 1;
-				} else if(!different &&
-					  ((menuex_item1->gothelpid && !menuex_item2->gothelpid) ||
-					  (!menuex_item2->gothelpid && menuex_item2->gothelpid)))
-						different = 1;
-			} else if((menuex_item1->name && !menuex_item2->name) ||
-				  (!menuex_item1->name && menuex_item2->name))
-					different = 1;
-		} else
-			different = 1;
-		menuex_item1 = menuex_item1->next;
-		menuex_item2 = menuex_item2->next;
-	}
-	if(!different &&
-	   ((menuex_item1 && !menuex_item2) ||
-	   (!menuex_item1 && menuex_item2)))
-		different = 1;
-	return different;
-}
-
-static int compare_menuex(menuex_t *menuex1, menuex_t *menuex2) {
-	int different = 0;
-	if(!different &&
-	   ((menuex1->memopt != menuex2->memopt) ||
-	   (menuex1->lvc.version != menuex2->lvc.version) ||
-	   (menuex1->lvc.characts != menuex2->lvc.characts)))
-		different = 1;
-	if(!different)
-		different = compare_menuex_item(menuex1->items, menuex2->items);
-	return different;
-}
-
 static int compare_rcdata(rcdata_t *rcdata1, rcdata_t *rcdata2) {
 	int different = 0;
-	if(!different &&
-	   ((rcdata1->memopt != rcdata2->memopt) ||
+	if(((rcdata1->memopt != rcdata2->memopt) ||
 	   (rcdata1->data->lvc.version != rcdata2->data->lvc.version) ||
 	   (rcdata1->data->lvc.characts != rcdata2->data->lvc.characts)))
 		different = 1;
 	return different;
+}
+
+static int compare_html(html_t *rcdata1, html_t *rcdata2) {
+        int different = 0;
+        if(((rcdata1->memopt != rcdata2->memopt) ||
+           (rcdata1->data->lvc.version != rcdata2->data->lvc.version) ||
+           (rcdata1->data->lvc.characts != rcdata2->data->lvc.characts)))
+                different = 1;
+        return different;
 }
 
 static int compare_stringtable(stringtable_t *stringtable1, stringtable_t *stringtable2) {
@@ -645,8 +570,7 @@ static int compare_stringtable(stringtable_t *stringtable1, stringtable_t *strin
 static int compare_user(user_t *user1, user_t *user2) {
 	int different = 0;
 	char *nameid = NULL;
-	if(!different &&
-	   ((user1->memopt != user2->memopt) ||
+	if(((user1->memopt != user2->memopt) ||
 	   (user1->data->lvc.version != user2->data->lvc.version) ||
 	   (user1->data->lvc.characts != user2->data->lvc.characts)))
 		different = 1;
@@ -659,8 +583,7 @@ static int compare_user(user_t *user1, user_t *user2) {
 
 static int compare_messagetable(messagetable_t *messagetable1, messagetable_t *messagetable2) {
 	int different = 0;
-	if(!different &&
-	   ((messagetable1->memopt != messagetable2->memopt) ||
+	if(((messagetable1->memopt != messagetable2->memopt) ||
 	   (messagetable1->data->lvc.version != messagetable2->data->lvc.version) ||
 	   (messagetable1->data->lvc.characts != messagetable2->data->lvc.characts)))
 		different = 1;
@@ -669,8 +592,7 @@ static int compare_messagetable(messagetable_t *messagetable1, messagetable_t *m
 
 static int compare_string(string_t *string1, string_t *string2) {
 	int different = 0;
-	if(!different &&
-	   ((string1->size != string2->size) ||
+	if(((string1->size != string2->size) ||
 	   (string1->type != string2->type)))
 		different = 1;
 	if(!different) {
@@ -689,27 +611,23 @@ static int compare_ver_block(ver_block_t *ver_block1, ver_block_t *ver_block2);
 static int compare_ver_value(ver_value_t *ver_value1, ver_value_t *ver_value2) {
 	int different = 0;
 	int i = 0;
-	if(!different &&
-	   (ver_value1->type == ver_value2->type)) {
+	if (ver_value1->type == ver_value2->type) {
 		switch(ver_value1->type) {
 			case val_str:
-				if(!different && ver_value1->key && ver_value2->key)
+				if(ver_value1->key && ver_value2->key)
 					different = compare_string(ver_value1->key, ver_value2->key);
-				else if(!different &&
-					((ver_value1->key && !ver_value2->key) ||
+				else if(((ver_value1->key && !ver_value2->key) ||
 					(!ver_value1->key && ver_value2->key)))
 						different = 1;
 				break;
 			case val_words:
-				if(!different && ver_value1->key && ver_value2->key)
+				if(ver_value1->key && ver_value2->key)
 					different = compare_string(ver_value1->key, ver_value2->key);
-				else if(!different &&
-					((ver_value1->key && !ver_value2->key) ||
+				else if(((ver_value1->key && !ver_value2->key) ||
 					(!ver_value1->key && ver_value2->key)))
 						different = 1;
 				if(!different && ver_value1->value.words && ver_value2->value.words) {
-					if(!different &&
-					   (ver_value1->value.words->nwords != ver_value2->value.words->nwords))
+					if(ver_value1->value.words->nwords != ver_value2->value.words->nwords)
 						different = 1;
 					if(!different)
 						for(i = 0; i < ver_value1->value.words->nwords; i++) {
@@ -724,10 +642,9 @@ static int compare_ver_value(ver_value_t *ver_value1, ver_value_t *ver_value2) {
 						different = 1;
 				break;
 			case val_block:
-				if(!different && ver_value1->value.block && ver_value2->value.block)
+				if(ver_value1->value.block && ver_value2->value.block)
 					different = compare_ver_block(ver_value1->value.block, ver_value2->value.block);
-				else if(!different &&
-					((ver_value1->value.block && !ver_value2->value.block) ||
+				else if(((ver_value1->value.block && !ver_value2->value.block) ||
 					(!ver_value1->value.block && ver_value2->value.block)))
 						different = 1;
 				break;
@@ -741,28 +658,25 @@ static int compare_ver_value(ver_value_t *ver_value1, ver_value_t *ver_value2) {
 
 static int compare_ver_block(ver_block_t *ver_block1, ver_block_t *ver_block2) {
 	int different = 0;
-	ver_value_t *ver_value1 = NULL, *ver_value2 = NULL;
-	if(!different) {
-		ver_value1 = ver_block1->values;
-		ver_value2 = ver_block2->values;
-		while(!different && ver_value1 && ver_value2) {
-			different = compare_ver_value(ver_value1, ver_value2);
-			ver_value1 = ver_value1->next;
-			ver_value2 = ver_value2->next;
-		}
-		if(!different &&
-		   ((ver_value1 && !ver_value2) ||
-		   (!ver_value1 && ver_value2)))
-			different = 1;
+	ver_value_t *ver_value1 = ver_block1->values, *ver_value2 = ver_block2->values;
+
+	while(!different && ver_value1 && ver_value2) {
+		different = compare_ver_value(ver_value1, ver_value2);
+		ver_value1 = ver_value1->next;
+		ver_value2 = ver_value2->next;
 	}
+	if(!different &&
+	   ((ver_value1 && !ver_value2) ||
+	   (!ver_value1 && ver_value2)))
+		different = 1;
+
 	return different;
 }
 
 static int compare_versioninfo(versioninfo_t *versioninfo1, versioninfo_t *versioninfo2) {
 	int different = 0;
 	ver_block_t *ver_block1 = NULL, *ver_block2 = NULL;
-	if(!different &&
-	   ((versioninfo1->memopt != versioninfo2->memopt) ||
+	if(((versioninfo1->memopt != versioninfo2->memopt) ||
 	   (versioninfo1->lvc.version != versioninfo2->lvc.version) ||
 	   (versioninfo1->lvc.characts != versioninfo2->lvc.characts)))
 		different = 1;
@@ -831,7 +745,7 @@ static int compare_versioninfo(versioninfo_t *versioninfo1, versioninfo_t *versi
 		}
 		if(!different &&
 		   ((ver_block1 && !ver_block2) ||
-		   (ver_block1 && !ver_block2)))
+		   (!ver_block1 && ver_block2)))
 			different = 1;
 	}
 	return different;
@@ -839,8 +753,7 @@ static int compare_versioninfo(versioninfo_t *versioninfo1, versioninfo_t *versi
 
 static int compare_dlginit(dlginit_t *dlginit1, dlginit_t *dlginit2) {
 	int different = 0;
-	if(!different &&
-	   ((dlginit1->memopt != dlginit2->memopt) ||
+	if(((dlginit1->memopt != dlginit2->memopt) ||
 	   (dlginit1->data->lvc.version != dlginit2->data->lvc.version) ||
 	   (dlginit1->data->lvc.characts != dlginit2->data->lvc.characts)))
 		different = 1;
@@ -865,8 +778,7 @@ static int compare_toolbar_item(toolbar_item_t *toolbar_item1, toolbar_item_t *t
 
 static int compare_toolbar(toolbar_t *toolbar1, toolbar_t *toolbar2) {
 	int different = 0;
-	if(!different &&
-	   ((toolbar1->memopt != toolbar2->memopt) ||
+	if(((toolbar1->memopt != toolbar2->memopt) ||
 	   (toolbar1->lvc.version != toolbar2->lvc.version) ||
 	   (toolbar1->lvc.characts != toolbar2->lvc.characts)))
 		different = 1;
@@ -877,8 +789,7 @@ static int compare_toolbar(toolbar_t *toolbar1, toolbar_t *toolbar2) {
 
 static int compare_ani_curico(ani_curico_t *ani_curico1, ani_curico_t *ani_curico2) {
 	int different = 0;
-	if(!different &&
-	   ((ani_curico1->memopt != ani_curico2->memopt) ||
+	if(((ani_curico1->memopt != ani_curico2->memopt) ||
 	   (ani_curico1->data->lvc.version != ani_curico2->data->lvc.version) ||
 	   (ani_curico1->data->lvc.characts != ani_curico2->data->lvc.characts)))
 		different = 1;
@@ -897,8 +808,6 @@ static int compare(resource_t *resource1, resource_t *resource2) {
 			return compare_cursor_group(resource1->res.curg, resource2->res.curg);
 		case res_dlg:
 			return compare_dialog(resource1->res.dlg, resource2->res.dlg);
-		case res_dlgex:
-			return compare_dialogex(resource1->res.dlgex, resource2->res.dlgex);
 		case res_fnt:
 			return compare_font(resource1->res.fnt, resource2->res.fnt);
 		case res_fntdir:
@@ -909,14 +818,14 @@ static int compare(resource_t *resource1, resource_t *resource2) {
 			return compare_icon_group(resource1->res.icog, resource2->res.icog);
 		case res_men:
 			return compare_menu(resource1->res.men, resource2->res.men);
-		case res_menex:
-			return compare_menuex(resource1->res.menex, resource2->res.menex);
 		case res_rdt:
 			return compare_rcdata(resource1->res.rdt, resource2->res.rdt);
 		case res_stt:
 			return compare_stringtable(resource1->res.stt, resource2->res.stt);
 		case res_usr:
 			return compare_user(resource1->res.usr, resource2->res.usr);
+		case res_html:
+		        return compare_html(resource1->res.html, resource2->res.html);
 		case res_msg:
 			return compare_messagetable(resource1->res.msg, resource2->res.msg);
 		case res_ver:
@@ -936,221 +845,169 @@ static int compare(resource_t *resource1, resource_t *resource2) {
 	}
 }
 
+typedef struct resource_lang_node
+{
+    language_t lang;
+    resource_t *res;
+    struct resource_lang_node *next;
+} resource_lang_node_t;
+
+typedef struct resource_id_node
+{
+    name_id_t *id;
+    resource_lang_node_t *langs;
+    struct resource_id_node *next;
+} resource_id_node_t;
+
+static struct
+{
+    int enabled;
+    struct resource_id_node *ids;
+} verify_tab[res_usr+1];
+
+static void add_resource(resource_t *res)
+{
+    resource_id_node_t *idnode;
+    resource_lang_node_t *langnode;
+    if (!verify_tab[res->type].enabled)
+    {
+	fprintf(stderr, "ERR: Report this: unknown resource type parsed %08x\n", res->type);
+	return;
+    }
+
+    for (idnode = verify_tab[res->type].ids; idnode; idnode = idnode->next)
+        if (compare_name_id(idnode->id, res->name) == 0)
+            break;
+
+    if (idnode == NULL)
+    {
+        idnode = xmalloc(sizeof(resource_id_node_t));
+        idnode->id = res->name;
+        idnode->langs = NULL;
+        idnode->next = verify_tab[res->type].ids;
+        verify_tab[res->type].ids = idnode;
+    }
+
+    for (langnode = idnode->langs; langnode; langnode = langnode->next)
+        if (compare_lang(langnode->lang, get_language(res)) == 0)
+        {
+            fprintf(stderr, "ERR: resource %s [type %x] language %03x:%02x duplicated!\n",
+                get_nameid_str(res->name), res->type, langnode->lang.id, langnode->lang.sub);
+            return;
+        }
+
+    langnode = xmalloc(sizeof(resource_lang_node_t));
+    langnode->res = res;
+    langnode->lang = get_language(res);
+    langnode->next = idnode->langs;
+    idnode->langs = langnode;
+}
+
+static void setup_tabs(void)
+{
+    int i;
+
+    for (i = 0; i <= res_usr; i++)
+	switch(i) {
+		case res_acc:
+		case res_bmp:
+		case res_cur:
+		case res_curg:
+		case res_dlg:
+		case res_fnt:
+		case res_fntdir:
+		case res_ico:
+		case res_icog:
+		case res_men:
+		case res_rdt:
+		case res_stt:
+		case res_usr:
+		case res_msg:
+		case res_ver:
+		case res_dlginit:
+		case res_toolbar:
+		case res_anicur:
+	        case res_aniico:
+		case res_html:
+		    verify_tab[i].enabled = 1;
+		    break;
+	}
+}
+
+static const char *get_typename_for_int(int type) {
+    resource_t res;
+    res.type = type;
+    return get_typename(&res);
+}
+
+static resource_t *find_main(int type, name_id_t *id, resource_lang_node_t *langnode)
+{
+    resource_t *neutral = NULL, *en = NULL, *en_US = NULL;
+    for (; langnode; langnode = langnode->next)
+    {
+        if (langnode->lang.id == LANG_NEUTRAL && langnode->lang.sub == SUBLANG_NEUTRAL)
+            neutral = langnode->res;
+        if (langnode->lang.id == MASTER_LANGUAGE && langnode->lang.sub == SUBLANG_NEUTRAL)
+            en = langnode->res;
+        if (langnode->lang.id == MASTER_LANGUAGE && langnode->lang.sub == MASTER_SUBLANGUAGE)
+            en_US = langnode->res;
+    }
+
+    if (neutral != NULL && (en != NULL || en_US != NULL))
+    {
+        fprintf(stderr, "INFO: Resource %04x/%s has both NEUTRAL and MASTER language translation\n",
+            type, get_nameid_str(id));
+    }
+
+    if (en_US != NULL) return en_US;
+    if (en != NULL) return en;
+    return neutral;
+}
+
 void verify_translations(resource_t *top) {
-	enum lang_type_e lang_type;
-	enum res_e res_type;
-	int **presence;
-	int i, j;
-	char *nameid;
-	char **problems;
-	int nb_problems, last_problem;
-	int complete, needs_work, partial;
-	resource_t *next = top;
+    resource_t *curr = top;
+    resource_id_node_t *idnode;
+    resource_lang_node_t *langnode;
+    int type;
 
-	for(res_type = res_0; res_type <= res_usr; res_type++) {
-		present_resources[res_type] = 0;
-		for(lang_type = lang_type_master; lang_type <= lang_type_normal; lang_type++) {
-			nb_resources[res_type][lang_type] = 0;
-			list_resources[res_type][lang_type] = NULL;
-		}
-	}
+    setup_tabs();
+    while (curr)
+    {
+        add_resource(curr);
+        curr = curr->next;
+    }
 
-	while(next) {
-		switch(next->type) {
-			case res_acc:
-			case res_bmp:
-			case res_cur:
-			case res_curg:
-			case res_dlg:
-			case res_dlgex:
-			case res_fnt:
-			case res_fntdir:
-			case res_ico:
-			case res_icog:
-			case res_men:
-			case res_menex:
-			case res_rdt:
-			case res_stt:
-			case res_usr:
-			case res_msg:
-			case res_ver:
-			case res_dlginit:
-			case res_toolbar:
-			case res_anicur:
-			case res_aniico:
-				add_resource(next);
-				break;
-			default:
-				fprintf(stderr, "Report this: unkown resource type parsed %08x\n", next->type);
-		}
-		next = next->next;
-	}
-	present_resources[res_acc] = 1;
-	res_names[res_acc] = strdup("accelerator");
-	present_resources[res_bmp] = 1;
-	res_names[res_bmp] = strdup("bitmap");
-	present_resources[res_cur] = 1;
-	res_names[res_cur] = strdup("cursor");
-	present_resources[res_curg] = 1;
-	res_names[res_curg] = strdup("cursor_group");
-	present_resources[res_dlg] = 1;
-	res_names[res_dlg] = strdup("dialog");
-	present_resources[res_dlgex] = 1;
-	res_names[res_dlgex] = strdup("dialogex");
-	present_resources[res_fnt] = 1;
-	res_names[res_fnt] = strdup("font");
-	present_resources[res_fntdir] = 1;
-	res_names[res_fntdir] = strdup("fontdir");
-	present_resources[res_ico] = 1;
-	res_names[res_ico] = strdup("icon");
-	present_resources[res_icog] = 1;
-	res_names[res_icog] = strdup("icon_group");
-	present_resources[res_men] = 1;
-	res_names[res_men] = strdup("menu");
-	present_resources[res_menex] = 1;
-	res_names[res_menex] = strdup("menuex");
-	present_resources[res_rdt] = 1;
-	res_names[res_rdt] = strdup("rcdata");
-	present_resources[res_stt] = 1;
-	res_names[res_stt] = strdup("stringtable");
-	present_resources[res_usr] = 1;
-	res_names[res_usr] = strdup("user");
-	present_resources[res_msg] = 1;
-	res_names[res_msg] = strdup("messagetable");
-	present_resources[res_ver] = 1;
-	res_names[res_ver] = strdup("versioninfo");
-	present_resources[res_dlginit] = 1;
-	res_names[res_dlginit] = strdup("dlginit");
-	present_resources[res_toolbar] = 1;
-	res_names[res_toolbar] = strdup("toolbar");
-	present_resources[res_anicur] = 1;
-	res_names[res_anicur] = strdup("ani_cursor");
-	present_resources[res_aniico] = 1;
-	res_names[res_aniico] = strdup("ani_icon");
+    for (type = 0; type <= res_usr; type++)
+    {
+        printf("TYPE NEXT [%s]\n", get_typename_for_int(type));
+        for (idnode = verify_tab[type].ids; idnode; idnode = idnode->next)
+        {
+            resource_t *mainres;
+            printf("RESOURCE [%s]\n", get_nameid_str(idnode->id));
 
-	for(res_type = res_0; res_type <= res_usr; res_type++) {
-		if(!present_resources[res_type]) {
-			continue;
-		}
-		if(nb_resources[res_type][lang_type_normal] > 0) {
-			if(nb_resources[res_type][lang_type_master] && nb_resources[res_type][lang_type_neutral]) {
-				fprintf(stderr, "Type %s:\n", res_names[res_type]);
-				fprintf(stderr, "There are both a NEUTRAL and a MASTER version for %s, along with additional localized versions. The NEUTRAL versions will not be checked against other versions.\n", res_names[res_type]);
-			} else if(nb_resources[res_type][lang_type_neutral]) {
-				fprintf(stderr, "Type %s:\n", res_names[res_type]);
-				fprintf(stderr, "There are no MASTER version, but there are some NEUTRAL versions for %s, so will use those instead of MASTER for comparison.\n", res_names[res_type]);
-				list_resources[res_type][lang_type_master] = list_resources[res_type][lang_type_neutral];
-				nb_resources[res_type][lang_type_master] = nb_resources[res_type][lang_type_neutral];
-			} else if(!nb_resources[res_type][lang_type_master]) {
-				fprintf(stderr, "Type %s:\n", res_names[res_type]);
-				fprintf(stderr, "There are no NEUTRAL nor MASTER versions for %s, but there are some other localized versions. No comparison will be done at all.\n", res_names[res_type]);
-			}
-		} else {
-			if(nb_resources[res_type][lang_type_master] && nb_resources[res_type][lang_type_neutral]) {
-				fprintf(stderr, "Type %s:\n", res_names[res_type]);
-				fprintf(stderr, "There are both a NEUTRAL and a MASTER versions for %s, but no other localized version. No comparison will be done at all.\n", res_names[res_type]);
-			} else if(nb_resources[res_type][lang_type_master]) {
-				fprintf(stderr, "Type %s:\n", res_names[res_type]);
-				fprintf(stderr, "There are only MASTER versions for %s. No comparison will be done at all.\n", res_names[res_type]);
-			} else if(nb_resources[res_type][lang_type_neutral]) {
-				/* fprintf(stderr, "There are only NEUTRAL versions for %s. No comparison will be done at all.\n", res_names[res_type]); */
-			} else {
-				/* fprintf(stderr, "There are no versions at all for %s. No comparison will be done at all.\n", res_names[res_type]); */
-			}
-		}
+            mainres = find_main(type, idnode->id, idnode->langs);
+            if (!mainres)
+            {
+                fprintf(stderr, "ERR: resource %04x/%s has translation(s) but not available in NEUTRAL or MASTER language\n",
+                    type, get_nameid_str(idnode->id));
+                for (langnode = idnode->langs; langnode; langnode = langnode->next)
+                    printf("EXTRA %03x:%02x\n", langnode->lang.id, langnode->lang.sub);
+                continue;
+            }
 
-		presence = malloc(nb_resources[res_type][lang_type_master]*sizeof(int *));
-		for(i = 0; i < nb_resources[res_type][lang_type_master]; i++) {
-			presence[i] = calloc(NB_LANG, sizeof(int));
-			presence[i][MASTER_LANGUAGE] = -1;
-		}
+            if (get_language_id(mainres) == LANG_NEUTRAL && idnode->langs->next == NULL) {
+                printf("NOTRANSL\n");
+                continue;
+            }
 
-		for(i = 0; i < nb_resources[res_type][lang_type_normal]; i++) {
-			for(j = 0; j < nb_resources[res_type][lang_type_master]; j++) {
-				nameid = strdup(get_nameid_str(list_resources[res_type][lang_type_normal][i]->name));
-				if(!strcmp(nameid, get_nameid_str(list_resources[res_type][lang_type_master][j]->name))) {
-					if(compare(list_resources[res_type][lang_type_normal][i], list_resources[res_type][lang_type_master][j])) {
-						presence[j][get_language_id(list_resources[res_type][lang_type_normal][i])] = 2;
-						/* fprintf(stderr, "Differences in type %s, ID %s, for language %s\n", res_names[res_type], nameid, get_language_name(get_language_id(list_resources[res_type][lang_type_normal][i]))); */
-					} else {
-						presence[j][get_language_id(list_resources[res_type][lang_type_normal][i])] = 1;
-					}
-				}
-				free(nameid);
-			}
-		}
-
-		problems = malloc(sizeof(char *));
-		problems[0] = strdup("");
-		nb_problems = 0;
-		last_problem = -1;
-		for(i = 0; i < NB_LANG; i++) {
-			complete = 1;
-			needs_work = 0;
-			partial = 0;
-			for(j = 0; j < nb_resources[res_type][lang_type_master]; j++) {
-				if(presence[j][i]) {
-					partial = 1;
-					if(presence[j][i] == 2) {
-						needs_work = 1;
-						problems = realloc(problems, (++nb_problems+1)*sizeof(char *));
-						problems[nb_problems] = malloc(strlen(get_nameid_str(list_resources[res_type][lang_type_master][j]->name)) + 9);
-						sprintf(problems[nb_problems], "DIFF %s %02x", get_nameid_str(list_resources[res_type][lang_type_master][j]->name), i);
-						if(last_problem == i) {
-							problems[nb_problems-1] = realloc(problems[nb_problems-1], strlen(problems[nb_problems-1]) + 3);
-							strcat(problems[nb_problems-1], " \\");
-						} else {
-							last_problem = i;
-						}
-					}
-				} else {
-					complete = 0;
-					problems = realloc(problems, (++nb_problems+1)*sizeof(char *));
-					problems[nb_problems] = malloc(strlen(get_nameid_str(list_resources[res_type][lang_type_master][j]->name)) + 8);
-					sprintf(problems[nb_problems], "ABS %s %02x", get_nameid_str(list_resources[res_type][lang_type_master][j]->name), i);
-					if(last_problem == i) {
-						problems[nb_problems-1] = realloc(problems[nb_problems-1], strlen(problems[nb_problems-1]) + 3);
-						strcat(problems[nb_problems-1], " \\");
-					} else {
-						last_problem = i;
-					}
-				}
-			}
-			if(complete && partial && !needs_work) {
-				/* Support is complete, no need to do anything */
-				/* fprintf(stderr, "Support for language %s is complete for %s.\n", get_language_name(i), res_names[res_type]); */
-				printf(".");
-			} else if(complete && partial && needs_work) {
-				/* Support is incomplete (differing resources), needs work */
-				/* fprintf(stderr, "Support for language %s is incomplete (differing resources) for %s.\n", get_language_name(i), res_names[res_type]); */
-				printf("x");
-			} else if(!complete && partial && !needs_work) {
-				/* Support is incomplete (missing resources), needs work */
-				/* fprintf(stderr, "Support for language %s is incomplete (missing resources) for %s.\n", get_language_name(i), res_names[res_type]); */
-				printf("-");
-			} else if(!complete && partial && needs_work) {
-				/* Support is incomplete (missing and differing resources), needs work */
-				/* fprintf(stderr, "Support for language %s is incomplete (missing and differing resources) for %s.\n", get_language_name(i), res_names[res_type]); */
-				printf("+");
-			} else if(!complete && !partial) {
-				/* Support is totally absent, might be interesting to do */
-				/* fprintf(stderr, "Support for language %s is absent for %s.\n", get_language_name(i), res_names[res_type]); */
-				printf(" ");
-			} else {
-				/* Support is not relevant, no need to do anything */
-				/* fprintf(stderr, "Support for language %s is not relevant for %s.\n", get_language_name(i), res_names[res_type]); */
-				printf("n");
-			}
-		}
-		printf("\n");
-		for(i = 1; i <= nb_problems; i++) {
-			printf("%s\n", problems[i]);
-			free(problems[i]);
-		}
-		free(problems[0]);
-		free(problems);
-		for(i = 0; i < nb_resources[res_type][lang_type_master]; i++)
-			free(presence[i]);
-		free(presence);
-	}
+            for (langnode = idnode->langs; langnode; langnode = langnode->next)
+            {
+                printf("EXIST %03x:%02x\n", langnode->lang.id, langnode->lang.sub);
+                if (compare(langnode->res, mainres))
+                {
+                    printf("DIFF %03x:%02x\n", langnode->lang.id, langnode->lang.sub);
+                }
+            }
+        }
+    }
 }

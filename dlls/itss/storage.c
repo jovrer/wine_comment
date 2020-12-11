@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -30,11 +30,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
-#include "winnls.h"
-#include "winreg.h"
 #include "ole2.h"
-
-#include "uuids.h"
 
 #include "chm_lib.h"
 #include "itsstor.h"
@@ -45,13 +41,11 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(itss);
 
-extern LONG dll_count;
-
 /************************************************************************/
 
 typedef struct _ITSS_IStorageImpl
 {
-    const IStorageVtbl *vtbl_IStorage;
+    IStorage IStorage_iface;
     LONG ref;
     struct chmFile *chmfile;
     WCHAR dir[1];
@@ -65,19 +59,34 @@ struct enum_info
 
 typedef struct _IEnumSTATSTG_Impl
 {
-    const IEnumSTATSTGVtbl *vtbl_IEnumSTATSTG;
+    IEnumSTATSTG IEnumSTATSTG_iface;
     LONG ref;
     struct enum_info *first, *last, *current;
 } IEnumSTATSTG_Impl;
 
 typedef struct _IStream_Impl
 {
-    const IStreamVtbl *vtbl_IStream;
+    IStream IStream_iface;
     LONG ref;
     ITSS_IStorageImpl *stg;
     ULONGLONG addr;
     struct chmUnitInfo ui;
 } IStream_Impl;
+
+static inline ITSS_IStorageImpl *impl_from_IStorage(IStorage *iface)
+{
+    return CONTAINING_RECORD(iface, ITSS_IStorageImpl, IStorage_iface);
+}
+
+static inline IEnumSTATSTG_Impl *impl_from_IEnumSTATSTG(IEnumSTATSTG *iface)
+{
+    return CONTAINING_RECORD(iface, IEnumSTATSTG_Impl, IEnumSTATSTG_iface);
+}
+
+static inline IStream_Impl *impl_from_IStream(IStream *iface)
+{
+    return CONTAINING_RECORD(iface, IStream_Impl, IStream_iface);
+}
 
 static HRESULT ITSS_create_chm_storage(
            struct chmFile *chmfile, const WCHAR *dir, IStorage** ppstgOpen );
@@ -91,13 +100,13 @@ static HRESULT WINAPI ITSS_IEnumSTATSTG_QueryInterface(
     REFIID riid,
     void** ppvObject)
 {
-    IEnumSTATSTG_Impl *This = (IEnumSTATSTG_Impl *)iface;
+    IEnumSTATSTG_Impl *This = impl_from_IEnumSTATSTG(iface);
 
     if (IsEqualGUID(riid, &IID_IUnknown)
 	|| IsEqualGUID(riid, &IID_IEnumSTATSTG))
     {
 	IEnumSTATSTG_AddRef(iface);
-	*ppvObject = This;
+	*ppvObject = &This->IEnumSTATSTG_iface;
 	return S_OK;
     }
 
@@ -108,14 +117,14 @@ static HRESULT WINAPI ITSS_IEnumSTATSTG_QueryInterface(
 static ULONG WINAPI ITSS_IEnumSTATSTG_AddRef(
     IEnumSTATSTG* iface)
 {
-    IEnumSTATSTG_Impl *This = (IEnumSTATSTG_Impl *)iface;
+    IEnumSTATSTG_Impl *This = impl_from_IEnumSTATSTG(iface);
     return InterlockedIncrement(&This->ref);
 }
 
 static ULONG WINAPI ITSS_IEnumSTATSTG_Release(
     IEnumSTATSTG* iface)
 {
-    IEnumSTATSTG_Impl *This = (IEnumSTATSTG_Impl *)iface;
+    IEnumSTATSTG_Impl *This = impl_from_IEnumSTATSTG(iface);
 
     ULONG ref = InterlockedDecrement(&This->ref);
 
@@ -128,7 +137,7 @@ static ULONG WINAPI ITSS_IEnumSTATSTG_Release(
             This->first = t;
         }
         HeapFree(GetProcessHeap(), 0, This);
-        InterlockedDecrement(&dll_count);
+        ITSS_UnlockModule();
     }
 
     return ref;
@@ -140,11 +149,11 @@ static HRESULT WINAPI ITSS_IEnumSTATSTG_Next(
         STATSTG* rgelt,
         ULONG* pceltFetched)
 {
-    IEnumSTATSTG_Impl *This = (IEnumSTATSTG_Impl *)iface;
+    IEnumSTATSTG_Impl *This = impl_from_IEnumSTATSTG(iface);
     DWORD len, n;
     struct enum_info *cur;
 
-    TRACE("%p %lu %p %p\n", This, celt, rgelt, pceltFetched );
+    TRACE("%p %u %p %p\n", This, celt, rgelt, pceltFetched );
 
     cur = This->current;
     n = 0;
@@ -192,11 +201,11 @@ static HRESULT WINAPI ITSS_IEnumSTATSTG_Skip(
         IEnumSTATSTG* iface,
         ULONG celt)
 {
-    IEnumSTATSTG_Impl *This = (IEnumSTATSTG_Impl *)iface;
+    IEnumSTATSTG_Impl *This = impl_from_IEnumSTATSTG(iface);
     DWORD n;
     struct enum_info *cur;
 
-    TRACE("%p %lu\n", This, celt );
+    TRACE("%p %u\n", This, celt );
 
     cur = This->current;
     n = 0;
@@ -216,7 +225,7 @@ static HRESULT WINAPI ITSS_IEnumSTATSTG_Skip(
 static HRESULT WINAPI ITSS_IEnumSTATSTG_Reset(
         IEnumSTATSTG* iface)
 {
-    IEnumSTATSTG_Impl *This = (IEnumSTATSTG_Impl *)iface;
+    IEnumSTATSTG_Impl *This = impl_from_IEnumSTATSTG(iface);
 
     TRACE("%p\n", This );
 
@@ -249,13 +258,13 @@ static IEnumSTATSTG_Impl *ITSS_create_enum( void )
     IEnumSTATSTG_Impl *stgenum;
 
     stgenum = HeapAlloc( GetProcessHeap(), 0, sizeof (IEnumSTATSTG_Impl) );
-    stgenum->vtbl_IEnumSTATSTG = &IEnumSTATSTG_vtbl;
+    stgenum->IEnumSTATSTG_iface.lpVtbl = &IEnumSTATSTG_vtbl;
     stgenum->ref = 1;
     stgenum->first = NULL;
     stgenum->last = NULL;
     stgenum->current = NULL;
-    InterlockedIncrement(&dll_count);
 
+    ITSS_LockModule();
     TRACE(" -> %p\n", stgenum );
 
     return stgenum;
@@ -268,13 +277,13 @@ static HRESULT WINAPI ITSS_IStorageImpl_QueryInterface(
     REFIID riid,
     void** ppvObject)
 {
-    ITSS_IStorageImpl *This = (ITSS_IStorageImpl *)iface;
+    ITSS_IStorageImpl *This = impl_from_IStorage(iface);
 
     if (IsEqualGUID(riid, &IID_IUnknown)
 	|| IsEqualGUID(riid, &IID_IStorage))
     {
 	IStorage_AddRef(iface);
-	*ppvObject = This;
+	*ppvObject = &This->IStorage_iface;
 	return S_OK;
     }
 
@@ -285,21 +294,22 @@ static HRESULT WINAPI ITSS_IStorageImpl_QueryInterface(
 static ULONG WINAPI ITSS_IStorageImpl_AddRef(
     IStorage* iface)
 {
-    ITSS_IStorageImpl *This = (ITSS_IStorageImpl *)iface;
+    ITSS_IStorageImpl *This = impl_from_IStorage(iface);
     return InterlockedIncrement(&This->ref);
 }
 
 static ULONG WINAPI ITSS_IStorageImpl_Release(
     IStorage* iface)
 {
-    ITSS_IStorageImpl *This = (ITSS_IStorageImpl *)iface;
+    ITSS_IStorageImpl *This = impl_from_IStorage(iface);
 
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (ref == 0)
     {
+        chm_close(This->chmfile);
         HeapFree(GetProcessHeap(), 0, This);
-        InterlockedDecrement(&dll_count);
+        ITSS_UnlockModule();
     }
 
     return ref;
@@ -325,40 +335,51 @@ static HRESULT WINAPI ITSS_IStorageImpl_OpenStream(
     DWORD reserved2,
     IStream** ppstm)
 {
-    ITSS_IStorageImpl *This = (ITSS_IStorageImpl *)iface;
+    ITSS_IStorageImpl *This = impl_from_IStorage(iface);
     IStream_Impl *stm;
     DWORD len;
     struct chmUnitInfo ui;
     int r;
-    WCHAR *path;
+    WCHAR *path, *p;
 
-    TRACE("%p %s %p %lu %lu %p\n", This, debugstr_w(pwcsName),
+    TRACE("%p %s %p %u %u %p\n", This, debugstr_w(pwcsName),
           reserved1, grfMode, reserved2, ppstm );
 
     len = strlenW( This->dir ) + strlenW( pwcsName ) + 1;
     path = HeapAlloc( GetProcessHeap(), 0, len*sizeof(WCHAR) );
     strcpyW( path, This->dir );
-    if( pwcsName[0] == '/' )
+
+    if( pwcsName[0] == '/' || pwcsName[0] == '\\' )
     {
-        WCHAR *p = &path[strlenW( path ) - 1];
+        p = &path[strlenW( path ) - 1];
         while( ( path <= p ) && ( *p == '/' ) )
             *p-- = 0;
     }
     strcatW( path, pwcsName );
+
+    for(p=path; *p; p++) {
+        if(*p == '\\')
+            *p = '/';
+    }
+
+    if(*--p == '/')
+        *p = 0;
 
     TRACE("Resolving %s\n", debugstr_w(path));
 
     r = chm_resolve_object(This->chmfile, path, &ui);
     HeapFree( GetProcessHeap(), 0, path );
 
-    if( r != CHM_RESOLVE_SUCCESS )
+    if( r != CHM_RESOLVE_SUCCESS ) {
+        WARN("Could not resolve object\n");
         return STG_E_FILENOTFOUND;
+    }
 
     stm = ITSS_create_stream( This, &ui );
     if( !stm )
         return E_FAIL;
 
-    *ppstm = (IStream*) stm;
+    *ppstm = &stm->IStream_iface;
 
     return S_OK;
 }
@@ -384,11 +405,45 @@ static HRESULT WINAPI ITSS_IStorageImpl_OpenStorage(
     DWORD reserved,
     IStorage** ppstg)
 {
-    ITSS_IStorageImpl *This = (ITSS_IStorageImpl *)iface;
+    ITSS_IStorageImpl *This = impl_from_IStorage(iface);
+    struct chmFile *chmfile;
+    WCHAR *path, *p;
+    DWORD len;
 
-    FIXME("%p %s %p %lu %p %lu %p\n", This, debugstr_w(pwcsName),
+    TRACE("%p %s %p %u %p %u %p\n", This, debugstr_w(pwcsName),
           pstgPriority, grfMode, snbExclude, reserved, ppstg);
-    return E_NOTIMPL;
+
+    chmfile = chm_dup( This->chmfile );
+    if( !chmfile )
+        return E_FAIL;
+
+    len = strlenW( This->dir ) + strlenW( pwcsName ) + 2; /* need room for a terminating slash */
+    path = HeapAlloc( GetProcessHeap(), 0, len*sizeof(WCHAR) );
+    strcpyW( path, This->dir );
+
+    if( pwcsName[0] == '/' || pwcsName[0] == '\\' )
+    {
+        p = &path[strlenW( path ) - 1];
+        while( ( path <= p ) && ( *p == '/' ) )
+            *p-- = 0;
+    }
+    strcatW( path, pwcsName );
+
+    for(p=path; *p; p++) {
+        if(*p == '\\')
+            *p = '/';
+    }
+
+    /* add a terminating slash if one does not already exist */
+    if(*(p-1) != '/')
+    {
+        *p++ = '/';
+        *p = 0;
+    }
+
+    TRACE("Resolving %s\n", debugstr_w(path));
+
+    return ITSS_create_chm_storage(chmfile, path, ppstg);
 }
 
 static HRESULT WINAPI ITSS_IStorageImpl_CopyTo(
@@ -439,7 +494,7 @@ static int ITSS_chm_enumerator(
     TRACE("adding %s to enumeration\n", debugstr_w(ui->path) );
 
     info = HeapAlloc( GetProcessHeap(), 0, sizeof (struct enum_info) );
-    memcpy( &info->ui, ui, sizeof info->ui );
+    info->ui = *ui;
 
     info->next = NULL;
     info->prev = stgenum->last;
@@ -459,10 +514,10 @@ static HRESULT WINAPI ITSS_IStorageImpl_EnumElements(
     DWORD reserved3,
     IEnumSTATSTG** ppenum)
 {
-    ITSS_IStorageImpl *This = (ITSS_IStorageImpl *)iface;
+    ITSS_IStorageImpl *This = impl_from_IStorage(iface);
     IEnumSTATSTG_Impl* stgenum;
 
-    TRACE("%p %ld %p %ld %p\n", This, reserved1, reserved2, reserved3, ppenum );
+    TRACE("%p %d %p %d %p\n", This, reserved1, reserved2, reserved3, ppenum );
 
     stgenum = ITSS_create_enum();
     if( !stgenum )
@@ -476,7 +531,7 @@ static HRESULT WINAPI ITSS_IStorageImpl_EnumElements(
 
     stgenum->current = stgenum->first;
 
-    *ppenum = (IEnumSTATSTG*) stgenum;
+    *ppenum = &stgenum->IEnumSTATSTG_iface;
 
     return S_OK;
 }
@@ -561,21 +616,19 @@ static HRESULT ITSS_create_chm_storage(
       struct chmFile *chmfile, const WCHAR *dir, IStorage** ppstgOpen )
 {
     ITSS_IStorageImpl *stg;
-    DWORD len;
 
     TRACE("%p %s\n", chmfile, debugstr_w( dir ) );
 
-    len = strlenW( dir ) + 1;
-    stg = HeapAlloc( GetProcessHeap(), 0, 
-                     sizeof (ITSS_IStorageImpl) + len*sizeof(WCHAR) );
-    stg->vtbl_IStorage = &ITSS_IStorageImpl_Vtbl;
+    stg = HeapAlloc( GetProcessHeap(), 0,
+                     FIELD_OFFSET( ITSS_IStorageImpl, dir[strlenW( dir ) + 1] ));
+    stg->IStorage_iface.lpVtbl = &ITSS_IStorageImpl_Vtbl;
     stg->ref = 1;
     stg->chmfile = chmfile;
     strcpyW( stg->dir, dir );
 
-    *ppstgOpen = (IStorage*) stg;
-    InterlockedIncrement(&dll_count);
+    *ppstgOpen = &stg->IStorage_iface;
 
+    ITSS_LockModule();
     return S_OK;
 }
 
@@ -606,14 +659,14 @@ static HRESULT WINAPI ITSS_IStream_QueryInterface(
     REFIID riid,
     void** ppvObject)
 {
-    IStream_Impl *This = (IStream_Impl *)iface;
+    IStream_Impl *This = impl_from_IStream(iface);
 
     if (IsEqualGUID(riid, &IID_IUnknown)
 	|| IsEqualGUID(riid, &IID_ISequentialStream)
 	|| IsEqualGUID(riid, &IID_IStream))
     {
 	IStream_AddRef(iface);
-	*ppvObject = This;
+	*ppvObject = &This->IStream_iface;
 	return S_OK;
     }
 
@@ -624,22 +677,22 @@ static HRESULT WINAPI ITSS_IStream_QueryInterface(
 static ULONG WINAPI ITSS_IStream_AddRef(
     IStream* iface)
 {
-    IStream_Impl *This = (IStream_Impl *)iface;
+    IStream_Impl *This = impl_from_IStream(iface);
     return InterlockedIncrement(&This->ref);
 }
 
 static ULONG WINAPI ITSS_IStream_Release(
     IStream* iface)
 {
-    IStream_Impl *This = (IStream_Impl *)iface;
+    IStream_Impl *This = impl_from_IStream(iface);
 
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (ref == 0)
     {
-        IStorage_Release( (IStorage*) This->stg );
-	HeapFree(GetProcessHeap(), 0, This);
-        InterlockedDecrement(&dll_count);
+        IStorage_Release( &This->stg->IStorage_iface );
+        HeapFree(GetProcessHeap(), 0, This);
+        ITSS_UnlockModule();
     }
 
     return ref;
@@ -651,18 +704,18 @@ static HRESULT WINAPI ITSS_IStream_Read(
         ULONG cb,
         ULONG* pcbRead)
 {
-    IStream_Impl *This = (IStream_Impl *)iface;
+    IStream_Impl *This = impl_from_IStream(iface);
     ULONG count;
 
-    TRACE("%p %p %lu %p\n", This, pv, cb, pcbRead);
+    TRACE("%p %p %u %p\n", This, pv, cb, pcbRead);
 
     count = chm_retrieve_object(This->stg->chmfile, 
                           &This->ui, pv, This->addr, cb);
     This->addr += count;
     if( pcbRead )
         *pcbRead = count;
-    
-    return S_OK;
+
+    return count ? S_OK : S_FALSE;
 }
 
 static HRESULT WINAPI ITSS_IStream_Write(
@@ -681,10 +734,10 @@ static HRESULT WINAPI ITSS_IStream_Seek(
         DWORD dwOrigin,
         ULARGE_INTEGER* plibNewPosition)
 {
-    IStream_Impl *This = (IStream_Impl *)iface;
+    IStream_Impl *This = impl_from_IStream(iface);
     LONGLONG newpos;
 
-    TRACE("%p %s %lu %p\n", This,
+    TRACE("%p %s %u %p\n", This,
           wine_dbgstr_longlong( dlibMove.QuadPart ), dwOrigin, plibNewPosition );
 
     newpos = This->addr;
@@ -770,9 +823,9 @@ static HRESULT WINAPI ITSS_IStream_Stat(
         STATSTG* pstatstg,
         DWORD grfStatFlag)
 {
-    IStream_Impl *This = (IStream_Impl *)iface;
+    IStream_Impl *This = impl_from_IStream(iface);
 
-    TRACE("%p %p %ld\n", This, pstatstg, grfStatFlag);
+    TRACE("%p %p %d\n", This, pstatstg, grfStatFlag);
 
     memset( pstatstg, 0, sizeof *pstatstg );
     if( !( grfStatFlag & STATFLAG_NONAME ) )
@@ -782,7 +835,7 @@ static HRESULT WINAPI ITSS_IStream_Stat(
     pstatstg->type = STGTY_STREAM;
     pstatstg->cbSize.QuadPart = This->ui.length;
     pstatstg->grfMode = STGM_READ;
-    memcpy( &pstatstg->clsid, &CLSID_ITStorage, sizeof (CLSID) );
+    pstatstg->clsid = CLSID_ITStorage;
 
     return S_OK;
 }
@@ -819,13 +872,14 @@ static IStream_Impl *ITSS_create_stream(
     IStream_Impl *stm;
 
     stm = HeapAlloc( GetProcessHeap(), 0, sizeof (IStream_Impl) );
-    stm->vtbl_IStream = &ITSS_IStream_vtbl;
+    stm->IStream_iface.lpVtbl = &ITSS_IStream_vtbl;
     stm->ref = 1;
     stm->addr = 0;
-    memcpy( &stm->ui, ui, sizeof stm->ui );
+    stm->ui = *ui;
     stm->stg = stg;
-    IStorage_AddRef( (IStorage*) stg );
-    InterlockedIncrement(&dll_count);
+    IStorage_AddRef( &stg->IStorage_iface );
+
+    ITSS_LockModule();
 
     TRACE(" -> %p\n", stm );
 

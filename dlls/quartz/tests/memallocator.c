@@ -15,10 +15,8 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-
-#include <assert.h>
 
 #define COBJMACROS
 
@@ -27,38 +25,58 @@
 #include "dshow.h"
 #include "control.h"
 
-static void CommitDecommitTest()
+static void CommitDecommitTest(void)
 {
     IMemAllocator* pMemAllocator;
     HRESULT hr;
 
     hr = CoCreateInstance(&CLSID_MemoryAllocator, NULL, CLSCTX_INPROC_SERVER, &IID_IMemAllocator, (LPVOID*)&pMemAllocator);
-    ok(hr==S_OK, "Unable to create memory allocator %lx\n", hr);
+    ok(hr==S_OK, "Unable to create memory allocator %x\n", hr);
 
     if (hr == S_OK)
     {
-	ALLOCATOR_PROPERTIES RequestedProps;
-	ALLOCATOR_PROPERTIES ActualProps;
+        ALLOCATOR_PROPERTIES RequestedProps;
+        ALLOCATOR_PROPERTIES ActualProps;
 
-	RequestedProps.cBuffers = 1;
-	RequestedProps.cbBuffer = 65536;
-	RequestedProps.cbAlign = 1;
-	RequestedProps.cbPrefix = 0;
+        IMediaSample *sample = NULL, *sample2 = NULL;
+
+        RequestedProps.cBuffers = 2;
+        RequestedProps.cbBuffer = 65536;
+        RequestedProps.cbAlign = 1;
+        RequestedProps.cbPrefix = 0;
 
 	hr = IMemAllocator_SetProperties(pMemAllocator, &RequestedProps, &ActualProps);
-	ok(hr==S_OK, "SetProperties returned: %lx\n", hr);
+	ok(hr==S_OK, "SetProperties returned: %x\n", hr);
 
 	hr = IMemAllocator_Commit(pMemAllocator);
-	ok(hr==S_OK, "Commit returned: %lx\n", hr);
+	ok(hr==S_OK, "Commit returned: %x\n", hr);
 	hr = IMemAllocator_Commit(pMemAllocator);
-	ok(hr==S_OK, "Commit returned: %lx\n", hr);
+	ok(hr==S_OK, "Commit returned: %x\n", hr);
+
+        hr = IMemAllocator_GetBuffer(pMemAllocator, &sample, NULL, NULL, 0);
+        ok(hr==S_OK, "Could not get a buffer: %x\n", hr);
 
 	hr = IMemAllocator_Decommit(pMemAllocator);
-	ok(hr==S_OK, "Decommit returned: %lx\n", hr);
+	ok(hr==S_OK, "Decommit returned: %x\n", hr);
 	hr = IMemAllocator_Decommit(pMemAllocator);
-	ok(hr==S_OK, "Cecommit returned: %lx\n", hr);
+	ok(hr==S_OK, "Cecommit returned: %x\n", hr);
 
-	IMemAllocator_Release(pMemAllocator);
+        /* Decommit and recommit while holding a sample */
+        if (sample)
+        {
+            hr = IMemAllocator_Commit(pMemAllocator);
+            ok(hr==S_OK, "Commit returned: %x\n", hr);
+
+            hr = IMemAllocator_GetBuffer(pMemAllocator, &sample2, NULL, NULL, 0);
+            ok(hr==S_OK, "Could not get a buffer: %x\n", hr);
+            IMediaSample_Release(sample);
+            if (sample2)
+                IMediaSample_Release(sample2);
+
+            hr = IMemAllocator_Decommit(pMemAllocator);
+            ok(hr==S_OK, "Cecommit returned: %x\n", hr);
+        }
+        IMemAllocator_Release(pMemAllocator);
     }
 }
 
@@ -67,4 +85,6 @@ START_TEST(memallocator)
     CoInitialize(NULL);
 
     CommitDecommitTest();
+
+    CoUninitialize();
 }

@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /* NOTES
@@ -35,8 +35,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(vxd);
-
-extern void WINAPI CallBuiltinHandler( CONTEXT86 *context, BYTE intnum );  /* from winedos */
 
 /*
  * IFSMgr DeviceIO service
@@ -60,11 +58,11 @@ struct win32apireq {
         unsigned short  ar_pad;
 };
 
-static void win32apieq_2_CONTEXT(struct win32apireq *pIn,CONTEXT86 *pCxt)
+static void win32apieq_2_CONTEXT(const struct win32apireq *pIn, CONTEXT *pCxt)
 {
         memset(pCxt,0,sizeof(*pCxt));
 
-        pCxt->ContextFlags=CONTEXT86_INTEGER|CONTEXT86_CONTROL;
+        pCxt->ContextFlags=CONTEXT_INTEGER|CONTEXT_CONTROL;
         pCxt->Eax = pIn->ar_eax;
         pCxt->Ebx = pIn->ar_ebx;
         pCxt->Ecx = pIn->ar_ecx;
@@ -72,7 +70,7 @@ static void win32apieq_2_CONTEXT(struct win32apireq *pIn,CONTEXT86 *pCxt)
         pCxt->Esi = pIn->ar_esi;
         pCxt->Edi = pIn->ar_edi;
 
-        /* FIXME: Only partial CONTEXT86_CONTROL */
+        /* FIXME: Only partial CONTEXT_CONTROL */
         pCxt->Ebp = pIn->ar_ebp;
 
         /* FIXME: pIn->ar_proid ignored */
@@ -80,7 +78,7 @@ static void win32apieq_2_CONTEXT(struct win32apireq *pIn,CONTEXT86 *pCxt)
         /* FIXME: pIn->ar_pad ignored */
 }
 
-static void CONTEXT_2_win32apieq(CONTEXT86 *pCxt,struct win32apireq *pOut)
+static void CONTEXT_2_win32apieq(const CONTEXT *pCxt, struct win32apireq *pOut)
 {
         memset(pOut,0,sizeof(struct win32apireq));
 
@@ -91,13 +89,15 @@ static void CONTEXT_2_win32apieq(CONTEXT86 *pCxt,struct win32apireq *pOut)
         pOut->ar_esi = pCxt->Esi;
         pOut->ar_edi = pCxt->Edi;
 
-        /* FIXME: Only partial CONTEXT86_CONTROL */
+        /* FIXME: Only partial CONTEXT_CONTROL */
         pOut->ar_ebp = pCxt->Ebp;
 
         /* FIXME: pOut->ar_proid ignored */
         /* FIXME: pOut->ar_error ignored */
         /* FIXME: pOut->ar_pad ignored */
 }
+
+extern void __wine_call_int_handler( CONTEXT *context, BYTE intnum );
 
 /***********************************************************************
  *           DeviceIoControl   (IFSMGR.VXD.@)
@@ -107,7 +107,7 @@ BOOL WINAPI IFSMGR_DeviceIoControl(DWORD dwIoControlCode, LPVOID lpvInBuffer, DW
                                   LPDWORD lpcbBytesReturned,
                                   LPOVERLAPPED lpOverlapped)
 {
-    TRACE("(%ld,%p,%ld,%p,%ld,%p,%p): stub\n",
+    TRACE("(%d,%p,%d,%p,%d,%p,%p): stub\n",
           dwIoControlCode, lpvInBuffer,cbInBuffer, lpvOutBuffer,cbOutBuffer,
           lpcbBytesReturned, lpOverlapped);
 
@@ -116,9 +116,9 @@ BOOL WINAPI IFSMGR_DeviceIoControl(DWORD dwIoControlCode, LPVOID lpvInBuffer, DW
     case IFS_IOCTL_21:
     case IFS_IOCTL_2F:
         {
-            CONTEXT86 cxt;
-            struct win32apireq *pIn=(struct win32apireq *) lpvInBuffer;
-            struct win32apireq *pOut=(struct win32apireq *) lpvOutBuffer;
+            CONTEXT cxt;
+            struct win32apireq *pIn=lpvInBuffer;
+            struct win32apireq *pOut=lpvOutBuffer;
 
             TRACE( "Control '%s': "
                    "proid=0x%08lx, eax=0x%08lx, ebx=0x%08lx, ecx=0x%08lx, "
@@ -132,9 +132,9 @@ BOOL WINAPI IFSMGR_DeviceIoControl(DWORD dwIoControlCode, LPVOID lpvInBuffer, DW
             win32apieq_2_CONTEXT(pIn,&cxt);
 
             if(dwIoControlCode==IFS_IOCTL_21)
-                CallBuiltinHandler( &cxt, 0x21 );
+                __wine_call_int_handler( &cxt, 0x21 );
             else
-                CallBuiltinHandler( &cxt, 0x2f );
+                __wine_call_int_handler( &cxt, 0x2f );
 
             CONTEXT_2_win32apieq(&cxt,pOut);
             return TRUE;
@@ -146,7 +146,7 @@ BOOL WINAPI IFSMGR_DeviceIoControl(DWORD dwIoControlCode, LPVOID lpvInBuffer, DW
         FIXME( "Control 'IFS_IOCTL_GET_NETPRO_NAME_A' not implemented\n");
         return FALSE;
     default:
-        FIXME( "Control %ld not implemented\n", dwIoControlCode);
+        FIXME( "Control %d not implemented\n", dwIoControlCode);
         return FALSE;
     }
 }

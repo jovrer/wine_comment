@@ -1,22 +1,14 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = dmloader.dll
-IMPORTS   = ole32 user32 advapi32 kernel32
-EXTRALIBS = -ldxguid -luuid
+IMPORTS   = dxguid uuid ole32 advapi32
 
 C_SRCS = \
-	classfactory.c \
 	container.c \
 	debug.c \
 	dmloader_main.c \
+	dmobject.c \
 	loader.c \
-	loaderstream.c \
-	regsvr.c
+	loaderstream.c
+
+IDL_SRCS = dmloader.idl
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

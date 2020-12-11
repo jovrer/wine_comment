@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __DSHOW_INCLUDED__
@@ -21,24 +21,34 @@
 
 #define AM_NOVTABLE
 
-#include <windef.h>
-#include <wingdi.h>
-#include <objbase.h>
+#include <windows.h>
+#ifndef __WINESRC__
+# include <windowsx.h>
+#endif
+#include <olectl.h>
 #include <ddraw.h>
 #include <mmsystem.h>
+#ifndef NO_DSHOW_STRSAFE
+#define NO_SHLWAPI_STRFCNS
+#include <strsafe.h>
+#endif
 
 #ifndef NUMELMS
 #define NUMELMS(array) (sizeof(array)/sizeof((array)[0]))
 #endif
 
 #include <strmif.h>
-/*#include <amvideo.h>*/
-/*#include <amaudio.h>*/
+#include <amvideo.h>
+#ifdef DSHOW_USE_AMAUDIO
+#include <amaudio.h>
+#endif
 #include <control.h>
-/*#include <evcode.h>*/
+#include <evcode.h>
 #include <uuids.h>
-/*#include <errors.h>*/
+#include <errors.h>
+/* FIXME: #include <edevdefs.h> */
 #include <audevcod.h>
+/* FIXME: #include <dvdevcod.h> */
 
 #ifndef OATRUE
 #define OATRUE (-1)

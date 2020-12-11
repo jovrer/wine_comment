@@ -1,22 +1,13 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = notepad.exe
-APPMODE   = -mwindows
-IMPORTS   = comdlg32 shell32 user32 gdi32 msvcrt advapi32 kernel32
-EXTRAINCL = -I$(TOPSRCDIR)/include/msvcrt
-MODCFLAGS = @BUILTINFLAG@
-EXTRADEFS = -DNO_LIBWINE_PORT
+APPMODE   = -mwindows -mno-cygwin
+IMPORTS   = comdlg32 shell32 shlwapi user32 gdi32 advapi32
 
 C_SRCS = \
-	License_En.c \
 	dialog.c \
-	license.c \
 	main.c
 
-RC_SRCS = rsrc.rc
+RC_SRCS = notepad.rc
 
-@MAKE_PROG_RULES@
+MANPAGES = notepad.man.in
 
-### Dependencies:
+SVG_SRCS = notepad.svg

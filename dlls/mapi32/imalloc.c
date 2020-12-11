@@ -15,14 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winbase.h"
 #include "winreg.h"
@@ -31,6 +30,8 @@
 #include "winternl.h"
 #include "objbase.h"
 #include "shlwapi.h"
+#include "mapiutil.h"
+#include "util.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mapi);
@@ -39,11 +40,11 @@ static const IMallocVtbl MAPI_IMalloc_vt;
 
 typedef struct
 {
-  const IMallocVtbl *lpVtbl;
+  IMalloc IMalloc_iface;
   LONG lRef;
 } MAPI_IMALLOC;
 
-static MAPI_IMALLOC MAPI_IMalloc = { &MAPI_IMalloc_vt, 0u };
+static MAPI_IMALLOC MAPI_IMalloc = { { &MAPI_IMalloc_vt }, 0 };
 
 extern LONG MAPI_ObjectCount; /* In mapi32_main.c */
 
@@ -62,8 +63,11 @@ LPMALLOC WINAPI MAPIGetDefaultMalloc(void)
 {
     TRACE("()\n");
 
-    IMalloc_AddRef((LPMALLOC)&MAPI_IMalloc);
-    return (LPMALLOC)&MAPI_IMalloc;
+    if (mapiFunctions.MAPIGetDefaultMalloc)
+        return mapiFunctions.MAPIGetDefaultMalloc();
+
+    IMalloc_AddRef(&MAPI_IMalloc.IMalloc_iface);
+    return &MAPI_IMalloc.IMalloc_iface;
 }
 
 /**************************************************************************
@@ -77,7 +81,7 @@ static HRESULT WINAPI IMAPIMalloc_fnQueryInterface(LPMALLOC iface, REFIID refiid
     if (IsEqualIID(refiid, &IID_IUnknown) ||
         IsEqualIID(refiid, &IID_IMalloc))
     {
-        *ppvObj = (LPMALLOC) &MAPI_IMalloc;
+        *ppvObj = &MAPI_IMalloc;
         TRACE("Returning IMalloc (%p)\n", *ppvObj);
         return S_OK;
     }
@@ -108,7 +112,7 @@ static ULONG WINAPI IMAPIMalloc_fnRelease(LPMALLOC iface)
 /**************************************************************************
  * IMAPIMalloc_Alloc
  */
-static LPVOID WINAPI IMAPIMalloc_fnAlloc(LPMALLOC iface, DWORD cb)
+static LPVOID WINAPI IMAPIMalloc_fnAlloc(LPMALLOC iface, SIZE_T cb)
 {
     TRACE("(%p)->(%ld)\n", iface, cb);
 
@@ -118,7 +122,7 @@ static LPVOID WINAPI IMAPIMalloc_fnAlloc(LPMALLOC iface, DWORD cb)
 /**************************************************************************
  * IMAPIMalloc_Realloc
  */
-static LPVOID WINAPI IMAPIMalloc_fnRealloc(LPMALLOC iface, LPVOID pv, DWORD cb)
+static LPVOID WINAPI IMAPIMalloc_fnRealloc(LPMALLOC iface, LPVOID pv, SIZE_T cb)
 {
     TRACE("(%p)->(%p, %ld)\n", iface, pv, cb);
 
@@ -126,9 +130,9 @@ static LPVOID WINAPI IMAPIMalloc_fnRealloc(LPMALLOC iface, LPVOID pv, DWORD cb)
         return LocalAlloc(LMEM_FIXED, cb);
 
     if (cb)
-        return LocalReAlloc((HANDLE) pv, cb, LMEM_MOVEABLE);
+        return LocalReAlloc(pv, cb, LMEM_MOVEABLE);
 
-    LocalFree((HANDLE) pv);
+    LocalFree(pv);
     return NULL;
 }
 
@@ -138,16 +142,16 @@ static LPVOID WINAPI IMAPIMalloc_fnRealloc(LPMALLOC iface, LPVOID pv, DWORD cb)
 static void WINAPI IMAPIMalloc_fnFree(LPMALLOC iface, LPVOID pv)
 {
     TRACE("(%p)->(%p)\n", iface, pv);
-    LocalFree((HANDLE) pv);
+    LocalFree(pv);
 }
 
 /**************************************************************************
  * IMAPIMalloc_GetSize
  */
-static DWORD WINAPI IMAPIMalloc_fnGetSize(LPMALLOC iface, LPVOID pv)
+static SIZE_T WINAPI IMAPIMalloc_fnGetSize(LPMALLOC iface, LPVOID pv)
 {
     TRACE("(%p)->(%p)\n", iface, pv);
-    return LocalSize((HANDLE) pv);
+    return LocalSize(pv);
 }
 
 /**************************************************************************

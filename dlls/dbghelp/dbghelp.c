@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -24,20 +24,21 @@
 #include "winerror.h"
 #include "psapi.h"
 #include "wine/debug.h"
+#include "wdbgexts.h"
+#include "winnls.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
 
 /* TODO
  *  - support for symbols' types is still partly missing
  *      + C++ support
- *      + funcargtype:s are (partly) wrong: they should be a specific struct (like
- *        typedef) pointing to the actual type (and not a direct access)
  *      + we should store the underlying type for an enum in the symt_enum struct
  *      + for enums, we store the names & values (associated to the enum type), 
  *        but those values are not directly usable from a debugger (that's why, I
  *        assume, that we have also to define constants for enum values, as 
  *        Codeview does BTW.
- *      + SymGetType(TI_GET_LENGTH) takes a ULONG64 (yurk, ugly)
+ *      + SymEnumTypes should only return *user* defined types (UDT, typedefs...) not
+ *        all the types stored/used in the modules (like char*)
  *  - SymGetLine{Next|Prev} don't work as expected (they don't seem to work across
  *    functions, and even across function blocks...). Basically, for *Next* to work
  *    it requires an address after the prolog of the func (the base address of the 
@@ -61,29 +62,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
  *        getting several of those while looking for a unique symbol. Part of the 
  *        issue is that we don't give a scope to a static variable inside a function
  *      + C++ management
- *  - implement the callback notification mechanism
  */
 
 unsigned   dbghelp_options = SYMOPT_UNDNAME;
-HANDLE     hMsvcrt = NULL;
-
-/***********************************************************************
- *           DllMain (DEBUGHLP.@)
- */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-{
-    switch (fdwReason)
-    {
-    case DLL_PROCESS_ATTACH:    break;
-    case DLL_PROCESS_DETACH:
-        if (hMsvcrt) FreeLibrary(hMsvcrt);
-        break;
-    case DLL_THREAD_ATTACH:     break;
-    case DLL_THREAD_DETACH:     break;
-    default:                    break;
-    }
-    return TRUE;
-}
 
 static struct process* process_first /* = NULL */;
 
@@ -101,10 +82,91 @@ struct process*    process_find_by_handle(HANDLE hProcess)
 }
 
 /******************************************************************
- *		SymSetSearchPath (DBGHELP.@)
+ *             validate_addr64 (internal)
  *
  */
-BOOL WINAPI SymSetSearchPath(HANDLE hProcess, PSTR searchPath)
+BOOL validate_addr64(DWORD64 addr)
+{
+    if (sizeof(void*) == sizeof(int) && (addr >> 32))
+    {
+        FIXME("Unsupported address %s\n", wine_dbgstr_longlong(addr));
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/******************************************************************
+ *		fetch_buffer
+ *
+ * Ensures process' internal buffer is large enough.
+ */
+void* fetch_buffer(struct process* pcs, unsigned size)
+{
+    if (size > pcs->buffer_size)
+    {
+        if (pcs->buffer)
+            pcs->buffer = HeapReAlloc(GetProcessHeap(), 0, pcs->buffer, size);
+        else
+            pcs->buffer = HeapAlloc(GetProcessHeap(), 0, size);
+        pcs->buffer_size = (pcs->buffer) ? size : 0;
+    }
+    return pcs->buffer;
+}
+
+const char* wine_dbgstr_addr(const ADDRESS64* addr)
+{
+    if (!addr) return "(null)";
+    switch (addr->Mode)
+    {
+    case AddrModeFlat:
+        return wine_dbg_sprintf("flat<%s>", wine_dbgstr_longlong(addr->Offset));
+    case AddrMode1616:
+        return wine_dbg_sprintf("1616<%04x:%04x>", addr->Segment, (DWORD)addr->Offset);
+    case AddrMode1632:
+        return wine_dbg_sprintf("1632<%04x:%08x>", addr->Segment, (DWORD)addr->Offset);
+    case AddrModeReal:
+        return wine_dbg_sprintf("real<%04x:%04x>", addr->Segment, (DWORD)addr->Offset);
+    default:
+        return "unknown";
+    }
+}
+
+extern struct cpu       cpu_i386, cpu_x86_64, cpu_ppc, cpu_arm, cpu_arm64;
+
+static struct cpu*      dbghelp_cpus[] = {&cpu_i386, &cpu_x86_64, &cpu_ppc, &cpu_arm, &cpu_arm64, NULL};
+struct cpu*             dbghelp_current_cpu =
+#if defined(__i386__)
+    &cpu_i386
+#elif defined(__x86_64__)
+    &cpu_x86_64
+#elif defined(__powerpc__)
+    &cpu_ppc
+#elif defined(__arm__)
+    &cpu_arm
+#elif defined(__aarch64__)
+    &cpu_arm64
+#else
+#error define support for your CPU
+#endif
+    ;
+
+struct cpu* cpu_find(DWORD machine)
+{
+    struct cpu** cpu;
+
+    for (cpu = dbghelp_cpus ; *cpu; cpu++)
+    {
+        if (cpu[0]->machine == machine) return cpu[0];
+    }
+    return NULL;
+}
+
+/******************************************************************
+ *		SymSetSearchPathW (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSetSearchPathW(HANDLE hProcess, PCWSTR searchPath)
 {
     struct process* pcs = process_find_by_handle(hProcess);
 
@@ -112,22 +174,64 @@ BOOL WINAPI SymSetSearchPath(HANDLE hProcess, PSTR searchPath)
     if (!searchPath) return FALSE;
 
     HeapFree(GetProcessHeap(), 0, pcs->search_path);
-    pcs->search_path = strcpy(HeapAlloc(GetProcessHeap(), 0, strlen(searchPath) + 1),
-                              searchPath);
+    pcs->search_path = lstrcpyW(HeapAlloc(GetProcessHeap(), 0, 
+                                          (lstrlenW(searchPath) + 1) * sizeof(WCHAR)),
+                                searchPath);
+    return TRUE;
+}
+
+/******************************************************************
+ *		SymSetSearchPath (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSetSearchPath(HANDLE hProcess, PCSTR searchPath)
+{
+    BOOL        ret = FALSE;
+    unsigned    len;
+    WCHAR*      sp;
+
+    len = MultiByteToWideChar(CP_ACP, 0, searchPath, -1, NULL, 0);
+    if ((sp = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR))))
+    {
+        MultiByteToWideChar(CP_ACP, 0, searchPath, -1, sp, len);
+
+        ret = SymSetSearchPathW(hProcess, sp);
+        HeapFree(GetProcessHeap(), 0, sp);
+    }
+    return ret;
+}
+
+/***********************************************************************
+ *		SymGetSearchPathW (DBGHELP.@)
+ */
+BOOL WINAPI SymGetSearchPathW(HANDLE hProcess, PWSTR szSearchPath,
+                              DWORD SearchPathLength)
+{
+    struct process* pcs = process_find_by_handle(hProcess);
+    if (!pcs) return FALSE;
+
+    lstrcpynW(szSearchPath, pcs->search_path, SearchPathLength);
     return TRUE;
 }
 
 /***********************************************************************
  *		SymGetSearchPath (DBGHELP.@)
  */
-BOOL WINAPI SymGetSearchPath(HANDLE hProcess, LPSTR szSearchPath, 
+BOOL WINAPI SymGetSearchPath(HANDLE hProcess, PSTR szSearchPath,
                              DWORD SearchPathLength)
 {
-    struct process* pcs = process_find_by_handle(hProcess);
-    if (!pcs) return FALSE;
+    WCHAR*      buffer = HeapAlloc(GetProcessHeap(), 0, SearchPathLength * sizeof(WCHAR));
+    BOOL        ret = FALSE;
 
-    lstrcpynA(szSearchPath, pcs->search_path, SearchPathLength);
-    return TRUE;
+    if (buffer)
+    {
+        ret = SymGetSearchPathW(hProcess, buffer, SearchPathLength);
+        if (ret)
+            WideCharToMultiByte(CP_ACP, 0, buffer, SearchPathLength,
+                                szSearchPath, SearchPathLength, NULL, NULL);
+        HeapFree(GetProcessHeap(), 0, buffer);
+    }
+    return ret;
 }
 
 /******************************************************************
@@ -136,26 +240,38 @@ BOOL WINAPI SymGetSearchPath(HANDLE hProcess, LPSTR szSearchPath,
  * SymInitialize helper: loads in dbghelp all known (and loaded modules)
  * this assumes that hProcess is a handle on a valid process
  */
-static BOOL WINAPI process_invade_cb(char* name, DWORD base, DWORD size, void* user)
+static BOOL WINAPI process_invade_cb(PCWSTR name, ULONG64 base, ULONG size, PVOID user)
 {
-    char        tmp[MAX_PATH];
-    HANDLE      hProcess = (HANDLE)user;
+    WCHAR       tmp[MAX_PATH];
+    HANDLE      hProcess = user;
 
-    if (!GetModuleFileNameExA(hProcess, (HMODULE)base, 
-                              tmp, sizeof(tmp)))
-        lstrcpynA(tmp, name, sizeof(tmp));
+    if (!GetModuleFileNameExW(hProcess, (HMODULE)(DWORD_PTR)base, tmp, ARRAY_SIZE(tmp)))
+        lstrcpynW(tmp, name, ARRAY_SIZE(tmp));
 
-    SymLoadModule(hProcess, 0, tmp, name, base, size);
+    SymLoadModuleExW(hProcess, 0, tmp, name, base, size, NULL, 0);
     return TRUE;
 }
 
 /******************************************************************
- *		SymInitialize (DBGHELP.@)
+ *		check_live_target
+ *
+ */
+static BOOL check_live_target(struct process* pcs)
+{
+    if (!GetProcessId(pcs->handle)) return FALSE;
+    if (GetEnvironmentVariableA("DBGHELP_NOLIVE", NULL, 0)) return FALSE;
+    if (!elf_read_wine_loader_dbg_info(pcs))
+        macho_read_wine_loader_dbg_info(pcs);
+    return TRUE;
+}
+
+/******************************************************************
+ *		SymInitializeW (DBGHELP.@)
  *
  * The initialisation of a dbghelp's context.
  * Note that hProcess doesn't need to be a valid process handle (except
  * when fInvadeProcess is TRUE).
- * Since, we're also allow to load ELF (pure) libraries and Wine ELF libraries 
+ * Since we also allow loading ELF (pure) libraries and Wine ELF libraries
  * containing PE (and NE) module(s), here's how we handle it:
  * - we load every module (ELF, NE, PE) passed in SymLoadModule
  * - in fInvadeProcess (in SymInitialize) is TRUE, we set up what is called ELF
@@ -164,58 +280,77 @@ static BOOL WINAPI process_invade_cb(char* name, DWORD base, DWORD size, void* u
  *   our internal ELF modules representation (loading / unloading). This way,
  *   we'll pair every loaded builtin PE module with its ELF counterpart (and
  *   access its debug information).
- * - if fInvadeProcess (in SymInitialize) is FALSE, we won't be able to
- *   make the peering between a builtin PE module and its ELF counterpart, hence
- *   we won't be able to provide the requested debug information. We'll
- *   however be able to load native PE modules (and their debug information)
- *   without any trouble.
+ * - if fInvadeProcess (in SymInitialize) is FALSE, we check anyway if the 
+ *   hProcess refers to a running process. We use some heuristics here, so YMMV.
+ *   If we detect a live target, then we get the same handling as if
+ *   fInvadeProcess is TRUE (except that the modules are not loaded). Otherwise,
+ *   we won't be able to make the peering between a builtin PE module and its ELF
+ *   counterpart. Hence we won't be able to provide the requested debug
+ *   information. We'll however be able to load native PE modules (and their
+ *   debug information) without any trouble.
  * Note also that this scheme can be intertwined with the deferred loading 
  * mechanism (ie only load the debug information when we actually need it).
  */
-BOOL WINAPI SymInitialize(HANDLE hProcess, PSTR UserSearchPath, BOOL fInvadeProcess)
+BOOL WINAPI SymInitializeW(HANDLE hProcess, PCWSTR UserSearchPath, BOOL fInvadeProcess)
 {
     struct process*     pcs;
+    BOOL wow64, child_wow64;
 
-    TRACE("(%p %s %u)\n", hProcess, debugstr_a(UserSearchPath), fInvadeProcess);
+    TRACE("(%p %s %u)\n", hProcess, debugstr_w(UserSearchPath), fInvadeProcess);
 
     if (process_find_by_handle(hProcess))
-        FIXME("what to do ??\n");
+    {
+        WARN("the symbols for this process have already been initialized!\n");
+
+        /* MSDN says to only call this function once unless SymCleanup() has been called since the last call.
+           It also says to call SymRefreshModuleList() instead if you just want the module list refreshed.
+           Native still returns TRUE even if the process has already been initialized. */
+        return TRUE;
+    }
+
+    IsWow64Process(GetCurrentProcess(), &wow64);
+
+    if (GetProcessId(hProcess) && !IsWow64Process(hProcess, &child_wow64))
+        return FALSE;
 
     pcs = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*pcs));
     if (!pcs) return FALSE;
 
     pcs->handle = hProcess;
+    pcs->is_64bit = (sizeof(void *) == 8 || wow64) && !child_wow64;
 
     if (UserSearchPath)
     {
-        pcs->search_path = strcpy(HeapAlloc(GetProcessHeap(), 0, strlen(UserSearchPath) + 1), 
-                                  UserSearchPath);
+        pcs->search_path = lstrcpyW(HeapAlloc(GetProcessHeap(), 0,      
+                                              (lstrlenW(UserSearchPath) + 1) * sizeof(WCHAR)),
+                                    UserSearchPath);
     }
     else
     {
         unsigned        size;
         unsigned        len;
+        static const WCHAR      sym_path[] = {'_','N','T','_','S','Y','M','B','O','L','_','P','A','T','H',0};
+        static const WCHAR      alt_sym_path[] = {'_','N','T','_','A','L','T','E','R','N','A','T','E','_','S','Y','M','B','O','L','_','P','A','T','H',0};
 
-        pcs->search_path = HeapAlloc(GetProcessHeap(), 0, len = MAX_PATH);
-        while ((size = GetCurrentDirectoryA(len, pcs->search_path)) >= len)
-            pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, len *= 2);
-        pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, size + 1);
+        pcs->search_path = HeapAlloc(GetProcessHeap(), 0, (len = MAX_PATH) * sizeof(WCHAR));
+        while ((size = GetCurrentDirectoryW(len, pcs->search_path)) >= len)
+            pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, (len *= 2) * sizeof(WCHAR));
+        pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, (size + 1) * sizeof(WCHAR));
 
-        len = GetEnvironmentVariableA("_NT_SYMBOL_PATH", NULL, 0);
+        len = GetEnvironmentVariableW(sym_path, NULL, 0);
         if (len)
         {
-            pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, size + 1 + len + 1);
+            pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, (size + 1 + len + 1) * sizeof(WCHAR));
             pcs->search_path[size] = ';';
-            GetEnvironmentVariableA("_NT_SYMBOL_PATH", pcs->search_path + size + 1, len);
+            GetEnvironmentVariableW(sym_path, pcs->search_path + size + 1, len);
             size += 1 + len;
         }
-        len = GetEnvironmentVariableA("_NT_ALTERNATE_SYMBOL_PATH", NULL, 0);
+        len = GetEnvironmentVariableW(alt_sym_path, NULL, 0);
         if (len)
         {
-            pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, size + 1 + len + 1);
+            pcs->search_path = HeapReAlloc(GetProcessHeap(), 0, pcs->search_path, (size + 1 + len + 1) * sizeof(WCHAR));
             pcs->search_path[size] = ';';
-            GetEnvironmentVariableA("_NT_ALTERNATE_SYMBOL_PATH", pcs->search_path + size + 1, len);
-            size += 1 + len;
+            GetEnvironmentVariableW(alt_sym_path, pcs->search_path + size + 1, len);
         }
     }
 
@@ -223,19 +358,46 @@ BOOL WINAPI SymInitialize(HANDLE hProcess, PSTR UserSearchPath, BOOL fInvadeProc
     pcs->dbg_hdr_addr = 0;
     pcs->next = process_first;
     process_first = pcs;
-
-    if (fInvadeProcess)
+    
+    if (check_live_target(pcs))
     {
-        if (!elf_read_wine_loader_dbg_info(pcs))
-        {
-            SymCleanup(hProcess);
-            return FALSE;
-        }
-        EnumerateLoadedModules(hProcess, process_invade_cb, (void*)hProcess);
+        if (fInvadeProcess)
+            EnumerateLoadedModulesW64(hProcess, process_invade_cb, hProcess);
         elf_synchronize_module_list(pcs);
+        macho_synchronize_module_list(pcs);
+    }
+    else if (fInvadeProcess)
+    {
+        SymCleanup(hProcess);
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
     }
 
     return TRUE;
+}
+
+/******************************************************************
+ *		SymInitialize (DBGHELP.@)
+ *
+ *
+ */
+BOOL WINAPI SymInitialize(HANDLE hProcess, PCSTR UserSearchPath, BOOL fInvadeProcess)
+{
+    WCHAR*              sp = NULL;
+    BOOL                ret;
+
+    if (UserSearchPath)
+    {
+        unsigned len;
+
+        len = MultiByteToWideChar(CP_ACP, 0, UserSearchPath, -1, NULL, 0);
+        sp = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, UserSearchPath, -1, sp, len);
+    }
+
+    ret = SymInitializeW(hProcess, sp, fInvadeProcess);
+    HeapFree(GetProcessHeap(), 0, sp);
+    return ret;
 }
 
 /******************************************************************
@@ -260,6 +422,8 @@ BOOL WINAPI SymCleanup(HANDLE hProcess)
             return TRUE;
         }
     }
+
+    ERR("this process has not had SymInitialize() called for it!\n");
     return FALSE;
 }
 
@@ -269,6 +433,12 @@ BOOL WINAPI SymCleanup(HANDLE hProcess)
  */
 DWORD WINAPI SymSetOptions(DWORD opts)
 {
+    struct process* pcs;
+
+    for (pcs = process_first; pcs; pcs = pcs->next)
+    {
+        pcs_callback(pcs, CBA_SET_OPTIONS, &opts);
+    }
     return dbghelp_options = opts;
 }
 
@@ -302,8 +472,134 @@ BOOL WINAPI SymSetContext(HANDLE hProcess, PIMAGEHLP_STACK_FRAME StackFrame,
     struct process* pcs = process_find_by_handle(hProcess);
     if (!pcs) return FALSE;
 
+    if (pcs->ctx_frame.ReturnOffset == StackFrame->ReturnOffset &&
+        pcs->ctx_frame.FrameOffset  == StackFrame->FrameOffset  &&
+        pcs->ctx_frame.StackOffset  == StackFrame->StackOffset)
+    {
+        TRACE("Setting same frame {rtn=%s frm=%s stk=%s}\n",
+              wine_dbgstr_longlong(pcs->ctx_frame.ReturnOffset),
+              wine_dbgstr_longlong(pcs->ctx_frame.FrameOffset),
+              wine_dbgstr_longlong(pcs->ctx_frame.StackOffset));
+        pcs->ctx_frame.InstructionOffset = StackFrame->InstructionOffset;
+        SetLastError(ERROR_ACCESS_DENIED); /* latest MSDN says ERROR_SUCCESS */
+        return FALSE;
+    }
+
     pcs->ctx_frame = *StackFrame;
     /* MSDN states that Context is not (no longer?) used */
+    return TRUE;
+}
+
+/******************************************************************
+ *		reg_cb64to32 (internal)
+ *
+ * Registered callback for converting information from 64 bit to 32 bit
+ */
+static BOOL CALLBACK reg_cb64to32(HANDLE hProcess, ULONG action, ULONG64 data, ULONG64 user)
+{
+    struct process*                     pcs = process_find_by_handle(hProcess);
+    void*                               data32;
+    IMAGEHLP_DEFERRED_SYMBOL_LOAD64*    idsl64;
+    IMAGEHLP_DEFERRED_SYMBOL_LOAD       idsl;
+
+    if (!pcs) return FALSE;
+    switch (action)
+    {
+    case CBA_DEBUG_INFO:
+    case CBA_DEFERRED_SYMBOL_LOAD_CANCEL:
+    case CBA_SET_OPTIONS:
+    case CBA_SYMBOLS_UNLOADED:
+        data32 = (void*)(DWORD_PTR)data;
+        break;
+    case CBA_DEFERRED_SYMBOL_LOAD_COMPLETE:
+    case CBA_DEFERRED_SYMBOL_LOAD_FAILURE:
+    case CBA_DEFERRED_SYMBOL_LOAD_PARTIAL:
+    case CBA_DEFERRED_SYMBOL_LOAD_START:
+        idsl64 = (IMAGEHLP_DEFERRED_SYMBOL_LOAD64*)(DWORD_PTR)data;
+        if (!validate_addr64(idsl64->BaseOfImage))
+            return FALSE;
+        idsl.SizeOfStruct = sizeof(idsl);
+        idsl.BaseOfImage = (DWORD)idsl64->BaseOfImage;
+        idsl.CheckSum = idsl64->CheckSum;
+        idsl.TimeDateStamp = idsl64->TimeDateStamp;
+        memcpy(idsl.FileName, idsl64->FileName, sizeof(idsl.FileName));
+        idsl.Reparse = idsl64->Reparse;
+        data32 = &idsl;
+        break;
+    case CBA_DUPLICATE_SYMBOL:
+    case CBA_EVENT:
+    case CBA_READ_MEMORY:
+    default:
+        FIXME("No mapping for action %u\n", action);
+        return FALSE;
+    }
+    return pcs->reg_cb32(hProcess, action, data32, (PVOID)(DWORD_PTR)user);
+}
+
+/******************************************************************
+ *		pcs_callback (internal)
+ */
+BOOL pcs_callback(const struct process* pcs, ULONG action, void* data)
+{
+    IMAGEHLP_DEFERRED_SYMBOL_LOAD64 idsl;
+
+    TRACE("%p %u %p\n", pcs, action, data);
+
+    if (!pcs->reg_cb) return FALSE;
+    if (!pcs->reg_is_unicode)
+    {
+        IMAGEHLP_DEFERRED_SYMBOL_LOADW64*   idslW;
+
+        switch (action)
+        {
+        case CBA_DEBUG_INFO:
+        case CBA_DEFERRED_SYMBOL_LOAD_CANCEL:
+        case CBA_SET_OPTIONS:
+        case CBA_SYMBOLS_UNLOADED:
+            break;
+        case CBA_DEFERRED_SYMBOL_LOAD_COMPLETE:
+        case CBA_DEFERRED_SYMBOL_LOAD_FAILURE:
+        case CBA_DEFERRED_SYMBOL_LOAD_PARTIAL:
+        case CBA_DEFERRED_SYMBOL_LOAD_START:
+            idslW = data;
+            idsl.SizeOfStruct = sizeof(idsl);
+            idsl.BaseOfImage = idslW->BaseOfImage;
+            idsl.CheckSum = idslW->CheckSum;
+            idsl.TimeDateStamp = idslW->TimeDateStamp;
+            WideCharToMultiByte(CP_ACP, 0, idslW->FileName, -1,
+                                idsl.FileName, sizeof(idsl.FileName), NULL, NULL);
+            idsl.Reparse = idslW->Reparse;
+            data = &idsl;
+            break;
+        case CBA_DUPLICATE_SYMBOL:
+        case CBA_EVENT:
+        case CBA_READ_MEMORY:
+        default:
+            FIXME("No mapping for action %u\n", action);
+            return FALSE;
+        }
+    }
+    return pcs->reg_cb(pcs->handle, action, (ULONG64)(DWORD_PTR)data, pcs->reg_user);
+}
+
+/******************************************************************
+ *		sym_register_cb
+ *
+ * Helper for registering a callback.
+ */
+static BOOL sym_register_cb(HANDLE hProcess,
+                            PSYMBOL_REGISTERED_CALLBACK64 cb,
+                            PSYMBOL_REGISTERED_CALLBACK cb32,
+                            DWORD64 user, BOOL unicode)
+{
+    struct process* pcs = process_find_by_handle(hProcess);
+
+    if (!pcs) return FALSE;
+    pcs->reg_cb = cb;
+    pcs->reg_cb32 = cb32;
+    pcs->reg_is_unicode = unicode;
+    pcs->reg_user = user;
+
     return TRUE;
 }
 
@@ -314,9 +610,33 @@ BOOL WINAPI SymRegisterCallback(HANDLE hProcess,
                                 PSYMBOL_REGISTERED_CALLBACK CallbackFunction,
                                 PVOID UserContext)
 {
-    FIXME("(%p, %p, %p): stub\n", hProcess, CallbackFunction, UserContext);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    TRACE("(%p, %p, %p)\n", 
+          hProcess, CallbackFunction, UserContext);
+    return sym_register_cb(hProcess, reg_cb64to32, CallbackFunction, (DWORD_PTR)UserContext, FALSE);
+}
+
+/***********************************************************************
+ *		SymRegisterCallback64 (DBGHELP.@)
+ */
+BOOL WINAPI SymRegisterCallback64(HANDLE hProcess, 
+                                  PSYMBOL_REGISTERED_CALLBACK64 CallbackFunction,
+                                  ULONG64 UserContext)
+{
+    TRACE("(%p, %p, %s)\n", 
+          hProcess, CallbackFunction, wine_dbgstr_longlong(UserContext));
+    return sym_register_cb(hProcess, CallbackFunction, NULL, UserContext, FALSE);
+}
+
+/***********************************************************************
+ *		SymRegisterCallbackW64 (DBGHELP.@)
+ */
+BOOL WINAPI SymRegisterCallbackW64(HANDLE hProcess, 
+                                   PSYMBOL_REGISTERED_CALLBACK64 CallbackFunction,
+                                   ULONG64 UserContext)
+{
+    TRACE("(%p, %p, %s)\n", 
+          hProcess, CallbackFunction, wine_dbgstr_longlong(UserContext));
+    return sym_register_cb(hProcess, CallbackFunction, NULL, UserContext, TRUE);
 }
 
 /* This is imagehlp version not dbghelp !! */
@@ -343,4 +663,21 @@ LPAPI_VERSION WINAPI ImagehlpApiVersionEx(LPAPI_VERSION AppVersion)
     AppVersion->Reserved = api_version.Reserved;
 
     return AppVersion;
+}
+
+/******************************************************************
+ *		ExtensionApiVersion (DBGHELP.@)
+ */
+LPEXT_API_VERSION WINAPI ExtensionApiVersion(void)
+{
+    static EXT_API_VERSION      eav = {5, 5, 5, 0};
+    return &eav;
+}
+
+/******************************************************************
+ *		WinDbgExtensionDllInit (DBGHELP.@)
+ */
+void WINAPI WinDbgExtensionDllInit(PWINDBG_EXTENSION_APIS lpExtensionApis,
+                                   unsigned short major, unsigned short minor)
+{
 }

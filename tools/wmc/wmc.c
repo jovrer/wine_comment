@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -25,40 +25,45 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#ifdef HAVE_GETOPT_H
+# include <getopt.h>
+#endif
 
 #include "wmc.h"
 #include "utils.h"
 #include "lang.h"
 #include "write.h"
 
-static char usage[] =
+static const char usage[] =
 	"Usage: wmc [options...] [inputfile.mc]\n"
-	"   -B x        Set output byte-order x={n[ative], l[ittle], b[ig]}\n"
-	"               (default is n[ative] which equals "
+	"   -B x                       Set output byte-order x={n[ative], l[ittle], b[ig]}\n"
+	"                              (default is n[ative] which equals "
 #ifdef WORDS_BIGENDIAN
 	"big"
 #else
 	"little"
 #endif
 	"-endian)\n"
-	"   -c          Set 'custom-bit' in values\n"
-	"   -d          Use decimal values in output\n"
-	"   -D		Set debug flag\n"
-	"   -h          This message\n"
-	"   -H file     Write headerfile to file (default is inputfile.h)\n"
-	"   -i          Inline messagetable(s)\n"
-	"   -o file     Output to file (default is inputfile.rc)\n"
-	"   -u          Inputfile is in unicode\n"
-	"   -U          Output unicode messagetable(s)\n"
-	"   -v          Show supported codepages and languages\n"
-	"   -V          Print version end exit\n"
-	"   -W          Enable pedantic warnings\n"
+	"   -c                         Set 'custom-bit' in values\n"
+	"   -d                         Use decimal values in output\n"
+	"   -D                         Set debug flag\n"
+	"   -h, --help                 Print this message\n"
+	"   -H FILE                    Write header file to FILE (default is inputfile.h)\n"
+	"   -i                         Inline messagetable(s)\n"
+	"   -o, --output=FILE          Output to FILE (default is infile.rc)\n"
+	"   -O, --output-format=FORMAT The output format (`rc', `res', or `pot')\n"
+	"   -P, --po-dir=DIR           Directory containing po files for translations\n"
+	"   -u                         Input file is in unicode\n"
+	"   -U                         Output unicode messagetable(s)\n"
+	"   -v                         Show supported codepages and languages\n"
+	"   -V, --version              Print version end exit\n"
+	"   -W, --pedantic             Enable pedantic warnings\n"
 	"Input is taken from stdin if no inputfile is specified.\n"
 	"Byteorder of unicode input is based upon the first couple of\n"
 	"bytes read, which should be 0x0000..0x00ff.\n"
 	;
 
-static char version_string[] =
+static const char version_string[] =
 	"Wine Message Compiler version " PACKAGE_VERSION "\n"
 	"Copyright 2000 Bertho A. Stultiens\n"
 	;
@@ -101,7 +106,9 @@ int rcinline = 0;
 /*
  * Debugging flag (-D option)
  */
-int dodebug = 0;
+static int dodebug = 0;
+
+static char *po_dir;
 
 char *output_name = NULL;	/* The name given by the -o option */
 char *input_name = NULL;	/* The name given on the command-line */
@@ -113,29 +120,64 @@ int char_number = 1;		/* The current char pos within the line */
 char *cmdline;			/* The entire commandline */
 time_t now;			/* The time of start of wmc */
 
-int getopt (int argc, char *const *argv, const char *optstring);
+int mcy_debug;
+
+FILE *yyin;
+
+static enum
+{
+    FORMAT_RC,
+    FORMAT_RES,
+    FORMAT_POT
+} output_format;
+
+static const char short_options[] = "B:cdDhH:io:O:P:uUvVW";
+static const struct option long_options[] =
+{
+	{ "help", 0, NULL, 'h' },
+	{ "output", 1, NULL, 'o' },
+	{ "output-format", 1, NULL, 'O' },
+	{ "pedantic", 0, NULL, 'W' },
+	{ "po-dir", 1, NULL, 'P' },
+	{ "version", 0, NULL, 'v' }
+};
+
 static void segvhandler(int sig);
+
+static void cleanup_files(void)
+{
+    if (output_name) unlink( output_name );
+    if (header_name) unlink( header_name );
+}
+
+static void exit_on_signal( int sig )
+{
+    exit(1);  /* this will call the atexit functions */
+}
 
 int main(int argc,char *argv[])
 {
-	extern char* optarg;
-	extern int   optind;
 	int optc;
+	int opti = 0;
 	int lose = 0;
 	int ret;
 	int i;
 	int cmdlen;
 
+	atexit( cleanup_files );
 	signal(SIGSEGV, segvhandler);
-
-	now = time(NULL);
+	signal( SIGTERM, exit_on_signal );
+	signal( SIGINT, exit_on_signal );
+#ifdef SIGHUP
+	signal( SIGHUP, exit_on_signal );
+#endif
 
 	/* First rebuild the commandline to put in destination */
 	/* Could be done through env[], but not all OS-es support it */
-	cmdlen = 4; /* for "wmc " */
+	cmdlen = 5; /* for "wmc " and \0 */
 	for(i = 1; i < argc; i++)
 		cmdlen += strlen(argv[i]) + 1;
-	cmdline = (char *)xmalloc(cmdlen);
+	cmdline = xmalloc(cmdlen);
 	strcpy(cmdline, "wmc ");
 	for(i = 1; i < argc; i++)
 	{
@@ -144,7 +186,7 @@ int main(int argc,char *argv[])
 			strcat(cmdline, " ");
 	}
 
-	while((optc = getopt(argc, argv, "B:cdDhH:io:p:uUvVW")) != EOF)
+	while((optc = getopt_long(argc, argv, short_options, long_options, &opti)) != EOF)
 	{
 		switch(optc)
 		{
@@ -190,6 +232,19 @@ int main(int argc,char *argv[])
 		case 'o':
 			output_name = xstrdup(optarg);
 			break;
+		case 'O':
+			if (!strcmp( optarg, "rc" )) output_format = FORMAT_RC;
+			else if (!strcmp( optarg, "res" )) output_format = FORMAT_RES;
+			else if (!strcmp( optarg, "pot" )) output_format = FORMAT_POT;
+			else
+                        {
+                            fprintf(stderr, "Output format must be rc or res\n" );
+                            lose++;
+                        }
+                        break;
+		case 'P':
+			po_dir = xstrdup( optarg );
+                        break;
 		case 'u':
 			unicodein = 1;
 			break;
@@ -220,11 +275,11 @@ int main(int argc,char *argv[])
 		return 1;
 	}
 
-	yydebug = dodebug;
+	mcy_debug = dodebug;
 	if(dodebug)
 	{
-		setbuf(stdout, 0);
-		setbuf(stderr, 0);
+		setbuf(stdout, NULL);
+		setbuf(stderr, NULL);
 	}
 
 	/* Check for input file on command-line */
@@ -254,7 +309,7 @@ int main(int argc,char *argv[])
 	else
 		yyin = stdin;
 
-	ret = yyparse();
+	ret = mcy_parse();
 
 	if(input_name)
 		fclose(yyin);
@@ -265,11 +320,30 @@ int main(int argc,char *argv[])
 		exit(1);
 	}
 
-	write_h_file(header_name);
-	write_rc_file(output_name);
-	if(!rcinline)
-		write_bin_files();
+#ifdef WORDS_BIGENDIAN
+	byte_swapped = (byteorder == WMC_BO_LITTLE);
+#else
+	byte_swapped = (byteorder == WMC_BO_BIG);
+#endif
 
+        switch (output_format)
+        {
+        case FORMAT_RC:
+            write_h_file(header_name);
+            write_rc_file(output_name);
+            if(!rcinline)
+		write_bin_files();
+            break;
+        case FORMAT_RES:
+            add_translations( po_dir );
+            write_res_file( output_name );
+            break;
+        case FORMAT_POT:
+            write_pot_file( output_name );
+            break;
+        }
+	output_name = NULL;
+	header_name = NULL;
 	return 0;
 }
 

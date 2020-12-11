@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -26,10 +26,12 @@
 #include "winreg.h"
 #include "winecon_private.h"
 
+#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wineconsole);
 
+static const WCHAR wszColorTable[]        = {'C','o','l','o','r','T','a','b','l','e',0};
 static const WCHAR wszConsole[]           = {'C','o','n','s','o','l','e',0};
 static const WCHAR wszCursorSize[]        = {'C','u','r','s','o','r','S','i','z','e',0};
 static const WCHAR wszCursorVisible[]     = {'C','u','r','s','o','r','V','i','s','i','b','l','e',0};
@@ -40,20 +42,27 @@ static const WCHAR wszFontSize[]          = {'F','o','n','t','S','i','z','e',0};
 static const WCHAR wszFontWeight[]        = {'F','o','n','t','W','e','i','g','h','t',0};
 static const WCHAR wszHistoryBufferSize[] = {'H','i','s','t','o','r','y','B','u','f','f','e','r','S','i','z','e',0};
 static const WCHAR wszHistoryNoDup[]      = {'H','i','s','t','o','r','y','N','o','D','u','p',0};
+static const WCHAR wszInsertMode[]        = {'I','n','s','e','r','t','M','o','d','e',0};
 static const WCHAR wszMenuMask[]          = {'M','e','n','u','M','a','s','k',0};
+static const WCHAR wszPopupColors[]       = {'P','o','p','u','p','C','o','l','o','r','s',0};
 static const WCHAR wszQuickEdit[]         = {'Q','u','i','c','k','E','d','i','t',0};
 static const WCHAR wszScreenBufferSize[]  = {'S','c','r','e','e','n','B','u','f','f','e','r','S','i','z','e',0};
 static const WCHAR wszScreenColors[]      = {'S','c','r','e','e','n','C','o','l','o','r','s',0};
 static const WCHAR wszWindowSize[]        = {'W','i','n','d','o','w','S','i','z','e',0};
 
+static const WCHAR color_name_fmt[] = {'%','s','%','0','2','d',0};
+
+#define NUM_COLORS 16
+
 void WINECON_DumpConfig(const char* pfx, const struct config_data* cfg)
 {
-    WINE_TRACE("%s cell=(%u,%u) cursor=(%d,%d) attr=%02lx font=%s/%lu hist=%lu/%d flags=%c%c msk=%08lx sb=(%u,%u) win=(%u,%u)x(%u,%u) edit=%u registry=%s\n",
+    WINE_TRACE("%s cell=(%u,%u) cursor=(%d,%d) attr=%02x pop-up=%02x font=%s/%u hist=%u/%d flags=%c%c%c "
+               "msk=%08x sb=(%u,%u) win=(%u,%u)x(%u,%u) edit=%u registry=%s\n",
                pfx, cfg->cell_width, cfg->cell_height, cfg->cursor_size, cfg->cursor_visible, cfg->def_attr,
-               wine_dbgstr_w(cfg->face_name), cfg->font_weight, cfg->history_size, cfg->history_nodup ? 1 : 2,
-               cfg->quick_edit ? 'Q' : 'q', cfg->exit_on_die ? 'X' : 'x',
-               cfg->menu_mask, cfg->sb_width, cfg->sb_height, cfg->win_pos.X, cfg->win_pos.Y, cfg->win_width, cfg->win_height,
-               cfg->edition_mode,
+               cfg->popup_attr, wine_dbgstr_w(cfg->face_name), cfg->font_weight, cfg->history_size,
+               cfg->history_nodup ? 1 : 2, cfg->insert_mode ? 'I' : 'i', cfg->quick_edit ? 'Q' : 'q',
+               cfg->exit_on_die ? 'X' : 'x', cfg->menu_mask, cfg->sb_width, cfg->sb_height,
+               cfg->win_pos.X, cfg->win_pos.Y, cfg->win_width, cfg->win_height, cfg->edition_mode,
                wine_dbgstr_w(cfg->registry));
 }
 
@@ -67,7 +76,7 @@ static LPWSTR   WINECON_CreateKeyName(LPCWSTR kn)
     LPWSTR      ret = HeapAlloc(GetProcessHeap(), 0, (lstrlenW(kn) + 1) * sizeof(WCHAR));
     LPWSTR      ptr = ret;
 
-    if (!ptr) WINECON_Fatal("OOM");
+    if (!ret) return NULL;
 
     do
     {
@@ -83,69 +92,88 @@ static LPWSTR   WINECON_CreateKeyName(LPCWSTR kn)
  */
 static void WINECON_RegLoadHelper(HKEY hConKey, struct config_data* cfg)
 {
-    DWORD 	type;
-    DWORD 	count;
-    DWORD       val;
+    int   i;
+    DWORD type, count, val;
+    WCHAR color_name[13];
 
-    count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszCursorSize, 0, &type, (LPBYTE)&val, &count))
-        cfg->cursor_size = val;
-
-    count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszCursorVisible, 0, &type, (LPBYTE)&val, &count))
-        cfg->cursor_visible = val;
-
-    count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszEditionMode, 0, &type, (LPBYTE)&val, &count))
-        cfg->edition_mode = val;
-
-    count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszExitOnDie, 0, &type, (LPBYTE)&val, &count))
-        cfg->exit_on_die = val;
-
-    count = sizeof(cfg->face_name);
-    RegQueryValueEx(hConKey, wszFaceName, 0, &type, (LPBYTE)&cfg->face_name, &count);
-
-    count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszFontSize, 0, &type, (LPBYTE)&val, &count))
+    for (i = 0; i < NUM_COLORS; i++)
     {
-        cfg->cell_height = HIWORD(val);
-        cfg->cell_width  = LOWORD(val);
+        sprintfW(color_name, color_name_fmt, wszColorTable, i);
+        count = sizeof(val);
+        if (!RegQueryValueExW(hConKey, color_name, 0, &type, (LPBYTE)&val, &count))
+            cfg->color_map[i] = val;
     }
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszFontWeight, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszCursorSize, 0, &type, (LPBYTE)&val, &count))
+        cfg->cursor_size = val;
+
+    count = sizeof(val);
+    if (!RegQueryValueExW(hConKey, wszCursorVisible, 0, &type, (LPBYTE)&val, &count))
+        cfg->cursor_visible = val;
+
+    count = sizeof(val);
+    if (!RegQueryValueExW(hConKey, wszEditionMode, 0, &type, (LPBYTE)&val, &count))
+        cfg->edition_mode = val;
+
+    count = sizeof(val);
+    if (!RegQueryValueExW(hConKey, wszExitOnDie, 0, &type, (LPBYTE)&val, &count))
+        cfg->exit_on_die = val;
+
+    count = sizeof(cfg->face_name);
+    RegQueryValueExW(hConKey, wszFaceName, 0, &type, (LPBYTE)&cfg->face_name, &count);
+
+    count = sizeof(val);
+    if (!RegQueryValueExW(hConKey, wszFontSize, 0, &type, (LPBYTE)&val, &count))
+    {
+        int height = HIWORD(val);
+        int width = LOWORD(val);
+        /* A value of zero reflects the default settings */
+        if (height != 0) cfg->cell_height = MulDiv( height, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
+        if (width != 0) cfg->cell_width = MulDiv( width, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
+    }
+
+    count = sizeof(val);
+    if (!RegQueryValueExW(hConKey, wszFontWeight, 0, &type, (LPBYTE)&val, &count))
         cfg->font_weight = val;
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszHistoryBufferSize, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszHistoryBufferSize, 0, &type, (LPBYTE)&val, &count))
         cfg->history_size = val;
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszHistoryNoDup, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszHistoryNoDup, 0, &type, (LPBYTE)&val, &count))
         cfg->history_nodup = val;
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszMenuMask, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszInsertMode, 0, &type, (LPBYTE)&val, &count))
+        cfg->insert_mode = val;
+
+    count = sizeof(val);
+    if (!RegQueryValueExW(hConKey, wszMenuMask, 0, &type, (LPBYTE)&val, &count))
         cfg->menu_mask = val;
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszQuickEdit, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszPopupColors, 0, &type, (LPBYTE)&val, &count))
+        cfg->popup_attr = val;
+
+    count = sizeof(val);
+    if (!RegQueryValueExW(hConKey, wszQuickEdit, 0, &type, (LPBYTE)&val, &count))
         cfg->quick_edit = val;
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszScreenBufferSize, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszScreenBufferSize, 0, &type, (LPBYTE)&val, &count))
     {
         cfg->sb_height = HIWORD(val);
         cfg->sb_width  = LOWORD(val);
     }
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszScreenColors, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszScreenColors, 0, &type, (LPBYTE)&val, &count))
         cfg->def_attr = val;
 
     count = sizeof(val);
-    if (!RegQueryValueEx(hConKey, wszWindowSize, 0, &type, (LPBYTE)&val, &count))
+    if (!RegQueryValueExW(hConKey, wszWindowSize, 0, &type, (LPBYTE)&val, &count))
     {
         cfg->win_height = HIWORD(val);
         cfg->win_width  = LOWORD(val);
@@ -161,21 +189,36 @@ static void WINECON_RegLoadHelper(HKEY hConKey, struct config_data* cfg)
  */
 void WINECON_RegLoad(const WCHAR* appname, struct config_data* cfg)
 {
-    HKEY        hConKey;
+    static const COLORREF color_map[NUM_COLORS] =
+    {
+        RGB(0x00, 0x00, 0x00), RGB(0x00, 0x00, 0x80), RGB(0x00, 0x80, 0x00), RGB(0x00, 0x80, 0x80),
+        RGB(0x80, 0x00, 0x00), RGB(0x80, 0x00, 0x80), RGB(0x80, 0x80, 0x00), RGB(0xC0, 0xC0, 0xC0),
+        RGB(0x80, 0x80, 0x80), RGB(0x00, 0x00, 0xFF), RGB(0x00, 0xFF, 0x00), RGB(0x00, 0xFF, 0xFF),
+        RGB(0xFF, 0x00, 0x00), RGB(0xFF, 0x00, 0xFF), RGB(0xFF, 0xFF, 0x00), RGB(0xFF, 0xFF, 0xFF),
+    };
+
+    int  i;
+    HKEY hConKey;
 
     WINE_TRACE("loading %s registry settings.\n", appname ? wine_dbgstr_w(appname) : "default");
 
     /* first set default values */
+    for (i = 0; i < NUM_COLORS; i++)
+    {
+        cfg->color_map[i] = color_map[i];
+    }
     cfg->cursor_size = 25;
     cfg->cursor_visible = 1;
     cfg->exit_on_die = 1;
     memset(cfg->face_name, 0, sizeof(cfg->face_name));
-    cfg->cell_height = 12;
-    cfg->cell_width  = 8;
-    cfg->font_weight = 0;
+    cfg->cell_height = MulDiv( 16, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
+    cfg->cell_width  = MulDiv( 8, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
+    cfg->font_weight = FW_NORMAL;
     cfg->history_size = 50;
     cfg->history_nodup = 0;
+    cfg->insert_mode = 1;
     cfg->menu_mask = 0;
+    cfg->popup_attr = 0xF5;
     cfg->quick_edit = 0;
     cfg->sb_height = 25;
     cfg->sb_width  = 80;
@@ -188,7 +231,7 @@ void WINECON_RegLoad(const WCHAR* appname, struct config_data* cfg)
     cfg->registry = NULL;
 
     /* then read global settings */
-    if (!RegOpenKey(HKEY_CURRENT_USER, wszConsole, &hConKey))
+    if (!RegOpenKeyW(HKEY_CURRENT_USER, wszConsole, &hConKey))
     {
         WINECON_RegLoadHelper(hConKey, cfg);
         /* if requested, load part related to console title */
@@ -197,7 +240,7 @@ void WINECON_RegLoad(const WCHAR* appname, struct config_data* cfg)
             HKEY        hAppKey;
 
             cfg->registry = WINECON_CreateKeyName(appname);
-            if (!RegOpenKey(hConKey, cfg->registry, &hAppKey))
+            if (!RegOpenKeyW(hConKey, cfg->registry, &hAppKey))
             {
                 WINECON_RegLoadHelper(hAppKey, cfg);
                 RegCloseKey(hAppKey);
@@ -215,50 +258,67 @@ void WINECON_RegLoad(const WCHAR* appname, struct config_data* cfg)
  */
 static void WINECON_RegSaveHelper(HKEY hConKey, const struct config_data* cfg)
 {
-    DWORD       val;
+    int   i;
+    DWORD val, width, height;
+    WCHAR color_name[13];
 
     WINECON_DumpConfig("save", cfg);
 
+    for (i = 0; i < NUM_COLORS; i++)
+    {
+        sprintfW(color_name, color_name_fmt, wszColorTable, i);
+        val = cfg->color_map[i];
+        RegSetValueExW(hConKey, color_name, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    }
+
     val = cfg->cursor_size;
-    RegSetValueEx(hConKey, wszCursorSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszCursorSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->cursor_visible;
-    RegSetValueEx(hConKey, wszCursorVisible, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszCursorVisible, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->edition_mode;
-    RegSetValueEx(hConKey, wszEditionMode, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszEditionMode, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->exit_on_die;
-    RegSetValueEx(hConKey, wszExitOnDie, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszExitOnDie, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
-    RegSetValueEx(hConKey, wszFaceName, 0, REG_SZ, (LPBYTE)&cfg->face_name, sizeof(cfg->face_name));
+    RegSetValueExW(hConKey, wszFaceName, 0, REG_SZ, (LPBYTE)&cfg->face_name, sizeof(cfg->face_name));
 
-    val = MAKELONG(cfg->cell_width, cfg->cell_height);
-    RegSetValueEx(hConKey, wszFontSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    width  = MulDiv( cfg->cell_width, USER_DEFAULT_SCREEN_DPI, GetDpiForSystem() );
+    height = MulDiv( cfg->cell_height, USER_DEFAULT_SCREEN_DPI, GetDpiForSystem() );
+    val = MAKELONG(width, height);
+    RegSetValueExW(hConKey, wszFontSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->font_weight;
-    RegSetValueEx(hConKey, wszFontWeight, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszFontWeight, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->history_size;
-    RegSetValueEx(hConKey, wszHistoryBufferSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszHistoryBufferSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->history_nodup;
-    RegSetValueEx(hConKey, wszHistoryNoDup, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszHistoryNoDup, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+
+    val = cfg->insert_mode;
+    RegSetValueExW(hConKey, wszInsertMode, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->menu_mask;
-    RegSetValueEx(hConKey, wszMenuMask, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszMenuMask, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+
+    val = cfg->popup_attr;
+    RegSetValueExW(hConKey, wszPopupColors, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->quick_edit;
-    RegSetValueEx(hConKey, wszQuickEdit, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszQuickEdit, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = MAKELONG(cfg->sb_width, cfg->sb_height);
-    RegSetValueEx(hConKey, wszScreenBufferSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszScreenBufferSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = cfg->def_attr;
-    RegSetValueEx(hConKey, wszScreenColors, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszScreenColors, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 
     val = MAKELONG(cfg->win_width, cfg->win_height);
-    RegSetValueEx(hConKey, wszWindowSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
+    RegSetValueExW(hConKey, wszWindowSize, 0, REG_DWORD, (LPBYTE)&val, sizeof(val));
 }
 
 /******************************************************************
@@ -271,7 +331,7 @@ void WINECON_RegSave(const struct config_data* cfg)
     HKEY        hConKey;
 
     WINE_TRACE("saving registry settings.\n");
-    if (RegCreateKey(HKEY_CURRENT_USER, wszConsole, &hConKey))
+    if (RegCreateKeyW(HKEY_CURRENT_USER, wszConsole, &hConKey))
     {
         WINE_ERR("Can't open registry for saving\n");
     }
@@ -281,7 +341,7 @@ void WINECON_RegSave(const struct config_data* cfg)
         {
             HKEY    hAppKey;
 
-            if (RegCreateKey(hConKey, cfg->registry, &hAppKey))
+            if (RegCreateKeyW(hConKey, cfg->registry, &hAppKey))
             {
                 WINE_ERR("Can't open registry for saving\n");
             }

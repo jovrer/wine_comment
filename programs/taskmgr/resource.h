@@ -4,15 +4,21 @@
  * Used by taskmgr.rc
  *
  */
-#define IDD_TASKMGR_DIALOG              102
-#define IDD_ABOUTBOX                    103
+
+#include <windef.h>
+#include <winuser.h>
+#include <commctrl.h>
+
 #define IDS_APP_TITLE                   103
+#define IDC_TASKMGR                     109
+#define IDS_RUNDLG_CAPTION              110
+
+#define IDD_TASKMGR_DIALOG              102
 #define IDM_ABOUT                       104
 #define IDM_EXIT                        105
 #define IDD_APPLICATION_PAGE            106
 #define IDI_TASKMGR                     107
 #define IDI_SMALL                       108
-#define IDC_TASKMGR                     109
 #define IDR_MAINFRAME                   128
 #define IDR_TASKMANAGER                 130
 #define IDD_PROCESS_PAGE                133
@@ -65,7 +71,6 @@
 #define IDC_CPU10                       1029
 #define IDC_PAGEFAULTS                  1029
 #define IDC_COMMIT_CHARGE_LIMIT         1029
-#define IDC_LICENSE_EDIT                1029
 #define IDC_CPU11                       1030
 #define IDC_USEROBJECTS                 1030
 #define IDC_COMMIT_CHARGE_PEAK          1030
@@ -182,7 +187,63 @@
 #define ID_PROCESS_PAGE_SETPRIORITY_BELOWNORMAL 32813
 #define ID_PROCESS_PAGE_SETPRIORITY_LOW 32814
 #define ID_PROCESS_PAGE_DEBUGCHANNELS   32815
-#define IDS_LICENSE                     32816
+#define IDS_VIEW_LARGE                  32816
+#define IDS_VIEW_SMALL                  32817
+#define IDS_VIEW_DETAILS                32818
+#define IDS_WINDOWS                     32819
+#define IDS_VIEW_SELECTCOLUMNS          32820
+#define IDS_OPTIONS_SHOW16BITTASKS      32821
+#define IDS_VIEW_CPUHISTORY             32822
+#define IDS_VIEW_CPUHISTORY_ONEGRAPHALL 32823
+#define IDS_VIEW_CPUHISTORY_ONEGRAPHPERCPU 32824
+#define IDS_VIEW_SHOWKERNELTIMES        32825
+#define IDS_APPLICATIONS                32826
+#define IDS_PROCESSES                   32827
+#define IDS_PERFORMANCE                 32828
+#define IDS_STATUS_BAR_CPU_USAGE        32829
+#define IDS_STATUS_BAR_PROCESSES        32830
+#define IDS_STATUS_BAR_MEMORY_USAGE     32831
+#define IDS_IMAGENAME                   32832
+#define IDS_PID                         32833
+#define IDS_CPUUSAGE                    32834
+#define IDS_CPUTIME                     32835
+#define IDS_MEMORYUSAGE                 32836
+#define IDS_MEMORYUSAGEDELTA            32837
+#define IDS_PEAKMEMORYUSAGE             32838
+#define IDS_PAGEFAULTS                  32839
+#define IDS_USEROBJECTS                 32840
+#define IDS_IOREADS                     32841
+#define IDS_IOREADBYTES                 32842
+#define IDS_SESSIONID                   32843
+#define IDS_USERNAME                    32844
+#define IDS_PAGEFAULTSDELTA             32845
+#define IDS_VIRTUALMEMORYSIZE           32846
+#define IDS_PAGEDPOOL                   32847
+#define IDS_NONPAGEDPOOL                32848
+#define IDS_BASEPRIORITY                32849
+#define IDS_HANDLECOUNT                 32850
+#define IDS_THREADCOUNT                 32851
+#define IDS_GDIOBJECTS                  32852
+#define IDS_IOWRITES                    32853
+#define IDS_IOWRITEBYTES                32854
+#define IDS_IOOTHER                     32855
+#define IDS_IOOTHERBYTES                32856
+#define IDS_WARNING_TITLE               32857
+#define IDS_PRIORITY_CHANGE_MESSAGE     32858
+#define IDS_PRIORITY_UNABLE2CHANGE      32859
+#define IDS_TERMINATE_MESSAGE           32860
+#define IDS_TERMINATE_UNABLE2TERMINATE  32861
+#define IDS_DEBUG_MESSAGE               32862
+#define IDS_DEBUG_UNABLE2DEBUG          32863
+#define IDS_AFFINITY_ERROR_MESSAGE      32864
+#define IDS_AFFINITY_ERROR_TITLE        32865
+#define IDS_AFFINITY_UNABLE2ACCESS      32866
+#define IDS_SYSTEM_IDLE_PROCESS         32867
+#define IDS_APPLICATION_NOT_RESPONDING  32868
+#define IDS_APPLICATION_RUNNING         32869
+#define IDS_APPLICATION_TASK            32870
+#define IDS_APPLICATION_STATUS          32871
+#define IDS_DEBUG_CHANNEL               32872
 #define IDC_STATIC                      -1
 
 /*

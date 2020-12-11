@@ -16,13 +16,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  *  o DPMSGCMD_ENUMSESSIONSREPLY & DPMSGCMD_ENUMSESSIONSREQUEST
  *    Have most fields understood, but not all.  Everything seems to work.
  *  o DPMSGCMD_REQUESTNEWPLAYERID & DPMSGCMD_NEWPLAYERIDREPLY
- *    Barely work. This needs to be completed for sessions to start.
+ *    Barely works. This needs to be completed for sessions to start.
  *  o A small issue will be the fact that DirectX 6.1(ie. DirectPlay4)
  *    introduces a layer of functionality inside the DP objects which 
  *    provide guaranteed protocol delivery.  This is even if the native
@@ -30,7 +30,7 @@
  *    to leave this kind of implementation to as close to the end as 
  *    possible. However, I will implement an abstraction layer, where 
  *    possible, for this functionality. It will do nothing to start, but 
- *    will require only the implementation of the guaranteness to give 
+ *    will require only the implementation of the guarantee to give
  *    final implementation.
  *
  * TODO:
@@ -47,9 +47,9 @@
  *  - Handles need to be correctly reference counted
  *  - Check if we need to deallocate any list objects when destroying 
  *    a dplay interface
- *  - RunApplication process spawning needs to have correct syncronization.
+ *  - RunApplication process spawning needs to have correct synchronization.
  *  - Need to get inter lobby messages working.
- *  - Decypher dplay messages between applications and implement...
+ *  - Decipher dplay messages between applications and implement...
  *  - Need to implement lobby session spawning.
  *  - Improve footprint and realtime blocking by setting up a separate data share
  *    between lobby application and client since there can be multiple apps per
@@ -61,10 +61,14 @@
 #include "winerror.h"
 #include "windef.h"
 #include "winbase.h"
+#include "objbase.h"
+#include "rpcproxy.h"
 #include "wine/debug.h"
 #include "dplayx_global.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dplay);
+
+static HINSTANCE instance;
 
 /* This is a globally exported variable at ordinal 6 of DPLAYX.DLL */
 DWORD gdwDPlaySPRefCount = 0; /* FIXME: Should it be initialized here? */
@@ -73,11 +77,12 @@ DWORD gdwDPlaySPRefCount = 0; /* FIXME: Should it be initialized here? */
 BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 {
 
-  TRACE( "(%p,%ld,%p)\n", hinstDLL, fdwReason, lpvReserved );
+  TRACE( "(%p,%d,%p)\n", hinstDLL, fdwReason, lpvReserved );
 
   switch ( fdwReason )
   {
     case DLL_PROCESS_ATTACH:
+        instance = hinstDLL;
         DisableThreadLibraryCalls(hinstDLL);
         /* First instance perform construction of global processor data */
         return DPLAYX_ConstructData();
@@ -102,10 +107,26 @@ HRESULT WINAPI DllCanUnloadNow(void)
   HRESULT hr = ( gdwDPlaySPRefCount > 0 ) ? S_FALSE : S_OK;
 
   /* FIXME: Should I be putting a check in for class factory objects
-   *        as well
+   *        as well?
    */
 
-  TRACE( ": returning 0x%08lx\n", hr );
+  TRACE( ": returning 0x%08x\n", hr );
 
   return hr;
+}
+
+/***********************************************************************
+ *		DllRegisterServer (DPLAYX.@)
+ */
+HRESULT WINAPI DllRegisterServer(void)
+{
+    return __wine_register_resources( instance );
+}
+
+/***********************************************************************
+ *		DllUnregisterServer (DPLAYX.@)
+ */
+HRESULT WINAPI DllUnregisterServer(void)
+{
+    return __wine_unregister_resources( instance );
 }

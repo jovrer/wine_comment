@@ -38,11 +38,19 @@
 46 stub -noname ClassicAdjustWindowRectEx
 48 stub -noname GetThemeParseErrorInfo
 60 stub -noname CreateThemeDataFromObjects
-61 stub -noname OpenThemeDataEx
+61 stdcall OpenThemeDataEx(ptr wstr long)
 62 stub -noname ServerClearStockObjects
 63 stub -noname MarkSelection
 
 # Standard functions
+@ stdcall BeginBufferedAnimation(ptr ptr ptr long ptr ptr ptr ptr)
+@ stdcall BeginBufferedPaint(ptr ptr long ptr ptr)
+@ stdcall BufferedPaintClear(ptr ptr)
+@ stdcall BufferedPaintInit()
+@ stdcall BufferedPaintRenderAnimation(ptr ptr)
+@ stdcall BufferedPaintSetAlpha(ptr ptr long)
+@ stdcall BufferedPaintStopAllAnimations(ptr)
+@ stdcall BufferedPaintUnInit()
 @ stdcall CloseThemeData(ptr)
 @ stdcall DrawThemeBackground(ptr ptr long long ptr ptr)
 @ stdcall DrawThemeBackgroundEx(ptr ptr long long ptr ptr)
@@ -50,9 +58,16 @@
 @ stdcall DrawThemeIcon(ptr ptr long long ptr ptr long)
 @ stdcall DrawThemeParentBackground(ptr ptr ptr)
 @ stdcall DrawThemeText(ptr ptr long long wstr long long long ptr)
+@ stdcall DrawThemeTextEx(ptr ptr long long wstr long long ptr ptr)
 @ stdcall EnableThemeDialogTexture(ptr long)
 @ stdcall EnableTheming(long)
-@ stdcall GetCurrentThemeName(wstr long wstr long wstr long)
+@ stdcall EndBufferedAnimation(ptr long)
+@ stdcall EndBufferedPaint(ptr long)
+@ stdcall GetBufferedPaintBits(ptr ptr ptr)
+@ stdcall GetBufferedPaintDC(ptr)
+@ stdcall GetBufferedPaintTargetDC(ptr)
+@ stdcall GetBufferedPaintTargetRect(ptr ptr)
+@ stdcall GetCurrentThemeName(ptr long ptr long ptr long)
 @ stdcall GetThemeAppProperties()
 @ stdcall GetThemeBackgroundContentRect(ptr ptr long long ptr ptr)
 @ stdcall GetThemeBackgroundExtent(ptr ptr long long ptr ptr)
@@ -81,9 +96,11 @@
 @ stdcall GetThemeSysString(ptr long wstr long)
 @ stdcall GetThemeTextExtent(ptr ptr long long wstr long long ptr ptr)
 @ stdcall GetThemeTextMetrics(ptr ptr long long ptr)
+@ stdcall GetThemeTransitionDuration(ptr long long long long ptr)
 @ stdcall GetWindowTheme(ptr)
-@ stdcall HitTestThemeBackground(ptr long long long long ptr long double ptr)
+@ stdcall HitTestThemeBackground(ptr long long long long ptr long int64 ptr)
 @ stdcall IsAppThemed()
+@ stdcall IsCompositionActive()
 @ stdcall IsThemeActive()
 @ stdcall IsThemeBackgroundPartiallyTransparent(ptr long long)
 @ stdcall IsThemeDialogTextureEnabled(ptr)
@@ -91,3 +108,4 @@
 @ stdcall OpenThemeData(ptr wstr)
 @ stdcall SetThemeAppProperties(long)
 @ stdcall SetWindowTheme(ptr wstr wstr)
+@ stdcall SetWindowThemeAttribute(ptr long ptr long)

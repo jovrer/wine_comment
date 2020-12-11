@@ -15,11 +15,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "thread.h"
 #include "user.h"
+#include "request.h"
 
 struct user_handle
 {
@@ -36,22 +37,22 @@ static int allocated_handles;
 static struct user_handle *handle_to_entry( user_handle_t handle )
 {
     unsigned short generation;
-    int index = (((unsigned int)handle & 0xffff) - FIRST_USER_HANDLE) >> 1;
+    int index = ((handle & 0xffff) - FIRST_USER_HANDLE) >> 1;
     if (index < 0 || index >= nb_handles) return NULL;
     if (!handles[index].type) return NULL;
-    generation = (unsigned int)handle >> 16;
+    generation = handle >> 16;
     if (generation == handles[index].generation || !generation || generation == 0xffff)
         return &handles[index];
     return NULL;
 }
 
-inline static user_handle_t entry_to_handle( struct user_handle *ptr )
+static inline user_handle_t entry_to_handle( struct user_handle *ptr )
 {
-    int index = ptr - handles;
-    return (user_handle_t)(((index << 1) + FIRST_USER_HANDLE) + (ptr->generation << 16));
+    unsigned int index = ptr - handles;
+    return (index << 1) + FIRST_USER_HANDLE + (ptr->generation << 16);
 }
 
-inline static struct user_handle *alloc_user_entry(void)
+static inline struct user_handle *alloc_user_entry(void)
 {
     struct user_handle *handle;
 
@@ -78,7 +79,7 @@ inline static struct user_handle *alloc_user_entry(void)
     return handle;
 }
 
-inline static void *free_user_entry( struct user_handle *ptr )
+static inline void *free_user_entry( struct user_handle *ptr )
 {
     void *ret;
     ret = ptr->ptr;
@@ -113,7 +114,7 @@ user_handle_t get_user_full_handle( user_handle_t handle )
 {
     struct user_handle *entry;
 
-    if ((unsigned int)handle >> 16) return handle;
+    if (handle >> 16) return handle;
     if (!(entry = handle_to_entry( handle ))) return handle;
     return entry_to_handle( entry );
 }
@@ -149,7 +150,7 @@ void *next_user_handle( user_handle_t *handle, enum user_object type )
     if (!*handle) entry = handles;
     else
     {
-        int index = (((unsigned int)*handle & 0xffff) - FIRST_USER_HANDLE) >> 1;
+        int index = ((*handle & 0xffff) - FIRST_USER_HANDLE) >> 1;
         if (index < 0 || index >= nb_handles) return NULL;
         entry = handles + index + 1;  /* start from the next one */
     }
@@ -163,4 +164,32 @@ void *next_user_handle( user_handle_t *handle, enum user_object type )
         entry++;
     }
     return NULL;
+}
+
+/* free client-side user handles managed by the process */
+void free_process_user_handles( struct process *process )
+{
+    unsigned int i;
+
+    for (i = 0; i < nb_handles; i++)
+        if (handles[i].type == USER_CLIENT && handles[i].ptr == process)
+            free_user_entry( &handles[i] );
+}
+
+/* allocate an arbitrary user handle */
+DECL_HANDLER(alloc_user_handle)
+{
+    reply->handle = alloc_user_handle( current->process, USER_CLIENT );
+}
+
+
+/* free an arbitrary user handle */
+DECL_HANDLER(free_user_handle)
+{
+    struct user_handle *entry;
+
+    if ((entry = handle_to_entry( req->handle )) && entry->type == USER_CLIENT)
+        free_user_entry( entry );
+    else
+        set_error( STATUS_INVALID_HANDLE );
 }

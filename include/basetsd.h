@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_BASETSD_H
@@ -27,18 +27,16 @@ extern "C" {
 #endif /* defined(__cplusplus) */
 
 /*
- * Win32 was easy to implement under Unix since most (all?) 32-bit
- * Unices uses the same type model (ILP32) as Win32, where int, long
- * and pointer are 32-bit.
+ * Win32 was easy to implement under Unix since most 32-bit Unices use the same
+ * type model (ILP32) as Win32, where int, long and pointer are 32-bit.
  *
- * Win64, however, will cause some problems when implemented under Unix.
- * Linux/{Alpha, Sparc64} and most (all?) other 64-bit Unices uses
- * the LP64 type model where int is 32-bit and long and pointer are
- * 64-bit. Win64 on the other hand uses the P64 (sometimes called LLP64)
- * type model where int and long are 32 bit and pointer is 64-bit.
+ * Win64, however, can cause some problems. Most 64-bit Unices use the LP64 type
+ * model where int is 32-bit and long and pointer are 64-bit. Win64 on the other
+ * hand uses the LLP64 type model where int and long are 32 bit and pointer is
+ * 64-bit.
  */
 
-#ifdef __x86_64__
+#if (defined(__x86_64__) || defined(__powerpc64__) || defined(__aarch64__)) && !defined(_WIN64)
 #define _WIN64
 #endif
 
@@ -59,7 +57,7 @@ extern "C" {
 #    define __int32 int
 #  endif
 #  ifndef __int64
-#    ifdef _WIN64
+#    if defined(_WIN64) && !defined(__MINGW64__)
 #      define __int64 long
 #    else
 #      define __int64 long long
@@ -102,20 +100,48 @@ typedef unsigned __int64 DECLSPEC_ALIGN(8) ULONG64, *PULONG64;
 typedef unsigned __int64 DECLSPEC_ALIGN(8) DWORD64, *PDWORD64;
 #endif
 
-/* Win32 or Win64 dependent typedef/defines. */
+/* Basic pointer-sized integer types */
 
-#ifdef _WIN64
+#if defined(__midl) || defined(__WIDL__)
+
+typedef /* [public] */ signed __int3264   INT_PTR, *PINT_PTR;
+typedef /* [public] */ signed __int3264   LONG_PTR, *PLONG_PTR;
+typedef /* [public] */ unsigned __int3264 UINT_PTR, *PUINT_PTR;
+typedef /* [public] */ unsigned __int3264 ULONG_PTR, *PULONG_PTR;
+typedef ULONG_PTR                   DWORD_PTR, *PDWORD_PTR;
+
+#elif defined(_WIN64)
+
+#define __int3264 __int64
 
 typedef signed __int64   INT_PTR, *PINT_PTR;
 typedef signed __int64   LONG_PTR, *PLONG_PTR;
 typedef unsigned __int64 UINT_PTR, *PUINT_PTR;
 typedef unsigned __int64 ULONG_PTR, *PULONG_PTR;
-typedef unsigned __int64 DWORD_PTR, *PDWORD_PTR;
+typedef ULONG_PTR        DWORD_PTR, *PDWORD_PTR;
+
+#else
+
+#define __int3264 __int32
+
+typedef long          INT_PTR, *PINT_PTR;
+typedef unsigned long UINT_PTR, *PUINT_PTR;
+typedef long          LONG_PTR, *PLONG_PTR;
+typedef unsigned long ULONG_PTR, *PULONG_PTR;
+typedef ULONG_PTR     DWORD_PTR, *PDWORD_PTR;
+
+#endif
+
+/* Win32 or Win64 dependent typedef/defines. */
+
+#ifdef _WIN64
 
 #define MAXINT_PTR 0x7fffffffffffffff
 #define MININT_PTR 0x8000000000000000
 #define MAXUINT_PTR 0xffffffffffffffff
 
+typedef __int64 SHANDLE_PTR;
+typedef unsigned __int64 HANDLE_PTR;
 typedef int HALF_PTR, *PHALF_PTR;
 typedef unsigned int UHALF_PTR, *PUHALF_PTR;
 
@@ -123,18 +149,88 @@ typedef unsigned int UHALF_PTR, *PUHALF_PTR;
 #define MINHALF_PTR 0x80000000
 #define MAXUHALF_PTR 0xffffffff
 
-#else /* FIXME: defined(_WIN32) */
+#if !defined(__midl) && !defined(__WIDL__)
 
-typedef int INT_PTR, *PINT_PTR;
-typedef long LONG_PTR, *PLONG_PTR;
-typedef unsigned int UINT_PTR, *PUINT_PTR;
-typedef unsigned long ULONG_PTR, *PULONG_PTR;
-typedef ULONG_PTR DWORD_PTR, *PDWORD_PTR;
+static inline ULONG32 HandleToULong(const void *h)
+{
+    return (ULONG32)(ULONG_PTR)h;
+}
+
+static inline LONG32 HandleToLong(const void *h)
+{
+    return (LONG32)(LONG_PTR)h;
+}
+
+static inline void *ULongToHandle(ULONG32 ul)
+{
+    return (void *)(ULONG_PTR)ul;
+}
+
+static inline void *LongToHandle(LONG32 l)
+{
+    return (void *)(LONG_PTR)l;
+}
+
+static inline ULONG32 PtrToUlong(const void *p)
+{
+    return (ULONG32)(ULONG_PTR)p;
+}
+
+static inline LONG32 PtrToLong(const void *p)
+{
+    return (LONG32)(LONG_PTR)p;
+}
+
+static inline UINT32 PtrToUint(const void *p)
+{
+    return (UINT32)(UINT_PTR)p;
+}
+
+static inline INT32 PtrToInt(const void *p)
+{
+    return (INT32)(INT_PTR)p;
+}
+
+static inline UINT16 PtrToUshort(const void *p)
+{
+    return (UINT16)(ULONG_PTR)p;
+}
+
+static inline INT16 PtrToShort(const void *p)
+{
+    return (INT16)(LONG_PTR)p;
+}
+
+static inline void *IntToPtr(INT32 i)
+{
+    return (void *)(INT_PTR)i;
+}
+
+static inline void *UIntToPtr(UINT32 ui)
+{
+    return (void *)(UINT_PTR)ui;
+}
+
+static inline void *LongToPtr(LONG32 l)
+{
+    return (void *)(LONG_PTR)l;
+}
+
+static inline void *ULongToPtr(ULONG32 ul)
+{
+    return (void *)(ULONG_PTR)ul;
+}
+
+#endif  /* !__midl && !__WIDL__ */
+
+#else /* FIXME: defined(_WIN32) */
 
 #define MAXINT_PTR 0x7fffffff
 #define MININT_PTR 0x80000000
 #define MAXUINT_PTR 0xffffffff
 
+typedef long SHANDLE_PTR;
+typedef unsigned long HANDLE_PTR;
 typedef signed short HALF_PTR, *PHALF_PTR;
 typedef unsigned short UHALF_PTR, *PUHALF_PTR;
 
@@ -142,7 +238,27 @@ typedef unsigned short UHALF_PTR, *PUHALF_PTR;
 #define MAXHALF_PTR 0x7fff
 #define MINHALF_PTR 0x8000
 
+#define HandleToULong(h)        ((ULONG)(ULONG_PTR)(h))
+#define HandleToLong(h)         ((LONG)(LONG_PTR)(h))
+#define ULongToHandle(ul)       ((HANDLE)(ULONG_PTR)(ul))
+#define LongToHandle(l)         ((HANDLE)(LONG_PTR)(l))
+#define PtrToUlong(p)           ((ULONG)(ULONG_PTR)(p))
+#define PtrToLong(p)            ((LONG)(LONG_PTR)(p))
+#define PtrToUint(p)            ((UINT)(UINT_PTR)(p))
+#define PtrToInt(p)             ((INT)(INT_PTR)(p))
+#define PtrToUshort(p)          ((USHORT)(ULONG_PTR)(p))
+#define PtrToShort(p)           ((SHORT)(LONG_PTR)(p))
+#define IntToPtr(i)             ((void *)(INT_PTR)((INT)i))
+#define UIntToPtr(ui)           ((void *)(UINT_PTR)((UINT)ui))
+#define LongToPtr(l)            ((void *)(LONG_PTR)((LONG)l))
+#define ULongToPtr(ul)          ((void *)(ULONG_PTR)((ULONG)ul))
+
 #endif /* defined(_WIN64) || defined(_WIN32) */
+
+#define HandleToUlong(h)        HandleToULong(h)
+#define UlongToHandle(ul)       ULongToHandle(ul)
+#define UintToPtr(ui)           UIntToPtr(ui)
+#define UlongToPtr(ul)          ULongToPtr(ul)
 
 typedef LONG_PTR SSIZE_T, *PSSIZE_T;
 typedef ULONG_PTR SIZE_T, *PSIZE_T;
@@ -161,10 +277,6 @@ typedef ULONG_PTR KAFFINITY, *PKAFFINITY;
 # undef  WORDS_BIGENDIAN
 # undef  BITFIELDS_BIGENDIAN
 # define ALLOW_UNALIGNED_ACCESS
-#elif defined(__sparc__)
-# define WORDS_BIGENDIAN
-# define BITFIELDS_BIGENDIAN
-# undef  ALLOW_UNALIGNED_ACCESS
 #elif defined(__powerpc__)
 # define WORDS_BIGENDIAN
 # define BITFIELDS_BIGENDIAN
@@ -173,7 +285,31 @@ typedef ULONG_PTR KAFFINITY, *PKAFFINITY;
 # undef  WORDS_BIGENDIAN
 # undef  BITFIELDS_BIGENDIAN
 # undef  ALLOW_UNALIGNED_ACCESS
-#elif !defined(RC_INVOKED) && !defined(__WIDL__)
+#elif defined(__ARMEB__)
+# define WORDS_BIGENDIAN
+# define BITFIELDS_BIGENDIAN
+# undef  ALLOW_UNALIGNED_ACCESS
+#elif defined(__ARMEL__) || defined(__arm__)
+# undef  WORDS_BIGENDIAN
+# undef  BITFIELDS_BIGENDIAN
+# undef  ALLOW_UNALIGNED_ACCESS
+#elif defined(__AARCH64EB__)
+# define WORDS_BIGENDIAN
+# define BITFIELDS_BIGENDIAN
+# undef  ALLOW_UNALIGNED_ACCESS
+#elif defined(__AARCH64EL__) || defined(__aarch64__)
+# undef  WORDS_BIGENDIAN
+# undef  BITFIELDS_BIGENDIAN
+# undef  ALLOW_UNALIGNED_ACCESS
+#elif defined(__MIPSEB__)
+# define WORDS_BIGENDIAN
+# define BITFIELDS_BIGENDIAN
+# undef  ALLOW_UNALIGNED_ACCESS
+#elif defined(__MIPSEL__)
+# undef  WORDS_BIGENDIAN
+# undef  BITFIELDS_BIGENDIAN
+# undef  ALLOW_UNALIGNED_ACCESS
+#elif !defined(RC_INVOKED) && !defined(__WIDL__) && !defined(__midl)
 # error Unknown CPU architecture!
 #endif
 

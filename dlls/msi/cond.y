@@ -17,8 +17,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#define COBJMACROS
 
 #include "config.h"
 
@@ -29,18 +31,17 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
-#include "wine/debug.h"
-#include "wine/unicode.h"
-
 #include "msi.h"
 #include "msiquery.h"
+#include "objbase.h"
+#include "oleauto.h"
+
 #include "msipriv.h"
-#include "action.h"
-
-#define YYLEX_PARAM info
-#define YYPARSE_PARAM info
-
-static int COND_error(const char *str);
+#include "winemsi.h"
+#include "wine/debug.h"
+#include "wine/exception.h"
+#include "wine/unicode.h"
+#include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msi);
 
@@ -50,6 +51,7 @@ typedef struct tag_yyinput
     LPCWSTR str;
     INT    n;
     MSICONDITION result;
+    struct list mem;
 } COND_input;
 
 struct cond_str {
@@ -57,36 +59,76 @@ struct cond_str {
     INT len;
 };
 
-static LPWSTR COND_GetString( struct cond_str *str );
-static LPWSTR COND_GetLiteral( struct cond_str *str );
-static int COND_lex( void *COND_lval, COND_input *info);
-static const WCHAR szEmpty[] = { 0 };
+struct value {
+    enum value_type {
+        VALUE_INTEGER,
+        VALUE_LITERAL,
+        VALUE_SYMBOL
+    } type;
+    union {
+        INT integer;
+        WCHAR *string;
+    } u;
+};
+
+static LPWSTR COND_GetString( COND_input *info, const struct cond_str *str );
+static LPWSTR COND_GetLiteral( COND_input *info, const struct cond_str *str );
+static int cond_lex( void *COND_lval, COND_input *info);
+static int cond_error( COND_input *info, const char *str);
+
+static void *cond_alloc( COND_input *cond, unsigned int sz );
+static void *cond_track_mem( COND_input *cond, void *ptr, unsigned int sz );
+static void cond_free( void *ptr );
 
 static INT compare_int( INT a, INT operator, INT b );
-static INT compare_string( LPCWSTR a, INT operator, LPCWSTR b );
+static INT compare_string( LPCWSTR a, INT operator, LPCWSTR b, BOOL convert );
 
-static INT compare_and_free_strings( LPWSTR a, INT op, LPWSTR b )
+static BOOL num_from_prop( LPCWSTR p, INT *val )
 {
-    INT r;
+    INT ret = 0, sign = 1;
 
-    r = compare_string( a, op, b );
-    msi_free( a );
-    msi_free( b );
-    return r;
+    if (!p)
+        return FALSE;
+    if (*p == '-')
+    {
+        sign = -1;
+        p++;
+    }
+    if (!*p)
+        return FALSE;
+    while (*p)
+    {
+        if( *p < '0' || *p > '9' )
+            return FALSE;
+        ret = ret*10 + (*p - '0');
+        p++;
+    }
+    *val = ret*sign;
+    return TRUE;
+}
+
+static void value_free( struct value val )
+{
+    if (val.type != VALUE_INTEGER)
+        cond_free( val.u.string );
 }
 
 %}
 
+%lex-param { COND_input *info }
+%parse-param { COND_input *info }
 %pure-parser
 
 %union
 {
     struct cond_str str;
-    LPWSTR    string;
-    INT       value;
+    struct value value;
+    LPWSTR identifier;
+    INT operator;
+    BOOL bool;
 }
 
-%token COND_SPACE COND_EOF COND_SPACE
+%token COND_SPACE COND_EOF
 %token COND_OR COND_AND COND_NOT COND_XOR COND_IMP COND_EQV
 %token COND_LT COND_GT COND_EQ COND_NE COND_GE COND_LE
 %token COND_ILT COND_IGT COND_IEQ COND_INE COND_IGE COND_ILE
@@ -97,9 +139,10 @@ static INT compare_and_free_strings( LPWSTR a, INT op, LPWSTR b )
 
 %nonassoc COND_ERROR COND_EOF
 
-%type <value> expression boolean_term boolean_factor 
-%type <value> value_i integer operator
-%type <string> identifier symbol_s value_s literal
+%type <bool> expression boolean_term boolean_factor
+%type <value> value
+%type <identifier> identifier
+%type <operator> operator
 
 %%
 
@@ -153,51 +196,50 @@ boolean_term:
 boolean_factor:
     COND_NOT boolean_factor
         {
-            $$ = $2 ? 0 : 1;
+            $$ = !$2;
         }
-  | value_i
+  | value
         {
-            $$ = $1 ? 1 : 0;
+            if ($1.type == VALUE_INTEGER)
+                $$ = $1.u.integer ? 1 : 0;
+            else
+                $$ = $1.u.string && $1.u.string[0];
+            value_free( $1 );
         }
-  | value_s
+  | value operator value
         {
-            $$ = ($1 && $1[0]) ? 1 : 0;
-        }
-  | value_i operator value_i
-        {
-            $$ = compare_int( $1, $2, $3 );
-        }
-  | symbol_s operator value_i
-        {
-            $$ = compare_int( $1 ? atoiW($1) : 0, $2, $3 );
-        }
-  | value_i operator symbol_s
-        {
-            $$ = compare_int( $1, $2, $3 ? atoiW($3) : 0 );
-        }
-  | symbol_s operator symbol_s
-        {
-            $$ = compare_and_free_strings( $1, $2, $3 );
-        }
-  | symbol_s operator literal
-        {
-            $$ = compare_and_free_strings( $1, $2, $3 );
-        }
-  | literal operator symbol_s
-        {
-            $$ = compare_and_free_strings( $1, $2, $3 );
-        }
-  | literal operator literal
-        {
-            $$ = compare_and_free_strings( $1, $2, $3 );
-        }
-  | literal operator value_i
-        {
-            $$ = 0;
-        }
-  | value_i operator literal
-        {
-            $$ = 0;
+            if ($1.type == VALUE_INTEGER && $3.type == VALUE_INTEGER)
+            {
+                $$ = compare_int($1.u.integer, $2, $3.u.integer);
+            }
+            else if ($1.type != VALUE_INTEGER && $3.type != VALUE_INTEGER)
+            {
+                $$ = compare_string($1.u.string, $2, $3.u.string,
+                        $1.type == VALUE_SYMBOL || $3.type == VALUE_SYMBOL);
+            }
+            else if ($1.type == VALUE_LITERAL || $3.type == VALUE_LITERAL)
+            {
+                $$ = ($2 == COND_NE || $2 == COND_INE );
+            }
+            else if ($1.type == VALUE_SYMBOL) /* symbol operator integer */
+            {
+                int num;
+                if (num_from_prop( $1.u.string, &num ))
+                    $$ = compare_int( num, $2, $3.u.integer );
+                else
+                    $$ = ($2 == COND_NE || $2 == COND_INE );
+            }
+            else /* integer operator symbol */
+            {
+                int num;
+                if (num_from_prop( $3.u.string, &num ))
+                    $$ = compare_int( $1.u.integer, $2, num );
+                else
+                    $$ = ($2 == COND_NE || $2 == COND_INE );
+            }
+
+            value_free( $1 );
+            value_free( $3 );
         }
   | COND_LPAR expression COND_RPAR
         {
@@ -227,107 +269,131 @@ operator:
   | COND_IRHS { $$ = COND_IRHS; }
     ;
 
-value_s:
-    symbol_s
-    {
-        $$ = $1;
-    } 
-  | literal
-    {
-        $$ = $1;
-    }
-    ;
-
-literal:
-    COND_LITER
+value:
+    identifier
         {
-            $$ = COND_GetLiteral(&$1);
-            if( !$$ )
+            COND_input* cond = (COND_input*) info;
+            UINT len;
+
+            $$.type = VALUE_SYMBOL;
+            $$.u.string = msi_dup_property( cond->package->db, $1 );
+            if ($$.u.string)
+            {
+                len = (lstrlenW($$.u.string) + 1) * sizeof (WCHAR);
+                $$.u.string = cond_track_mem( cond, $$.u.string, len );
+            }
+            cond_free( $1 );
+        }
+  | COND_PERCENT identifier
+        {
+            COND_input* cond = (COND_input*) info;
+            UINT len = GetEnvironmentVariableW( $2, NULL, 0 );
+            $$.type = VALUE_SYMBOL;
+            $$.u.string = NULL;
+            if (len++)
+            {
+                $$.u.string = cond_alloc( cond, len*sizeof (WCHAR) );
+                if( !$$.u.string )
+                    YYABORT;
+                GetEnvironmentVariableW( $2, $$.u.string, len );
+            }
+            cond_free( $2 );
+        }
+  | COND_LITER
+        {
+            COND_input* cond = (COND_input*) info;
+            $$.type = VALUE_LITERAL;
+            $$.u.string = COND_GetLiteral( cond, &$1 );
+            if( !$$.u.string )
                 YYABORT;
         }
-    ;
-
-value_i:
-    integer
+  | COND_NUMBER
         {
-            $$ = $1;
+            COND_input* cond = (COND_input*) info;
+            LPWSTR szNum = COND_GetString( cond, &$1 );
+            if( !szNum )
+                YYABORT;
+            $$.type = VALUE_INTEGER;
+            $$.u.integer = atoiW( szNum );
+            cond_free( szNum );
         }
   | COND_DOLLARS identifier
         {
             COND_input* cond = (COND_input*) info;
             INSTALLSTATE install = INSTALLSTATE_UNKNOWN, action = INSTALLSTATE_UNKNOWN;
       
-            MSI_GetComponentStateW(cond->package, $2, &install, &action );
-            $$ = action;
-            msi_free( $2 );
+            if(MSI_GetComponentStateW(cond->package, $2, &install, &action ) != ERROR_SUCCESS)
+            {
+                $$.type = VALUE_LITERAL;
+                $$.u.string = NULL;
+            }
+            else
+            {
+                $$.type = VALUE_INTEGER;
+                $$.u.integer = action;
+            }
+            cond_free( $2 );
         }
   | COND_QUESTION identifier
         {
             COND_input* cond = (COND_input*) info;
             INSTALLSTATE install = INSTALLSTATE_UNKNOWN, action = INSTALLSTATE_UNKNOWN;
       
-            MSI_GetComponentStateW(cond->package, $2, &install, &action );
-            $$ = install;
-            msi_free( $2 );
+            if(MSI_GetComponentStateW(cond->package, $2, &install, &action ) != ERROR_SUCCESS)
+            {
+                $$.type = VALUE_LITERAL;
+                $$.u.string = NULL;
+            }
+            else
+            {
+                $$.type = VALUE_INTEGER;
+                $$.u.integer = install;
+            }
+            cond_free( $2 );
         }
   | COND_AMPER identifier
         {
             COND_input* cond = (COND_input*) info;
-            INSTALLSTATE install = INSTALLSTATE_UNKNOWN, action = INSTALLSTATE_UNKNOWN;
+            INSTALLSTATE install, action;
       
-            MSI_GetFeatureStateW(cond->package, $2, &install, &action );
-            $$ = action;
-            msi_free( $2 );
+            if (MSI_GetFeatureStateW(cond->package, $2, &install, &action ) != ERROR_SUCCESS)
+            {
+                $$.type = VALUE_LITERAL;
+                $$.u.string = NULL;
+            }
+            else
+            {
+                $$.type = VALUE_INTEGER;
+                $$.u.integer = action;
+            }
+            cond_free( $2 );
         }
   | COND_EXCLAM identifier
         {
             COND_input* cond = (COND_input*) info;
             INSTALLSTATE install = INSTALLSTATE_UNKNOWN, action = INSTALLSTATE_UNKNOWN;
       
-            MSI_GetFeatureStateW(cond->package, $2, &install, &action );
-            $$ = install;
-            msi_free( $2 );
-        }
-    ;
-
-symbol_s:
-    identifier
-        {
-            COND_input* cond = (COND_input*) info;
-
-            $$ = msi_dup_property( cond->package, $1 );
-            msi_free( $1 );
-        }
-    | COND_PERCENT identifier
-        {
-            UINT len = GetEnvironmentVariableW( $2, NULL, 0 );
-            $$ = NULL;
-            if (len++)
+            if(MSI_GetFeatureStateW(cond->package, $2, &install, &action ) != ERROR_SUCCESS)
             {
-                $$ = msi_alloc( len*sizeof (WCHAR) );
-                GetEnvironmentVariableW( $2, $$, len );
+                $$.type = VALUE_LITERAL;
+                $$.u.string = NULL;
             }
-            msi_free( $2 );
+            else
+            {
+                $$.type = VALUE_INTEGER;
+                $$.u.integer = install;
+            }
+            cond_free( $2 );
         }
     ;
 
 identifier:
     COND_IDENT
         {
-            $$ = COND_GetString(&$1);
+            COND_input* cond = (COND_input*) info;
+            $$ = COND_GetString( cond, &$1 );
             if( !$$ )
                 YYABORT;
-        }
-    ;
-
-integer:
-    COND_NUMBER
-        {
-            LPWSTR szNum = COND_GetString(&$1);
-            if( !szNum )
-                YYABORT;
-            $$ = atoiW( szNum );
-            msi_free( szNum );
         }
     ;
 
@@ -359,51 +425,120 @@ static WCHAR *strstriW( const WCHAR *str, const WCHAR *sub )
     return r;
 }
 
-static INT compare_string( LPCWSTR a, INT operator, LPCWSTR b )
+static BOOL str_is_number( LPCWSTR str )
 {
+    int i;
+
+    if (!*str)
+        return FALSE;
+
+    for (i = 0; i < lstrlenW( str ); i++)
+        if (!isdigitW(str[i]))
+            return FALSE;
+
+    return TRUE;
+}
+
+static INT compare_substring( LPCWSTR a, INT operator, LPCWSTR b )
+{
+    int lhs, rhs;
+
+    /* substring operators return 0 if LHS is missing */
+    if (!a || !*a)
+        return 0;
+
+    /* substring operators return 1 if RHS is missing */
+    if (!b || !*b)
+        return 1;
+
+    /* if both strings contain only numbers, use integer comparison */
+    lhs = atoiW(a);
+    rhs = atoiW(b);
+    if (str_is_number(a) && str_is_number(b))
+        return compare_int( lhs, operator, rhs );
+
+    switch (operator)
+    {
+    case COND_SS:
+        return strstrW( a, b ) != 0;
+    case COND_ISS:
+        return strstriW( a, b ) != 0;
+    case COND_LHS:
+    {
+        int l = strlenW( a );
+        int r = strlenW( b );
+        if (r > l) return 0;
+        return !strncmpW( a, b, r );
+    }
+    case COND_RHS:
+    {
+        int l = strlenW( a );
+        int r = strlenW( b );
+        if (r > l) return 0;
+        return !strncmpW( a + (l - r), b, r );
+    }
+    case COND_ILHS:
+    {
+        int l = strlenW( a );
+        int r = strlenW( b );
+        if (r > l) return 0;
+        return !strncmpiW( a, b, r );
+    }
+    case COND_IRHS:
+    {
+        int l = strlenW( a );
+        int r = strlenW( b );
+        if (r > l) return 0;
+        return !strncmpiW( a + (l - r), b, r );
+    }
+    default:
+        ERR("invalid substring operator\n");
+        return 0;
+    }
+    return 0;
+}
+
+static INT compare_string( LPCWSTR a, INT operator, LPCWSTR b, BOOL convert )
+{
+    if (operator >= COND_SS && operator <= COND_RHS)
+        return compare_substring( a, operator, b );
+
     /* null and empty string are equivalent */
     if (!a) a = szEmpty;
     if (!b) b = szEmpty;
+
+    if (convert && str_is_number(a) && str_is_number(b))
+        return compare_int( atoiW(a), operator, atoiW(b) );
 
     /* a or b may be NULL */
     switch (operator)
     {
     case COND_LT:
-        return -1 == lstrcmpW( a, b );
+        return strcmpW( a, b ) < 0;
     case COND_GT:
-        return  1 == lstrcmpW( a, b );
+        return strcmpW( a, b ) > 0;
     case COND_EQ:
-        return  0 == lstrcmpW( a, b );
+        return strcmpW( a, b ) == 0;
     case COND_NE:
-        return  0 != lstrcmpW( a, b );
+        return strcmpW( a, b ) != 0;
     case COND_GE:
-        return -1 != lstrcmpW( a, b );
+        return strcmpW( a, b ) >= 0;
     case COND_LE:
-        return  1 != lstrcmpW( a, b );
-    case COND_SS: /* substring */
-        return strstrW( a, b ) ? 1 : 0;
+        return strcmpW( a, b ) <= 0;
     case COND_ILT:
-        return -1 == lstrcmpiW( a, b );
+        return strcmpiW( a, b ) < 0;
     case COND_IGT:
-        return  1 == lstrcmpiW( a, b );
+        return strcmpiW( a, b ) > 0;
     case COND_IEQ:
-        return  0 == lstrcmpiW( a, b );
+        return strcmpiW( a, b ) == 0;
     case COND_INE:
-        return  0 != lstrcmpiW( a, b );
+        return strcmpiW( a, b ) != 0;
     case COND_IGE:
-        return -1 != lstrcmpiW( a, b );
+        return strcmpiW( a, b ) >= 0;
     case COND_ILE:
-        return  1 != lstrcmpiW( a, b );
-    case COND_ISS:
-        return strstriW( a, b ) ? 1 : 0;
-    case COND_LHS:
-    case COND_RHS:
-    case COND_ILHS:
-    case COND_IRHS:
-        ERR("unimplemented string comparison\n");
-        break;
+        return strcmpiW( a, b ) <= 0;
     default:
-        ERR("invalid integer operator\n");
+        ERR("invalid string operator\n");
         return 0;
     }
     return 0;
@@ -431,7 +566,7 @@ static INT compare_int( INT a, INT operator, INT b )
         return a >= b;
     case COND_LE:
     case COND_ILE:
-        return a >= b;
+        return a <= b;
     case COND_SS:
     case COND_ISS:
         return ( a & b ) ? 1 : 0;
@@ -459,22 +594,22 @@ static int COND_GetOperator( COND_input *cond )
         const WCHAR str[4];
         int id;
     } table[] = {
-        { {'~','=',0},     COND_IEQ },
-        { {'~','>','=',0}, COND_ILE },
+        { {'~','<','=',0}, COND_ILE },
         { {'~','>','<',0}, COND_ISS },
         { {'~','>','>',0}, COND_IRHS },
-        { {'~','>',0},     COND_ILT },
         { {'~','<','>',0}, COND_INE },
-        { {'~','<','=',0}, COND_IGE },
+        { {'~','>','=',0}, COND_IGE },
         { {'~','<','<',0}, COND_ILHS },
-        { {'~','<',0},     COND_IGT },
+        { {'~','=',0},     COND_IEQ },
+        { {'~','<',0},     COND_ILT },
+        { {'~','>',0},     COND_IGT },
         { {'>','=',0},     COND_GE  },
         { {'>','<',0},     COND_SS  },
-        { {'>','>',0},     COND_LHS },
-        { {'>',0},         COND_GT  },
+        { {'<','<',0},     COND_LHS },
         { {'<','>',0},     COND_NE  },
         { {'<','=',0},     COND_LE  },
-        { {'<','<',0},     COND_RHS },
+        { {'>','>',0},     COND_RHS },
+        { {'>',0},         COND_GT  },
         { {'<',0},         COND_LT  },
         { {0},             0        }
     };
@@ -513,7 +648,6 @@ static int COND_GetOne( struct cond_str *str, COND_input *cond )
     case '%': rc = COND_PERCENT; break;
     case ' ': rc = COND_SPACE; break;
     case '=': rc = COND_EQ; break;
-        break;
 
     case '~':
     case '<':
@@ -535,8 +669,7 @@ static int COND_GetOne( struct cond_str *str, COND_input *cond )
     if (ch == '"' )
     {
         LPCWSTR p = strchrW( str->data + 1, '"' );
-	if (!p)
-            return COND_ERROR;
+        if (!p) return COND_ERROR;
         len = p - str->data + 1;
         rc = COND_LITER;
     }
@@ -587,7 +720,7 @@ static int COND_GetOne( struct cond_str *str, COND_input *cond )
     return rc;
 }
 
-static int COND_lex( void *COND_lval, COND_input *cond )
+static int cond_lex( void *COND_lval, COND_input *cond )
 {
     int rc;
     struct cond_str *str = COND_lval;
@@ -599,11 +732,11 @@ static int COND_lex( void *COND_lval, COND_input *cond )
     return rc;
 }
 
-static LPWSTR COND_GetString( struct cond_str *str )
+static LPWSTR COND_GetString( COND_input *cond, const struct cond_str *str )
 {
     LPWSTR ret;
 
-    ret = msi_alloc( (str->len+1) * sizeof (WCHAR) );
+    ret = cond_alloc( cond, (str->len+1) * sizeof (WCHAR) );
     if( ret )
     {
         memcpy( ret, str->data, str->len * sizeof(WCHAR));
@@ -613,11 +746,11 @@ static LPWSTR COND_GetString( struct cond_str *str )
     return ret;
 }
 
-static LPWSTR COND_GetLiteral( struct cond_str *str )
+static LPWSTR COND_GetLiteral( COND_input *cond, const struct cond_str *str )
 {
     LPWSTR ret;
 
-    ret = msi_alloc( (str->len-1) * sizeof (WCHAR) );
+    ret = cond_alloc( cond, (str->len-1) * sizeof (WCHAR) );
     if( ret )
     {
         memcpy( ret, str->data+1, (str->len-2) * sizeof(WCHAR) );
@@ -627,7 +760,49 @@ static LPWSTR COND_GetLiteral( struct cond_str *str )
     return ret;
 }
 
-static int COND_error(const char *str)
+static void *cond_alloc( COND_input *cond, unsigned int sz )
+{
+    struct list *mem;
+
+    mem = msi_alloc( sizeof (struct list) + sz );
+    if( !mem )
+        return NULL;
+
+    list_add_head( &(cond->mem), mem );
+    return mem + 1;
+}
+
+static void *cond_track_mem( COND_input *cond, void *ptr, unsigned int sz )
+{
+    void *new_ptr;
+
+    if( !ptr )
+        return ptr;
+
+    new_ptr = cond_alloc( cond, sz );
+    if( !new_ptr )
+    {
+        msi_free( ptr );
+        return NULL;
+    }
+
+    memcpy( new_ptr, ptr, sz );
+    msi_free( ptr );
+    return new_ptr;
+}
+
+static void cond_free( void *ptr )
+{
+    struct list *mem = (struct list *)ptr - 1;
+
+    if( ptr )
+    {
+        list_remove( mem );
+        msi_free( mem );
+    }
+}
+
+static int cond_error( COND_input *info, const char *str )
 {
     TRACE("%s\n", str );
     return 0;
@@ -637,21 +812,32 @@ MSICONDITION MSI_EvaluateConditionW( MSIPACKAGE *package, LPCWSTR szCondition )
 {
     COND_input cond;
     MSICONDITION r;
+    struct list *mem, *safety;
 
     TRACE("%s\n", debugstr_w( szCondition ) );
 
-    if ( szCondition == NULL )
-    	return MSICONDITION_NONE;
+    if (szCondition == NULL) return MSICONDITION_NONE;
 
     cond.package = package;
     cond.str   = szCondition;
     cond.n     = 0;
     cond.result = MSICONDITION_ERROR;
-    
-    if ( !COND_parse( &cond ) )
+
+    list_init( &cond.mem );
+
+    if ( !cond_parse( &cond ) )
         r = cond.result;
     else
         r = MSICONDITION_ERROR;
+
+    LIST_FOR_EACH_SAFE( mem, safety, &cond.mem )
+    {
+        /* The tracked memory lives directly after the list struct */
+        void *ptr = mem + 1;
+        if ( r != MSICONDITION_ERROR )
+            WARN( "condition parser failed to free up some memory: %p\n", ptr );
+        cond_free( ptr );
+    }
 
     TRACE("%i <- %s\n", r, debugstr_w(szCondition));
     return r;
@@ -663,8 +849,29 @@ MSICONDITION WINAPI MsiEvaluateConditionW( MSIHANDLE hInstall, LPCWSTR szConditi
     UINT ret;
 
     package = msihandle2msiinfo( hInstall, MSIHANDLETYPE_PACKAGE);
-    if( !package)
-        return MSICONDITION_ERROR;
+    if( !package )
+    {
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hInstall)))
+            return MSICONDITION_ERROR;
+
+        if (!szCondition)
+            return MSICONDITION_NONE;
+
+        __TRY
+        {
+            ret = remote_EvaluateCondition(remote, szCondition);
+        }
+        __EXCEPT(rpc_filter)
+        {
+            ret = GetExceptionCode();
+        }
+        __ENDTRY
+
+        return ret;
+    }
+
     ret = MSI_EvaluateConditionW( package, szCondition );
     msiobj_release( &package->hdr );
     return ret;

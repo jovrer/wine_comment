@@ -3,28 +3,27 @@
  *
  *  Copyright (C) 2003-2004 Rok Mandeljc
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU Lesser General Public
+ *  License as published by the Free Software Foundation; either
+ *  version 2.1 of the License, or (at your option) any later version.
  *
  *  This program is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU Library General Public License for more details.
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  Lesser General Public License for more details.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *  You should have received a copy of the GNU Lesser General Public
+ *  License along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DMUSIC_FILEFORMATS_H
 #define __WINE_DMUSIC_FILEFORMATS_H
 
-#ifndef __WINESRC__
 #include <windows.h>
-#endif /* __WINESRC__ */
 
+#define COM_NO_WINDOWS_H
 #include <objbase.h>
 #include <mmsystem.h>
 #include <pshpack8.h>
@@ -35,7 +34,7 @@ extern "C" {
 
 
 /*****************************************************************************
- * FOURCC Definitons
+ * FOURCC Definitions
  */
 /* Common chunks */
 #define DMUS_FOURCC_GUID_CHUNK                     mmioFOURCC('g','u','i','d')
@@ -626,7 +625,7 @@ struct _DMUS_IO_COMMAND {
 
 struct _DMUS_IO_TOOL_HEADER {
 	GUID   guidClassID;
-	long   lIndex;
+	LONG   lIndex;
 	DWORD  cPChannels;
 	FOURCC ckid;
 	FOURCC fccType;
@@ -684,12 +683,12 @@ struct _DMUS_IO_WAVE_HEADER {
 };
 
 struct _DMUS_IO_WAVE_TRACK_HEADER {
-	long  lVolume;
+	LONG  lVolume;
 	DWORD dwFlags;
 };
 
 struct _DMUS_IO_WAVE_PART_HEADER {
-    long  lVolume;
+    LONG  lVolume;
     DWORD dwVariations;
     DWORD dwPChannel;
     DWORD dwLockToPart;
@@ -698,8 +697,8 @@ struct _DMUS_IO_WAVE_PART_HEADER {
 };
 
 struct _DMUS_IO_WAVE_ITEM_HEADER  {
-	long           lVolume;
-	long           lPitch;
+	LONG           lVolume;
+	LONG           lPitch;
 	DWORD          dwVariations;
 	REFERENCE_TIME rtTime;
 	REFERENCE_TIME rtStartOffset;

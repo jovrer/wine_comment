@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINE_WINUSER16_H
@@ -401,9 +401,6 @@ typedef struct
 #define SBM_SETRANGE16           (WM_USER+2)
 #define SBM_GETRANGE16           (WM_USER+3)
 #define SBM_ENABLE_ARROWS16      (WM_USER+4)
-#define SBM_SETRANGEREDRAW16     WM_NULL  /* Not in Win16 */
-#define SBM_SETSCROLLINFO16      WM_NULL  /* Not in Win16 */
-#define SBM_GETSCROLLINFO16      WM_NULL  /* Not in Win16 */
 
   /* CBT hook structures */
 
@@ -449,9 +446,6 @@ typedef struct
 #define BM_GETSTATE16          (WM_USER+2)
 #define BM_SETSTATE16          (WM_USER+3)
 #define BM_SETSTYLE16          (WM_USER+4)
-#define BM_CLICK16             WM_NULL  /* Does not exist in Win16 */
-#define BM_GETIMAGE16          WM_NULL  /* Does not exist in Win16 */
-#define BM_SETIMAGE16          WM_NULL  /* Does not exist in Win16 */
 
 /* Static Control Messages */
 #define STM_SETICON16       (WM_USER+0)
@@ -489,15 +483,6 @@ typedef struct
 #define EM_SETWORDBREAKPROC16      (WM_USER+32)
 #define EM_GETWORDBREAKPROC16      (WM_USER+33)
 #define EM_GETPASSWORDCHAR16       (WM_USER+34)
-/*
-  not in win16:
-    EM_SETMARGINS16            WM_NULL
-    EM_GETMARGINS16            WM_NULL
-    EM_GETLIMITTEXT16          WM_NULL
-    EM_POSFROMCHAR16           WM_NULL
-    EM_CHARFROMPOS16           WM_NULL
-    EM_SETLIMITTEXT16          WM_NULL - no name change in win16
-*/
 
 typedef struct
 {
@@ -716,7 +701,7 @@ BOOL16      WINAPI DrawIconEx16(HDC16,INT16,INT16,HICON16,INT16,INT16,
 VOID        WINAPI DrawMenuBar16(HWND16);
 INT16       WINAPI DrawText16(HDC16,LPCSTR,INT16,LPRECT16,UINT16);
 BOOL16      WINAPI EmptyClipboard16(void);
-UINT16      WINAPI EnableMenuItem16(HMENU16,UINT16,UINT16);
+BOOL16      WINAPI EnableMenuItem16(HMENU16,UINT16,UINT16);
 BOOL16      WINAPI EnableScrollBar16(HWND16,INT16,UINT16);
 BOOL16      WINAPI EnableWindow16(HWND16,BOOL16);
 BOOL16      WINAPI EndDeferWindowPos16(HDWP16);
@@ -948,7 +933,7 @@ VOID        WINAPI ValidateRgn16(HWND16,HRGN16);
 HWND16      WINAPI WindowFromDC16(HDC16);
 HWND16      WINAPI WindowFromPoint16(POINT16);
 BOOL16      WINAPI WinHelp16(HWND16,LPCSTR,UINT16,DWORD);
-UINT16      WINAPI WNetAddConnection16(LPCSTR,LPCSTR,LPCSTR);
+WORD        WINAPI WNetAddConnection16(LPCSTR,LPCSTR,LPCSTR);
 INT16       WINAPI wvsprintf16(LPSTR,LPCSTR,VA_LIST16);
 BOOL16      WINAPI DrawState16A(HDC16,HBRUSH16,DRAWSTATEPROC16,LPARAM,WPARAM16,INT16,INT16,INT16,INT16,UINT16);
 BOOL16      WINAPI IsDialogMessage16(HWND16,MSG16*);
@@ -961,12 +946,7 @@ INT16       WINAPI lstrcmpi16(LPCSTR,LPCSTR);
 
 /* undocumented functions */
 
-typedef VOID (*SYSTEMTIMERPROC)(WORD);
-
-void        WINAPI ConvertDialog32To16(LPVOID,DWORD,LPVOID);
-WORD        WINAPI CreateSystemTimer(WORD,SYSTEMTIMERPROC);
-VOID        WINAPI DisableSystemTimers16(void);
-VOID        WINAPI EnableSystemTimers16(void);
+void        WINAPI ConvertDialog32To16(LPCVOID,DWORD,LPVOID);
 BOOL16      WINAPI EnumTaskWindows16(HTASK16,WNDENUMPROC16,LPARAM);
 BOOL16      WINAPI GrayString16(HDC16,HBRUSH16,GRAYSTRINGPROC16,LPARAM,
                                 INT16,INT16,INT16,INT16,INT16);

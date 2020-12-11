@@ -2,6 +2,7 @@
  *	Object management functions
  *
  * Copyright 1999, 2000 Juergen Schmied
+ * Copyright 2005 Vitaliy Margolen
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -29,12 +30,15 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-#include "wine/debug.h"
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+#include "wine/debug.h"
 #include "windef.h"
 #include "winternl.h"
 #include "ntdll_misc.h"
 #include "wine/server.h"
+#include "wine/exception.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
@@ -53,29 +57,152 @@ NTSTATUS WINAPI NtQueryObject(IN HANDLE handle,
 {
     NTSTATUS status;
 
-    TRACE("(%p,0x%08x,%p,0x%08lx,%p): stub\n",
-          handle, info_class, ptr, len, used_len);
+    TRACE("(%p,0x%08x,%p,0x%08x,%p)\n", handle, info_class, ptr, len, used_len);
 
     if (used_len) *used_len = 0;
 
     switch (info_class)
     {
+    case ObjectBasicInformation:
+        {
+            POBJECT_BASIC_INFORMATION p = ptr;
+
+            if (len < sizeof(*p)) return STATUS_INVALID_BUFFER_SIZE;
+
+            SERVER_START_REQ( get_object_info )
+            {
+                req->handle = wine_server_obj_handle( handle );
+                status = wine_server_call( req );
+                if (status == STATUS_SUCCESS)
+                {
+                    memset( p, 0, sizeof(*p) );
+                    p->GrantedAccess = reply->access;
+                    p->PointerCount = reply->ref_count;
+                    p->HandleCount = reply->handle_count;
+                    if (used_len) *used_len = sizeof(*p);
+                }
+            }
+            SERVER_END_REQ;
+        }
+        break;
+    case ObjectNameInformation:
+        {
+            OBJECT_NAME_INFORMATION* p = ptr;
+            ANSI_STRING unix_name;
+
+            /* first try as a file object */
+
+            if (!(status = server_get_unix_name( handle, &unix_name )))
+            {
+                UNICODE_STRING nt_name;
+
+                if (!(status = wine_unix_to_nt_file_name( &unix_name, &nt_name )))
+                {
+                    if (len < sizeof(*p))
+                        status = STATUS_INFO_LENGTH_MISMATCH;
+                    else if (len < sizeof(*p) + nt_name.MaximumLength)
+                        status = STATUS_BUFFER_OVERFLOW;
+                    else
+                    {
+                        p->Name.Buffer = (WCHAR *)(p + 1);
+                        p->Name.Length = nt_name.Length;
+                        p->Name.MaximumLength = nt_name.MaximumLength;
+                        memcpy( p->Name.Buffer, nt_name.Buffer, nt_name.MaximumLength );
+                    }
+                    if (used_len) *used_len = sizeof(*p) + nt_name.MaximumLength;
+                    RtlFreeUnicodeString( &nt_name );
+                }
+                RtlFreeAnsiString( &unix_name );
+                break;
+            }
+            else if (status != STATUS_OBJECT_TYPE_MISMATCH) break;
+
+            /* not a file, treat as a generic object */
+
+            SERVER_START_REQ( get_object_info )
+            {
+                req->handle = wine_server_obj_handle( handle );
+                if (len > sizeof(*p)) wine_server_set_reply( req, p + 1, len - sizeof(*p) );
+                status = wine_server_call( req );
+                if (status == STATUS_SUCCESS)
+                {
+                    if (!reply->total)  /* no name */
+                    {
+                        if (sizeof(*p) > len) status = STATUS_INFO_LENGTH_MISMATCH;
+                        else memset( p, 0, sizeof(*p) );
+                        if (used_len) *used_len = sizeof(*p);
+                    }
+                    else if (sizeof(*p) + reply->total + sizeof(WCHAR) > len)
+                    {
+                        if (used_len) *used_len = sizeof(*p) + reply->total + sizeof(WCHAR);
+                        status = STATUS_INFO_LENGTH_MISMATCH;
+                    }
+                    else
+                    {
+                        ULONG res = wine_server_reply_size( reply );
+                        p->Name.Buffer = (WCHAR *)(p + 1);
+                        p->Name.Length = res;
+                        p->Name.MaximumLength = res + sizeof(WCHAR);
+                        p->Name.Buffer[res / sizeof(WCHAR)] = 0;
+                        if (used_len) *used_len = sizeof(*p) + p->Name.MaximumLength;
+                    }
+                }
+            }
+            SERVER_END_REQ;
+        }
+        break;
+    case ObjectTypeInformation:
+        {
+            OBJECT_TYPE_INFORMATION *p = ptr;
+
+            SERVER_START_REQ( get_object_type )
+            {
+                req->handle = wine_server_obj_handle( handle );
+                if (len > sizeof(*p)) wine_server_set_reply( req, p + 1, len - sizeof(*p) );
+                status = wine_server_call( req );
+                if (status == STATUS_SUCCESS)
+                {
+                    if (!reply->total)  /* no name */
+                    {
+                        if (sizeof(*p) > len) status = STATUS_INFO_LENGTH_MISMATCH;
+                        else memset( p, 0, sizeof(*p) );
+                        if (used_len) *used_len = sizeof(*p);
+                    }
+                    else if (sizeof(*p) + reply->total + sizeof(WCHAR) > len)
+                    {
+                        if (used_len) *used_len = sizeof(*p) + reply->total + sizeof(WCHAR);
+                        status = STATUS_INFO_LENGTH_MISMATCH;
+                    }
+                    else
+                    {
+                        ULONG res = wine_server_reply_size( reply );
+                        p->TypeName.Buffer = (WCHAR *)(p + 1);
+                        p->TypeName.Length = res;
+                        p->TypeName.MaximumLength = res + sizeof(WCHAR);
+                        p->TypeName.Buffer[res / sizeof(WCHAR)] = 0;
+                        if (used_len) *used_len = sizeof(*p) + p->TypeName.MaximumLength;
+                    }
+                }
+            }
+            SERVER_END_REQ;
+        }
+        break;
     case ObjectDataInformation:
         {
-            OBJECT_DATA_INFORMATION* p = (OBJECT_DATA_INFORMATION*)ptr;
+            OBJECT_DATA_INFORMATION* p = ptr;
 
             if (len < sizeof(*p)) return STATUS_INVALID_BUFFER_SIZE;
 
             SERVER_START_REQ( set_handle_info )
             {
-                req->handle = handle;
+                req->handle = wine_server_obj_handle( handle );
                 req->flags  = 0;
                 req->mask   = 0;
                 status = wine_server_call( req );
                 if (status == STATUS_SUCCESS)
                 {
-                    p->InheritHandle = (reply->old_flags & HANDLE_FLAG_INHERIT) ? TRUE : FALSE;
-                    p->ProtectFromClose = (reply->old_flags & HANDLE_FLAG_PROTECT_FROM_CLOSE) ? TRUE : FALSE;
+                    p->InheritHandle = (reply->old_flags & HANDLE_FLAG_INHERIT) != 0;
+                    p->ProtectFromClose = (reply->old_flags & HANDLE_FLAG_PROTECT_FROM_CLOSE) != 0;
                     if (used_len) *used_len = sizeof(*p);
                 }
             }
@@ -101,20 +228,19 @@ NTSTATUS WINAPI NtSetInformationObject(IN HANDLE handle,
 {
     NTSTATUS status;
 
-    TRACE("(%p,0x%08x,%p,0x%08lx): stub\n",
-          handle, info_class, ptr, len);
+    TRACE("(%p,0x%08x,%p,0x%08x)\n", handle, info_class, ptr, len);
 
     switch (info_class)
     {
     case ObjectDataInformation:
         {
-            OBJECT_DATA_INFORMATION* p = (OBJECT_DATA_INFORMATION*)ptr;
+            OBJECT_DATA_INFORMATION* p = ptr;
 
             if (len < sizeof(*p)) return STATUS_INVALID_BUFFER_SIZE;
 
             SERVER_START_REQ( set_handle_info )
             {
-                req->handle = handle;
+                req->handle = wine_server_obj_handle( handle );
                 req->flags  = 0;
                 req->mask   = HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE;
                 if (p->InheritHandle)    req->flags |= HANDLE_FLAG_INHERIT;
@@ -137,154 +263,86 @@ NTSTATUS WINAPI NtSetInformationObject(IN HANDLE handle,
  *
  * An ntdll analogue to GetKernelObjectSecurity().
  *
- * NOTES
- *  only the lowest 4 bit of SecurityObjectInformationClass are used
- *  0x7-0xf returns STATUS_ACCESS_DENIED (even running with system privileges)
- *
- * FIXME
- *  We are constructing a fake sid (Administrators:Full, System:Full, Everyone:Read)
  */
 NTSTATUS WINAPI
 NtQuerySecurityObject(
 	IN HANDLE Object,
 	IN SECURITY_INFORMATION RequestedInformation,
-	OUT PSECURITY_DESCRIPTOR pSecurityDesriptor,
+	OUT PSECURITY_DESCRIPTOR pSecurityDescriptor,
 	IN ULONG Length,
 	OUT PULONG ResultLength)
 {
-	static SID_IDENTIFIER_AUTHORITY localSidAuthority = {SECURITY_NT_AUTHORITY};
-	static SID_IDENTIFIER_AUTHORITY worldSidAuthority = {SECURITY_WORLD_SID_AUTHORITY};
-	BYTE Buffer[256];
-	PISECURITY_DESCRIPTOR_RELATIVE psd = (PISECURITY_DESCRIPTOR_RELATIVE)Buffer;
-	UINT BufferIndex = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
+    PISECURITY_DESCRIPTOR_RELATIVE psd = pSecurityDescriptor;
+    NTSTATUS status;
+    unsigned int buffer_size = 512;
+    BOOLEAN need_more_memory;
 
-	FIXME("(%p,0x%08lx,%p,0x%08lx,%p) stub!\n",
-	Object, RequestedInformation, pSecurityDesriptor, Length, ResultLength);
+    TRACE("(%p,0x%08x,%p,0x%08x,%p)\n",
+	Object, RequestedInformation, pSecurityDescriptor, Length, ResultLength);
 
-	RequestedInformation &= 0x0000000f;
+    do
+    {
+        char *buffer = RtlAllocateHeap(GetProcessHeap(), 0, buffer_size);
+        if (!buffer)
+            return STATUS_NO_MEMORY;
 
-	if (RequestedInformation & SACL_SECURITY_INFORMATION) return STATUS_ACCESS_DENIED;
+        need_more_memory = FALSE;
 
-	ZeroMemory(Buffer, 256);
-	RtlCreateSecurityDescriptor((PSECURITY_DESCRIPTOR)psd, SECURITY_DESCRIPTOR_REVISION);
-	psd->Control = SE_SELF_RELATIVE |
-	  ((RequestedInformation & DACL_SECURITY_INFORMATION) ? SE_DACL_PRESENT:0);
+        SERVER_START_REQ( get_security_object )
+        {
+            req->handle = wine_server_obj_handle( Object );
+            req->security_info = RequestedInformation;
+            wine_server_set_reply( req, buffer, buffer_size );
+            status = wine_server_call( req );
+            if (status == STATUS_SUCCESS)
+            {
+                struct security_descriptor *sd = (struct security_descriptor *)buffer;
+                if (reply->sd_len)
+                {
+                    *ResultLength = sizeof(SECURITY_DESCRIPTOR_RELATIVE) +
+                        sd->owner_len + sd->group_len + sd->sacl_len + sd->dacl_len;
+                    if (Length >= *ResultLength)
+                    {
+                        psd->Revision = SECURITY_DESCRIPTOR_REVISION;
+                        psd->Sbz1 = 0;
+                        psd->Control = sd->control | SE_SELF_RELATIVE;
+                        psd->Owner = sd->owner_len ? sizeof(SECURITY_DESCRIPTOR_RELATIVE) : 0;
+                        psd->Group = sd->group_len ? sizeof(SECURITY_DESCRIPTOR_RELATIVE) + sd->owner_len : 0;
+                        psd->Sacl = sd->sacl_len ? sizeof(SECURITY_DESCRIPTOR_RELATIVE) + sd->owner_len + sd->group_len : 0;
+                        psd->Dacl = sd->dacl_len ? sizeof(SECURITY_DESCRIPTOR_RELATIVE) + sd->owner_len + sd->group_len + sd->sacl_len : 0;
+                        /* owner, group, sacl and dacl are the same type as in the server
+                         * and in the same order so we copy the memory in one block */
+                        memcpy((char *)pSecurityDescriptor + sizeof(SECURITY_DESCRIPTOR_RELATIVE),
+                               buffer + sizeof(struct security_descriptor),
+                               sd->owner_len + sd->group_len + sd->sacl_len + sd->dacl_len);
+                    }
+                    else
+                        status = STATUS_BUFFER_TOO_SMALL;
+                }
+                else
+                {
+                    *ResultLength = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
+                    if (Length >= *ResultLength)
+                    {
+                        memset(psd, 0, sizeof(*psd));
+                        psd->Revision = SECURITY_DESCRIPTOR_REVISION;
+                        psd->Control = SE_SELF_RELATIVE;
+                    }
+                    else
+                        status = STATUS_BUFFER_TOO_SMALL;
+                }
+            }
+            else if (status == STATUS_BUFFER_TOO_SMALL)
+            {
+                buffer_size = reply->sd_len;
+                need_more_memory = TRUE;
+            }
+        }
+        SERVER_END_REQ;
+        RtlFreeHeap(GetProcessHeap(), 0, buffer);
+    } while (need_more_memory);
 
-	/* owner: administrator S-1-5-20-220*/
-	if (OWNER_SECURITY_INFORMATION & RequestedInformation)
-	{
-	  SID* psid = (SID*)&(Buffer[BufferIndex]);
-
-	  psd->Owner = BufferIndex;
-	  BufferIndex += RtlLengthRequiredSid(2);
-
-	  psid->Revision = SID_REVISION;
-	  psid->SubAuthorityCount = 2;
-	  psid->IdentifierAuthority = localSidAuthority;
-	  psid->SubAuthority[0] = SECURITY_BUILTIN_DOMAIN_RID;
-	  psid->SubAuthority[1] = DOMAIN_ALIAS_RID_ADMINS;
-	}
-
-	/* group: built in domain S-1-5-12 */
-	if (GROUP_SECURITY_INFORMATION & RequestedInformation)
-	{
-	  SID* psid = (SID*) &(Buffer[BufferIndex]);
-
-	  psd->Group = BufferIndex;
-	  BufferIndex += RtlLengthRequiredSid(1);
-
-	  psid->Revision = SID_REVISION;
-	  psid->SubAuthorityCount = 1;
-	  psid->IdentifierAuthority = localSidAuthority;
-	  psid->SubAuthority[0] = SECURITY_LOCAL_SYSTEM_RID;
-	}
-
-	/* discretionary ACL */
-	if (DACL_SECURITY_INFORMATION & RequestedInformation)
-	{
-	  /* acl header */
-	  PACL pacl = (PACL)&(Buffer[BufferIndex]);
-	  PACCESS_ALLOWED_ACE pace;
-	  SID* psid;
-
-	  psd->Dacl = BufferIndex;
-
-	  pacl->AclRevision = MIN_ACL_REVISION;
-	  pacl->AceCount = 3;
-	  pacl->AclSize = BufferIndex; /* storing the start index temporary */
-
-	  BufferIndex += sizeof(ACL);
-
-	  /* ACE System - full access */
-	  pace = (PACCESS_ALLOWED_ACE)&(Buffer[BufferIndex]);
-	  BufferIndex += sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD);
-
-	  pace->Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
-	  pace->Header.AceFlags = CONTAINER_INHERIT_ACE;
-	  pace->Header.AceSize = sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD) + RtlLengthRequiredSid(1);
-	  pace->Mask = DELETE | READ_CONTROL | WRITE_DAC | WRITE_OWNER  | 0x3f;
-	  pace->SidStart = BufferIndex;
-
-	  /* SID S-1-5-12 (System) */
-	  psid = (SID*)&(Buffer[BufferIndex]);
-
-	  BufferIndex += RtlLengthRequiredSid(1);
-
-	  psid->Revision = SID_REVISION;
-	  psid->SubAuthorityCount = 1;
-	  psid->IdentifierAuthority = localSidAuthority;
-	  psid->SubAuthority[0] = SECURITY_LOCAL_SYSTEM_RID;
-
-	  /* ACE Administrators - full access*/
-	  pace = (PACCESS_ALLOWED_ACE) &(Buffer[BufferIndex]);
-	  BufferIndex += sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD);
-
-	  pace->Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
-	  pace->Header.AceFlags = CONTAINER_INHERIT_ACE;
-	  pace->Header.AceSize = sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD) + RtlLengthRequiredSid(2);
-	  pace->Mask = DELETE | READ_CONTROL | WRITE_DAC | WRITE_OWNER  | 0x3f;
-	  pace->SidStart = BufferIndex;
-
-	  /* S-1-5-12 (Administrators) */
-	  psid = (SID*)&(Buffer[BufferIndex]);
-
-	  BufferIndex += RtlLengthRequiredSid(2);
-
-	  psid->Revision = SID_REVISION;
-	  psid->SubAuthorityCount = 2;
-	  psid->IdentifierAuthority = localSidAuthority;
-	  psid->SubAuthority[0] = SECURITY_BUILTIN_DOMAIN_RID;
-	  psid->SubAuthority[1] = DOMAIN_ALIAS_RID_ADMINS;
-
-	  /* ACE Everyone - read access */
-	  pace = (PACCESS_ALLOWED_ACE)&(Buffer[BufferIndex]);
-	  BufferIndex += sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD);
-
-	  pace->Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
-	  pace->Header.AceFlags = CONTAINER_INHERIT_ACE;
-	  pace->Header.AceSize = sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD) + RtlLengthRequiredSid(1);
-	  pace->Mask = READ_CONTROL| 0x19;
-	  pace->SidStart = BufferIndex;
-
-	  /* SID S-1-1-0 (Everyone) */
-	  psid = (SID*)&(Buffer[BufferIndex]);
-
-	  BufferIndex += RtlLengthRequiredSid(1);
-
-	  psid->Revision = SID_REVISION;
-	  psid->SubAuthorityCount = 1;
-	  psid->IdentifierAuthority = worldSidAuthority;
-	  psid->SubAuthority[0] = 0;
-
-	  /* calculate used bytes */
-	  pacl->AclSize = BufferIndex - pacl->AclSize;
-	}
-	*ResultLength = BufferIndex;
-	TRACE("len=%lu\n", *ResultLength);
-	if (Length < *ResultLength) return STATUS_BUFFER_TOO_SMALL;
-	memcpy(pSecurityDesriptor, Buffer, *ResultLength);
-
-	return STATUS_SUCCESS;
+    return status;
 }
 
 
@@ -299,20 +357,65 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source,
     NTSTATUS ret;
     SERVER_START_REQ( dup_handle )
     {
-        req->src_process = source_process;
-        req->src_handle  = source;
-        req->dst_process = dest_process;
+        req->src_process = wine_server_obj_handle( source_process );
+        req->src_handle  = wine_server_obj_handle( source );
+        req->dst_process = wine_server_obj_handle( dest_process );
         req->access      = access;
-        req->inherit     = (attributes & OBJ_INHERIT) != 0;
+        req->attributes  = attributes;
         req->options     = options;
 
         if (!(ret = wine_server_call( req )))
         {
-            if (dest) *dest = reply->handle;
-            if (reply->fd != -1) close( reply->fd );
+            if (dest) *dest = wine_server_ptr_handle( reply->handle );
+            if (reply->closed && reply->self)
+            {
+                int fd = server_remove_fd_from_cache( source );
+                if (fd != -1) close( fd );
+            }
         }
     }
     SERVER_END_REQ;
+    return ret;
+}
+
+static LONG WINAPI invalid_handle_exception_handler( EXCEPTION_POINTERS *eptr )
+{
+    EXCEPTION_RECORD *rec = eptr->ExceptionRecord;
+    return (rec->ExceptionCode == EXCEPTION_INVALID_HANDLE) ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH;
+}
+
+/* Everquest 2 / Pirates of the Burning Sea hooks NtClose, so we need a wrapper */
+NTSTATUS close_handle( HANDLE handle )
+{
+    NTSTATUS ret;
+    int fd = server_remove_fd_from_cache( handle );
+
+    SERVER_START_REQ( close_handle )
+    {
+        req->handle = wine_server_obj_handle( handle );
+        ret = wine_server_call( req );
+    }
+    SERVER_END_REQ;
+    if (fd != -1) close( fd );
+
+    if (ret == STATUS_INVALID_HANDLE && handle && NtCurrentTeb()->Peb->BeingDebugged)
+    {
+        __TRY
+        {
+            EXCEPTION_RECORD record;
+            record.ExceptionCode    = EXCEPTION_INVALID_HANDLE;
+            record.ExceptionFlags   = 0;
+            record.ExceptionRecord  = NULL;
+            record.ExceptionAddress = NULL;
+            record.NumberParameters = 0;
+            RtlRaiseException( &record );
+        }
+        __EXCEPT(invalid_handle_exception_handler)
+        {
+        }
+        __ENDTRY
+    }
+
     return ret;
 }
 
@@ -330,15 +433,7 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source,
  */
 NTSTATUS WINAPI NtClose( HANDLE Handle )
 {
-    NTSTATUS ret;
-    SERVER_START_REQ( close_handle )
-    {
-        req->handle = Handle;
-        ret = wine_server_call( req );
-        if (!ret && reply->fd != -1) close( reply->fd );
-    }
-    SERVER_END_REQ;
-    return ret;
+    return close_handle( Handle );
 }
 
 /*
@@ -360,30 +455,67 @@ NTSTATUS WINAPI NtClose( HANDLE Handle )
  *  Success: ERROR_SUCCESS.
  *  Failure: An NTSTATUS error code.
  */
-NTSTATUS WINAPI NtOpenDirectoryObject(
-	PHANDLE DirectoryHandle,
-	ACCESS_MASK DesiredAccess,
-	POBJECT_ATTRIBUTES ObjectAttributes)
+NTSTATUS WINAPI NtOpenDirectoryObject( HANDLE *handle, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr)
 {
-	FIXME("(%p,0x%08lx,%p): stub\n",
-	DirectoryHandle, DesiredAccess, ObjectAttributes);
-	dump_ObjectAttributes(ObjectAttributes);
-	return 0;
+    NTSTATUS ret;
+
+    if (!handle) return STATUS_ACCESS_VIOLATION;
+    if ((ret = validate_open_object_attributes( attr ))) return ret;
+
+    TRACE("(%p,0x%08x,%s)\n", handle, access, debugstr_ObjectAttributes(attr));
+
+    SERVER_START_REQ(open_directory)
+    {
+        req->access     = access;
+        req->attributes = attr->Attributes;
+        req->rootdir    = wine_server_obj_handle( attr->RootDirectory );
+        if (attr->ObjectName)
+            wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
+        ret = wine_server_call( req );
+        *handle = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+    return ret;
 }
 
 /******************************************************************************
  *  NtCreateDirectoryObject	[NTDLL.@]
  *  ZwCreateDirectoryObject	[NTDLL.@]
+ *
+ * Create a namespace directory object.
+ * 
+ * PARAMS
+ *  DirectoryHandle  [O] Destination for the new directory handle
+ *  DesiredAccess    [I] Desired access to the directory
+ *  ObjectAttributes [I] Structure describing the directory
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS.
+ *  Failure: An NTSTATUS error code.
  */
-NTSTATUS WINAPI NtCreateDirectoryObject(
-	PHANDLE DirectoryHandle,
-	ACCESS_MASK DesiredAccess,
-	POBJECT_ATTRIBUTES ObjectAttributes)
+NTSTATUS WINAPI NtCreateDirectoryObject(PHANDLE DirectoryHandle, ACCESS_MASK DesiredAccess,
+                                        OBJECT_ATTRIBUTES *attr )
 {
-	FIXME("(%p,0x%08lx,%p),stub!\n",
-	DirectoryHandle,DesiredAccess,ObjectAttributes);
-	dump_ObjectAttributes(ObjectAttributes);
-	return 0;
+    NTSTATUS ret;
+    data_size_t len;
+    struct object_attributes *objattr;
+
+    if (!DirectoryHandle) return STATUS_ACCESS_VIOLATION;
+    TRACE("(%p,0x%08x,%s)\n", DirectoryHandle, DesiredAccess, debugstr_ObjectAttributes(attr));
+
+    if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
+
+    SERVER_START_REQ(create_directory)
+    {
+        req->access = DesiredAccess;
+        wine_server_add_data( req, objattr, len );
+        ret = wine_server_call( req );
+        *DirectoryHandle = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+
+    RtlFreeHeap( GetProcessHeap(), 0, objattr );
+    return ret;
 }
 
 /******************************************************************************
@@ -393,26 +525,62 @@ NTSTATUS WINAPI NtCreateDirectoryObject(
  * Read information from a namespace directory.
  * 
  * PARAMS
- *  DirectoryHandle   [I]   Handle to a directory object
- *  Buffer            [O]   Buffer to hold the read data
- *  BufferLength      [I]   Size of the buffer in bytes
- *  ReturnSingleEntry [I]   If TRUE, return a single entry, if FALSE, return as many as fit in the buffer
- *  RestartScan       [I]   If TRUE, start scanning from the start, if FALSE, scan from Context
- *  Context           [I/O] Indicates what point of the directory the scan is at
- *  ReturnLength      [O]   Caller supplied storage for the number of bytes written (or NULL)
+ *  handle        [I]   Handle to a directory object
+ *  buffer        [O]   Buffer to hold the read data
+ *  size          [I]   Size of the buffer in bytes
+ *  single_entry  [I]   If TRUE, return a single entry, if FALSE, return as many as fit in the buffer
+ *  restart       [I]   If TRUE, start scanning from the start, if FALSE, scan from Context
+ *  context       [I/O] Indicates what point of the directory the scan is at
+ *  ret_size      [O]   Caller supplied storage for the number of bytes written (or NULL)
  *
  * RETURNS
  *  Success: ERROR_SUCCESS.
  *  Failure: An NTSTATUS error code.
  */
-NTSTATUS WINAPI NtQueryDirectoryObject(IN HANDLE DirectoryHandle, OUT PDIRECTORY_BASIC_INFORMATION Buffer,
-                                       IN ULONG BufferLength, IN BOOLEAN ReturnSingleEntry, IN BOOLEAN RestartScan,
-                                       IN OUT PULONG Context, OUT PULONG ReturnLength OPTIONAL)
+NTSTATUS WINAPI NtQueryDirectoryObject(HANDLE handle, PDIRECTORY_BASIC_INFORMATION buffer,
+                                       ULONG size, BOOLEAN single_entry, BOOLEAN restart,
+                                       PULONG context, PULONG ret_size)
 {
-    FIXME("(%p,%p,0x%08lx,0x%08x,0x%08x,%p,%p), stub\n", DirectoryHandle, Buffer, BufferLength, ReturnSingleEntry,
-          RestartScan, Context, ReturnLength);
+    NTSTATUS ret;
 
-    return STATUS_NOT_IMPLEMENTED;
+    if (restart) *context = 0;
+
+    if (single_entry)
+    {
+        if (size <= sizeof(*buffer) + 2*sizeof(WCHAR)) return STATUS_BUFFER_OVERFLOW;
+
+        SERVER_START_REQ( get_directory_entry )
+        {
+            req->handle = wine_server_obj_handle( handle );
+            req->index = *context;
+            wine_server_set_reply( req, buffer + 1, size - sizeof(*buffer) - 2*sizeof(WCHAR) );
+            if (!(ret = wine_server_call( req )))
+            {
+                buffer->ObjectName.Buffer = (WCHAR *)(buffer + 1);
+                buffer->ObjectName.Length = reply->name_len;
+                buffer->ObjectName.MaximumLength = reply->name_len + sizeof(WCHAR);
+                buffer->ObjectTypeName.Buffer = (WCHAR *)(buffer + 1) + reply->name_len/sizeof(WCHAR) + 1;
+                buffer->ObjectTypeName.Length = wine_server_reply_size( reply ) - reply->name_len;
+                buffer->ObjectTypeName.MaximumLength = buffer->ObjectTypeName.Length + sizeof(WCHAR);
+                /* make room for the terminating null */
+                memmove( buffer->ObjectTypeName.Buffer, buffer->ObjectTypeName.Buffer - 1,
+                         buffer->ObjectTypeName.Length );
+                buffer->ObjectName.Buffer[buffer->ObjectName.Length/sizeof(WCHAR)] = 0;
+                buffer->ObjectTypeName.Buffer[buffer->ObjectTypeName.Length/sizeof(WCHAR)] = 0;
+                (*context)++;
+            }
+        }
+        SERVER_END_REQ;
+        if (ret_size)
+            *ret_size = buffer->ObjectName.MaximumLength + buffer->ObjectTypeName.MaximumLength + sizeof(*buffer);
+    }
+    else
+    {
+        FIXME("multiple entries not implemented\n");
+        ret = STATUS_NOT_IMPLEMENTED;
+    }
+
+    return ret;
 }
 
 /*
@@ -421,55 +589,152 @@ NTSTATUS WINAPI NtQueryDirectoryObject(IN HANDLE DirectoryHandle, OUT PDIRECTORY
 
 /******************************************************************************
  *  NtOpenSymbolicLinkObject	[NTDLL.@]
+ *  ZwOpenSymbolicLinkObject	[NTDLL.@]
+ *
+ * Open a namespace symbolic link object.
+ * 
+ * PARAMS
+ *  LinkHandle       [O] Destination for the new symbolic link handle
+ *  DesiredAccess    [I] Desired access to the symbolic link
+ *  ObjectAttributes [I] Structure describing the symbolic link
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS.
+ *  Failure: An NTSTATUS error code.
  */
-NTSTATUS WINAPI NtOpenSymbolicLinkObject(
-	OUT PHANDLE LinkHandle,
-	IN ACCESS_MASK DesiredAccess,
-	IN POBJECT_ATTRIBUTES ObjectAttributes)
+NTSTATUS WINAPI NtOpenSymbolicLinkObject( HANDLE *handle, ACCESS_MASK access,
+                                          const OBJECT_ATTRIBUTES *attr)
 {
-	FIXME("(%p,0x%08lx,%p) stub\n",
-	LinkHandle, DesiredAccess, ObjectAttributes);
-	dump_ObjectAttributes(ObjectAttributes);
-        return STATUS_OBJECT_NAME_NOT_FOUND;
+    NTSTATUS ret;
+
+    TRACE("(%p,0x%08x,%s)\n", handle, access, debugstr_ObjectAttributes(attr));
+
+    if (!handle) return STATUS_ACCESS_VIOLATION;
+    if ((ret = validate_open_object_attributes( attr ))) return ret;
+
+    SERVER_START_REQ(open_symlink)
+    {
+        req->access     = access;
+        req->attributes = attr->Attributes;
+        req->rootdir    = wine_server_obj_handle( attr->RootDirectory );
+        if (attr->ObjectName)
+            wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
+        ret = wine_server_call( req );
+        *handle = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+    return ret;
 }
 
 /******************************************************************************
  *  NtCreateSymbolicLinkObject	[NTDLL.@]
+ *  ZwCreateSymbolicLinkObject	[NTDLL.@]
+ *
+ * Open a namespace symbolic link object.
+ * 
+ * PARAMS
+ *  SymbolicLinkHandle [O] Destination for the new symbolic link handle
+ *  DesiredAccess      [I] Desired access to the symbolic link
+ *  ObjectAttributes   [I] Structure describing the symbolic link
+ *  TargetName         [I] Name of the target symbolic link points to
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS.
+ *  Failure: An NTSTATUS error code.
  */
-NTSTATUS WINAPI NtCreateSymbolicLinkObject(
-	OUT PHANDLE SymbolicLinkHandle,
-	IN ACCESS_MASK DesiredAccess,
-	IN POBJECT_ATTRIBUTES ObjectAttributes,
-	IN PUNICODE_STRING Name)
+NTSTATUS WINAPI NtCreateSymbolicLinkObject(OUT PHANDLE SymbolicLinkHandle,IN ACCESS_MASK DesiredAccess,
+	                                   POBJECT_ATTRIBUTES attr, PUNICODE_STRING TargetName)
 {
-	FIXME("(%p,0x%08lx,%p, %p) stub\n",
-	SymbolicLinkHandle, DesiredAccess, ObjectAttributes, debugstr_us(Name));
-	dump_ObjectAttributes(ObjectAttributes);
-	return 0;
+    NTSTATUS ret;
+    data_size_t len;
+    struct object_attributes *objattr;
+
+    if (!SymbolicLinkHandle || !attr || !TargetName) return STATUS_ACCESS_VIOLATION;
+    if (!TargetName->Buffer) return STATUS_INVALID_PARAMETER;
+
+    TRACE("(%p,0x%08x,%s -> %s)\n", SymbolicLinkHandle, DesiredAccess,
+          debugstr_ObjectAttributes(attr), debugstr_us(TargetName));
+
+    if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
+
+    SERVER_START_REQ(create_symlink)
+    {
+        req->access = DesiredAccess;
+        wine_server_add_data( req, objattr, len );
+        wine_server_add_data(req, TargetName->Buffer, TargetName->Length);
+        ret = wine_server_call( req );
+        *SymbolicLinkHandle = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+
+    RtlFreeHeap( GetProcessHeap(), 0, objattr );
+    return ret;
 }
 
 /******************************************************************************
  *  NtQuerySymbolicLinkObject	[NTDLL.@]
+ *  ZwQuerySymbolicLinkObject	[NTDLL.@]
+ *
+ * Query a namespace symbolic link object target name.
+ *
+ * PARAMS
+ *  handle     [I] Handle to a symbolic link object
+ *  target     [O] Destination for the symbolic link target
+ *  length     [O] Size of returned data
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS.
+ *  Failure: An NTSTATUS error code.
  */
-NTSTATUS WINAPI NtQuerySymbolicLinkObject(
-	IN HANDLE LinkHandle,
-	IN OUT PUNICODE_STRING LinkTarget,
-	OUT PULONG ReturnedLength OPTIONAL)
+NTSTATUS WINAPI NtQuerySymbolicLinkObject( HANDLE handle, PUNICODE_STRING target, PULONG length )
 {
-	FIXME("(%p,%p,%p) stub\n",
-	LinkHandle, debugstr_us(LinkTarget), ReturnedLength);
+    NTSTATUS ret;
 
-	return 0;
+    TRACE("(%p,%p,%p)\n", handle, target, length );
+
+    if (!target) return STATUS_ACCESS_VIOLATION;
+
+    SERVER_START_REQ(query_symlink)
+    {
+        req->handle = wine_server_obj_handle( handle );
+        if (target->MaximumLength >= sizeof(WCHAR))
+            wine_server_set_reply( req, target->Buffer, target->MaximumLength - sizeof(WCHAR) );
+        if (!(ret = wine_server_call( req )))
+        {
+            target->Length = wine_server_reply_size(reply);
+            target->Buffer[target->Length / sizeof(WCHAR)] = 0;
+            if (length) *length = reply->total + sizeof(WCHAR);
+        }
+        else if (length && ret == STATUS_BUFFER_TOO_SMALL) *length = reply->total + sizeof(WCHAR);
+    }
+    SERVER_END_REQ;
+    return ret;
 }
 
 /******************************************************************************
  *  NtAllocateUuids   [NTDLL.@]
  */
-NTSTATUS WINAPI NtAllocateUuids(
-        PULARGE_INTEGER Time,
-        PULONG Range,
-        PULONG Sequence)
+NTSTATUS WINAPI NtAllocateUuids( ULARGE_INTEGER *time, ULONG *delta, ULONG *sequence, UCHAR *seed )
 {
-        FIXME("(%p,%p,%p), stub.\n", Time, Range, Sequence);
-	return 0;
+    FIXME("(%p,%p,%p,%p), stub.\n", time, delta, sequence, seed);
+    return STATUS_SUCCESS;
+}
+
+/**************************************************************************
+ *  NtMakeTemporaryObject	[NTDLL.@]
+ *  ZwMakeTemporaryObject	[NTDLL.@]
+ *
+ * Make a permanent object temporary.
+ *
+ * PARAMS
+ *  Handle [I] handle to permanent object
+ *
+ * RETURNS
+ *  Success: STATUS_SUCCESS.
+ *  Failure: An NTSTATUS error code.
+ */
+NTSTATUS WINAPI NtMakeTemporaryObject( HANDLE Handle )
+{
+    FIXME("(%p), stub.\n", Handle);
+    return STATUS_SUCCESS;
 }

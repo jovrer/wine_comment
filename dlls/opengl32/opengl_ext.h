@@ -14,64 +14,33 @@
 *
 * You should have received a copy of the GNU Lesser General Public
 * License along with this library; if not, write to the Free Software
-* Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+* Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 */
 #ifndef __DLLS_OPENGL32_OPENGL_EXT_H
 #define __DLLS_OPENGL32_OPENGL_EXT_H
 
-#undef APIENTRY
-#undef CALLBACK
-#undef WINAPI
-
-#define XMD_H /* This is to prevent the Xmd.h inclusion bug :-/ */
-#define GL_GLEXT_PROTOTYPES
-#include <GL/gl.h>
-#include <GL/glx.h>
-#ifdef HAVE_GL_GLEXT_H
-# include <GL/glext.h>
-#endif
-#undef  XMD_H
-
-#undef APIENTRY
-#undef CALLBACK
-#undef WINAPI
-
-/* Redefines the constants */
-#define CALLBACK    __stdcall
-#define WINAPI      __stdcall
-#define APIENTRY    WINAPI
-
-/* For compatibility with old Mesa headers */
-#ifndef GLX_SAMPLE_BUFFERS_ARB
-# define GLX_SAMPLE_BUFFERS_ARB             100000
-#endif
-#ifndef GLX_SAMPLES_ARB
-# define GLX_SAMPLES_ARB                    100001
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP
-# define GL_TEXTURE_CUBE_MAP 0x8513
-#endif
-
-/* X11 locking */
-
-extern void (*wine_tsx11_lock_ptr)(void);
-extern void (*wine_tsx11_unlock_ptr)(void);
-
-/* As GLX relies on X, this is needed */
-#define ENTER_GL() wine_tsx11_lock_ptr()
-#define LEAVE_GL() wine_tsx11_unlock_ptr()
-
+#include "windef.h"
+#include "winbase.h"
+#include "wingdi.h"
+#include "wine/wgl.h"
+#include "wine/wgl_driver.h"
 
 typedef struct {
   const char  *name;     /* name of the extension */
-  const char  *glx_name; /* name used on Unix's libGL */
+  const char  *extension; /* name of the GL/WGL extension */
   void  *func;     /* pointer to the Wine function for this extension */
-  void **func_ptr; /* where to store the value of glXGetProcAddressARB */
 } OpenGL_extension;
 
-extern OpenGL_extension extension_registry[];
-extern int extension_registry_size;
+extern const OpenGL_extension extension_registry[] DECLSPEC_HIDDEN;
+extern const int extension_registry_size DECLSPEC_HIDDEN;
+extern struct opengl_funcs null_opengl_funcs DECLSPEC_HIDDEN;
 
-const GLubyte* internal_glGetString(GLenum name);
+static inline struct opengl_funcs *get_dc_funcs( HDC hdc )
+{
+    struct opengl_funcs *funcs = __wine_get_wgl_driver( hdc, WINE_WGL_DRIVER_VERSION );
+    if (!funcs) SetLastError( ERROR_INVALID_HANDLE );
+    else if (funcs == (void *)-1) funcs = &null_opengl_funcs;
+    return funcs;
+}
 
 #endif /* __DLLS_OPENGL32_OPENGL_EXT_H */

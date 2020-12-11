@@ -13,8 +13,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#define WIN32_LEAN_AND_MEAN
 
 #include <windows.h>
 
@@ -26,8 +28,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmds
     HMODULE hModule;
     DOWINMAIN *doWinMain;
 
-    hModule = LoadLibrary("hhctrl.ocx");
-    doWinMain = GetProcAddress(hModule, "doWinMain");
+    hModule = LoadLibraryA("hhctrl.ocx");
+    doWinMain = (DOWINMAIN*) GetProcAddress(hModule, "doWinMain");
 
     return doWinMain(hInst, cmdline); 
 }

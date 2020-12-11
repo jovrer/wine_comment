@@ -1,15 +1,8 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = netapi32.dll
-IMPORTS   = netapi32 advapi32 kernel32
+IMPORTS   = advapi32
 
-CTESTS = \
+C_SRCS = \
 	access.c \
 	apibuf.c \
+	ds.c \
 	wksta.c
-
-@MAKE_TEST_RULES@
-
-### Dependencies:

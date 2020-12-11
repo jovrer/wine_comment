@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -32,7 +32,7 @@ DWORD WINAPI DECLSPEC_HIDDEN __wine_spec_exe_entry( PEB *peb )
     BOOL needs_init = (__wine_spec_init_state != CONSTRUCTORS_DONE);
     DWORD ret;
 
-    if (needs_init) _init( __wine_main_argc, __wine_main_argv, __wine_main_environ );
+    if (needs_init) _init( __wine_main_argc, __wine_main_argv, NULL );
     ret = main( __wine_main_argc, __wine_main_argv );
     if (needs_init) _fini();
     ExitProcess( ret );

@@ -7,8 +7,8 @@
  15 stdcall MAPIAllocateMore@12(long ptr ptr) MAPIAllocateMore
  16 stdcall MAPIFreeBuffer(ptr)
  17 stdcall MAPIFreeBuffer@4(ptr) MAPIFreeBuffer
- 18 stub MAPIAdminProfiles
- 19 stub MAPIAdminProfiles@8
+ 18 stdcall MAPIAdminProfiles(long ptr)
+ 19 stdcall MAPIAdminProfiles@8(long ptr) MAPIAdminProfiles
  20 stdcall MAPIInitialize(ptr)
  21 stdcall MAPIInitialize@4(ptr) MAPIInitialize
  22 stdcall MAPIUninitialize()
@@ -16,12 +16,12 @@
  24 stub PRProviderInit
  25 stub LAUNCHWIZARD
  26 stub LaunchWizard@20
- 27 stub DllGetClassObject
+ 27 stdcall -private DllGetClassObject(ptr ptr ptr)
  28 stdcall -private DllCanUnloadNow()
  29 stub MAPIOpenFormMgr
  30 stub MAPIOpenFormMgr@8
- 31 stub MAPIOpenLocalFormContainer
- 32 stub MAPIOpenLocalFormContainer@4
+ 31 stdcall MAPIOpenLocalFormContainer(ptr)
+ 32 stdcall MAPIOpenLocalFormContainer@4(ptr) MAPIOpenLocalFormContainer
  33 stdcall ScInitMapiUtil@4(long) ScInitMapiUtil
  34 stdcall DeinitMapiUtil@0() DeinitMapiUtil
  35 stub ScGenerateMuid@4
@@ -54,7 +54,7 @@
  72 stdcall FEqualNames@8(ptr ptr) FEqualNames
  73 stub WrapStoreEntryID@24
  74 stdcall IsBadBoundedStringPtr@8(ptr long) IsBadBoundedStringPtr
- 75 stub HrQueryAllRows@24
+ 75 stdcall HrQueryAllRows@24(ptr ptr ptr ptr long ptr) HrQueryAllRows
  76 stdcall PropCopyMore@16(ptr ptr ptr ptr) PropCopyMore
  77 stdcall UlPropSize@4(ptr) UlPropSize
  78 stdcall FPropContainsProp@12(ptr ptr long) FPropContainsProp
@@ -62,12 +62,12 @@
  80 stdcall LPropCompareProp@8(ptr ptr) LPropCompareProp
  81 stub HrAddColumns@16
  82 stub HrAddColumnsEx@20
-121 stdcall -ret64 FtAddFt@16(double double) MAPI32_FtAddFt
+121 stdcall -ret64 FtAddFt@16(int64 int64) MAPI32_FtAddFt
 122 stub FtAdcFt@20
-123 stdcall -ret64 FtSubFt@16(double double) MAPI32_FtSubFt
-124 stdcall -ret64 FtMulDw@12(long double) MAPI32_FtMulDw
+123 stdcall -ret64 FtSubFt@16(int64 int64) MAPI32_FtSubFt
+124 stdcall -ret64 FtMulDw@12(long int64) MAPI32_FtMulDw
 125 stdcall -ret64 FtMulDwDw@8(long long) MAPI32_FtMulDwDw
-126 stdcall -ret64 FtNegFt@8(double) MAPI32_FtNegFt
+126 stdcall -ret64 FtNegFt@8(int64) MAPI32_FtNegFt
 127 stub FtDivFtBogus@20
 128 stdcall UlAddRef@4(ptr) UlAddRef
 129 stdcall UlRelease@4(ptr) UlRelease
@@ -87,8 +87,8 @@
 144 stub HrDecomposeEID@28
 145 stub HrComposeMsgID@24
 146 stub HrDecomposeMsgID@24
-147 stdcall OpenStreamOnFile@24(ptr ptr ptr ptr ptr ptr) OpenStreamOnFile
-148 stdcall OpenStreamOnFile(ptr ptr ptr ptr ptr ptr)
+147 stdcall OpenStreamOnFile@24(ptr ptr long ptr ptr ptr) OpenStreamOnFile
+148 stdcall OpenStreamOnFile(ptr ptr long ptr ptr ptr)
 149 stub OpenTnefStream@28
 150 stub OpenTnefStream
 151 stub OpenTnefStreamEx@32
@@ -122,8 +122,8 @@
 182 stdcall FBadColumnSet@4(ptr) FBadColumnSet
 183 stub RTFSync@12
 184 stub RTFSync
-185 stub WrapCompressedRTFStream@12
-186 stub WrapCompressedRTFStream
+185 stdcall WrapCompressedRTFStream@12(ptr long ptr) WrapCompressedRTFStream
+186 stdcall WrapCompressedRTFStream(ptr long ptr)
 187 stub __ValidateParameters@8
 188 stub __CPPValidateParameters@8
 189 stub FBadSortOrderSet@4
@@ -145,17 +145,17 @@
 205 stub FDecodeID@12
 206 stub CchOfEncoding@4
 207 stdcall CbOfEncoded@4(ptr) CbOfEncoded
-208 stub MAPISendDocuments
-209 stdcall MAPILogon(long ptr ptr long long ptr)
-210 stub MAPILogoff
-211 stub MAPISendMail
-212 stub MAPISaveMail
-213 stub MAPIReadMail
-214 stub MAPIFindNext
-215 stub MAPIDeleteMail
-217 stub MAPIAddress
-218 stub MAPIDetails
-219 stub MAPIResolveName
+208 stdcall MAPISendDocuments(long str str str long)
+209 stdcall MAPILogon(long str str long long ptr)
+210 stdcall MAPILogoff(ptr long long long)
+211 stdcall MAPISendMail(ptr long ptr long long)
+212 stdcall MAPISaveMail(ptr long ptr long long str)
+213 stdcall MAPIReadMail(ptr long str long long ptr)
+214 stdcall MAPIFindNext(ptr long str str long long ptr)
+215 stdcall MAPIDeleteMail(ptr long str long long)
+217 stdcall MAPIAddress(ptr long str long str long ptr long long ptr ptr)
+218 stdcall MAPIDetails(ptr long ptr long long)
+219 stdcall MAPIResolveName(ptr long str long long ptr)
 220 stub BMAPISendMail
 221 stub BMAPISaveMail
 222 stub BMAPIReadMail
@@ -175,7 +175,7 @@
 236 stub cmc_read
 237 stub cmc_send
 238 stub cmc_send_documents
-239 stub HrDispatchNotifications@4
+239 stdcall HrDispatchNotifications@4(long) HrDispatchNotifications
 241 stub HrValidateParameters@8
 244 stub ScCreateConversationIndex@16
 246 stub HrGetOmiProvidersFlags
@@ -186,6 +186,6 @@
 251 stub GetOutlookVersion@0
 252 stub FixMAPI
 253 stub FixMAPI@0
-# This entry point is sometimes used to detect if the mapi dll came from Outlook
-#254 stub FGetComponentPath
-#255 stub FGetComponentPath@20
+254 stdcall FGetComponentPath(str str ptr long long)
+255 stdcall FGetComponentPath@20(str str ptr long long) FGetComponentPath
+256 stdcall MAPISendMailW(ptr long ptr long long)

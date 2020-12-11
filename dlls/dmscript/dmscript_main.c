@@ -2,545 +2,145 @@
  *
  * Copyright (C) 2003-2004 Rok Mandeljc
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Library General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include "config.h"
+#include "wine/port.h"
+
+#include <stdarg.h>
+
+#define COBJMACROS
+
+#include "windef.h"
+#include "winbase.h"
+#include "winnt.h"
+#include "wingdi.h"
+#include "winuser.h"
+#include "winreg.h"
+#include "objbase.h"
+#include "rpcproxy.h"
+#include "initguid.h"
+#include "dmusici.h"
 
 #include "dmscript_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmscript);
 
+static HINSTANCE instance;
 LONG DMSCRIPT_refCount = 0;
 
 typedef struct {
-    const IClassFactoryVtbl *lpVtbl;
+        IClassFactory IClassFactory_iface;
+        HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ppv, IUnknown *pUnkOuter);
 } IClassFactoryImpl;
 
-/******************************************************************
- *		DirectMusicScriptAutoImplSegment ClassFactory
- */
-static HRESULT WINAPI ScriptAutoImplSegmentCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
+static HRESULT WINAPI create_unimpl_instance(REFIID riid, void **ppv, IUnknown *pUnkOuter)
+{
+        FIXME("(%p, %s, %p) stub\n", pUnkOuter, debugstr_dmguid(riid), ppv);
 
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
+        return CLASS_E_CLASSNOTAVAILABLE;
 }
-
-static ULONG WINAPI ScriptAutoImplSegmentCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ScriptAutoImplSegmentCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptAutoImplSegmentCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI ScriptAutoImplSegmentCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptAutoImplSegmentCF_Vtbl = {
-	ScriptAutoImplSegmentCF_QueryInterface,
-	ScriptAutoImplSegmentCF_AddRef,
-	ScriptAutoImplSegmentCF_Release,
-	ScriptAutoImplSegmentCF_CreateInstance,
-	ScriptAutoImplSegmentCF_LockServer
-};
-
-static IClassFactoryImpl ScriptAutoImplSegment_CF = {&ScriptAutoImplSegmentCF_Vtbl};
 
 /******************************************************************
- *		DirectMusicScriptTrack ClassFactory
+ *      IClassFactory implementation
  */
-static HRESULT WINAPI ScriptTrackCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
+static inline IClassFactoryImpl *impl_from_IClassFactory(IClassFactory *iface)
+{
+        return CONTAINING_RECORD(iface, IClassFactoryImpl, IClassFactory_iface);
 }
 
-static ULONG WINAPI ScriptTrackCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
+static HRESULT WINAPI ClassFactory_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
+{
+        if (ppv == NULL)
+                return E_POINTER;
 
-	return 2; /* non-heap based object */
+        if (IsEqualGUID(&IID_IUnknown, riid))
+                TRACE("(%p)->(IID_IUnknown %p)\n", iface, ppv);
+        else if (IsEqualGUID(&IID_IClassFactory, riid))
+                TRACE("(%p)->(IID_IClassFactory %p)\n", iface, ppv);
+        else {
+                FIXME("(%p)->(%s %p)\n", iface, debugstr_guid(riid), ppv);
+                *ppv = NULL;
+                return E_NOINTERFACE;
+        }
+
+        *ppv = iface;
+        IUnknown_AddRef((IUnknown*)*ppv);
+        return S_OK;
 }
 
-static ULONG WINAPI ScriptTrackCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
+static ULONG WINAPI ClassFactory_AddRef(IClassFactory *iface)
+{
+        DMSCRIPT_LockModule();
 
-	return 1; /* non-heap based object */
+        return 2; /* non-heap based object */
 }
 
-static HRESULT WINAPI ScriptTrackCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	TRACE ("(%p, %s, %p)\n", pOuter, debugstr_dmguid(riid), ppobj);
-	return DMUSIC_CreateDirectMusicScriptTrack (riid, ppobj, pOuter);
+static ULONG WINAPI ClassFactory_Release(IClassFactory *iface)
+{
+        DMSCRIPT_UnlockModule();
+
+        return 1; /* non-heap based object */
 }
 
-static HRESULT WINAPI ScriptTrackCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
+static HRESULT WINAPI ClassFactory_CreateInstance(IClassFactory *iface, IUnknown *pUnkOuter,
+        REFIID riid, void **ppv)
+{
+        IClassFactoryImpl *This = impl_from_IClassFactory(iface);
 
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
+        TRACE ("(%p, %s, %p)\n", pUnkOuter, debugstr_dmguid(riid), ppv);
+
+        return This->fnCreateInstance(riid, ppv, pUnkOuter);
 }
 
-static const IClassFactoryVtbl ScriptTrackCF_Vtbl = {
-	ScriptTrackCF_QueryInterface,
-	ScriptTrackCF_AddRef,
-	ScriptTrackCF_Release,
-	ScriptTrackCF_CreateInstance,
-	ScriptTrackCF_LockServer
+static HRESULT WINAPI ClassFactory_LockServer(IClassFactory *iface, BOOL dolock)
+{
+        TRACE("(%d)\n", dolock);
+
+        if (dolock)
+                DMSCRIPT_LockModule();
+        else
+                DMSCRIPT_UnlockModule();
+
+        return S_OK;
+}
+
+static const IClassFactoryVtbl classfactory_vtbl = {
+        ClassFactory_QueryInterface,
+        ClassFactory_AddRef,
+        ClassFactory_Release,
+        ClassFactory_CreateInstance,
+        ClassFactory_LockServer
 };
 
-static IClassFactoryImpl ScriptTrack_CF = {&ScriptTrackCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicAudioVBScript ClassFactory
- */
-static HRESULT WINAPI AudioVBScriptCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI AudioVBScriptCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI AudioVBScriptCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI AudioVBScriptCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI AudioVBScriptCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl AudioVBScriptCF_Vtbl = {
-	AudioVBScriptCF_QueryInterface,
-	AudioVBScriptCF_AddRef,
-	AudioVBScriptCF_Release,
-	AudioVBScriptCF_CreateInstance,
-	AudioVBScriptCF_LockServer
-};
-
-static IClassFactoryImpl AudioVBScript_CF = {&AudioVBScriptCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicScript ClassFactory
- */
-static HRESULT WINAPI ScriptCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ScriptCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ScriptCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	TRACE ("(%p, %s, %p)\n", pOuter, debugstr_dmguid(riid), ppobj);
-	
-	return DMUSIC_CreateDirectMusicScriptImpl (riid, ppobj, pOuter);
-}
-
-static HRESULT WINAPI ScriptCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptCF_Vtbl = {
-	ScriptCF_QueryInterface,
-	ScriptCF_AddRef,
-	ScriptCF_Release,
-	ScriptCF_CreateInstance,
-	ScriptCF_LockServer
-};
-
-static IClassFactoryImpl Script_CF = {&ScriptCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicScriptAutoImplPerformance ClassFactory
- */
-static HRESULT WINAPI ScriptAutoImplPerformanceCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ScriptAutoImplPerformanceCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ScriptAutoImplPerformanceCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptAutoImplPerformanceCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI ScriptAutoImplPerformanceCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptAutoImplPerformanceCF_Vtbl = {
-	ScriptAutoImplPerformanceCF_QueryInterface,
-	ScriptAutoImplPerformanceCF_AddRef,
-	ScriptAutoImplPerformanceCF_Release,
-	ScriptAutoImplPerformanceCF_CreateInstance,
-	ScriptAutoImplPerformanceCF_LockServer
-};
-
-static IClassFactoryImpl ScriptAutoImplPerformance_CF = {&ScriptAutoImplPerformanceCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicScriptSourceCodeLoader ClassFactory
- */
-static HRESULT WINAPI ScriptSourceCodeLoaderCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ScriptSourceCodeLoaderCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ScriptSourceCodeLoaderCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptSourceCodeLoaderCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI ScriptSourceCodeLoaderCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptSourceCodeLoaderCF_Vtbl = {
-	ScriptSourceCodeLoaderCF_QueryInterface,
-	ScriptSourceCodeLoaderCF_AddRef,
-	ScriptSourceCodeLoaderCF_Release,
-	ScriptSourceCodeLoaderCF_CreateInstance,
-	ScriptSourceCodeLoaderCF_LockServer
-};
-
-static IClassFactoryImpl ScriptSourceCodeLoader_CF = {&ScriptSourceCodeLoaderCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicScriptAutoImplSegmentState ClassFactory
- */
-static HRESULT WINAPI ScriptAutoImplSegmentStateCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ScriptAutoImplSegmentStateCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ScriptAutoImplSegmentStateCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptAutoImplSegmentStateCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI ScriptAutoImplSegmentStateCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptAutoImplSegmentStateCF_Vtbl = {
-	ScriptAutoImplSegmentStateCF_QueryInterface,
-	ScriptAutoImplSegmentStateCF_AddRef,
-	ScriptAutoImplSegmentStateCF_Release,
-	ScriptAutoImplSegmentStateCF_CreateInstance,
-	ScriptAutoImplSegmentStateCF_LockServer
-};
-
-static IClassFactoryImpl ScriptAutoImplSegmentState_CF = {&ScriptAutoImplSegmentStateCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicScriptAutoImplAudioPathConfig ClassFactory
- */
-static HRESULT WINAPI ScriptAutoImplAudioPathConfigCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ScriptAutoImplAudioPathConfigCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ScriptAutoImplAudioPathConfigCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptAutoImplAudioPathConfigCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI ScriptAutoImplAudioPathConfigCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptAutoImplAudioPathConfigCF_Vtbl = {
-	ScriptAutoImplAudioPathConfigCF_QueryInterface,
-	ScriptAutoImplAudioPathConfigCF_AddRef,
-	ScriptAutoImplAudioPathConfigCF_Release,
-	ScriptAutoImplAudioPathConfigCF_CreateInstance,
-	ScriptAutoImplAudioPathConfigCF_LockServer
-};
-
-static IClassFactoryImpl ScriptAutoImplAudioPathConfig_CF = {&ScriptAutoImplAudioPathConfigCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicScriptAutoImplAudioPath ClassFactory
- */
-static HRESULT WINAPI ScriptAutoImplAudioPathCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ScriptAutoImplAudioPathCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ScriptAutoImplAudioPathCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptAutoImplAudioPathCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI ScriptAutoImplAudioPathCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptAutoImplAudioPathCF_Vtbl = {
-	ScriptAutoImplAudioPathCF_QueryInterface,
-	ScriptAutoImplAudioPathCF_AddRef,
-	ScriptAutoImplAudioPathCF_Release,
-	ScriptAutoImplAudioPathCF_CreateInstance,
-	ScriptAutoImplAudioPathCF_LockServer
-};
-
-static IClassFactoryImpl ScriptAutoImplAudioPath_CF = {&ScriptAutoImplAudioPathCF_Vtbl};
-
-/******************************************************************
- *		DirectMusicScriptAutoImplSong ClassFactory
- */
-static HRESULT WINAPI ScriptAutoImplSongCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ScriptAutoImplSongCF_AddRef(LPCLASSFACTORY iface) {
-	DMSCRIPT_LockModule();
-
-	return 2; /* non-heap based */
-}
-
-static ULONG WINAPI ScriptAutoImplSongCF_Release(LPCLASSFACTORY iface) {
-	DMSCRIPT_UnlockModule();
-
-	return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ScriptAutoImplSongCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter, REFIID riid, LPVOID *ppobj) {
-	FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
-
-	if (ppobj == NULL) return E_POINTER;
-	
-	return E_NOINTERFACE;
-}
-
-static HRESULT WINAPI ScriptAutoImplSongCF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {
-	TRACE("(%d)\n", dolock);
-
-	if (dolock)
-		DMSCRIPT_LockModule();
-	else
-		DMSCRIPT_UnlockModule();
-	
-	return S_OK;
-}
-
-static const IClassFactoryVtbl ScriptAutoImplSongCF_Vtbl = {
-	ScriptAutoImplSongCF_QueryInterface,
-	ScriptAutoImplSongCF_AddRef,
-	ScriptAutoImplSongCF_Release,
-	ScriptAutoImplSongCF_CreateInstance,
-	ScriptAutoImplSongCF_LockServer
-};
-
-static IClassFactoryImpl ScriptAutoImplSong_CF = {&ScriptAutoImplSongCF_Vtbl};
+static IClassFactoryImpl ScriptAutoImplSegment_CF = {{&classfactory_vtbl}, create_unimpl_instance};
+static IClassFactoryImpl ScriptTrack_CF = {{&classfactory_vtbl},
+                                           DMUSIC_CreateDirectMusicScriptTrack};
+static IClassFactoryImpl AudioVBScript_CF = {{&classfactory_vtbl}, create_unimpl_instance};
+static IClassFactoryImpl Script_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicScriptImpl};
+static IClassFactoryImpl ScriptAutoImplPerformance_CF = {{&classfactory_vtbl},
+                                                         create_unimpl_instance};
+static IClassFactoryImpl ScriptSourceCodeLoader_CF = {{&classfactory_vtbl}, create_unimpl_instance};
+static IClassFactoryImpl ScriptAutoImplSegmentState_CF = {{&classfactory_vtbl},
+                                                          create_unimpl_instance};
+static IClassFactoryImpl ScriptAutoImplAudioPathConfig_CF = {{&classfactory_vtbl},
+                                                             create_unimpl_instance};
+static IClassFactoryImpl ScriptAutoImplAudioPath_CF = {{&classfactory_vtbl},
+                                                       create_unimpl_instance};
+static IClassFactoryImpl ScriptAutoImplSong_CF = {{&classfactory_vtbl}, create_unimpl_instance};
 
 /******************************************************************
  *		DllMain
@@ -549,10 +149,8 @@ static IClassFactoryImpl ScriptAutoImplSong_CF = {&ScriptAutoImplSongCF_Vtbl};
  */
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	if (fdwReason == DLL_PROCESS_ATTACH) {
+            instance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
-	} else if (fdwReason == DLL_PROCESS_DETACH) {
-		/* FIXME: Cleanup */
 	}
 
 	return TRUE;
@@ -579,43 +177,43 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
 {
     TRACE("(%s, %s, %p)\n", debugstr_dmguid(rclsid), debugstr_dmguid(riid), ppv);
     if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptAutoImpSegment) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptAutoImplSegment_CF;
+      *ppv = &ScriptAutoImplSegment_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptTrack) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptTrack_CF;
+      *ppv = &ScriptTrack_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_AudioVBScript) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &AudioVBScript_CF;
+      *ppv = &AudioVBScript_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScript) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &Script_CF;
+      *ppv = &Script_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptAutoImpPerformance) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptAutoImplPerformance_CF;
+      *ppv = &ScriptAutoImplPerformance_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptSourceCodeLoader) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptSourceCodeLoader_CF;
+      *ppv = &ScriptSourceCodeLoader_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptAutoImpSegmentState) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptAutoImplSegmentState_CF;
+      *ppv = &ScriptAutoImplSegmentState_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptAutoImpAudioPathConfig) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptAutoImplAudioPathConfig_CF;
+      *ppv = &ScriptAutoImplAudioPathConfig_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptAutoImpAudioPath) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptAutoImplAudioPath_CF;
+      *ppv = &ScriptAutoImplAudioPath_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	} else if (IsEqualCLSID (rclsid, &CLSID_DirectMusicScriptAutoImpSong) && IsEqualIID (riid, &IID_IClassFactory)) {
-      *ppv = (LPVOID) &ScriptAutoImplSong_CF;
+      *ppv = &ScriptAutoImplSong_CF;
       IClassFactory_AddRef((IClassFactory*)*ppv);
       return S_OK;
 	}		
@@ -625,15 +223,27 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
 }
 
 
+/***********************************************************************
+ *		DllRegisterServer (DMSCRIPT.@)
+ */
+HRESULT WINAPI DllRegisterServer(void)
+{
+    return __wine_register_resources( instance );
+}
+
+/***********************************************************************
+ *		DllUnregisterServer (DMSCRIPT.@)
+ */
+HRESULT WINAPI DllUnregisterServer(void)
+{
+    return __wine_unregister_resources( instance );
+}
+
 /******************************************************************
  *		Helper functions
  *
  *
  */
-/* check whether the given DWORD is even (return 0) or odd (return 1) */
-int even_or_odd (DWORD number) {
-	return (number & 0x1); /* basically, check if bit 0 is set ;) */
-}
 
 /* FOURCC to string conversion for debug messages */
 const char *debugstr_fourcc (DWORD fourcc) {
@@ -644,11 +254,11 @@ const char *debugstr_fourcc (DWORD fourcc) {
 }
 
 /* DMUS_VERSION struct to string conversion for debug messages */
-const char *debugstr_dmversion (LPDMUS_VERSION version) {
+static const char *debugstr_dmversion (const DMUS_VERSION *version) {
 	if (!version) return "'null'";
 	return wine_dbg_sprintf ("\'%i,%i,%i,%i\'",
-		(int)((version->dwVersionMS && 0xFFFF0000) >> 8), (int)(version->dwVersionMS && 0x0000FFFF), 
-		(int)((version->dwVersionLS && 0xFFFF0000) >> 8), (int)(version->dwVersionLS && 0x0000FFFF));
+		(int)((version->dwVersionMS & 0xFFFF0000) >> 8), (int)(version->dwVersionMS & 0x0000FFFF), 
+		(int)((version->dwVersionLS & 0xFFFF0000) >> 8), (int)(version->dwVersionLS & 0x0000FFFF));
 }
 
 /* returns name of given GUID */
@@ -657,7 +267,6 @@ const char *debugstr_dmguid (const GUID *id) {
 		/* CLSIDs */
 		GE(CLSID_AudioVBScript),
 		GE(CLSID_DirectMusic),
-		GE(CLSID_DirectMusicAudioPath),
 		GE(CLSID_DirectMusicAudioPathConfig),
 		GE(CLSID_DirectMusicAuditionTrack),
 		GE(CLSID_DirectMusicBand),
@@ -827,154 +436,19 @@ const char *debugstr_dmguid (const GUID *id) {
 
         if (!id) return "(null)";
 
-	for (i = 0; i < sizeof(guids)/sizeof(guids[0]); i++) {
-		if (IsEqualGUID(id, &guids[i].guid))
+	for (i = 0; i < ARRAY_SIZE(guids); i++) {
+		if (IsEqualGUID(id, guids[i].guid))
 			return guids[i].name;
 	}
 	/* if we didn't find it, act like standard debugstr_guid */	
 	return debugstr_guid(id);
 }	
 
-/* returns name of given error code */
-const char *debugstr_dmreturn (DWORD code) {
-	static const flag_info codes[] = {
-		FE(S_OK),
-		FE(S_FALSE),
-		FE(DMUS_S_PARTIALLOAD),
-		FE(DMUS_S_PARTIALDOWNLOAD),
-		FE(DMUS_S_REQUEUE),
-		FE(DMUS_S_FREE),
-		FE(DMUS_S_END),
-		FE(DMUS_S_STRING_TRUNCATED),
-		FE(DMUS_S_LAST_TOOL),
-		FE(DMUS_S_OVER_CHORD),
-		FE(DMUS_S_UP_OCTAVE),
-		FE(DMUS_S_DOWN_OCTAVE),
-		FE(DMUS_S_NOBUFFERCONTROL),
-		FE(DMUS_S_GARBAGE_COLLECTED),
-		FE(DMUS_E_DRIVER_FAILED),
-		FE(DMUS_E_PORTS_OPEN),
-		FE(DMUS_E_DEVICE_IN_USE),
-		FE(DMUS_E_INSUFFICIENTBUFFER),
-		FE(DMUS_E_BUFFERNOTSET),
-		FE(DMUS_E_BUFFERNOTAVAILABLE),
-		FE(DMUS_E_NOTADLSCOL),
-		FE(DMUS_E_INVALIDOFFSET),
-		FE(DMUS_E_ALREADY_LOADED),
-		FE(DMUS_E_INVALIDPOS),
-		FE(DMUS_E_INVALIDPATCH),
-		FE(DMUS_E_CANNOTSEEK),
-		FE(DMUS_E_CANNOTWRITE),
-		FE(DMUS_E_CHUNKNOTFOUND),
-		FE(DMUS_E_INVALID_DOWNLOADID),
-		FE(DMUS_E_NOT_DOWNLOADED_TO_PORT),
-		FE(DMUS_E_ALREADY_DOWNLOADED),
-		FE(DMUS_E_UNKNOWN_PROPERTY),
-		FE(DMUS_E_SET_UNSUPPORTED),
-		FE(DMUS_E_GET_UNSUPPORTED),
-		FE(DMUS_E_NOTMONO),
-		FE(DMUS_E_BADARTICULATION),
-		FE(DMUS_E_BADINSTRUMENT),
-		FE(DMUS_E_BADWAVELINK),
-		FE(DMUS_E_NOARTICULATION),
-		FE(DMUS_E_NOTPCM),
-		FE(DMUS_E_BADWAVE),
-		FE(DMUS_E_BADOFFSETTABLE),
-		FE(DMUS_E_UNKNOWNDOWNLOAD),
-		FE(DMUS_E_NOSYNTHSINK),
-		FE(DMUS_E_ALREADYOPEN),
-		FE(DMUS_E_ALREADYCLOSED),
-		FE(DMUS_E_SYNTHNOTCONFIGURED),
-		FE(DMUS_E_SYNTHACTIVE),
-		FE(DMUS_E_CANNOTREAD),
-		FE(DMUS_E_DMUSIC_RELEASED),
-		FE(DMUS_E_BUFFER_EMPTY),
-		FE(DMUS_E_BUFFER_FULL),
-		FE(DMUS_E_PORT_NOT_CAPTURE),
-		FE(DMUS_E_PORT_NOT_RENDER),
-		FE(DMUS_E_DSOUND_NOT_SET),
-		FE(DMUS_E_ALREADY_ACTIVATED),
-		FE(DMUS_E_INVALIDBUFFER),
-		FE(DMUS_E_WAVEFORMATNOTSUPPORTED),
-		FE(DMUS_E_SYNTHINACTIVE),
-		FE(DMUS_E_DSOUND_ALREADY_SET),
-		FE(DMUS_E_INVALID_EVENT),
-		FE(DMUS_E_UNSUPPORTED_STREAM),
-		FE(DMUS_E_ALREADY_INITED),
-		FE(DMUS_E_INVALID_BAND),
-		FE(DMUS_E_TRACK_HDR_NOT_FIRST_CK),
-		FE(DMUS_E_TOOL_HDR_NOT_FIRST_CK),
-		FE(DMUS_E_INVALID_TRACK_HDR),
-		FE(DMUS_E_INVALID_TOOL_HDR),
-		FE(DMUS_E_ALL_TOOLS_FAILED),
-		FE(DMUS_E_ALL_TRACKS_FAILED),
-		FE(DMUS_E_NOT_FOUND),
-		FE(DMUS_E_NOT_INIT),
-		FE(DMUS_E_TYPE_DISABLED),
-		FE(DMUS_E_TYPE_UNSUPPORTED),
-		FE(DMUS_E_TIME_PAST),
-		FE(DMUS_E_TRACK_NOT_FOUND),
-		FE(DMUS_E_TRACK_NO_CLOCKTIME_SUPPORT),
-		FE(DMUS_E_NO_MASTER_CLOCK),
-		FE(DMUS_E_LOADER_NOCLASSID),
-		FE(DMUS_E_LOADER_BADPATH),
-		FE(DMUS_E_LOADER_FAILEDOPEN),
-		FE(DMUS_E_LOADER_FORMATNOTSUPPORTED),
-		FE(DMUS_E_LOADER_FAILEDCREATE),
-		FE(DMUS_E_LOADER_OBJECTNOTFOUND),
-		FE(DMUS_E_LOADER_NOFILENAME),
-		FE(DMUS_E_INVALIDFILE),
-		FE(DMUS_E_ALREADY_EXISTS),
-		FE(DMUS_E_OUT_OF_RANGE),
-		FE(DMUS_E_SEGMENT_INIT_FAILED),
-		FE(DMUS_E_ALREADY_SENT),
-		FE(DMUS_E_CANNOT_FREE),
-		FE(DMUS_E_CANNOT_OPEN_PORT),
-		FE(DMUS_E_CANNOT_CONVERT),
-		FE(DMUS_E_DESCEND_CHUNK_FAIL),
-		FE(DMUS_E_NOT_LOADED),
-		FE(DMUS_E_SCRIPT_LANGUAGE_INCOMPATIBLE),
-		FE(DMUS_E_SCRIPT_UNSUPPORTED_VARTYPE),
-		FE(DMUS_E_SCRIPT_ERROR_IN_SCRIPT),
-		FE(DMUS_E_SCRIPT_CANTLOAD_OLEAUT32),
-		FE(DMUS_E_SCRIPT_LOADSCRIPT_ERROR),
-		FE(DMUS_E_SCRIPT_INVALID_FILE),
-		FE(DMUS_E_INVALID_SCRIPTTRACK),
-		FE(DMUS_E_SCRIPT_VARIABLE_NOT_FOUND),
-		FE(DMUS_E_SCRIPT_ROUTINE_NOT_FOUND),
-		FE(DMUS_E_SCRIPT_CONTENT_READONLY),
-		FE(DMUS_E_SCRIPT_NOT_A_REFERENCE),
-		FE(DMUS_E_SCRIPT_VALUE_NOT_SUPPORTED),
-		FE(DMUS_E_INVALID_SEGMENTTRIGGERTRACK),
-		FE(DMUS_E_INVALID_LYRICSTRACK),
-		FE(DMUS_E_INVALID_PARAMCONTROLTRACK),
-		FE(DMUS_E_AUDIOVBSCRIPT_SYNTAXERROR),
-		FE(DMUS_E_AUDIOVBSCRIPT_RUNTIMEERROR),
-		FE(DMUS_E_AUDIOVBSCRIPT_OPERATIONFAILURE),
-		FE(DMUS_E_AUDIOPATHS_NOT_VALID),
-		FE(DMUS_E_AUDIOPATHS_IN_USE),
-		FE(DMUS_E_NO_AUDIOPATH_CONFIG),
-		FE(DMUS_E_AUDIOPATH_INACTIVE),
-		FE(DMUS_E_AUDIOPATH_NOBUFFER),
-		FE(DMUS_E_AUDIOPATH_NOPORT),
-		FE(DMUS_E_NO_AUDIOPATH),
-		FE(DMUS_E_INVALIDCHUNK),
-		FE(DMUS_E_AUDIOPATH_NOGLOBALFXBUFFER),
-		FE(DMUS_E_INVALID_CONTAINER_OBJECT)
-	};
-	unsigned int i;
-	for (i = 0; i < sizeof(codes)/sizeof(codes[0]); i++) {
-		if (code == codes[i].val)
-			return codes[i].name;
-	}
-	/* if we didn't find it, return value */
-	return wine_dbg_sprintf("0x%08lx", code);
-}
-
 /* generic flag-dumping function */
-const char* debugstr_flags (DWORD flags, const flag_info* names, size_t num_names){
+static const char* debugstr_flags (DWORD flags, const flag_info* names, size_t num_names){
 	char buffer[128] = "", *ptr = &buffer[0];
-	unsigned int i, size = sizeof(buffer);
+	unsigned int i;
+	int size = sizeof(buffer);
 	
 	for (i=0; i < num_names; i++)
 	{
@@ -991,7 +465,7 @@ const char* debugstr_flags (DWORD flags, const flag_info* names, size_t num_name
 }
 
 /* dump DMUS_OBJ flags */
-const char *debugstr_DMUS_OBJ_FLAGS (DWORD flagmask) {
+static const char *debugstr_DMUS_OBJ_FLAGS (DWORD flagmask) {
     static const flag_info flags[] = {
 	    FE(DMUS_OBJ_OBJECT),
 	    FE(DMUS_OBJ_CLASS),
@@ -1006,7 +480,7 @@ const char *debugstr_DMUS_OBJ_FLAGS (DWORD flagmask) {
 	    FE(DMUS_OBJ_MEMORY),
 	    FE(DMUS_OBJ_STREAM)
 	};
-    return debugstr_flags (flagmask, flags, sizeof(flags)/sizeof(flags[0]));
+    return debugstr_flags(flagmask, flags, ARRAY_SIZE(flags));
 }
 
 /* dump whole DMUS_OBJECTDESC struct */
@@ -1015,7 +489,7 @@ const char *debugstr_DMUS_OBJECTDESC (LPDMUS_OBJECTDESC pDesc) {
 		char buffer[1024] = "", *ptr = &buffer[0];
 		
 		ptr += sprintf(ptr, "DMUS_OBJECTDESC (%p):\n", pDesc);
-		ptr += sprintf(ptr, " - dwSize = %ld\n", pDesc->dwSize);
+		ptr += sprintf(ptr, " - dwSize = %d\n", pDesc->dwSize);
 		ptr += sprintf(ptr, " - dwValidData = %s\n", debugstr_DMUS_OBJ_FLAGS (pDesc->dwValidData));
 		if (pDesc->dwValidData & DMUS_OBJ_CLASS) ptr +=	sprintf(ptr, " - guidClass = %s\n", debugstr_dmguid(&pDesc->guidClass));
 		if (pDesc->dwValidData & DMUS_OBJ_OBJECT) ptr += sprintf(ptr, " - guidObject = %s\n", debugstr_guid(&pDesc->guidObject));
@@ -1024,7 +498,8 @@ const char *debugstr_DMUS_OBJECTDESC (LPDMUS_OBJECTDESC pDesc) {
 		if (pDesc->dwValidData & DMUS_OBJ_NAME) ptr += sprintf(ptr, " - wszName = %s\n", debugstr_w(pDesc->wszName));
 		if (pDesc->dwValidData & DMUS_OBJ_CATEGORY) ptr += sprintf(ptr, " - wszCategory = %s\n", debugstr_w(pDesc->wszCategory));
 		if (pDesc->dwValidData & DMUS_OBJ_FILENAME) ptr += sprintf(ptr, " - wszFileName = %s\n", debugstr_w(pDesc->wszFileName));
-		if (pDesc->dwValidData & DMUS_OBJ_MEMORY) ptr += sprintf(ptr, " - llMemLength = %lli\n  - pbMemData = %p\n", pDesc->llMemLength, pDesc->pbMemData);
+		if (pDesc->dwValidData & DMUS_OBJ_MEMORY) ptr += sprintf(ptr, " - llMemLength = 0x%s\n  - pbMemData = %p\n", 
+		                                                     wine_dbgstr_longlong(pDesc->llMemLength), pDesc->pbMemData);
 		if (pDesc->dwValidData & DMUS_OBJ_STREAM) ptr += sprintf(ptr, " - pStream = %p", pDesc->pStream);
 
 		return wine_dbg_sprintf("%s", buffer);

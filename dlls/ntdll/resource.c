@@ -22,7 +22,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -35,12 +35,11 @@
 #define NONAMELESSUNION
 #define NONAMELESSSTRUCT
 #include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
-#include "winnls.h"
 #include "winnt.h"
 #include "winternl.h"
-#include "excpt.h"
 #include "wine/exception.h"
 #include "wine/unicode.h"
 #include "wine/debug.h"
@@ -50,20 +49,14 @@ WINE_DEFAULT_DEBUG_CHANNEL(resource);
 static LCID user_lcid, system_lcid;
 static LANGID user_ui_language, system_ui_language;
 
-static WINE_EXCEPTION_FILTER(page_fault)
-{
-    if (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ||
-        GetExceptionCode() == EXCEPTION_PRIV_INSTRUCTION)
-        return EXCEPTION_EXECUTE_HANDLER;
-    return EXCEPTION_CONTINUE_SEARCH;
-}
+#define IS_INTRESOURCE(x)       (((ULONG_PTR)(x) >> 16) == 0)
 
 /**********************************************************************
  *  is_data_file_module
  *
  * Check if a module handle is for a LOAD_LIBRARY_AS_DATAFILE module.
  */
-inline static int is_data_file_module( HMODULE hmod )
+static inline BOOL is_data_file_module( HMODULE hmod )
 {
     return (ULONG_PTR)hmod & 1;
 }
@@ -96,8 +89,8 @@ static const IMAGE_RESOURCE_DIRECTORY *find_first_entry( const IMAGE_RESOURCE_DI
 
     for (pos = 0; pos < dir->NumberOfNamedEntries + dir->NumberOfIdEntries; pos++)
     {
-        if (!entry[pos].u2.s3.DataIsDirectory == !want_dir)
-            return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s3.OffsetToDirectory);
+        if (!entry[pos].u2.s2.DataIsDirectory == !want_dir)
+            return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s2.OffsetToDirectory);
     }
     return NULL;
 }
@@ -120,17 +113,17 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_id( const IMAGE_RESOURCE_DI
     while (min <= max)
     {
         pos = (min + max) / 2;
-        if (entry[pos].u1.s2.Id == id)
+        if (entry[pos].u.Id == id)
         {
-            if (!entry[pos].u2.s3.DataIsDirectory == !want_dir)
+            if (!entry[pos].u2.s2.DataIsDirectory == !want_dir)
             {
                 TRACE("root %p dir %p id %04x ret %p\n",
-                      root, dir, id, (const char*)root + entry[pos].u2.s3.OffsetToDirectory);
-                return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s3.OffsetToDirectory);
+                      root, dir, id, (const char*)root + entry[pos].u2.s2.OffsetToDirectory);
+                return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s2.OffsetToDirectory);
             }
             break;
         }
-        if (entry[pos].u1.s2.Id > id) max = pos - 1;
+        if (entry[pos].u.Id > id) max = pos - 1;
         else min = pos + 1;
     }
     TRACE("root %p dir %p id %04x not found\n", root, dir, id );
@@ -151,7 +144,7 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_name( const IMAGE_RESOURCE_
     const IMAGE_RESOURCE_DIR_STRING_U *str;
     int min, max, res, pos, namelen;
 
-    if (!HIWORD(name)) return find_entry_by_id( dir, LOWORD(name), root, want_dir );
+    if (IS_INTRESOURCE(name)) return find_entry_by_id( dir, LOWORD(name), root, want_dir );
     entry = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
     namelen = strlenW(name);
     min = 0;
@@ -159,15 +152,15 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_name( const IMAGE_RESOURCE_
     while (min <= max)
     {
         pos = (min + max) / 2;
-        str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const char *)root + entry[pos].u1.s1.NameOffset);
+        str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const char *)root + entry[pos].u.s.NameOffset);
         res = strncmpW( name, str->NameString, str->Length );
         if (!res && namelen == str->Length)
         {
-            if (!entry[pos].u2.s3.DataIsDirectory == !want_dir)
+            if (!entry[pos].u2.s2.DataIsDirectory == !want_dir)
             {
                 TRACE("root %p dir %p name %s ret %p\n",
-                      root, dir, debugstr_w(name), (const char*)root + entry[pos].u2.s3.OffsetToDirectory);
-                return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s3.OffsetToDirectory);
+                      root, dir, debugstr_w(name), (const char*)root + entry[pos].u2.s2.OffsetToDirectory);
+                return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s2.OffsetToDirectory);
             }
             break;
         }
@@ -195,6 +188,7 @@ static NTSTATUS find_entry( HMODULE hmod, const LDR_RESOURCE_INFO *info,
 
     root = RtlImageDirectoryEntryToData( hmod, TRUE, IMAGE_DIRECTORY_ENTRY_RESOURCE, &size );
     if (!root) return STATUS_RESOURCE_DATA_NOT_FOUND;
+    if (size < sizeof(*resdirptr)) return STATUS_RESOURCE_DATA_NOT_FOUND;
     resdirptr = root;
 
     if (!level--) goto done;
@@ -273,7 +267,7 @@ NTSTATUS WINAPI LdrFindResourceDirectory_U( HMODULE hmod, const LDR_RESOURCE_INF
 
     __TRY
     {
-	if (info) TRACE( "module %p type %s name %s lang %04lx level %ld\n",
+	if (info) TRACE( "module %p type %s name %s lang %04x level %d\n",
                      hmod, debugstr_w((LPCWSTR)info->Type),
                      level > 1 ? debugstr_w((LPCWSTR)info->Name) : "",
                      level > 2 ? info->Language : 0, level );
@@ -281,7 +275,7 @@ NTSTATUS WINAPI LdrFindResourceDirectory_U( HMODULE hmod, const LDR_RESOURCE_INF
         status = find_entry( hmod, info, level, &res, TRUE );
         if (status == STATUS_SUCCESS) *dir = res;
     }
-    __EXCEPT(page_fault)
+    __EXCEPT_PAGE_FAULT
     {
         return GetExceptionCode();
     }
@@ -301,7 +295,7 @@ NTSTATUS WINAPI LdrFindResource_U( HMODULE hmod, const LDR_RESOURCE_INFO *info,
 
     __TRY
     {
-	if (info) TRACE( "module %p type %s name %s lang %04lx level %ld\n",
+	if (info) TRACE( "module %p type %s name %s lang %04x level %d\n",
                      hmod, debugstr_w((LPCWSTR)info->Type),
                      level > 1 ? debugstr_w((LPCWSTR)info->Name) : "",
                      level > 2 ? info->Language : 0, level );
@@ -309,7 +303,7 @@ NTSTATUS WINAPI LdrFindResource_U( HMODULE hmod, const LDR_RESOURCE_INFO *info,
         status = find_entry( hmod, info, level, &res, FALSE );
         if (status == STATUS_SUCCESS) *entry = res;
     }
-    __EXCEPT(page_fault)
+    __EXCEPT_PAGE_FAULT
     {
         return GetExceptionCode();
     }
@@ -320,8 +314,8 @@ NTSTATUS WINAPI LdrFindResource_U( HMODULE hmod, const LDR_RESOURCE_INFO *info,
 
 /* don't penalize other platforms stuff needed on i386 for compatibility */
 #ifdef __i386__
-NTSTATUS WINAPI access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_ENTRY *entry,
-                                 void **ptr, ULONG *size )
+NTSTATUS WINAPI DECLSPEC_HIDDEN access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_ENTRY *entry,
+                                                 void **ptr, ULONG *size )
 #else
 static inline NTSTATUS access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_ENTRY *entry,
                                         void **ptr, ULONG *size )
@@ -339,18 +333,18 @@ static inline NTSTATUS access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_
         {
             if (ptr)
             {
-                if (is_data_file_module(hmod))
-                {
-                    HMODULE mod = (HMODULE)((ULONG_PTR)hmod & ~1);
-                    *ptr = RtlImageRvaToVa( RtlImageNtHeader(mod), mod, entry->OffsetToData, NULL );
-                }
-                else *ptr = (char *)hmod + entry->OffsetToData;
+                BOOL is_data_file = is_data_file_module(hmod);
+                hmod = (HMODULE)((ULONG_PTR)hmod & ~3);
+                if (is_data_file)
+                    *ptr = RtlImageRvaToVa( RtlImageNtHeader(hmod), hmod, entry->OffsetToData, NULL );
+                else
+                    *ptr = (char *)hmod + entry->OffsetToData;
             }
             if (size) *size = entry->Size;
             status = STATUS_SUCCESS;
         }
     }
-    __EXCEPT(page_fault)
+    __EXCEPT_PAGE_FAULT
     {
         return GetExceptionCode();
     }
@@ -360,21 +354,25 @@ static inline NTSTATUS access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_
 
 /**********************************************************************
  *	LdrAccessResource  (NTDLL.@)
+ *
+ * NOTE
+ * On x86, Shrinker, an executable compressor, depends on the
+ * "call access_resource" instruction being there.
  */
 #ifdef __i386__
-/* Shrinker depends on the "call access_resource" instruction being there */
-__ASM_GLOBAL_FUNC( LdrAccessResource,
-    "pushl %ebp\n"
-    "movl %esp, %ebp\n"
-    "pushl 24(%ebp)\n"
-    "pushl 20(%ebp)\n"
-    "pushl 16(%ebp)\n"
-    "pushl 12(%ebp)\n"
-    "pushl 8(%ebp)\n"
-    "call access_resource\n"
-    "leave\n"
-    "ret $16\n"
-);
+__ASM_STDCALL_FUNC( LdrAccessResource, 16,
+    "pushl %ebp\n\t"
+    "movl %esp, %ebp\n\t"
+    "subl $4,%esp\n\t"
+    "pushl 24(%ebp)\n\t"
+    "pushl 20(%ebp)\n\t"
+    "pushl 16(%ebp)\n\t"
+    "pushl 12(%ebp)\n\t"
+    "pushl 8(%ebp)\n\t"
+    "call " __ASM_NAME("access_resource") "\n\t"
+    "leave\n\t"
+    "ret $16"
+)
 #else
 NTSTATUS WINAPI LdrAccessResource( HMODULE hmod, const IMAGE_RESOURCE_DATA_ENTRY *entry,
                                    void **ptr, ULONG *size )
@@ -443,10 +441,10 @@ NTSTATUS WINAPI RtlFindMessage( HMODULE hmod, ULONG type, ULONG lang,
  */
 NTSTATUS WINAPI RtlFormatMessage( LPWSTR Message, UCHAR MaxWidth,
                                   BOOLEAN IgnoreInserts, BOOLEAN Ansi,
-                                  BOOLEAN ArgumentIsArray, va_list * Arguments,
+                                  BOOLEAN ArgumentIsArray, __ms_va_list * Arguments,
                                   LPWSTR Buffer, ULONG BufferSize )
 {
-    FIXME("(%s, %u, %s, %s, %s, %p, %p, %ld)\n", debugstr_w(Message),
+    FIXME("(%s, %u, %s, %s, %s, %p, %p, %d)\n", debugstr_w(Message),
         MaxWidth, IgnoreInserts ? "TRUE" : "FALSE", Ansi ? "TRUE" : "FALSE",
         ArgumentIsArray ? "TRUE" : "FALSE", Arguments, Buffer, BufferSize);
     return STATUS_SUCCESS;

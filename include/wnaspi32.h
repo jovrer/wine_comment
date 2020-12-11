@@ -13,14 +13,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WNASPI32_H__
 #define __WNASPI32_H__
 
-/* This file should be 100% source compatible according to MSes docs and
- * Adaptecs docs */
+/* This file should be 100% source compatible according to MS docs and
+ * Adaptec docs */
 
 #ifdef __cplusplus
 extern "C" {
@@ -150,7 +150,7 @@ typedef struct tagSRB32_ExecSCSICmd {
   BYTE        SRB_CDBLen;         /* 15 CDB Length */
   BYTE        SRB_HaStat;         /* 16 Host Adapter Status */
   BYTE        SRB_TargStat;       /* 17 Target Status */
-  void        (*SRB_PostProc)();  /* 18 Post routine */
+  void        (*SRB_PostProc)( struct tagSRB32_ExecSCSICmd * ); /* 18 Post routine */
   void        *SRB_Rsvd2;         /* 1C Reserved */
   BYTE        SRB_Rsvd3[16];      /* 20 Reserved for expansion */
   BYTE        CDBByte[16];        /* 30 SCSI CDB */
@@ -179,7 +179,7 @@ typedef struct tagSRB32_BusDeviceReset {
  BYTE         SRB_Rsvd1[12];            /* 0A Reserved for Alignment */
  BYTE         SRB_HaStat;               /* 16 Host Adapter Status */
  BYTE         SRB_TargStat;             /* 17 Target Status */
- void         (*SRB_PostProc)();        /* 18 Post routine */
+ void         (*SRB_PostProc)( struct tagSRB32_BusDeviceReset * ); /* 18 Post routine */
  void         *SRB_Rsvd2;               /* 1c Reserved */
  BYTE         SRB_Rsvd3[32];            /* 20 Reserved */
 } SRB_BusDeviceReset, *PSRB_BusDeviceReset;
@@ -199,6 +199,17 @@ typedef struct tagSRB32_GetDiskInfo {
  BYTE         SRB_Sectors;              /* 0D Preferred number of sectors trans */
  BYTE         SRB_Rsvd1[10];            /* 0E Reserved */
 } SRB_GetDiskInfo, *PSRB_GetDiskInfo;
+
+typedef struct tagSRB32_GetSetTimeouts {
+ BYTE         SRB_Cmd;                  /* 00 ASPI cmd code = SC_GETSET_TIMEOUTS */
+ BYTE         SRB_Status;               /* 01 ASPI command status byte */
+ BYTE         SRB_HaId;                 /* 02 ASPI host adapter number */
+ BYTE         SRB_Flags;                /* 03 Reserved */
+ DWORD        SRB_Hdr_Rsvd;             /* 04 Reserved */
+ BYTE         SRB_Target;               /* 08 Target's SCSI ID */
+ BYTE         SRB_Lun;                  /* 09 Target's LUN number */
+ DWORD        SRB_Timeout;              /* 10 Target's Timeout value */
+} SRB_GetSetTimeouts, *PSRB_GetSetTimeouts;
 
 /* SRB header */
 typedef struct tagSRB32_Header {

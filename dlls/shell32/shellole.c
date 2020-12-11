@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -26,6 +26,7 @@
 #include <string.h>
 
 #define COBJMACROS
+#define NONAMELESSUNION
 
 #include "windef.h"
 #include "winbase.h"
@@ -34,6 +35,9 @@
 #include "winuser.h"
 #include "shlobj.h"
 #include "shlguid.h"
+#include "shldisp.h"
+#include "gdiplus.h"
+#include "shimgdata.h"
 #include "winreg.h"
 #include "winerror.h"
 
@@ -47,64 +51,63 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
-extern HRESULT WINAPI IFSFolder_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
+extern INT WINAPI SHStringFromGUIDW(REFGUID guid, LPWSTR lpszDest, INT cchMax);  /* shlwapi.24 */
+static HRESULT WINAPI ShellImageDataFactory_Constructor(IUnknown *outer, REFIID riid, void **obj);
 
-const WCHAR sShell32[12] = {'S','H','E','L','L','3','2','.','D','L','L','\0'};
-const WCHAR sOLE32[10] = {'O','L','E','3','2','.','D','L','L','\0'};
-
-HINSTANCE hShellOle32 = 0;
 /**************************************************************************
  * Default ClassFactory types
  */
 typedef HRESULT (CALLBACK *LPFNCREATEINSTANCE)(IUnknown* pUnkOuter, REFIID riid, LPVOID* ppvObject);
-IClassFactory * IDefClF_fnConstructor(LPFNCREATEINSTANCE lpfnCI, PLONG pcRefDll, REFIID riidInst);
+static IClassFactory * IDefClF_fnConstructor(LPFNCREATEINSTANCE lpfnCI, PLONG pcRefDll, REFIID riidInst);
 
-/* this table contains all CLSID's of shell32 objects */
-struct {
-	REFIID			riid;
+/* this table contains all CLSIDs of shell32 objects */
+static const struct {
+	REFIID			clsid;
 	LPFNCREATEINSTANCE	lpfnCI;
 } InterfaceTable[] = {
-	{&CLSID_ShellFSFolder,	&IFSFolder_Constructor},
-	{&CLSID_MyComputer,	&ISF_MyComputer_Constructor},
-	{&CLSID_ShellDesktop,	&ISF_Desktop_Constructor},
-	{&CLSID_ShellLink,	&IShellLink_Constructor},
-	{&CLSID_DragDropHelper, &IDropTargetHelper_Constructor},
-	{&CLSID_ControlPanel,	&IControlPanel_Constructor},
-	{&CLSID_AutoComplete,   &IAutoComplete_Constructor},
-	{&CLSID_UnixFolder,     &UnixFolder_Constructor},
-	{&CLSID_UnixDosFolder,  &UnixDosFolder_Constructor},
-	{&CLSID_FolderShortcut, &FolderShortcut_Constructor},
-	{&CLSID_MyDocuments,    &MyDocuments_Constructor},
-	{NULL,NULL}
+
+	{&CLSID_ApplicationAssociationRegistration, ApplicationAssociationRegistration_Constructor},
+	{&CLSID_ApplicationDestinations, ApplicationDestinations_Constructor},
+	{&CLSID_AutoComplete,   IAutoComplete_Constructor},
+	{&CLSID_ControlPanel,	IControlPanel_Constructor},
+	{&CLSID_DragDropHelper, IDropTargetHelper_Constructor},
+	{&CLSID_FolderShortcut, FolderShortcut_Constructor},
+	{&CLSID_MyComputer,	ISF_MyComputer_Constructor},
+	{&CLSID_MyDocuments,    MyDocuments_Constructor},
+	{&CLSID_NetworkPlaces,  ISF_NetworkPlaces_Constructor},
+	{&CLSID_Printers,       Printers_Constructor},
+	{&CLSID_QueryAssociations, QueryAssociations_Constructor},
+	{&CLSID_RecycleBin,     RecycleBin_Constructor},
+	{&CLSID_ShellDesktop,	ISF_Desktop_Constructor},
+	{&CLSID_ShellFSFolder,	IFSFolder_Constructor},
+	{&CLSID_ShellItem,	IShellItem_Constructor},
+	{&CLSID_ShellLink,	IShellLink_Constructor},
+	{&CLSID_UnixDosFolder,  UnixDosFolder_Constructor},
+	{&CLSID_UnixFolder,     UnixFolder_Constructor},
+	{&CLSID_ExplorerBrowser,ExplorerBrowser_Constructor},
+	{&CLSID_KnownFolderManager, KnownFolderManager_Constructor},
+	{&CLSID_Shell,          IShellDispatch_Constructor},
+	{&CLSID_DestinationList, CustomDestinationList_Constructor},
+	{&CLSID_ShellImageDataFactory, ShellImageDataFactory_Constructor},
+	{NULL, NULL}
 };
 
 /*************************************************************************
  * SHCoCreateInstance [SHELL32.102]
  *
+ * Equivalent to CoCreateInstance. Under Windows 9x this function could sometimes
+ * use the shell32 built-in "mini-COM" without the need to load ole32.dll - see
+ * SHLoadOLE for details.
+ *
+ * Under wine if a "LoadWithoutCOM" value is present or the object resides in
+ * shell32.dll the function will load the object manually without the help of ole32
+ *
  * NOTES
  *     exported by ordinal
+ *
+ * SEE ALSO
+ *     CoCreateInstance, SHLoadOLE
  */
-
-/* FIXME: this should be SHLWAPI.24 since we can't yet import by ordinal */
-
-DWORD WINAPI __SHGUIDToStringW (REFGUID guid, LPWSTR str)
-{
-    WCHAR sFormat[52] = {'{','%','0','8','l','x','-','%','0','4',
-		         'x','-','%','0','4','x','-','%','0','2',
-                         'x','%','0','2','x','-','%','0','2','x',
-			 '%','0','2','x','%','0','2','x','%','0',
-			 '2','x','%','0','2','x','%','0','2','x',
-			 '}','\0'};
-
-    return wsprintfW ( str, sFormat,
-             guid->Data1, guid->Data2, guid->Data3,
-             guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
-             guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7] );
-
-}
-
-/************************************************************************/
-
 HRESULT WINAPI SHCoCreateInstance(
 	LPCWSTR aclsid,
 	const CLSID *clsid,
@@ -114,17 +117,15 @@ HRESULT WINAPI SHCoCreateInstance(
 {
 	DWORD	hres;
 	IID	iid;
-	CLSID * myclsid = (CLSID*)clsid;
+	const	CLSID * myclsid = clsid;
 	WCHAR	sKeyName[MAX_PATH];
-	const	WCHAR sCLSID[7] = {'C','L','S','I','D','\\','\0'};
+	static const WCHAR sCLSID[] = {'C','L','S','I','D','\\','\0'};
 	WCHAR	sClassID[60];
-	const WCHAR sInProcServer32[16] ={'\\','I','n','p','r','o','c','S','e','r','v','e','r','3','2','\0'};
-	const WCHAR sLoadWithoutCOM[15] ={'L','o','a','d','W','i','t','h','o','u','t','C','O','M','\0'};
+	static const WCHAR sInProcServer32[] = {'\\','I','n','p','r','o','c','S','e','r','v','e','r','3','2','\0'};
+	static const WCHAR sLoadWithoutCOM[] = {'L','o','a','d','W','i','t','h','o','u','t','C','O','M','\0'};
 	WCHAR	sDllPath[MAX_PATH];
-	HKEY	hKey;
+	HKEY	hKey = 0;
 	DWORD	dwSize;
-	BOOLEAN bLoadFromShell32 = FALSE;
-	BOOLEAN bLoadWithoutCOM = FALSE;
 	IClassFactory * pcf = NULL;
 
 	if(!ppv) return E_POINTER;
@@ -141,41 +142,32 @@ HRESULT WINAPI SHCoCreateInstance(
 	TRACE("(%p,%s,unk:%p,%s,%p)\n",
 		aclsid,shdebugstr_guid(myclsid),pUnkOuter,shdebugstr_guid(refiid),ppv);
 
+        if (SUCCEEDED(DllGetClassObject(myclsid, &IID_IClassFactory,(LPVOID*)&pcf)))
+        {
+            hres = IClassFactory_CreateInstance(pcf, pUnkOuter, refiid, ppv);
+            IClassFactory_Release(pcf);
+            goto end;
+        }
+
 	/* we look up the dll path in the registry */
-        __SHGUIDToStringW(myclsid, sClassID);
+        SHStringFromGUIDW(myclsid, sClassID, ARRAY_SIZE(sClassID));
 	lstrcpyW(sKeyName, sCLSID);
 	lstrcatW(sKeyName, sClassID);
 	lstrcatW(sKeyName, sInProcServer32);
 
-	if (ERROR_SUCCESS == RegOpenKeyExW(HKEY_CLASSES_ROOT, sKeyName, 0, KEY_READ, &hKey)) {
-	    dwSize = sizeof(sDllPath);
-	    SHQueryValueExW(hKey, NULL, 0,0, sDllPath, &dwSize );
+	if (RegOpenKeyExW(HKEY_CLASSES_ROOT, sKeyName, 0, KEY_READ, &hKey))
+            return E_ACCESSDENIED;
 
-	    /* if a special registry key is set, we load a shell extension without help of OLE32 */
-	    bLoadWithoutCOM = (ERROR_SUCCESS == SHQueryValueExW(hKey, sLoadWithoutCOM, 0, 0, 0, 0));
-
-	    /* if the com object is inside shell32, omit use of ole32 */
-	    bLoadFromShell32 = (0==lstrcmpiW( PathFindFileNameW(sDllPath), sShell32));
-
-	    RegCloseKey (hKey);
-	} else {
-	    /* since we can't find it in the registry we try internally */
-	    bLoadFromShell32 = TRUE;
-	}
-
-	TRACE("WithoutCom=%u FromShell=%u\n", bLoadWithoutCOM, bLoadFromShell32);
-
-	/* now we create an instance */
-	if (bLoadFromShell32) {
-	    if (! SUCCEEDED(DllGetClassObject(myclsid, &IID_IClassFactory,(LPVOID*)&pcf))) {
-	        ERR("LoadFromShell failed for CLSID=%s\n", shdebugstr_guid(myclsid));
-	    }
-	} else if (bLoadWithoutCOM) {
-
+        /* if a special registry key is set, we load a shell extension without help of OLE32 */
+        if (!SHQueryValueExW(hKey, sLoadWithoutCOM, 0, 0, 0, 0))
+        {
 	    /* load an external dll without ole32 */
 	    HANDLE hLibrary;
 	    typedef HRESULT (CALLBACK *DllGetClassObjectFunc)(REFCLSID clsid, REFIID iid, LPVOID *ppv);
 	    DllGetClassObjectFunc DllGetClassObject;
+
+            dwSize = sizeof(sDllPath);
+            SHQueryValueExW(hKey, NULL, 0,0, sDllPath, &dwSize );
 
 	    if ((hLibrary = LoadLibraryExW(sDllPath, 0, LOAD_WITH_ALTERED_SEARCH_PATH)) == 0) {
 	        ERR("couldn't load InprocServer32 dll %s\n", debugstr_w(sDllPath));
@@ -186,27 +178,24 @@ HRESULT WINAPI SHCoCreateInstance(
 	        FreeLibrary( hLibrary );
 		hres = E_ACCESSDENIED;
 	        goto end;
-	    } else if (! SUCCEEDED(hres = DllGetClassObject(myclsid, &IID_IClassFactory, (LPVOID*)&pcf))) {
-		    TRACE("GetClassObject failed 0x%08lx\n", hres);
+            } else if (FAILED(hres = DllGetClassObject(myclsid, &IID_IClassFactory, (LPVOID*)&pcf))) {
+		    TRACE("GetClassObject failed 0x%08x\n", hres);
 		    goto end;
 	    }
 
+            hres = IClassFactory_CreateInstance(pcf, pUnkOuter, refiid, ppv);
+            IClassFactory_Release(pcf);
 	} else {
 
 	    /* load an external dll in the usual way */
 	    hres = CoCreateInstance(myclsid, pUnkOuter, CLSCTX_INPROC_SERVER, refiid, ppv);
-	    goto end;
 	}
 
-	/* here we should have a ClassFactory */
-	if (!pcf) return E_ACCESSDENIED;
-
-	hres = IClassFactory_CreateInstance(pcf, pUnkOuter, refiid, ppv);
-	IClassFactory_Release(pcf);
 end:
+        if (hKey) RegCloseKey(hKey);
 	if(hres!=S_OK)
 	{
-	  ERR("failed (0x%08lx) to create CLSID:%s IID:%s\n",
+	  ERR("failed (0x%08x) to create CLSID:%s IID:%s\n",
               hres, shdebugstr_guid(myclsid), shdebugstr_guid(refiid));
 	  ERR("class not found in registry\n");
 	}
@@ -216,12 +205,13 @@ end:
 }
 
 /*************************************************************************
- * DllGetClassObject   [SHELL32.@]
+ * DllGetClassObject     [SHELL32.@]
+ * SHDllGetClassObject   [SHELL32.128]
  */
 HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
 {
-	HRESULT	hres = E_OUTOFMEMORY;
 	IClassFactory * pcf = NULL;
+	HRESULT	hres;
 	int i;
 
 	TRACE("CLSID:%s,IID:%s\n",shdebugstr_guid(rclsid),shdebugstr_guid(iid));
@@ -230,10 +220,11 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
 	*ppv = NULL;
 
 	/* search our internal interface table */
-	for(i=0;InterfaceTable[i].riid;i++) {
-	    if(IsEqualIID(InterfaceTable[i].riid, rclsid)) {
+	for(i=0;InterfaceTable[i].clsid;i++) {
+	    if(IsEqualIID(InterfaceTable[i].clsid, rclsid)) {
 	        TRACE("index[%u]\n", i);
 	        pcf = IDefClF_fnConstructor(InterfaceTable[i].lpfnCI, NULL, NULL);
+	        break;
 	    }
 	}
 
@@ -252,23 +243,31 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
 /*************************************************************************
  * SHCLSIDFromString				[SHELL32.147]
  *
+ * Under Windows 9x this was an ANSI version of CLSIDFromString. It also allowed
+ * to avoid dependency on ole32.dll (see SHLoadOLE for details).
+ *
+ * Under Windows NT/2000/XP this is equivalent to CLSIDFromString
+ *
  * NOTES
  *     exported by ordinal
+ *
+ * SEE ALSO
+ *     CLSIDFromString, SHLoadOLE
  */
 DWORD WINAPI SHCLSIDFromStringA (LPCSTR clsid, CLSID *id)
 {
     WCHAR buffer[40];
     TRACE("(%p(%s) %p)\n", clsid, clsid, id);
-    if (!MultiByteToWideChar( CP_ACP, 0, clsid, -1, buffer, sizeof(buffer)/sizeof(WCHAR) ))
+    if (!MultiByteToWideChar( CP_ACP, 0, clsid, -1, buffer, ARRAY_SIZE(buffer) ))
         return CO_E_CLASSSTRING;
     return CLSIDFromString( buffer, id );
 }
 DWORD WINAPI SHCLSIDFromStringW (LPCWSTR clsid, CLSID *id)
 {
 	TRACE("(%p(%s) %p)\n", clsid, debugstr_w(clsid), id);
-	return CLSIDFromString((LPWSTR)clsid, id);
+	return CLSIDFromString(clsid, id);
 }
-DWORD WINAPI SHCLSIDFromStringAW (LPVOID clsid, CLSID *id)
+DWORD WINAPI SHCLSIDFromStringAW (LPCVOID clsid, CLSID *id)
 {
 	if (SHELL_OsIsUnicode())
 	  return SHCLSIDFromStringW (clsid, id);
@@ -276,135 +275,11 @@ DWORD WINAPI SHCLSIDFromStringAW (LPVOID clsid, CLSID *id)
 }
 
 /*************************************************************************
- *	Shell Memory Allocator
- */
-
-/* set the vtable later */
-static const IMallocVtbl VT_Shell_IMalloc32;
-
-/* this is the static object instance */
-typedef struct {
-	const IMallocVtbl *lpVtbl;
-	DWORD dummy;
-} _ShellMalloc;
-
-static _ShellMalloc Shell_Malloc = { &VT_Shell_IMalloc32,1};
-
-/* this is the global allocator of shell32 */
-static IMalloc * ShellTaskAllocator = NULL;
-
-/******************************************************************************
- *              IShellMalloc_QueryInterface        [VTABLE]
- */
-static HRESULT WINAPI IShellMalloc_fnQueryInterface(LPMALLOC iface, REFIID refiid, LPVOID *obj)
-{
-	TRACE("(%s,%p)\n",shdebugstr_guid(refiid),obj);
-	if (IsEqualIID(refiid, &IID_IUnknown) || IsEqualIID(refiid, &IID_IMalloc)) {
-		*obj = (LPMALLOC) &Shell_Malloc;
-		return S_OK;
-	}
-	return E_NOINTERFACE;
-}
-
-/******************************************************************************
- *              IShellMalloc_AddRefRelease        [VTABLE]
- */
-static ULONG WINAPI IShellMalloc_fnAddRefRelease(LPMALLOC iface)
-{
-        return 1;
-}
-
-/******************************************************************************
- *		IShellMalloc_Alloc [VTABLE]
- */
-static LPVOID WINAPI IShellMalloc_fnAlloc(LPMALLOC iface, DWORD cb)
-{
-        LPVOID addr;
-
-	addr = (LPVOID) LocalAlloc(LMEM_ZEROINIT, cb);
-        TRACE("(%p,%ld);\n",addr,cb);
-        return addr;
-}
-
-/******************************************************************************
- *		IShellMalloc_Realloc [VTABLE]
- */
-static LPVOID WINAPI IShellMalloc_fnRealloc(LPMALLOC iface, LPVOID pv, DWORD cb)
-{
-        LPVOID addr;
-
-	if (pv) {
-		if (cb) {
-			addr = (LPVOID) LocalReAlloc((HANDLE) pv, cb, LMEM_ZEROINIT | LMEM_MOVEABLE);
-		} else {
-			LocalFree((HANDLE) pv);
-			addr = NULL;
-		}
-	} else {
-		if (cb) {
-			addr = (LPVOID) LocalAlloc(LMEM_ZEROINIT, cb);
-		} else {
-			addr = NULL;
-		}
-	}
-
-        TRACE("(%p->%p,%ld)\n",pv,addr,cb);
-        return addr;
-}
-
-/******************************************************************************
- *		IShellMalloc_Free [VTABLE]
- */
-static VOID WINAPI IShellMalloc_fnFree(LPMALLOC iface, LPVOID pv)
-{
-        TRACE("(%p)\n",pv);
-	LocalFree((HANDLE) pv);
-}
-
-/******************************************************************************
- *		IShellMalloc_GetSize [VTABLE]
- */
-static DWORD WINAPI IShellMalloc_fnGetSize(LPMALLOC iface, LPVOID pv)
-{
-        DWORD cb = (DWORD) LocalSize((HANDLE)pv);
-        TRACE("(%p,%ld)\n", pv, cb);
-	return cb;
-}
-
-/******************************************************************************
- *		IShellMalloc_DidAlloc [VTABLE]
- */
-static INT WINAPI IShellMalloc_fnDidAlloc(LPMALLOC iface, LPVOID pv)
-{
-        TRACE("(%p)\n",pv);
-        return -1;
-}
-
-/******************************************************************************
- * 		IShellMalloc_HeapMinimize [VTABLE]
- */
-static VOID WINAPI IShellMalloc_fnHeapMinimize(LPMALLOC iface)
-{
-	TRACE("()\n");
-}
-
-static const IMallocVtbl VT_Shell_IMalloc32 =
-{
-	IShellMalloc_fnQueryInterface,
-	IShellMalloc_fnAddRefRelease,
-	IShellMalloc_fnAddRefRelease,
-	IShellMalloc_fnAlloc,
-	IShellMalloc_fnRealloc,
-	IShellMalloc_fnFree,
-	IShellMalloc_fnGetSize,
-	IShellMalloc_fnDidAlloc,
-	IShellMalloc_fnHeapMinimize
-};
-
-/*************************************************************************
  *			 SHGetMalloc			[SHELL32.@]
  *
- * Return the shell IMalloc interface.
+ * Equivalent to CoGetMalloc(MEMCTX_TASK, ...). Under Windows 9x this function
+ * could use the shell32 built-in "mini-COM" without the need to load ole32.dll -
+ * see SHLoadOLE for details. 
  *
  * PARAMS
  *  lpmal [O] Destination for IMalloc interface.
@@ -413,66 +288,54 @@ static const IMallocVtbl VT_Shell_IMalloc32 =
  *  Success: S_OK. lpmal contains the shells IMalloc interface.
  *  Failure. An HRESULT error code.
  *
- * NOTES
- *  This function will use CoGetMalloc() if OLE32.DLL is already loaded.
- *  If not it uses an internal implementation as a fallback.
+ * SEE ALSO
+ *  CoGetMalloc, SHLoadOLE
  */
 HRESULT WINAPI SHGetMalloc(LPMALLOC *lpmal)
 {
 	TRACE("(%p)\n", lpmal);
-
-	if (!ShellTaskAllocator)
-	{
-		HMODULE hOle32 = GetModuleHandleA("OLE32.DLL");
-		/* this is very suspect. we should not being using a different
-		 * allocator from deallocator based on something undeterministic
-		 * like whether ole32 is loaded. as it happens currently, they
-		 * both map to the same allocator deep down, but this could
-		 * change in the future. */
-		if(hOle32) {
-			CoGetMalloc(MEMCTX_TASK, &ShellTaskAllocator);
-			TRACE("got ole32 IMalloc\n");
-		}
-		if(!ShellTaskAllocator) {
-			ShellTaskAllocator = (IMalloc* ) &Shell_Malloc;
-			TRACE("use fallback allocator\n");
-		}
-	}
-	*lpmal = ShellTaskAllocator;
-	return  S_OK;
+	return CoGetMalloc(MEMCTX_TASK, lpmal);
 }
 
 /*************************************************************************
  * SHAlloc					[SHELL32.196]
  *
+ * Equivalent to CoTaskMemAlloc. Under Windows 9x this function could use
+ * the shell32 built-in "mini-COM" without the need to load ole32.dll -
+ * see SHLoadOLE for details. 
+ *
  * NOTES
  *     exported by ordinal
+ *
+ * SEE ALSO
+ *     CoTaskMemAlloc, SHLoadOLE
  */
 LPVOID WINAPI SHAlloc(DWORD len)
 {
-	IMalloc * ppv;
-	LPBYTE ret;
+	LPVOID ret;
 
-	if (!ShellTaskAllocator) SHGetMalloc(&ppv);
-
-	ret = (LPVOID) IMalloc_Alloc(ShellTaskAllocator, len);
-	TRACE("%lu bytes at %p\n",len, ret);
-	return (LPVOID)ret;
+	ret = CoTaskMemAlloc(len);
+	TRACE("%u bytes at %p\n",len, ret);
+	return ret;
 }
 
 /*************************************************************************
  * SHFree					[SHELL32.195]
  *
+ * Equivalent to CoTaskMemFree. Under Windows 9x this function could use
+ * the shell32 built-in "mini-COM" without the need to load ole32.dll -
+ * see SHLoadOLE for details. 
+ *
  * NOTES
  *     exported by ordinal
+ *
+ * SEE ALSO
+ *     CoTaskMemFree, SHLoadOLE
  */
 void WINAPI SHFree(LPVOID pv)
 {
-	IMalloc * ppv;
-
 	TRACE("%p\n",pv);
-	if (!ShellTaskAllocator) SHGetMalloc(&ppv);
-	IMalloc_Free(ShellTaskAllocator, pv);
+	CoTaskMemFree(pv);
 }
 
 /*************************************************************************
@@ -480,14 +343,16 @@ void WINAPI SHFree(LPVOID pv)
  */
 HRESULT WINAPI SHGetDesktopFolder(IShellFolder **psf)
 {
-	HRESULT	hres = S_OK;
-	TRACE("\n");
+	HRESULT	hres;
+
+	TRACE("(%p)\n", psf);
 
 	if(!psf) return E_INVALIDARG;
-	*psf = NULL;
-	hres = ISF_Desktop_Constructor(NULL, &IID_IShellFolder,(LPVOID*)psf);
 
-	TRACE("-- %p->(%p)\n",psf, *psf);
+	*psf = NULL;
+	hres = ISF_Desktop_Constructor(NULL, &IID_IShellFolder, (LPVOID*)psf);
+
+	TRACE("-- %p->(%p) 0x%08x\n", psf, *psf, hres);
 	return hres;
 }
 /**************************************************************************
@@ -503,7 +368,7 @@ HRESULT WINAPI SHGetDesktopFolder(IShellFolder **psf)
 
 typedef struct
 {
-    const IClassFactoryVtbl    *lpVtbl;
+    IClassFactory               IClassFactory_iface;
     LONG                        ref;
     CLSID			*rclsid;
     LPFNCREATEINSTANCE		lpfnCI;
@@ -511,19 +376,24 @@ typedef struct
     LONG *			pcRefDll; /* pointer to refcounter in external dll (ugrrr...) */
 } IDefClFImpl;
 
+static inline IDefClFImpl *impl_from_IClassFactory(IClassFactory *iface)
+{
+	return CONTAINING_RECORD(iface, IDefClFImpl, IClassFactory_iface);
+}
+
 static const IClassFactoryVtbl dclfvt;
 
 /**************************************************************************
  *  IDefClF_fnConstructor
  */
 
-IClassFactory * IDefClF_fnConstructor(LPFNCREATEINSTANCE lpfnCI, PLONG pcRefDll, REFIID riidInst)
+static IClassFactory * IDefClF_fnConstructor(LPFNCREATEINSTANCE lpfnCI, PLONG pcRefDll, REFIID riidInst)
 {
 	IDefClFImpl* lpclf;
 
-	lpclf = HeapAlloc(GetProcessHeap(),0,sizeof(IDefClFImpl));
+	lpclf = heap_alloc(sizeof(*lpclf));
 	lpclf->ref = 1;
-	lpclf->lpVtbl = &dclfvt;
+	lpclf->IClassFactory_iface.lpVtbl = &dclfvt;
 	lpclf->lpfnCI = lpfnCI;
 	lpclf->pcRefDll = pcRefDll;
 
@@ -539,7 +409,7 @@ IClassFactory * IDefClF_fnConstructor(LPFNCREATEINSTANCE lpfnCI, PLONG pcRefDll,
 static HRESULT WINAPI IDefClF_fnQueryInterface(
   LPCLASSFACTORY iface, REFIID riid, LPVOID *ppvObj)
 {
-	IDefClFImpl *This = (IDefClFImpl *)iface;
+	IDefClFImpl *This = impl_from_IClassFactory(iface);
 
 	TRACE("(%p)->(%s)\n",This,shdebugstr_guid(riid));
 
@@ -559,10 +429,10 @@ static HRESULT WINAPI IDefClF_fnQueryInterface(
  */
 static ULONG WINAPI IDefClF_fnAddRef(LPCLASSFACTORY iface)
 {
-	IDefClFImpl *This = (IDefClFImpl *)iface;
+	IDefClFImpl *This = impl_from_IClassFactory(iface);
 	ULONG refCount = InterlockedIncrement(&This->ref);
 
-	TRACE("(%p)->(count=%lu)\n", This, refCount - 1);
+	TRACE("(%p)->(count=%u)\n", This, refCount - 1);
 
 	return refCount;
 }
@@ -571,19 +441,19 @@ static ULONG WINAPI IDefClF_fnAddRef(LPCLASSFACTORY iface)
  */
 static ULONG WINAPI IDefClF_fnRelease(LPCLASSFACTORY iface)
 {
-	IDefClFImpl *This = (IDefClFImpl *)iface;
+	IDefClFImpl *This = impl_from_IClassFactory(iface);
 	ULONG refCount = InterlockedDecrement(&This->ref);
-	
-	TRACE("(%p)->(count=%lu)\n", This, refCount + 1);
+
+	TRACE("(%p)->(count=%u)\n", This, refCount + 1);
 
 	if (!refCount)
 	{
 	  if (This->pcRefDll) InterlockedDecrement(This->pcRefDll);
 
 	  TRACE("-- destroying IClassFactory(%p)\n",This);
-	  HeapFree(GetProcessHeap(),0,This);
-	  return 0;
+	  heap_free(This);
 	}
+
 	return refCount;
 }
 /******************************************************************************
@@ -592,7 +462,7 @@ static ULONG WINAPI IDefClF_fnRelease(LPCLASSFACTORY iface)
 static HRESULT WINAPI IDefClF_fnCreateInstance(
   LPCLASSFACTORY iface, LPUNKNOWN pUnkOuter, REFIID riid, LPVOID *ppvObject)
 {
-	IDefClFImpl *This = (IDefClFImpl *)iface;
+	IDefClFImpl *This = impl_from_IClassFactory(iface);
 
 	TRACE("%p->(%p,%s,%p)\n",This,pUnkOuter,shdebugstr_guid(riid),ppvObject);
 
@@ -613,7 +483,7 @@ static HRESULT WINAPI IDefClF_fnCreateInstance(
  */
 static HRESULT WINAPI IDefClF_fnLockServer(LPCLASSFACTORY iface, BOOL fLock)
 {
-	IDefClFImpl *This = (IDefClFImpl *)iface;
+	IDefClFImpl *This = impl_from_IClassFactory(iface);
 	TRACE("%p->(0x%x), not implemented\n",This, fLock);
 	return E_NOTIMPL;
 }
@@ -645,7 +515,7 @@ HRESULT WINAPI SHCreateDefClassObject(
 	if (! IsEqualCLSID(riid, &IID_IClassFactory) ) return E_NOINTERFACE;
 	if (! (pcf = IDefClF_fnConstructor(lpfnCI, (PLONG)pcRefDll, riidInst))) return E_OUTOFMEMORY;
 	*ppv = pcf;
-	return NOERROR;
+	return S_OK;
 }
 
 /*************************************************************************
@@ -670,7 +540,7 @@ void WINAPI DragAcceptFiles(HWND hWnd, BOOL b)
 void WINAPI DragFinish(HDROP h)
 {
 	TRACE("\n");
-	GlobalFree((HGLOBAL)h);
+	GlobalFree(h);
 }
 
 /*************************************************************************
@@ -683,7 +553,7 @@ BOOL WINAPI DragQueryPoint(HDROP hDrop, POINT *p)
 
 	TRACE("\n");
 
-	lpDropFileStruct = (DROPFILES *) GlobalLock(hDrop);
+	lpDropFileStruct = GlobalLock(hDrop);
 
         *p = lpDropFileStruct->pt;
 	bRet = lpDropFileStruct->fNC;
@@ -693,8 +563,8 @@ BOOL WINAPI DragQueryPoint(HDROP hDrop, POINT *p)
 }
 
 /*************************************************************************
- *  DragQueryFile 		[SHELL32.@]
  *  DragQueryFileA		[SHELL32.@]
+ *  DragQueryFile 		[SHELL32.@]
  */
 UINT WINAPI DragQueryFileA(
 	HDROP hDrop,
@@ -704,7 +574,7 @@ UINT WINAPI DragQueryFileA(
 {
 	LPSTR lpDrop;
 	UINT i = 0;
-	DROPFILES *lpDropFileStruct = (DROPFILES *) GlobalLock(hDrop);
+	DROPFILES *lpDropFileStruct = GlobalLock(hDrop);
 
 	TRACE("(%p, %x, %p, %u)\n",	hDrop,lFile,lpszFile,lLength);
 
@@ -715,8 +585,8 @@ UINT WINAPI DragQueryFileA(
         if(lpDropFileStruct->fWide) {
             LPWSTR lpszFileW = NULL;
 
-            if(lpszFile) {
-                lpszFileW = HeapAlloc(GetProcessHeap(), 0, lLength*sizeof(WCHAR));
+            if(lpszFile && lFile != 0xFFFFFFFF) {
+                lpszFileW = heap_alloc(lLength*sizeof(WCHAR));
                 if(lpszFileW == NULL) {
                     goto end;
                 }
@@ -725,7 +595,7 @@ UINT WINAPI DragQueryFileA(
 
             if(lpszFileW) {
                 WideCharToMultiByte(CP_ACP, 0, lpszFileW, -1, lpszFile, lLength, 0, NULL);
-                HeapFree(GetProcessHeap(), 0, lpszFileW);
+                heap_free(lpszFileW);
             }
             goto end;
         }
@@ -741,10 +611,8 @@ UINT WINAPI DragQueryFileA(
 	}
 
 	i = strlen(lpDrop);
-	i++;
 	if (!lpszFile ) goto end;   /* needed buffer size */
-	i = (lLength > i) ? i : lLength;
-	lstrcpynA (lpszFile,  lpDrop,  i);
+	lstrcpynA (lpszFile, lpDrop, lLength);
 end:
 	GlobalUnlock(hDrop);
 	return i;
@@ -761,7 +629,7 @@ UINT WINAPI DragQueryFileW(
 {
 	LPWSTR lpwDrop;
 	UINT i = 0;
-	DROPFILES *lpDropFileStruct = (DROPFILES *) GlobalLock(hDrop);
+	DROPFILES *lpDropFileStruct = GlobalLock(hDrop);
 
 	TRACE("(%p, %x, %p, %u)\n", hDrop,lFile,lpszwFile,lLength);
 
@@ -772,8 +640,8 @@ UINT WINAPI DragQueryFileW(
         if(lpDropFileStruct->fWide == FALSE) {
             LPSTR lpszFileA = NULL;
 
-            if(lpszwFile) {
-                lpszFileA = HeapAlloc(GetProcessHeap(), 0, lLength);
+            if(lpszwFile && lFile != 0xFFFFFFFF) {
+                lpszFileA = heap_alloc(lLength);
                 if(lpszFileA == NULL) {
                     goto end;
                 }
@@ -782,7 +650,7 @@ UINT WINAPI DragQueryFileW(
 
             if(lpszFileA) {
                 MultiByteToWideChar(CP_ACP, 0, lpszFileA, -1, lpszwFile, lLength);
-                HeapFree(GetProcessHeap(), 0, lpszFileA);
+                heap_free(lpszFileA);
             }
             goto end;
         }
@@ -799,12 +667,688 @@ UINT WINAPI DragQueryFileW(
 	}
 
 	i = strlenW(lpwDrop);
-	i++;
 	if ( !lpszwFile) goto end;   /* needed buffer size */
-
-	i = (lLength > i) ? i : lLength;
-	lstrcpynW (lpszwFile, lpwDrop, i);
+	lstrcpynW (lpszwFile, lpwDrop, lLength);
 end:
 	GlobalUnlock(hDrop);
 	return i;
+}
+
+/*************************************************************************
+ *  SHPropStgCreate             [SHELL32.685]
+ */
+HRESULT WINAPI SHPropStgCreate(IPropertySetStorage *psstg, REFFMTID fmtid,
+        const CLSID *pclsid, DWORD grfFlags, DWORD grfMode,
+        DWORD dwDisposition, IPropertyStorage **ppstg, UINT *puCodePage)
+{
+    PROPSPEC prop;
+    PROPVARIANT ret;
+    HRESULT hres;
+
+    TRACE("%p %s %s %x %x %x %p %p\n", psstg, debugstr_guid(fmtid), debugstr_guid(pclsid),
+            grfFlags, grfMode, dwDisposition, ppstg, puCodePage);
+
+    hres = IPropertySetStorage_Open(psstg, fmtid, grfMode, ppstg);
+
+    switch(dwDisposition) {
+    case CREATE_ALWAYS:
+        if(SUCCEEDED(hres)) {
+            IPropertyStorage_Release(*ppstg);
+            hres = IPropertySetStorage_Delete(psstg, fmtid);
+            if(FAILED(hres))
+                return hres;
+            hres = E_FAIL;
+        }
+
+    case OPEN_ALWAYS:
+    case CREATE_NEW:
+        if(FAILED(hres))
+            hres = IPropertySetStorage_Create(psstg, fmtid, pclsid,
+                    grfFlags, grfMode, ppstg);
+
+    case OPEN_EXISTING:
+        if(FAILED(hres))
+            return hres;
+
+        if(puCodePage) {
+            prop.ulKind = PRSPEC_PROPID;
+            prop.u.propid = PID_CODEPAGE;
+            hres = IPropertyStorage_ReadMultiple(*ppstg, 1, &prop, &ret);
+            if(FAILED(hres) || ret.vt!=VT_I2)
+                *puCodePage = 0;
+            else
+                *puCodePage = ret.u.iVal;
+        }
+    }
+
+    return S_OK;
+}
+
+/*************************************************************************
+ *  SHPropStgReadMultiple       [SHELL32.688]
+ */
+HRESULT WINAPI SHPropStgReadMultiple(IPropertyStorage *pps, UINT uCodePage,
+        ULONG cpspec, const PROPSPEC *rgpspec, PROPVARIANT *rgvar)
+{
+    STATPROPSETSTG stat;
+    HRESULT hres;
+
+    FIXME("%p %u %u %p %p\n", pps, uCodePage, cpspec, rgpspec, rgvar);
+
+    memset(rgvar, 0, cpspec*sizeof(PROPVARIANT));
+    hres = IPropertyStorage_ReadMultiple(pps, cpspec, rgpspec, rgvar);
+    if(FAILED(hres))
+        return hres;
+
+    if(!uCodePage) {
+        PROPSPEC prop;
+        PROPVARIANT ret;
+
+        prop.ulKind = PRSPEC_PROPID;
+        prop.u.propid = PID_CODEPAGE;
+        hres = IPropertyStorage_ReadMultiple(pps, 1, &prop, &ret);
+        if(FAILED(hres) || ret.vt!=VT_I2)
+            return S_OK;
+
+        uCodePage = ret.u.iVal;
+    }
+
+    hres = IPropertyStorage_Stat(pps, &stat);
+    if(FAILED(hres))
+        return S_OK;
+
+    /* TODO: do something with codepage and stat */
+    return S_OK;
+}
+
+/*************************************************************************
+ *  SHPropStgWriteMultiple      [SHELL32.689]
+ */
+HRESULT WINAPI SHPropStgWriteMultiple(IPropertyStorage *pps, UINT *uCodePage,
+        ULONG cpspec, const PROPSPEC *rgpspec, PROPVARIANT *rgvar, PROPID propidNameFirst)
+{
+    STATPROPSETSTG stat;
+    UINT codepage;
+    HRESULT hres;
+
+    FIXME("%p %p %u %p %p %d\n", pps, uCodePage, cpspec, rgpspec, rgvar, propidNameFirst);
+
+    hres = IPropertyStorage_Stat(pps, &stat);
+    if(FAILED(hres))
+        return hres;
+
+    if(uCodePage && *uCodePage)
+        codepage = *uCodePage;
+    else {
+        PROPSPEC prop;
+        PROPVARIANT ret;
+
+        prop.ulKind = PRSPEC_PROPID;
+        prop.u.propid = PID_CODEPAGE;
+        hres = IPropertyStorage_ReadMultiple(pps, 1, &prop, &ret);
+        if(FAILED(hres))
+            return hres;
+        if(ret.vt!=VT_I2 || !ret.u.iVal)
+            return E_FAIL;
+
+        codepage = ret.u.iVal;
+        if(uCodePage)
+            *uCodePage = codepage;
+    }
+
+    /* TODO: do something with codepage and stat */
+
+    hres = IPropertyStorage_WriteMultiple(pps, cpspec, rgpspec, rgvar, propidNameFirst);
+    return hres;
+}
+
+/*************************************************************************
+ *  SHCreateQueryCancelAutoPlayMoniker [SHELL32.@]
+ */
+HRESULT WINAPI SHCreateQueryCancelAutoPlayMoniker(IMoniker **moniker)
+{
+    TRACE("%p\n", moniker);
+
+    if (!moniker) return E_INVALIDARG;
+    return CreateClassMoniker(&CLSID_QueryCancelAutoPlay, moniker);
+}
+
+static HRESULT gpstatus_to_hresult(GpStatus status)
+{
+    switch (status)
+    {
+    case Ok:
+        return S_OK;
+    case InvalidParameter:
+        return E_INVALIDARG;
+    case OutOfMemory:
+        return E_OUTOFMEMORY;
+    case NotImplemented:
+        return E_NOTIMPL;
+    default:
+        return E_FAIL;
+    }
+}
+
+/* IShellImageData */
+typedef struct
+{
+    IShellImageData IShellImageData_iface;
+    LONG ref;
+
+    WCHAR *path;
+    GpImage *image;
+} ShellImageData;
+
+static inline ShellImageData *impl_from_IShellImageData(IShellImageData *iface)
+{
+    return CONTAINING_RECORD(iface, ShellImageData, IShellImageData_iface);
+}
+
+static HRESULT WINAPI ShellImageData_QueryInterface(IShellImageData *iface, REFIID riid, void **obj)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    TRACE("%p, %s, %p\n", This, debugstr_guid(riid), obj);
+
+    if (IsEqualIID(riid, &IID_IShellImageData) || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = &This->IShellImageData_iface;
+        IShellImageData_AddRef(iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI ShellImageData_AddRef(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("%p, %u\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI ShellImageData_Release(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("%p, %u\n", This, ref);
+
+    if (!ref)
+    {
+        GdipDisposeImage(This->image);
+        heap_free(This->path);
+        SHFree(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI ShellImageData_Decode(IShellImageData *iface, DWORD flags, ULONG cx_desired, ULONG cy_desired)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    GpImage *image;
+    HRESULT hr;
+
+    TRACE("%p, %#x, %u, %u\n", This, flags, cx_desired, cy_desired);
+
+    if (This->image)
+        return S_FALSE;
+
+    if (flags & SHIMGDEC_LOADFULL)
+        FIXME("LOADFULL flag ignored\n");
+
+    hr = gpstatus_to_hresult(GdipLoadImageFromFile(This->path, &image));
+    if (FAILED(hr))
+        return hr;
+
+    if (flags & SHIMGDEC_THUMBNAIL)
+    {
+        hr = gpstatus_to_hresult(GdipGetImageThumbnail(image, cx_desired, cy_desired, &This->image, NULL, NULL));
+        GdipDisposeImage(image);
+    }
+    else
+        This->image = image;
+
+    return hr;
+}
+
+static HRESULT WINAPI ShellImageData_Draw(IShellImageData *iface, HDC hdc, RECT *dest, RECT *src)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    GpGraphics *graphics;
+    HRESULT hr;
+
+    TRACE("%p, %p, %s, %s\n", This, hdc, wine_dbgstr_rect(dest), wine_dbgstr_rect(src));
+
+    if (!This->image)
+        return E_FAIL;
+
+    if (!dest)
+        return E_INVALIDARG;
+
+    if (!src)
+        return S_OK;
+
+    hr = gpstatus_to_hresult(GdipCreateFromHDC(hdc, &graphics));
+    if (FAILED(hr))
+        return hr;
+
+    hr = gpstatus_to_hresult(GdipDrawImageRectRectI(graphics, This->image, dest->left, dest->top, dest->right - dest->left,
+        dest->bottom - dest->top, src->left, src->top, src->right - src->left, src->bottom - src->top,
+        UnitPixel, NULL, NULL, NULL));
+    GdipDeleteGraphics(graphics);
+
+    return hr;
+}
+
+static HRESULT WINAPI ShellImageData_NextFrame(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_NextPage(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_PrevPage(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsTransparent(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsAnimated(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsVector(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsMultipage(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsEditable(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsPrintable(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsDecoded(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetCurrentPage(IShellImageData *iface, ULONG *page)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetPageCount(IShellImageData *iface, ULONG *count)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, count);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDate_SelectPage(IShellImageData *iface, ULONG page)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %u: stub\n", This, page);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetSize(IShellImageData *iface, SIZE *size)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    REAL cx, cy;
+    HRESULT hr;
+
+    TRACE("%p, %p\n", This, size);
+
+    if (!This->image)
+        return E_FAIL;
+
+    hr = gpstatus_to_hresult(GdipGetImageDimension(This->image, &cx, &cy));
+    if (SUCCEEDED(hr))
+    {
+        size->cx = cx;
+        size->cy = cy;
+    }
+
+    return hr;
+}
+
+static HRESULT WINAPI ShellImageData_GetRawDataFormat(IShellImageData *iface, GUID *format)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, format);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetPixelFormat(IShellImageData *iface, PixelFormat *format)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, format);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetDelay(IShellImageData *iface, DWORD *delay)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, delay);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetProperties(IShellImageData *iface, DWORD mode, IPropertySetStorage **props)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %#x, %p: stub\n", This, mode, props);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_Rotate(IShellImageData *iface, DWORD angle)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %u: stub\n", This, angle);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_Scale(IShellImageData *iface, ULONG cx, ULONG cy, InterpolationMode mode)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %u, %u, %#x: stub\n", This, cx, cy, mode);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_DiscardEdit(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDate_SetEncoderParams(IShellImageData *iface, IPropertyBag *params)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, params);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_DisplayName(IShellImageData *iface, LPWSTR name, UINT count)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %u: stub\n", This, name, count);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetResolution(IShellImageData *iface, ULONG *res_x, ULONG *res_y)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %p: stub\n", This, res_x, res_y);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetEncoderParams(IShellImageData *iface, GUID *format, EncoderParameters **params)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %p: stub\n", This, format, params);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_RegisterAbort(IShellImageData *iface, IShellImageDataAbort *abort,
+    IShellImageDataAbort **prev)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %p: stub\n", This, abort, prev);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_CloneFrame(IShellImageData *iface, Image **frame)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, frame);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_ReplaceFrame(IShellImageData *iface, Image *frame)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, frame);
+
+    return E_NOTIMPL;
+}
+
+static const IShellImageDataVtbl ShellImageDataVtbl =
+{
+    ShellImageData_QueryInterface,
+    ShellImageData_AddRef,
+    ShellImageData_Release,
+    ShellImageData_Decode,
+    ShellImageData_Draw,
+    ShellImageData_NextFrame,
+    ShellImageData_NextPage,
+    ShellImageData_PrevPage,
+    ShellImageData_IsTransparent,
+    ShellImageData_IsAnimated,
+    ShellImageData_IsVector,
+    ShellImageData_IsMultipage,
+    ShellImageData_IsEditable,
+    ShellImageData_IsPrintable,
+    ShellImageData_IsDecoded,
+    ShellImageData_GetCurrentPage,
+    ShellImageData_GetPageCount,
+    ShellImageDate_SelectPage,
+    ShellImageData_GetSize,
+    ShellImageData_GetRawDataFormat,
+    ShellImageData_GetPixelFormat,
+    ShellImageData_GetDelay,
+    ShellImageData_GetProperties,
+    ShellImageData_Rotate,
+    ShellImageData_Scale,
+    ShellImageData_DiscardEdit,
+    ShellImageDate_SetEncoderParams,
+    ShellImageData_DisplayName,
+    ShellImageData_GetResolution,
+    ShellImageData_GetEncoderParams,
+    ShellImageData_RegisterAbort,
+    ShellImageData_CloneFrame,
+    ShellImageData_ReplaceFrame,
+};
+
+static HRESULT create_shellimagedata_from_path(const WCHAR *path, IShellImageData **data)
+{
+    ShellImageData *This;
+
+    This = SHAlloc(sizeof(*This));
+
+    This->IShellImageData_iface.lpVtbl = &ShellImageDataVtbl;
+    This->ref = 1;
+
+    This->path = strdupW(path);
+    This->image = NULL;
+
+    *data = &This->IShellImageData_iface;
+    return S_OK;
+}
+
+/* IShellImageDataFactory */
+static HRESULT WINAPI ShellImageDataFactory_QueryInterface(IShellImageDataFactory *iface, REFIID riid, void **obj)
+{
+    TRACE("(%p, %s, %p)\n", iface, debugstr_guid(riid), obj);
+
+    if (IsEqualIID(&IID_IShellImageDataFactory, riid) || IsEqualIID(&IID_IUnknown, riid))
+    {
+        *obj = iface;
+    }
+    else
+    {
+        FIXME("not implemented for %s\n", debugstr_guid(riid));
+        *obj = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*obj);
+    return S_OK;
+}
+
+static ULONG WINAPI ShellImageDataFactory_AddRef(IShellImageDataFactory *iface)
+{
+    TRACE("(%p)\n", iface);
+
+    return 2;
+}
+
+static ULONG WINAPI ShellImageDataFactory_Release(IShellImageDataFactory *iface)
+{
+    TRACE("(%p)\n", iface);
+
+    return 1;
+}
+
+static HRESULT WINAPI ShellImageDataFactory_CreateIShellImageData(IShellImageDataFactory *iface, IShellImageData **data)
+{
+    FIXME("%p, %p: stub\n", iface, data);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDataFactory_CreateImageFromFile(IShellImageDataFactory *iface, const WCHAR *path,
+    IShellImageData **data)
+{
+    TRACE("%p, %s, %p\n", iface, debugstr_w(path), data);
+
+    return create_shellimagedata_from_path(path, data);
+}
+
+static HRESULT WINAPI ShellImageDataFactory_CreateImageFromStream(IShellImageDataFactory *iface, IStream *stream,
+    IShellImageData **data)
+{
+    FIXME("%p, %p, %p: stub\n", iface, stream, data);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDataFactory_GetDataFormatFromPath(IShellImageDataFactory *iface, const WCHAR *path,
+    GUID *format)
+{
+    FIXME("%p, %s, %p: stub\n", iface, debugstr_w(path), format);
+
+    return E_NOTIMPL;
+}
+
+static const IShellImageDataFactoryVtbl ShellImageDataFactoryVtbl =
+{
+    ShellImageDataFactory_QueryInterface,
+    ShellImageDataFactory_AddRef,
+    ShellImageDataFactory_Release,
+    ShellImageDataFactory_CreateIShellImageData,
+    ShellImageDataFactory_CreateImageFromFile,
+    ShellImageDataFactory_CreateImageFromStream,
+    ShellImageDataFactory_GetDataFormatFromPath,
+};
+
+static IShellImageDataFactory ShellImageDataFactory = { &ShellImageDataFactoryVtbl };
+
+HRESULT WINAPI ShellImageDataFactory_Constructor(IUnknown *outer, REFIID riid, void **obj)
+{
+    TRACE("%p %s %p\n", outer, debugstr_guid(riid), obj);
+
+    if (outer)
+        return CLASS_E_NOAGGREGATION;
+
+    return IShellImageDataFactory_QueryInterface(&ShellImageDataFactory, riid, obj);
 }

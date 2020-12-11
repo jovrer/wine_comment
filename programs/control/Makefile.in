@@ -1,13 +1,5 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = control.exe
-APPMODE   = -mwindows
-IMPORTS   = shell32 user32 kernel32
+APPMODE   = -mwindows -municode
+IMPORTS   = shell32 user32
 
 C_SRCS = control.c
-
-@MAKE_PROG_RULES@
-
-### Dependencies:

@@ -16,16 +16,19 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 # first determine the directory that contains the app itself
 
 appdir=""
+name=$0
+
 case "$0" in
   */*)
     # $0 contains a path, use it
     appdir=`dirname "$0"`
+    name=`basename "$0"`
     ;;
   *)
     # no directory in $0, search in PATH
@@ -34,7 +37,7 @@ case "$0" in
     for d in $PATH
     do
       IFS=$saved_ifs
-      if [ -x "$d/$0" ]
+      if [ -x "$d/$name" ]
       then
         appdir="$d"
         break
@@ -43,7 +46,7 @@ case "$0" in
     ;;
 esac
 
-# now find the top-level directory of the source tree
+# now find the top-level directory of the build tree
 
 if [ -x "$appdir/server/wineserver" ]
 then topdir="$appdir"
@@ -54,7 +57,7 @@ then topdir="$appdir/../.."
 elif [ -x "$appdir/../../../server/wineserver" ]
 then topdir="$appdir/../../.."
 else
-  echo "$0: could not locate Wine source tree"
+  echo "$name: could not locate the Wine build tree"
   exit 1
 fi
 
@@ -62,21 +65,36 @@ fi
 
 topdir=`cd "$topdir" && pwd`
 
-if [ -n "$LD_LIBRARY_PATH" ]
+if [ "`uname -s`" = "Darwin" ]
 then
-  LD_LIBRARY_PATH="$topdir/libs:$LD_LIBRARY_PATH"
+  if [ -n "$DYLD_LIBRARY_PATH" ]
+  then
+    DYLD_LIBRARY_PATH="$topdir/libs/wine:$DYLD_LIBRARY_PATH"
+  else
+    DYLD_LIBRARY_PATH="$topdir/libs/wine"
+  fi
+  export DYLD_LIBRARY_PATH
 else
-  LD_LIBRARY_PATH="$topdir/libs"
+  if [ -n "$LD_LIBRARY_PATH" ]
+  then
+    LD_LIBRARY_PATH="$topdir/libs/wine:$LD_LIBRARY_PATH"
+  else
+    LD_LIBRARY_PATH="$topdir/libs/wine"
+  fi
+  export LD_LIBRARY_PATH
 fi
-if [ -n "$WINEDLLPATH" ]
-then
-  WINEDLLPATH="$topdir/dlls:$topdir/programs:$WINEDLLPATH"
+
+if [ -x "$topdir/loader/$name" ]
+then WINELOADER="$topdir/loader/$name"
+elif [ -x "$topdir/loader/wine" ]
+then WINELOADER="$topdir/loader/wine"
+elif [ -x "$topdir/loader/wine64" ]
+then WINELOADER="$topdir/loader/wine64"
 else
-  WINEDLLPATH="$topdir/dlls:$topdir/programs"
+  echo "$name: could not find the Wine loader in $topdir"
+  exit 1
 fi
-WINESERVER="$topdir/server/wineserver"
-WINELOADER="$topdir/loader/wine"
-export LD_LIBRARY_PATH WINEDLLPATH WINESERVER WINELOADER
+export WINELOADER
 
 # any local settings ?
 if [ -f "$topdir/.winewrapper" ]
@@ -84,27 +102,6 @@ then
     . $topdir/.winewrapper
 fi
 
-# create prefix directory if needed
-
-if [ -z "$WINEPREFIX" -a ! -d "$HOME/.wine" ]
-then
-    "$topdir/tools/wineprefixcreate" --use-wine-tree "$topdir"
-fi
-
 # and run the application
 
-case "$0" in
-  wine|*/wine)
-    exec "$WINELOADER" "$@"
-    ;;
-  */*)
-    [ -f "$0.exe.so" ] && exec "$WINELOADER" "$0.exe.so" "$@"
-    echo "$0: cannot find corresponding application"
-    exit 1
-    ;;
-  *)
-    [ -f "$appdir/$0.exe.so" ] && exec "$WINELOADER" "$appdir/$0.exe.so" "$@"
-    echo "$0: cannot find corresponding application"
-    exit 1
-    ;;
-esac
+exec "$WINELOADER" "$@"

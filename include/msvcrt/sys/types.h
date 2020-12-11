@@ -15,13 +15,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_SYS_TYPES_H
 #define __WINE_SYS_TYPES_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
 
 #ifndef _DEV_T_DEFINED
 typedef unsigned int   _dev_t;
@@ -43,17 +42,12 @@ typedef int _off_t;
 #define _OFF_T_DEFINED
 #endif
 
-#ifndef _TIME_T_DEFINED
-typedef long time_t;
-#define _TIME_T_DEFINED
-#endif
-
-#ifndef _BSD_TYPES_DEFINED
+#ifndef _BSDTYPES_DEFINED
 typedef unsigned char u_char;
 typedef unsigned short u_short;
 typedef unsigned int  u_int;
-typedef unsigned long u_long;
-#define _BSD_TYPES_DEFINED
+typedef __msvcrt_ulong u_long;
+#define _BSDTYPES_DEFINED
 #endif
 
 #define dev_t _dev_t
@@ -67,7 +61,11 @@ typedef int pid_t;
 #endif
 
 #ifndef _SSIZE_T_DEFINED
+#ifdef _WIN64
+typedef __int64 ssize_t;
+#else
 typedef int ssize_t;
+#endif
 #define _SSIZE_T_DEFINED
 #endif
 

@@ -1,26 +1,14 @@
-EXTRADEFS = -D__WINE__ -DUNICODE
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
+EXTRADEFS = -D__WINE__
 MODULE    = winefile.exe
-APPMODE   = -mwindows
-IMPORTS   = shell32 comdlg32 comctl32 ole32 mpr version user32 gdi32 advapi32 kernel32
-EXTRALIBS = -luuid
+APPMODE   = -mwindows -municode
+IMPORTS   = uuid shell32 comdlg32 comctl32 ole32 mpr version user32 gdi32 advapi32 shlwapi
 
 C_SRCS = \
-	license.c \
 	splitpath.c \
 	winefile.c
 
-RC_SRCS = rsrc.rc
-RC_BINSRC = resource.rc
-RC_BINARIES = \
-	drivebar.bmp \
-	images.bmp \
-	toolbar.bmp \
-	winefile.ico
+RC_SRCS = winefile.rc
 
-@MAKE_PROG_RULES@
+MANPAGES = winefile.man.in
 
-### Dependencies:
+SVG_SRCS = winefile.svg

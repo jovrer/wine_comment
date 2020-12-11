@@ -1,4 +1,3 @@
-
 /*
  *	Virtual Folder
  *	common definitions
@@ -18,39 +17,48 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include "stgprop.h"
 
 #define CHARS_IN_GUID 39
 
 typedef struct {
+    const GUID *fmtid;
+    DWORD pid;
     int colnameid;
     int pcsFlags;
     int fmt;
     int cxChar;
 } shvheader;
 
+HRESULT SHELL32_GetColumnDetails(const shvheader *data, int column, SHELLDETAILS *details) DECLSPEC_HIDDEN;
+HRESULT shellfolder_map_column_to_scid(const shvheader *data, UINT column, SHCOLUMNID *scid) DECLSPEC_HIDDEN;
+
 #define GET_SHGDN_FOR(dwFlags)         ((DWORD)dwFlags & (DWORD)0x0000FF00)
 #define GET_SHGDN_RELATION(dwFlags)    ((DWORD)dwFlags & (DWORD)0x000000FF)
 
-BOOL SHELL32_GetCustomFolderAttribute (LPCITEMIDLIST pidl, LPCWSTR pwszHeading, LPCWSTR pwszAttribute, LPWSTR pwszValue, DWORD cchValue);
+BOOL SHELL32_GetCustomFolderAttribute (LPCITEMIDLIST pidl, LPCWSTR pwszHeading, LPCWSTR pwszAttribute, LPWSTR pwszValue, DWORD cchValue) DECLSPEC_HIDDEN;
 
-LPCWSTR GetNextElementW (LPCWSTR pszNext, LPWSTR pszOut, DWORD dwOut);
+LPCWSTR GetNextElementW (LPCWSTR pszNext, LPWSTR pszOut, DWORD dwOut) DECLSPEC_HIDDEN;
 HRESULT SHELL32_ParseNextElement (IShellFolder2 * psf, HWND hwndOwner, LPBC pbc, LPITEMIDLIST * pidlInOut,
-				  LPOLESTR szNext, DWORD * pEaten, DWORD * pdwAttributes);
-HRESULT SHELL32_GetItemAttributes (IShellFolder * psf, LPCITEMIDLIST pidl, LPDWORD pdwAttributes);
-HRESULT SHELL32_GetDisplayNameOfChild (IShellFolder2 * psf, LPCITEMIDLIST pidl, DWORD dwFlags, LPSTR szOut,
-				       DWORD dwOutLen);
+				  LPOLESTR szNext, DWORD * pEaten, DWORD * pdwAttributes) DECLSPEC_HIDDEN;
+HRESULT SHELL32_GetItemAttributes (IShellFolder2 *folder, LPCITEMIDLIST pidl, DWORD *attributes) DECLSPEC_HIDDEN;
+HRESULT SHELL32_GetDisplayNameOfChild (IShellFolder2 * psf, LPCITEMIDLIST pidl, DWORD dwFlags, LPWSTR szOut,
+				       DWORD dwOutLen) DECLSPEC_HIDDEN;
 
 HRESULT SHELL32_BindToChild (LPCITEMIDLIST pidlRoot,
-			     LPCWSTR pathRoot, LPCITEMIDLIST pidlComplete, REFIID riid, LPVOID * ppvOut);
+			     LPCWSTR pathRoot, LPCITEMIDLIST pidlComplete, REFIID riid, LPVOID * ppvOut) DECLSPEC_HIDDEN;
 
-HRESULT SHELL32_CompareIDs (IShellFolder * iface, LPARAM lParam, LPCITEMIDLIST pidl1, LPCITEMIDLIST pidl2);
-LPITEMIDLIST SHELL32_CreatePidlFromBindCtx(IBindCtx *pbc, LPCWSTR path);
+HRESULT SHELL32_CompareIDs(IShellFolder2 *iface, LPARAM lParam, LPCITEMIDLIST pidl1, LPCITEMIDLIST pidl2) DECLSPEC_HIDDEN;
+LPITEMIDLIST SHELL32_CreatePidlFromBindCtx(IBindCtx *pbc, LPCWSTR path) DECLSPEC_HIDDEN;
+
+HRESULT SHELL32_CreateExtensionUIObject(IShellFolder2 *iface, LPCITEMIDLIST pidl, REFIID riid, LPVOID *ppvOut) DECLSPEC_HIDDEN;
 
 static inline int SHELL32_GUIDToStringA (REFGUID guid, LPSTR str)
 {
-    return sprintf(str, "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
+    return sprintf(str, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
             guid->Data1, guid->Data2, guid->Data3,
             guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
             guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
@@ -69,5 +77,8 @@ static inline int SHELL32_GUIDToStringW (REFGUID guid, LPWSTR str)
             guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
 }
 
-void SHELL_FS_ProcessDisplayFilename(LPSTR szPath, DWORD dwFlags);
-BOOL SHELL_FS_HideExtension(LPWSTR pwszPath);
+void SHELL_FS_ProcessDisplayFilename(LPWSTR szPath, DWORD dwFlags) DECLSPEC_HIDDEN;
+BOOL SHELL_FS_HideExtension(LPCWSTR pwszPath) DECLSPEC_HIDDEN;
+
+DEFINE_GUID( CLSID_UnixFolder, 0xcc702eb2, 0x7dc5, 0x11d9, 0xc6, 0x87, 0x00, 0x04, 0x23, 0x8a, 0x01, 0xcd );
+DEFINE_GUID( CLSID_UnixDosFolder, 0x9d20aae8, 0x0625, 0x44b0, 0x9c, 0xa7, 0x71, 0x88, 0x9c, 0x22, 0x54, 0xd9 );

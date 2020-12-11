@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_CABINET_H
 #define __WINE_CABINET_H
@@ -32,6 +32,23 @@
 /* from msvcrt/sys/stat.h */
 #define _S_IWRITE 0x0080
 #define _S_IREAD  0x0100
+
+/* from msvcrt/fcntl.h */
+#define _O_RDONLY      0
+#define _O_WRONLY      1
+#define _O_RDWR        2
+#define _O_ACCMODE     (_O_RDONLY|_O_WRONLY|_O_RDWR)
+#define _O_APPEND      0x0008
+#define _O_RANDOM      0x0010
+#define _O_SEQUENTIAL  0x0020
+#define _O_TEMPORARY   0x0040
+#define _O_NOINHERIT   0x0080
+#define _O_CREAT       0x0100
+#define _O_TRUNC       0x0200
+#define _O_EXCL        0x0400
+#define _O_SHORT_LIVED 0x1000
+#define _O_TEXT        0x4000
+#define _O_BINARY      0x8000
 
 #define CAB_SPLITMAX (10)
 
@@ -289,134 +306,10 @@ typedef struct cds_forward {
   } methods;
 } cab_decomp_state;
 
-/* _Int as in "Internal" fyi */
-
-typedef struct {
-  unsigned int     FCI_Intmagic;
-  PERF perf;
-  PFNFCIFILEPLACED   pfnfiledest;
-  PFNFCIALLOC        pfnalloc;
-  PFNFCIFREE         pfnfree;
-  PFNFCIOPEN         pfnopen;
-  PFNFCIREAD         pfnread;
-  PFNFCIWRITE        pfnwrite;
-  PFNFCICLOSE        pfnclose;
-  PFNFCISEEK         pfnseek;
-  PFNFCIDELETE       pfndelete;
-  PFNFCIGETTEMPFILE  pfnfcigtf;
-  PCCAB              pccab;
-  BOOL               fPrevCab;
-  BOOL               fNextCab;
-  BOOL               fSplitFolder;
-  cab_ULONG          statusFolderCopied;
-  cab_ULONG          statusFolderTotal;
-  BOOL               fGetNextCabInVain;
-  void               *pv;
-  char szPrevCab[CB_MAX_CABINET_NAME];    /* previous cabinet name */
-  char szPrevDisk[CB_MAX_DISK_NAME];      /* disk name of previous cabinet */
-  CCAB               oldCCAB;
-  char*              data_in;  /* uncompressed data blocks */
-  cab_UWORD          cdata_in;
-  char*              data_out; /* compressed data blocks */
-  ULONG              cCompressedBytesInFolder;
-  cab_UWORD          cFolders;
-  cab_UWORD          cFiles;
-  cab_ULONG          cDataBlocks;
-  cab_ULONG          cbFileRemainer; /* uncompressed, yet to be written data */
-               /* of spanned file of a spanning folder of a spanning cabinet */
-  char               szFileNameCFDATA1[CB_MAX_FILENAME];
-  int                handleCFDATA1;
-  char               szFileNameCFFILE1[CB_MAX_FILENAME];
-  int                handleCFFILE1;
-  char               szFileNameCFDATA2[CB_MAX_FILENAME];
-  int                handleCFDATA2;
-  char               szFileNameCFFILE2[CB_MAX_FILENAME];
-  int                handleCFFILE2;
-  char               szFileNameCFFOLDER[CB_MAX_FILENAME];
-  int                handleCFFOLDER;
-  cab_ULONG          sizeFileCFDATA1;
-  cab_ULONG          sizeFileCFFILE1;
-  cab_ULONG          sizeFileCFDATA2;
-  cab_ULONG          sizeFileCFFILE2;
-  cab_ULONG          sizeFileCFFOLDER;
-  BOOL               fNewPrevious;
-} FCI_Int, *PFCI_Int;
-
-typedef struct {
-  unsigned int FDI_Intmagic;
-  PFNALLOC pfnalloc;
-  PFNFREE  pfnfree;
-  PFNOPEN  pfnopen;
-  PFNREAD  pfnread;
-  PFNWRITE pfnwrite;
-  PFNCLOSE pfnclose;
-  PFNSEEK  pfnseek;
-  PERF     perf;
-} FDI_Int, *PFDI_Int;
-
-/* cast an HFCI into a PFCI_Int */
-#define PFCI_INT(hfci) ((PFCI_Int)(hfci))
-
-/* cast an HFDI into a PFDI_Int */
-#define PFDI_INT(hfdi) ((PFDI_Int)(hfdi))
-
-/* quick pfci method invokers */
-#define PFCI_ALLOC(hfdi, size)            ((*PFCI_INT(hfdi)->pfnalloc) (size))
-#define PFCI_FREE(hfdi, ptr)              ((*PFCI_INT(hfdi)->pfnfree)  (ptr))
-#define PFCI_GETTEMPFILE(hfci,name,length) ((*PFCI_INT(hfci)->pfnfcigtf)(name,length,PFCI_INT(hfci)->pv))
-#define PFCI_DELETE(hfci,name,err,pv)      ((*PFCI_INT(hfci)->pfndelete)(name,err,pv))
-#define PFCI_OPEN(hfci,name,oflag,pmode,err,pv) ((*PFCI_INT(hfci)->pfnopen)(name,oflag,pmode,err,pv))
-#define PFCI_READ(hfci,hf,memory,cb,err,pv)((*PFCI_INT(hfci)->pfnread)(hf,memory,cb,err,pv))
-#define PFCI_WRITE(hfci,hf,memory,cb,err,pv)  ((*PFCI_INT(hfci)->pfnwrite)(hf,memory,cb,err,pv))
-#define PFCI_CLOSE(hfci,hf,err,pv)         ((*PFCI_INT(hfci)->pfnclose)(hf,err,pv))
-#define PFCI_SEEK(hfci,hf,dist,seektype,err,pv)((*PFCI_INT(hfci)->pfnseek)(hf,dist,seektype,err,pv))
-#define PFCI_FILEPLACED(hfci,pccab,name,cb,cont,pv)((*PFCI_INT(hfci)->pfnfiledest)(pccab,name,cb,cont,pv))
-
-/* quickie pfdi method invokers */
-#define PFDI_ALLOC(hfdi, size)            ((*PFDI_INT(hfdi)->pfnalloc) (size))
-#define PFDI_FREE(hfdi, ptr)              ((*PFDI_INT(hfdi)->pfnfree)  (ptr))
-#define PFDI_OPEN(hfdi, file, flag, mode) ((*PFDI_INT(hfdi)->pfnopen)  (file, flag, mode))
-#define PFDI_READ(hfdi, hf, pv, cb)       ((*PFDI_INT(hfdi)->pfnread)  (hf, pv, cb))
-#define PFDI_WRITE(hfdi, hf, pv, cb)      ((*PFDI_INT(hfdi)->pfnwrite) (hf, pv, cb))
-#define PFDI_CLOSE(hfdi, hf)              ((*PFDI_INT(hfdi)->pfnclose) (hf))
-#define PFDI_SEEK(hfdi, hf, dist, type)   ((*PFDI_INT(hfdi)->pfnseek)  (hf, dist, type))
-
-#define FCI_INT_MAGIC 0xfcfcfc05
-#define FDI_INT_MAGIC 0xfdfdfd05
-
-#define REALLY_IS_FCI(hfci) ( \
-  (((void *) hfci) != NULL) && \
-  (PFCI_INT(hfci)->FCI_Intmagic == FCI_INT_MAGIC) )
-
-#define REALLY_IS_FDI(hfdi) ( \
-  (((void *) hfdi) != NULL) && \
-  (PFDI_INT(hfdi)->FDI_Intmagic == FDI_INT_MAGIC) )
-
 /*
  * the rest of these are somewhat kludgy macros which are shared between fdi.c
  * and cabextract.c.
  */
-
-#define ZIPNEEDBITS(n) {while(k<(n)){cab_LONG c=*(ZIP(inpos)++);\
-    b|=((cab_ULONG)c)<<k;k+=8;}}
-#define ZIPDUMPBITS(n) {b>>=(n);k-=(n);}
-
-/* endian-neutral reading of little-endian data */
-#define EndGetI32(a)  ((((a)[3])<<24)|(((a)[2])<<16)|(((a)[1])<<8)|((a)[0]))
-#define EndGetI16(a)  ((((a)[1])<<8)|((a)[0]))
-
-#define CAB(x) (decomp_state->x)
-#define ZIP(x) (decomp_state->methods.zip.x)
-#define QTM(x) (decomp_state->methods.qtm.x)
-#define LZX(x) (decomp_state->methods.lzx.x)
-#define DECR_OK           (0)
-#define DECR_DATAFORMAT   (1)
-#define DECR_ILLEGALDATA  (2)
-#define DECR_NOMEMORY     (3)
-#define DECR_CHECKSUM     (4)
-#define DECR_INPUT        (5)
-#define DECR_OUTPUT       (6)
-#define DECR_USERABORT    (7)
 
 /* Bitstream reading macros (Quantum / normal byte order)
  *
@@ -613,28 +506,26 @@ static const cab_UWORD Zipmask[17] = {                                          
  0x01ff, 0x03ff, 0x07ff, 0x0fff, 0x1fff, 0x3fff, 0x7fff, 0xffff                    \
 }
 
-struct ExtractFileList {
-        LPSTR  filename;
-        struct ExtractFileList *next;
-        BOOL   unknown;  /* always 1L */
-} ;
+/* SESSION Operation */
+#define EXTRACT_FILLFILELIST  0x00000001
+#define EXTRACT_EXTRACTFILES  0x00000002
 
-/* the first parameter of the function extract */
+struct FILELIST{
+    LPSTR FileName;
+    struct FILELIST *next;
+    BOOL DoExtract;
+};
+
 typedef struct {
-        long  result1;          /* 0x000 */
-        long  unknown1[3];      /* 0x004 */
-        struct ExtractFileList *filelist; /* 0x010 */
-        long  filecount;        /* 0x014 */
-        long  unknown2;         /* 0x018 */
-        char  directory[0x104]; /* 0x01c */
-        char  lastfile[0x20c];  /* 0x120 */
-} EXTRACTdest;
-
-
-/* from cabextract.c */
-BOOL process_cabinet(LPCSTR cabname, LPCSTR dir, BOOL fix, BOOL lower, EXTRACTdest *dest);
-void QTMupdatemodel(struct QTMmodel *model, int sym);
-int make_decode_table(cab_ULONG nsyms, cab_ULONG nbits, cab_UBYTE *length, cab_UWORD *table);
-cab_ULONG checksum(cab_UBYTE *data, cab_UWORD bytes, cab_ULONG csum);
+    INT FileSize;
+    ERF Error;
+    struct FILELIST *FileList;
+    INT FileCount;
+    INT Operation;
+    CHAR Destination[MAX_PATH];
+    CHAR CurrentFile[MAX_PATH];
+    CHAR Reserved[MAX_PATH];
+    struct FILELIST *FilterList;
+} SESSION;
 
 #endif /* __WINE_CABINET_H */

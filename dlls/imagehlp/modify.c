@@ -15,14 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
 
 #include "windef.h"
 #include "winbase.h"
-#include "winreg.h"
 #include "winternl.h"
 #include "winerror.h"
 #include "wine/debug.h"
@@ -37,7 +36,7 @@ static WORD CalcCheckSum(DWORD StartValue, LPVOID BaseAddress, DWORD WordCount);
  *		BindImage (IMAGEHLP.@)
  */
 BOOL WINAPI BindImage(
-  LPSTR ImageName, LPSTR DllPath, LPSTR SymbolPath)
+  PCSTR ImageName, PCSTR DllPath, PCSTR SymbolPath)
 {
   return BindImageEx(0, ImageName, DllPath, SymbolPath, NULL);
 }
@@ -46,15 +45,14 @@ BOOL WINAPI BindImage(
  *		BindImageEx (IMAGEHLP.@)
  */
 BOOL WINAPI BindImageEx(
-  DWORD Flags, LPSTR ImageName, LPSTR DllPath, LPSTR SymbolPath,
+  DWORD Flags, PCSTR ImageName, PCSTR DllPath, PCSTR SymbolPath,
   PIMAGEHLP_STATUS_ROUTINE StatusRoutine)
 {
-  FIXME("(%ld, %s, %s, %s, %p): stub\n",
+  FIXME("(%d, %s, %s, %s, %p): stub\n",
     Flags, debugstr_a(ImageName), debugstr_a(DllPath),
     debugstr_a(SymbolPath), StatusRoutine
   );
-  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-  return FALSE;
+  return TRUE;
 }
 
 
@@ -91,11 +89,14 @@ PIMAGE_NT_HEADERS WINAPI CheckSumMappedFile(
   LPVOID BaseAddress, DWORD FileLength,
   LPDWORD HeaderSum, LPDWORD CheckSum)
 {
-  PIMAGE_NT_HEADERS Header;
+  IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *) BaseAddress;
+  PIMAGE_NT_HEADERS32 Header32;
+  PIMAGE_NT_HEADERS64 Header64;
+  DWORD *ChecksumFile;
   DWORD CalcSum;
   DWORD HdrSum;
 
-  FIXME("(%p, %ld, %p, %p): stub\n",
+  TRACE("(%p, %d, %p, %p)\n",
     BaseAddress, FileLength, HeaderSum, CheckSum
   );
 
@@ -103,8 +104,25 @@ PIMAGE_NT_HEADERS WINAPI CheckSumMappedFile(
 				BaseAddress,
 				(FileLength + 1) / sizeof(WORD));
 
-  Header = RtlImageNtHeader(BaseAddress);
-  HdrSum = Header->OptionalHeader.CheckSum;
+  if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+    return NULL;
+
+  Header32 = (IMAGE_NT_HEADERS32 *)((char *)dos + dos->e_lfanew);
+
+  if (Header32->Signature != IMAGE_NT_SIGNATURE)
+    return NULL;
+
+  if (Header32->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+    ChecksumFile = &Header32->OptionalHeader.CheckSum;
+  else if (Header32->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+  {
+    Header64 = (IMAGE_NT_HEADERS64 *)Header32;
+    ChecksumFile = &Header64->OptionalHeader.CheckSum;
+  }
+  else
+    return NULL;
+
+  HdrSum = *ChecksumFile;
 
   /* Subtract image checksum from calculated checksum. */
   /* fix low word of checksum */
@@ -131,16 +149,16 @@ PIMAGE_NT_HEADERS WINAPI CheckSumMappedFile(
   CalcSum += FileLength;
 
   *CheckSum = CalcSum;
-  *HeaderSum = Header->OptionalHeader.CheckSum;
+  *HeaderSum = *ChecksumFile;
 
-  return Header;
+  return (PIMAGE_NT_HEADERS) Header32;
 }
 
 /***********************************************************************
  *		MapFileAndCheckSumA (IMAGEHLP.@)
  */
 DWORD WINAPI MapFileAndCheckSumA(
-  LPSTR Filename, LPDWORD HeaderSum, LPDWORD CheckSum)
+  PCSTR Filename, PDWORD HeaderSum, PDWORD CheckSum)
 {
   HANDLE hFile;
   HANDLE hMapping;
@@ -180,7 +198,7 @@ DWORD WINAPI MapFileAndCheckSumA(
 			      0,
 			      0,
 			      0);
-  if (hMapping == 0)
+  if (BaseAddress == 0)
   {
     CloseHandle(hMapping);
     CloseHandle(hFile);
@@ -206,7 +224,7 @@ DWORD WINAPI MapFileAndCheckSumA(
  *		MapFileAndCheckSumW (IMAGEHLP.@)
  */
 DWORD WINAPI MapFileAndCheckSumW(
-  LPWSTR Filename, LPDWORD HeaderSum, LPDWORD CheckSum)
+  PCWSTR Filename, PDWORD HeaderSum, PDWORD CheckSum)
 {
   HANDLE hFile;
   HANDLE hMapping;
@@ -246,7 +264,7 @@ DWORD WINAPI MapFileAndCheckSumW(
 			      0,
 			      0,
 			      0);
-  if (hMapping == 0)
+  if (BaseAddress == 0)
   {
     CloseHandle(hMapping);
     CloseHandle(hFile);
@@ -272,13 +290,13 @@ DWORD WINAPI MapFileAndCheckSumW(
  *		ReBaseImage (IMAGEHLP.@)
  */
 BOOL WINAPI ReBaseImage(
-  LPSTR CurrentImageName, LPSTR SymbolPath, BOOL fReBase,
+  PCSTR CurrentImageName, PCSTR SymbolPath, BOOL fReBase,
   BOOL fRebaseSysfileOk, BOOL fGoingDown, ULONG CheckImageSize,
-  ULONG *OldImageSize, ULONG *OldImageBase, ULONG *NewImageSize,
-  ULONG *NewImageBase, ULONG TimeStamp)
+  ULONG *OldImageSize, ULONG_PTR *OldImageBase, ULONG *NewImageSize,
+  ULONG_PTR *NewImageBase, ULONG TimeStamp)
 {
   FIXME(
-    "(%s, %s, %d, %d, %d, %ld, %p, %p, %p, %p, %ld): stub\n",
+    "(%s, %s, %d, %d, %d, %d, %p, %p, %p, %p, %d): stub\n",
       debugstr_a(CurrentImageName),debugstr_a(SymbolPath), fReBase,
       fRebaseSysfileOk, fGoingDown, CheckImageSize, OldImageSize,
       OldImageBase, NewImageSize, NewImageBase, TimeStamp
@@ -313,10 +331,10 @@ VOID WINAPI RemoveRelocations(PCHAR ImageName)
  *		SplitSymbols (IMAGEHLP.@)
  */
 BOOL WINAPI SplitSymbols(
-  LPSTR ImageName, LPSTR SymbolsPath,
-  LPSTR SymbolFilePath, DWORD Flags)
+  PSTR ImageName, PCSTR SymbolsPath,
+  PSTR SymbolFilePath, ULONG Flags)
 {
-  FIXME("(%s, %s, %s, %ld): stub\n",
+  FIXME("(%s, %s, %s, %d): stub\n",
     debugstr_a(ImageName), debugstr_a(SymbolsPath),
     debugstr_a(SymbolFilePath), Flags
   );
@@ -328,8 +346,8 @@ BOOL WINAPI SplitSymbols(
  *		UpdateDebugInfoFile (IMAGEHLP.@)
  */
 BOOL WINAPI UpdateDebugInfoFile(
-  LPSTR ImageFileName, LPSTR SymbolPath,
-  LPSTR DebugFilePath, PIMAGE_NT_HEADERS NtHeaders)
+  PCSTR ImageFileName, PCSTR SymbolPath,
+  PSTR DebugFilePath, PIMAGE_NT_HEADERS32 NtHeaders)
 {
   FIXME("(%s, %s, %s, %p): stub\n",
     debugstr_a(ImageFileName), debugstr_a(SymbolPath),
@@ -343,10 +361,10 @@ BOOL WINAPI UpdateDebugInfoFile(
  *		UpdateDebugInfoFileEx (IMAGEHLP.@)
  */
 BOOL WINAPI UpdateDebugInfoFileEx(
-  LPSTR ImageFileName, LPSTR SymbolPath, LPSTR DebugFilePath,
-  PIMAGE_NT_HEADERS NtHeaders, DWORD OldChecksum)
+  PCSTR ImageFileName, PCSTR SymbolPath, PSTR DebugFilePath,
+  PIMAGE_NT_HEADERS32 NtHeaders, DWORD OldChecksum)
 {
-  FIXME("(%s, %s, %s, %p, %ld): stub\n",
+  FIXME("(%s, %s, %s, %p, %d): stub\n",
     debugstr_a(ImageFileName), debugstr_a(SymbolPath),
     debugstr_a(DebugFilePath), NtHeaders, OldChecksum
   );

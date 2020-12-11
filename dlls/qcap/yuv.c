@@ -18,17 +18,21 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "config.h"
 #include <stdarg.h>
 
 #include "windef.h"
-#include "winbase.h"
+#include "wingdi.h"
 #include "objbase.h"
 #include "strmif.h"
 #include "qcap_main.h"
 #include "wine/debug.h"
+
+/* This is not used if V4L support is missing */
+#if defined(HAVE_LINUX_VIDEODEV_H) || defined(HAVE_LIBV4L1_H)
 
 WINE_DEFAULT_DEBUG_CHANNEL(qcap);
 
@@ -37,7 +41,7 @@ static int yuv_gu[256]; /* Green U */
 static int yuv_bu[256]; /* Blue  U */
 static int yuv_rv[256]; /* Red   V */
 static int yuv_gv[256]; /* Green V */
-static int initialised = 0;
+static BOOL initialised = FALSE;
 
 static inline int ValidRange(int in) {
    if (in > 255) in = 255;
@@ -63,26 +67,27 @@ void YUV_Init(void) {
    float y, u, v;
    int y_, cb, cr;
 
-   if (initialised++) return;
+   if (initialised) return;
+   initialised = TRUE;
 
    for (y_ = 0; y_ <= 255; y_++)
    {
       y = ((float) 255 / 219) * (y_ - 16);
-      yuv_xy[y_] = ValidRange((int) (y));
+      yuv_xy[y_] = y;
    }
 
    for (cb = 0; cb <= 255; cb++)
    {
       u = ((float) 255 / 224) * (cb - 128);
-      yuv_gu[cb] = - ValidRange((int) (0.344 * u));
-      yuv_bu[cb] =   ValidRange((int) (1.772 * u));
+      yuv_gu[cb] = -0.344 * u;
+      yuv_bu[cb] =  1.772 * u;
    }
 
    for (cr = 0; cr <= 255; cr++)
    {
       v = ((float) 255 / 224) * (cr - 128);
-      yuv_rv[cr] =   ValidRange((int) (1.402 * v));
-      yuv_gv[cr] = - ValidRange((int) (0.714 * v));
+      yuv_rv[cr] =  1.402 * v;
+      yuv_gv[cr] = -0.714 * v;
    }
    TRACE("Filled hash table\n");
 }
@@ -141,14 +146,13 @@ static void Parse_PYUV(unsigned char *destbuffer, const unsigned char *input, in
    /* We have 3 pointers, One to Y, one to Cb and 1 to Cr */
 
 /* C19 *89* declaration block (Grr julliard for not allowing C99) */
-   int uvjump, ysize, uvsize;
+   int ysize, uvsize;
    const unsigned char *pY, *pCb, *pCr;
    int swstep = 0, shstep = 0;
    int ypos = 0, xpos = 0;
    int indexUV = 0, cUv;
 /* End of Grr */
 
-   uvjump = width / wstep;
    ysize = width * height;
    uvsize = (width / wstep) * (height / hstep);
    pY = input;
@@ -193,3 +197,4 @@ void YUV_To_RGB24(enum YUV_Format format, unsigned char *target, const unsigned 
       }
    }
 }
+#endif

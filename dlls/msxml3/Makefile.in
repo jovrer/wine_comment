@@ -1,25 +1,50 @@
-EXTRADEFS = -DCOM_NO_WINDOWS_H
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = msxml3.dll
-IMPORTS   = oleaut32 advapi32 kernel32 ntdll
-EXTRALIBS = -luuid $(LIBUNICODE) @XML2LIBS@ @XSLTLIBS@
-EXTRAINCL = @XML2INCL@ @XSLTINCL@
+IMPORTS   = uuid urlmon shlwapi oleaut32 ole32 user32 advapi32
+EXTRALIBS = $(XML2_LIBS)
+EXTRAINCL = $(XML2_CFLAGS) $(XSLT_CFLAGS)
 
 C_SRCS = \
+	attribute.c \
+	bsc.c \
+	cdata.c \
+	comment.c \
+	dispex.c \
+	docfrag.c \
+	doctype.c \
 	domdoc.c \
+	domimpl.c \
 	element.c \
+	entityref.c \
 	factory.c \
+	httprequest.c \
 	main.c \
+	mxnamespace.c \
+	mxwriter.c \
 	node.c \
 	nodelist.c \
 	nodemap.c \
-	parseerror.c
+	parseerror.c \
+	pi.c \
+	saxreader.c \
+	schema.c \
+	selection.c \
+	stylesheet.c \
+	text.c \
+	uuid.c \
+	xdr.c \
+	xmldoc.c \
+	xmlelem.c \
+	xmlparser.c \
+	xmlview.c
 
-SUBDIRS = tests
+LEX_SRCS = xslpattern.l
 
-@MAKE_DLL_RULES@
+BISON_SRCS = xslpattern.y
 
-### Dependencies:
+RC_SRCS = \
+	schemas.rc \
+	version.rc
+
+IDL_SRCS = \
+	msxml3_v1.idl \
+	xmlparser.idl

@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -31,6 +31,7 @@
 #include "winuser.h"
 #include "tlhelp32.h"
 #include "wine/debug.h"
+#include "wine/exception.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
@@ -48,7 +49,8 @@ void print_help(void)
             "subset of the commands that gdb accepts.",
             "The commands currently are:",
             "  help                                   quit",
-            "  break [*<addr>]                        watch *<addr>",
+            "  attach <wpid>                          detach",
+            "  break [*<addr>]                        watch | rwatch *<addr>",
             "  delete break bpnum                     disable bpnum",
             "  enable bpnum                           condition <bpnum> [<expr>]",
             "  finish                                 cont [N]",
@@ -63,8 +65,8 @@ void print_help(void)
             "  list <lines>                           disassemble [<addr>][,<addr>]",
             "  show dir                               dir <path>",
             "  set <reg> = <expr>                     set *<addr> = <expr>",
-            "  mode [16,32,vm86]                      pass",
-            "  whatis                                 info (see 'help info' for options)",
+            "  pass                                   whatis",
+            "  info (see 'help info' for options)",
 
             "The 'x' command accepts repeat counts and formats (including 'i') in the",
             "same way that gdb does.\n",
@@ -101,11 +103,12 @@ void info_help(void)
             "  info locals          Displays values of all local vars for current frame",
             "  info maps <pid>      Shows virtual mappings (in a given process)",
             "  info process         Shows all running processes",
-            "  info reg             Displays values in all registers at top of stack",
+            "  info reg             Displays values of the general registers at top of stack",
+            "  info all-reg         Displays the general and floating point registers",
             "  info segments <pid>  Displays information about all known segments",
             "  info share           Displays all loaded modules",
             "  info share <addr>    Displays internal module state",
-            "  info stack           Dumps information about top of stack",
+            "  info stack [<len>]   Dumps information about top of stack, up to len words",
             "  info symbol <sym>    Displays information about a given symbol",
             "  info thread          Shows all running threads",
             "  info wnd <handle>    Displays internal window state",
@@ -116,11 +119,10 @@ void info_help(void)
     while (infotext[i]) dbg_printf("%s\n", infotext[i++]);
 }
 
-static const char* get_symtype_str(SYM_TYPE st)
+static const char* get_symtype_str(const IMAGEHLP_MODULE64* mi)
 {
-    switch (st)
+    switch (mi->SymType)
     {
-    case -1:            return "\\";
     default:
     case SymNone:       return "--none--";
     case SymCoff:       return "COFF";
@@ -129,53 +131,77 @@ static const char* get_symtype_str(SYM_TYPE st)
     case SymExport:     return "Export";
     case SymDeferred:   return "Deferred";
     case SymSym:        return "Sym";
-    case SymDia:        return "DIA";
-    case NumSymTypes:   return "Stabs";
+    case SymDia:
+        switch (mi->CVSig)
+        {
+        case 'S' | ('T' << 8) | ('A' << 16) | ('B' << 24):
+            return "Stabs";
+        case 'D' | ('W' << 8) | ('A' << 16) | ('R' << 24):
+            return "Dwarf";
+        default:
+            return "DIA";
+
+        }
     }
 }
 
 struct info_module
 {
-    IMAGEHLP_MODULE*    mi;
+    IMAGEHLP_MODULE64 mi;
+    char              name[64];
+};
+
+struct info_modules
+{
+    struct info_module *modules;
     unsigned            num_alloc;
     unsigned            num_used;
 };
 
-static void module_print_info(const IMAGEHLP_MODULE* mi, SYM_TYPE st)
+static void module_print_info(const struct info_module *module, BOOL is_embedded)
 {
-    dbg_printf("0x%08lx-%08lx\t%-16s%s\n",
-               mi->BaseOfImage, mi->BaseOfImage + mi->ImageSize,
-               get_symtype_str(st), mi->ModuleName);
+    dbg_printf("%*.*s-%*.*s\t%-16s%s\n",
+               ADDRWIDTH, ADDRWIDTH, wine_dbgstr_longlong(module->mi.BaseOfImage),
+               ADDRWIDTH, ADDRWIDTH, wine_dbgstr_longlong(module->mi.BaseOfImage + module->mi.ImageSize),
+               is_embedded ? "\\" : get_symtype_str(&module->mi), module->name);
 }
 
 static int      module_compare(const void* p1, const void* p2)
 {
-    return (char*)(((const IMAGEHLP_MODULE*)p1)->BaseOfImage) -
-        (char*)(((const IMAGEHLP_MODULE*)p2)->BaseOfImage);
+    struct info_module *left = (struct info_module *)p1;
+    struct info_module *right = (struct info_module *)p2;
+    LONGLONG val = left->mi.BaseOfImage - right->mi.BaseOfImage;
+
+    if (val < 0) return -1;
+    else if (val > 0) return 1;
+    else return 0;
 }
 
-static inline BOOL module_is_container(const IMAGEHLP_MODULE* wmod_cntnr,
-                                     const IMAGEHLP_MODULE* wmod_child)
+static inline BOOL module_is_container(const struct info_module *wmod_cntnr,
+        const struct info_module *wmod_child)
 {
-    return wmod_cntnr->BaseOfImage <= wmod_child->BaseOfImage &&
-        (DWORD)wmod_cntnr->BaseOfImage + wmod_cntnr->ImageSize >=
-        (DWORD)wmod_child->BaseOfImage + wmod_child->ImageSize;
+    return wmod_cntnr->mi.BaseOfImage <= wmod_child->mi.BaseOfImage &&
+        wmod_cntnr->mi.BaseOfImage + wmod_cntnr->mi.ImageSize >=
+        wmod_child->mi.BaseOfImage + wmod_child->mi.ImageSize;
 }
 
-static BOOL CALLBACK info_mod_cb(PSTR mod_name, DWORD base, void* ctx)
+static BOOL CALLBACK info_mod_cb(PCSTR mod_name, DWORD64 base, PVOID ctx)
 {
-    struct info_module* im = (struct info_module*)ctx;
+    struct info_modules *im = ctx;
 
     if (im->num_used + 1 > im->num_alloc)
     {
         im->num_alloc += 16;
-        im->mi = dbg_heap_realloc(im->mi, im->num_alloc * sizeof(*im->mi));
+        im->modules = dbg_heap_realloc(im->modules, im->num_alloc * sizeof(*im->modules));
     }
-    im->mi[im->num_used].SizeOfStruct = sizeof(im->mi[im->num_used]);
-    if (SymGetModuleInfo(dbg_curr_process->handle, base, &im->mi[im->num_used]))
+    im->modules[im->num_used].mi.SizeOfStruct = sizeof(im->modules[im->num_used].mi);
+    if (SymGetModuleInfo64(dbg_curr_process->handle, base, &im->modules[im->num_used].mi))
     {
+        const int dst_len = sizeof(im->modules[im->num_used].name);
+        lstrcpynA(im->modules[im->num_used].name, mod_name, dst_len - 1);
+        im->modules[im->num_used].name[dst_len - 1] = 0;
         im->num_used++;
-    }   
+    }
     return TRUE;
 }
 
@@ -184,81 +210,73 @@ static BOOL CALLBACK info_mod_cb(PSTR mod_name, DWORD base, void* ctx)
  *
  * Display information about a given module (DLL or EXE), or about all modules
  */
-void info_win32_module(DWORD base)
+void info_win32_module(DWORD64 base)
 {
-    if (!dbg_curr_process || !dbg_curr_thread)
+    struct info_modules im;
+    UINT                i, j, num_printed = 0;
+    DWORD               opt;
+
+    if (!dbg_curr_process)
     {
         dbg_printf("Cannot get info on module while no process is loaded\n");
         return;
     }
 
-    if (base)
+    im.modules = NULL;
+    im.num_alloc = im.num_used = 0;
+
+    /* this is a wine specific options to return also ELF modules in the
+     * enumeration
+     */
+    SymSetOptions((opt = SymGetOptions()) | 0x40000000);
+    SymEnumerateModules64(dbg_curr_process->handle, info_mod_cb, &im);
+    SymSetOptions(opt);
+
+    qsort(im.modules, im.num_used, sizeof(im.modules[0]), module_compare);
+
+    dbg_printf("Module\tAddress\t\t\t%sDebug info\tName (%d modules)\n",
+	       ADDRWIDTH == 16 ? "\t\t" : "", im.num_used);
+
+    for (i = 0; i < im.num_used; i++)
     {
-        IMAGEHLP_MODULE     mi;
-
-        mi.SizeOfStruct = sizeof(mi);
-
-        if (!SymGetModuleInfo(dbg_curr_process->handle, base, &mi))
+        if (base && 
+            (base < im.modules[i].mi.BaseOfImage || base >= im.modules[i].mi.BaseOfImage + im.modules[i].mi.ImageSize))
+            continue;
+        if (strstr(im.modules[i].name, "<elf>"))
         {
-            dbg_printf("'0x%08lx' is not a valid module address\n", base);
-            return;
-        }
-        module_print_info(&mi, mi.SymType);
-    }
-    else
-    {
-        struct info_module      im;
-        int			i, j;
-        DWORD                   opt;
-
-        im.mi = NULL;
-        im.num_alloc = im.num_used = 0;
-
-        /* this is a wine specific options to return also ELF modules in the
-         * enumeration
-         */
-        SymSetOptions((opt = SymGetOptions()) | 0x40000000);
-        SymEnumerateModules(dbg_curr_process->handle, info_mod_cb, (void*)&im);
-        SymSetOptions(opt);
-
-        qsort(im.mi, im.num_used, sizeof(im.mi[0]), module_compare);
-
-        dbg_printf("Module\tAddress\t\t\tDebug info\tName (%d modules)\n", im.num_used);
-
-        for (i = 0; i < im.num_used; i++)
-        {
-            if (strstr(im.mi[i].ModuleName, "<elf>"))
+            dbg_printf("ELF\t");
+            module_print_info(&im.modules[i], FALSE);
+            /* print all modules embedded in this one */
+            for (j = 0; j < im.num_used; j++)
             {
+                if (!strstr(im.modules[j].name, "<elf>") && module_is_container(&im.modules[i], &im.modules[j]))
+                {
+                    dbg_printf("  \\-PE\t");
+                    module_print_info(&im.modules[j], TRUE);
+                }
+            }
+        }
+        else
+        {
+            /* check module is not embedded in another module */
+            for (j = 0; j < im.num_used; j++) 
+            {
+                if (strstr(im.modules[j].name, "<elf>") && module_is_container(&im.modules[j], &im.modules[i]))
+                    break;
+            }
+            if (j < im.num_used) continue;
+            if (strstr(im.modules[i].name, ".so") || strchr(im.modules[i].name, '<'))
                 dbg_printf("ELF\t");
-                module_print_info(&im.mi[i], (im.mi[i].SymType == SymDia) ? NumSymTypes : im.mi[i].SymType);
-                /* print all modules embedded in this one */
-                for (j = 0; j < im.num_used; j++)
-                {
-                    if (!strstr(im.mi[j].ModuleName, "<elf>") && module_is_container(&im.mi[i], &im.mi[j]))
-                    {
-                        dbg_printf("  \\-PE\t");
-                        module_print_info(&im.mi[j], -1);
-                    }
-                }
-            }
             else
-            {
-                /* check module is not embedded in another module */
-                for (j = 0; j < im.num_used; j++) 
-                {
-                    if (strstr(im.mi[j].ModuleName, "<elf>") && module_is_container(&im.mi[j], &im.mi[i]))
-                        break;
-                }
-                if (j < im.num_used) continue;
-                if (strstr(im.mi[i].ModuleName, ".so") || strchr(im.mi[i].ModuleName, '<'))
-                    dbg_printf("ELF\t");
-                else
-                    dbg_printf("PE\t");
-                module_print_info(&im.mi[i], im.mi[i].SymType);
-            }
+                dbg_printf("PE\t");
+            module_print_info(&im.modules[i], FALSE);
         }
-        HeapFree(GetProcessHeap(), 0, im.mi);
+        num_printed++;
     }
+    HeapFree(GetProcessHeap(), 0, im.modules);
+
+    if (base && !num_printed)
+        dbg_printf("'0x%x%08x' is not a valid module address\n", (DWORD)(base >> 32), (DWORD)base);
 }
 
 struct class_walker
@@ -275,9 +293,9 @@ static void class_walker(HWND hWnd, struct class_walker* cw)
     ATOM	atom;
     HWND	child;
 
-    if (!GetClassName(hWnd, clsName, sizeof(clsName)))
+    if (!GetClassNameA(hWnd, clsName, sizeof(clsName)))
         return;
-    if ((atom = FindAtom(clsName)) == 0)
+    if ((atom = FindAtomA(clsName)) == 0)
         return;
 
     for (i = 0; i < cw->used; i++)
@@ -305,7 +323,7 @@ static void class_walker(HWND hWnd, struct class_walker* cw)
 void info_win32_class(HWND hWnd, const char* name)
 {
     WNDCLASSEXA	wca;
-    HINSTANCE   hInst = hWnd ? (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE) : 0;
+    HINSTANCE   hInst = hWnd ? (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE) : 0;
 
     if (!name)
     {
@@ -318,17 +336,17 @@ void info_win32_class(HWND hWnd, const char* name)
         return;
     }
 
-    if (!GetClassInfoEx(hInst, name, &wca))
+    if (!GetClassInfoExA(hInst, name, &wca))
     {
         dbg_printf("Cannot find class '%s'\n", name);
         return;
     }
 
     dbg_printf("Class '%s':\n", name);
-    dbg_printf("style=0x%08x  wndProc=0x%08lx\n"
+    dbg_printf("style=0x%08x  wndProc=%p\n"
                "inst=%p  icon=%p  cursor=%p  bkgnd=%p\n"
                "clsExtra=%d  winExtra=%d\n",
-               wca.style, (DWORD)wca.lpfnWndProc, wca.hInstance,
+               wca.style, wca.lpfnWndProc, wca.hInstance,
                wca.hIcon, wca.hCursor, wca.hbrBackground,
                wca.cbClsExtra, wca.cbWndExtra);
 
@@ -361,15 +379,15 @@ static void info_window(HWND hWnd, int indent)
 
     do
     {
-        if (!GetClassName(hWnd, clsName, sizeof(clsName)))
+        if (!GetClassNameA(hWnd, clsName, sizeof(clsName)))
             strcpy(clsName, "-- Unknown --");
-        if (!GetWindowText(hWnd, wndName, sizeof(wndName)))
+        if (!GetWindowTextA(hWnd, wndName, sizeof(wndName)))
             strcpy(wndName, "-- Empty --");
 
-        dbg_printf("%*s%08x%*s %-17.17s %08lx %08lx %08lx %.14s\n",
-                   indent, "", (UINT)hWnd, 12 - indent, "",
-                   clsName, GetWindowLong(hWnd, GWL_STYLE),
-                   GetWindowLongPtr(hWnd, GWLP_WNDPROC),
+        dbg_printf("%*s%08lx%*s %-17.17s %08x %0*lx %08x %.14s\n",
+                   indent, "", (DWORD_PTR)hWnd, 12 - indent, "",
+                   clsName, GetWindowLongW(hWnd, GWL_STYLE),
+                   ADDRWIDTH, (ULONG_PTR)GetWindowLongPtrW(hWnd, GWLP_WNDPROC),
                    GetWindowThreadProcessId(hWnd, NULL), wndName);
 
         if ((child = GetWindow(hWnd, GW_CHILD)) != 0)
@@ -383,22 +401,22 @@ void info_win32_window(HWND hWnd, BOOL detailed)
     char	wndName[128];
     RECT	clientRect;
     RECT	windowRect;
-    int         i;
     WORD	w;
 
     if (!IsWindow(hWnd)) hWnd = GetDesktopWindow();
 
     if (!detailed)
     {
-        dbg_printf("%-20.20s %-17.17s %-8.8s %-8.8s %-8.8s %s\n",
-                   "Window handle", "Class Name", "Style", "WndProc", "Thread", "Text");
+        dbg_printf("%-20.20s %-17.17s %-8.8s %-*.*s %-8.8s %s\n",
+                   "Window handle", "Class Name", "Style",
+		   ADDRWIDTH, ADDRWIDTH, "WndProc", "Thread", "Text");
         info_window(hWnd, 0);
         return;
     }
 
-    if (!GetClassName(hWnd, clsName, sizeof(clsName)))
+    if (!GetClassNameA(hWnd, clsName, sizeof(clsName)))
         strcpy(clsName, "-- Unknown --");
-    if (!GetWindowText(hWnd, wndName, sizeof(wndName)))
+    if (!GetWindowTextA(hWnd, wndName, sizeof(wndName)))
         strcpy(wndName, "-- Empty --");
     if (!GetClientRect(hWnd, &clientRect) || 
         !MapWindowPoints(hWnd, 0, (LPPOINT) &clientRect, 2))
@@ -409,28 +427,30 @@ void info_win32_window(HWND hWnd, BOOL detailed)
     /* FIXME missing fields: hmemTaskQ, hrgnUpdate, dce, flags, pProp, scroll */
     dbg_printf("next=%p  child=%p  parent=%p  owner=%p  class='%s'\n"
                "inst=%p  active=%p  idmenu=%08lx\n"
-               "style=0x%08lx  exstyle=0x%08lx  wndproc=0x%08lx  text='%s'\n"
-               "client=%ld,%ld-%ld,%ld  window=%ld,%ld-%ld,%ld sysmenu=%p\n",
+               "style=0x%08x  exstyle=0x%08x  wndproc=%p  text='%s'\n"
+               "client=%d,%d-%d,%d  window=%d,%d-%d,%d sysmenu=%p\n",
                GetWindow(hWnd, GW_HWNDNEXT),
                GetWindow(hWnd, GW_CHILD),
                GetParent(hWnd),
                GetWindow(hWnd, GW_OWNER),
                clsName,
-               (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE),
+               (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE),
                GetLastActivePopup(hWnd),
-               GetWindowLongPtr(hWnd, GWLP_ID),
-               GetWindowLong(hWnd, GWL_STYLE),
-               GetWindowLong(hWnd, GWL_EXSTYLE),
-               GetWindowLongPtr(hWnd, GWLP_WNDPROC),
+               (ULONG_PTR)GetWindowLongPtrW(hWnd, GWLP_ID),
+               GetWindowLongW(hWnd, GWL_STYLE),
+               GetWindowLongW(hWnd, GWL_EXSTYLE),
+               (void*)GetWindowLongPtrW(hWnd, GWLP_WNDPROC),
                wndName,
                clientRect.left, clientRect.top, clientRect.right, clientRect.bottom,
                windowRect.left, windowRect.top, windowRect.right, windowRect.bottom,
                GetSystemMenu(hWnd, FALSE));
 
-    if (GetClassLong(hWnd, GCL_CBWNDEXTRA))
+    if (GetClassLongW(hWnd, GCL_CBWNDEXTRA))
     {
+        UINT i;
+
         dbg_printf("Extra bytes:");
-        for (i = 0; i < GetClassLong(hWnd, GCL_CBWNDEXTRA) / 2; i++)
+        for (i = 0; i < GetClassLongW(hWnd, GCL_CBWNDEXTRA) / 2; i++)
         {
             w = GetWindowWord(hWnd, i * 2);
             /* FIXME: depends on i386 endian-ity */
@@ -441,31 +461,116 @@ void info_win32_window(HWND hWnd, BOOL detailed)
     dbg_printf("\n");
 }
 
+struct dump_proc_entry
+{
+    PROCESSENTRY32         proc;
+    unsigned               children; /* index in dump_proc.entries of first child */
+    unsigned               sibling;  /* index in dump_proc.entries of next sibling */
+};
+
+struct dump_proc
+{
+    struct dump_proc_entry*entries;
+    unsigned               count;
+    unsigned               alloc;
+};
+
+static unsigned get_parent(const struct dump_proc* dp, unsigned idx)
+{
+    unsigned i;
+
+    for (i = 0; i < dp->count; i++)
+    {
+        if (i != idx && dp->entries[i].proc.th32ProcessID == dp->entries[idx].proc.th32ParentProcessID)
+            return i;
+    }
+    return -1;
+}
+
+static void dump_proc_info(const struct dump_proc* dp, unsigned idx, unsigned depth)
+{
+    struct dump_proc_entry* dpe;
+    for ( ; idx != -1; idx = dp->entries[idx].sibling)
+    {
+        assert(idx < dp->count);
+        dpe = &dp->entries[idx];
+        dbg_printf("%c%08x %-8d ",
+                   (dpe->proc.th32ProcessID == (dbg_curr_process ?
+                                                dbg_curr_process->pid : 0)) ? '>' : ' ',
+                   dpe->proc.th32ProcessID, dpe->proc.cntThreads);
+        if (depth)
+        {
+            unsigned i;
+            for (i = 3 * (depth - 1); i > 0; i--) dbg_printf(" ");
+            dbg_printf("\\_ ");
+        }
+        dbg_printf("'%s'\n", dpe->proc.szExeFile);
+        dump_proc_info(dp, dpe->children, depth + 1);
+    }
+}
+
 void info_win32_processes(void)
 {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap != INVALID_HANDLE_VALUE)
     {
-        PROCESSENTRY32  entry;
-        DWORD           current = dbg_curr_process ? dbg_curr_process->pid : 0;
-        BOOL            ok;
+        struct dump_proc  dp;
+        unsigned          i, first = -1;
+        BOOL              ok;
 
-        entry.dwSize = sizeof(entry);
-        ok = Process32First(snap, &entry);
+        dp.count   = 0;
+        dp.alloc   = 16;
+        dp.entries = HeapAlloc(GetProcessHeap(), 0, sizeof(*dp.entries) * dp.alloc);
+        if (!dp.entries)
+        {
+             CloseHandle(snap);
+             return;
+        }
+        dp.entries[dp.count].proc.dwSize = sizeof(dp.entries[dp.count].proc);
+        ok = Process32First(snap, &dp.entries[dp.count].proc);
 
-        dbg_printf(" %-8.8s %-8.8s %-8.8s %s (all id:s are in hex)\n",
-                   "pid", "threads", "parent", "executable");
+        /* fetch all process information into dp (skipping this debugger) */
         while (ok)
         {
-            if (entry.th32ProcessID != GetCurrentProcessId())
-                dbg_printf("%c%08lx %-8ld %08lx '%s'\n",
-                           (entry.th32ProcessID == current) ? '>' : ' ',
-                           entry.th32ProcessID, entry.cntThreads,
-                           entry.th32ParentProcessID, entry.szExeFile);
-            ok = Process32Next(snap, &entry);
+            if (dp.entries[dp.count].proc.th32ProcessID != GetCurrentProcessId())
+                dp.entries[dp.count++].children = -1;
+            if (dp.count >= dp.alloc)
+            {
+                dp.entries = HeapReAlloc(GetProcessHeap(), 0, dp.entries, sizeof(*dp.entries) * (dp.alloc *= 2));
+                if (!dp.entries) return;
+            }
+            dp.entries[dp.count].proc.dwSize = sizeof(dp.entries[dp.count].proc);
+            ok = Process32Next(snap, &dp.entries[dp.count].proc);
         }
         CloseHandle(snap);
+        /* chain the siblings wrt. their parent */
+        for (i = 0; i < dp.count; i++)
+        {
+            unsigned parent = get_parent(&dp, i);
+            unsigned *chain = parent == -1 ? &first : &dp.entries[parent].children;
+            dp.entries[i].sibling = *chain;
+            *chain = i;
+        }
+        dbg_printf(" %-8.8s %-8.8s %s (all id:s are in hex)\n", "pid", "threads", "executable");
+        dump_proc_info(&dp, first, 0);
+        HeapFree(GetProcessHeap(), 0, dp.entries);
     }
+}
+
+static BOOL get_process_name(DWORD pid, PROCESSENTRY32* entry)
+{
+    BOOL   ret = FALSE;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+
+    if (snap != INVALID_HANDLE_VALUE)
+    {
+        entry->dwSize = sizeof(*entry);
+        if (Process32First(snap, entry))
+            while (!(ret = (entry->th32ProcessID == pid)) &&
+                   Process32Next(snap, entry));
+        CloseHandle(snap);
+    }
+    return ret;
 }
 
 void info_win32_threads(void)
@@ -493,12 +598,21 @@ void info_win32_threads(void)
 		if (entry.th32OwnerProcessID != lastProcessId)
 		{
 		    struct dbg_process*	p = dbg_get_process(entry.th32OwnerProcessID);
+                    PROCESSENTRY32 pcs_entry;
+                    const char* exename;
 
-		    dbg_printf("%08lx%s %s\n",
-                               entry.th32OwnerProcessID, p ? " (D)" : "", p ? p->imageName : "");
-		    lastProcessId = entry.th32OwnerProcessID;
+                    if (p)
+                        exename = dbg_W2A(p->imageName, -1);
+                    else if (get_process_name(entry.th32OwnerProcessID, &pcs_entry))
+                        exename = pcs_entry.szExeFile;
+                    else
+                        exename = "";
+
+		    dbg_printf("%08x%s %s\n",
+                               entry.th32OwnerProcessID, p ? " (D)" : "", exename);
+                    lastProcessId = entry.th32OwnerProcessID;
 		}
-                dbg_printf("\t%08lx %4ld%s\n",
+                dbg_printf("\t%08x %4d%s\n",
                            entry.th32ThreadID, entry.tpBasePri,
                            (entry.th32ThreadID == dbg_curr_tid) ? " <==" : "");
 
@@ -511,11 +625,11 @@ void info_win32_threads(void)
 }
 
 /***********************************************************************
- *           info_win32_exceptions
+ *           info_win32_frame_exceptions
  *
  * Get info on the exception frames of a given thread.
  */
-void info_win32_exceptions(DWORD tid)
+void info_win32_frame_exceptions(DWORD tid)
 {
     struct dbg_thread*  thread;
     void*               next_frame;
@@ -535,12 +649,12 @@ void info_win32_exceptions(DWORD tid)
 
         if (!thread)
         {
-            dbg_printf("Unknown thread id (0x%08lx) in current process\n", tid);
+            dbg_printf("Unknown thread id (%04x) in current process\n", tid);
             return;
         }
         if (SuspendThread(thread->handle) == -1)
         {
-            dbg_printf("Can't suspend thread id (0x%08lx)\n", tid);
+            dbg_printf("Can't suspend thread id (%04x)\n", tid);
             return;
         }
     }
@@ -578,7 +692,7 @@ void info_win32_segments(DWORD start, int length)
 
     for (i = start; i < start + length; i++)
     {
-        if (!GetThreadSelectorEntry(dbg_curr_thread->handle, (i << 3) | 7, &le))
+        if (!dbg_curr_process->process_io->get_selector(dbg_curr_thread->handle, (i << 3) | 7, &le))
             continue;
 
         if (le.HighWord.Bits.Type & 0x08)
@@ -593,7 +707,7 @@ void info_win32_segments(DWORD start, int length)
             flags[1] = (le.HighWord.Bits.Type & 0x2) ? 'w' : '-';
             flags[2] = '-';
         }
-        dbg_printf("%04lx: sel=%04lx base=%08x limit=%08x %d-bit %c%c%c\n",
+        dbg_printf("%04x: sel=%04x base=%08x limit=%08x %d-bit %c%c%c\n",
                    i, (i << 3) | 7,
                    (le.HighWord.Bits.BaseHi << 24) +
                    (le.HighWord.Bits.BaseMid << 16) + le.BaseLow,
@@ -627,12 +741,12 @@ void info_win32_virtual(DWORD pid)
         hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
         if (hProc == NULL)
         {
-            dbg_printf("Cannot open process <%lu>\n", pid);
+            dbg_printf("Cannot open process <%04x>\n", pid);
             return;
         }
     }
 
-    dbg_printf("Address  Size     State   Type    RWX\n");
+    dbg_printf("Address  End      State   Type    RWX\n");
 
     while (VirtualQueryEx(hProc, addr, &mbi, sizeof(mbi)) >= sizeof(mbi))
     {
@@ -670,7 +784,7 @@ void info_win32_virtual(DWORD pid)
             prot[0] = '\0';
         }
         dbg_printf("%08lx %08lx %s %s %s\n",
-                   (DWORD)addr, (DWORD)addr + mbi.RegionSize - 1, state, type, prot);
+                   (DWORD_PTR)addr, (DWORD_PTR)addr + mbi.RegionSize - 1, state, type, prot);
         if (addr + mbi.RegionSize < addr) /* wrap around ? */
             break;
         addr += mbi.RegionSize;
@@ -724,4 +838,155 @@ void info_wine_dbg_channel(BOOL turn_on, const char* cls, const char* name)
     }
     if (!done) dbg_printf("Unable to find debug channel %s\n", name);
     else WINE_TRACE("Changed %d channel instances\n", done);
+}
+
+void info_win32_exception(void)
+{
+    const EXCEPTION_RECORD*     rec;
+    ADDRESS64                   addr;
+    char                        hexbuf[MAX_OFFSET_TO_STR_LEN];
+
+    if (!dbg_curr_thread->in_exception)
+    {
+        dbg_printf("Thread isn't in an exception\n");
+        return;
+    }
+    rec = &dbg_curr_thread->excpt_record;
+    memory_get_current_pc(&addr);
+
+    /* print some infos */
+    dbg_printf("%s: ",
+               dbg_curr_thread->first_chance ? "First chance exception" : "Unhandled exception");
+    switch (rec->ExceptionCode)
+    {
+    case EXCEPTION_BREAKPOINT:
+        dbg_printf("breakpoint");
+        break;
+    case EXCEPTION_SINGLE_STEP:
+        dbg_printf("single step");
+        break;
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+        dbg_printf("divide by zero");
+        break;
+    case EXCEPTION_INT_OVERFLOW:
+        dbg_printf("overflow");
+        break;
+    case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+        dbg_printf("array bounds");
+        break;
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+        dbg_printf("illegal instruction");
+        break;
+    case EXCEPTION_STACK_OVERFLOW:
+        dbg_printf("stack overflow");
+        break;
+    case EXCEPTION_PRIV_INSTRUCTION:
+        dbg_printf("privileged instruction");
+        break;
+    case EXCEPTION_ACCESS_VIOLATION:
+        if (rec->NumberParameters == 2)
+            dbg_printf("page fault on %s access to 0x%08lx",
+                       rec->ExceptionInformation[0] == EXCEPTION_WRITE_FAULT ? "write" :
+                       rec->ExceptionInformation[0] == EXCEPTION_EXECUTE_FAULT ? "execute" : "read",
+                       rec->ExceptionInformation[1]);
+        else
+            dbg_printf("page fault");
+        break;
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+        dbg_printf("Alignment");
+        break;
+    case DBG_CONTROL_C:
+        dbg_printf("^C");
+        break;
+    case CONTROL_C_EXIT:
+        dbg_printf("^C");
+        break;
+    case STATUS_POSSIBLE_DEADLOCK:
+        {
+            ADDRESS64       recaddr;
+
+            recaddr.Mode   = AddrModeFlat;
+            recaddr.Offset = rec->ExceptionInformation[0];
+
+            dbg_printf("wait failed on critical section ");
+            print_address(&recaddr, FALSE);
+        }
+        break;
+    case EXCEPTION_WINE_STUB:
+        {
+            char dll[32], name[256];
+            memory_get_string(dbg_curr_process,
+                              (void*)rec->ExceptionInformation[0], TRUE, FALSE,
+                              dll, sizeof(dll));
+            if (HIWORD(rec->ExceptionInformation[1]))
+                memory_get_string(dbg_curr_process,
+                                  (void*)rec->ExceptionInformation[1], TRUE, FALSE,
+                                  name, sizeof(name));
+            else
+                sprintf( name, "%ld", rec->ExceptionInformation[1] );
+            dbg_printf("unimplemented function %s.%s called", dll, name);
+        }
+        break;
+    case EXCEPTION_WINE_ASSERTION:
+        dbg_printf("assertion failed");
+        break;
+    case EXCEPTION_FLT_DENORMAL_OPERAND:
+        dbg_printf("denormal float operand");
+        break;
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+        dbg_printf("divide by zero");
+        break;
+    case EXCEPTION_FLT_INEXACT_RESULT:
+        dbg_printf("inexact float result");
+        break;
+    case EXCEPTION_FLT_INVALID_OPERATION:
+        dbg_printf("invalid float operation");
+        break;
+    case EXCEPTION_FLT_OVERFLOW:
+        dbg_printf("floating point overflow");
+        break;
+    case EXCEPTION_FLT_UNDERFLOW:
+        dbg_printf("floating point underflow");
+        break;
+    case EXCEPTION_FLT_STACK_CHECK:
+        dbg_printf("floating point stack check");
+        break;
+    case CXX_EXCEPTION:
+        if(rec->NumberParameters == 3 && rec->ExceptionInformation[0] == CXX_FRAME_MAGIC)
+            dbg_printf("C++ exception(object = 0x%08lx, type = 0x%08lx)",
+                       rec->ExceptionInformation[1], rec->ExceptionInformation[2]);
+        else if(rec->NumberParameters == 4 && rec->ExceptionInformation[0] == CXX_FRAME_MAGIC)
+            dbg_printf("C++ exception(object = %p, type = %p, base = %p)",
+                       (void*)rec->ExceptionInformation[1], (void*)rec->ExceptionInformation[2],
+                       (void*)rec->ExceptionInformation[3]);
+        else
+            dbg_printf("C++ exception with strange parameter count %d or magic 0x%08lx",
+                       rec->NumberParameters, rec->ExceptionInformation[0]);
+        break;
+    default:
+        dbg_printf("0x%08x", rec->ExceptionCode);
+        break;
+    }
+    if (rec->ExceptionFlags & EH_STACK_INVALID)
+        dbg_printf(", invalid program stack");
+
+    switch (addr.Mode)
+    {
+    case AddrModeFlat:
+        dbg_printf(" in %d-bit code (%s)",
+                   dbg_curr_process->be_cpu->pointer_size * 8,
+                   memory_offset_to_string(hexbuf, addr.Offset, 0));
+        break;
+    case AddrModeReal:
+        dbg_printf(" in vm86 code (%04x:%04x)", addr.Segment, (unsigned) addr.Offset);
+        break;
+    case AddrMode1616:
+        dbg_printf(" in 16-bit code (%04x:%04x)", addr.Segment, (unsigned) addr.Offset);
+        break;
+    case AddrMode1632:
+        dbg_printf(" in segmented 32-bit code (%04x:%08x)", addr.Segment, (unsigned) addr.Offset);
+        break;
+    default: dbg_printf(" bad address");
+    }
+    dbg_printf(".\n");
 }

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #define IDI_WINE 1
@@ -23,6 +23,9 @@
 #define IDD_STATUS 100
 #define IDD_ABOUT  101
 #define IDD_TAG    102
+#define IDD_EMAIL  103
+
+#define IDC_STATIC -1
 
 #define IDC_ST0 1000
 #define IDC_PB0 1001
@@ -34,22 +37,11 @@
 #define IDC_DIR 2000
 #define IDC_OUT 2001
 #define IDC_TAG 2002
+#define IDC_EMAIL 2002
 
 #define IDC_SB  3000
 
 #define IDC_EDIT  4000
 #define IDC_ABOUT 4001
 
-/* Resource types */
-
-#define TESTRES   1000
-#define STRINGRES 1001
-
-/* String resources */
-
-#define WINE_BUILD 10000
-#define BUILD_INFO 10001
-#define TESTS_URL  10002
-
-/* Revision info strings start from this index: */
-#define REV_INFO 30000
+#define IDS_BUILD_ID 1

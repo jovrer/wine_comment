@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -51,17 +51,22 @@
 #ifdef HAVE_POLL_H
 #include <poll.h>
 #endif
+#ifdef __APPLE__
+# include <mach/mach_time.h>
+#endif
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "wincon.h"
+#include "winternl.h"
 #include "wine/library.h"
 
 #include "file.h"
-#include "handle.h"
-#include "thread.h"
 #include "process.h"
-#include "user.h"
+#include "thread.h"
+#include "security.h"
 #define WANT_REQUEST_HANDLERS
 #include "request.h"
 
@@ -78,7 +83,6 @@ struct master_socket
 {
     struct object        obj;        /* object header */
     struct fd           *fd;         /* file descriptor of the master socket */
-    struct timeout_user *timeout;    /* timeout on last process exit */
 };
 
 static void master_socket_dump( struct object *obj, int verbose );
@@ -89,12 +93,20 @@ static const struct object_ops master_socket_ops =
 {
     sizeof(struct master_socket),  /* size */
     master_socket_dump,            /* dump */
+    no_get_type,                   /* get_type */
     no_add_queue,                  /* add_queue */
     NULL,                          /* remove_queue */
     NULL,                          /* signaled */
     NULL,                          /* satisfied */
     no_signal,                     /* signal */
     no_get_fd,                     /* get_fd */
+    no_map_access,                 /* map_access */
+    default_get_sd,                /* get_sd */
+    default_set_sd,                /* set_sd */
+    no_lookup_name,                /* lookup_name */
+    no_link_name,                  /* link_name */
+    NULL,                          /* unlink_name */
+    no_open_file,                  /* open_file */
     no_close_handle,               /* close_handle */
     master_socket_destroy          /* destroy */
 };
@@ -103,35 +115,22 @@ static const struct fd_ops master_socket_fd_ops =
 {
     NULL,                          /* get_poll_events */
     master_socket_poll_event,      /* poll_event */
-    no_flush,                      /* flush */
-    no_get_file_info,              /* get_file_info */
-    no_queue_async,                /* queue_async */
-    no_cancel_async                /* cancel_async */
+    NULL,                          /* flush */
+    NULL,                          /* get_fd_type */
+    NULL,                          /* ioctl */
+    NULL,                          /* queue_async */
+    NULL                           /* reselect_async */
 };
 
 
 struct thread *current = NULL;  /* thread handling the current request */
 unsigned int global_error = 0;  /* global error code for when no thread is current */
-time_t server_start_time = 0;  /* server startup time */
+timeout_t server_start_time = 0;  /* server startup time */
+int server_dir_fd = -1;    /* file descriptor for the server dir */
+int config_dir_fd = -1;    /* file descriptor for the config dir */
 
 static struct master_socket *master_socket;  /* the master socket object */
-
-/* socket communication static structures */
-static struct iovec myiovec;
-static struct msghdr msghdr;
-#ifndef HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS
-struct cmsg_fd
-{
-    struct
-    {
-        size_t len;   /* size of structure */
-        int    level; /* SOL_SOCKET */
-        int    type;  /* SCM_RIGHTS */
-    } header;
-    int fd;           /* fd to pass */
-};
-static struct cmsg_fd cmsg = { { sizeof(cmsg.header) + sizeof(cmsg.fd), SOL_SOCKET, SCM_RIGHTS }, -1 };
-#endif  /* HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS */
+static struct timeout_user *master_timeout;
 
 /* complain about a protocol error and terminate the client connection */
 void fatal_protocol_error( struct thread *thread, const char *err, ... )
@@ -139,22 +138,8 @@ void fatal_protocol_error( struct thread *thread, const char *err, ... )
     va_list args;
 
     va_start( args, err );
-    fprintf( stderr, "Protocol error:%p: ", thread );
+    fprintf( stderr, "Protocol error:%04x: ", thread->id );
     vfprintf( stderr, err, args );
-    va_end( args );
-    thread->exit_code = 1;
-    kill_thread( thread, 1 );
-}
-
-/* complain about a protocol error and terminate the client connection */
-void fatal_protocol_perror( struct thread *thread, const char *err, ... )
-{
-    va_list args;
-
-    va_start( args, err );
-    fprintf( stderr, "Protocol error:%p: ", thread );
-    vfprintf( stderr, err, args );
-    perror( " " );
     va_end( args );
     thread->exit_code = 1;
     kill_thread( thread, 1 );
@@ -172,26 +157,72 @@ void fatal_error( const char *err, ... )
     exit(1);
 }
 
-/* die on a fatal error */
-void fatal_perror( const char *err, ... )
-{
-    va_list args;
-
-    va_start( args, err );
-    fprintf( stderr, "wineserver: " );
-    vfprintf( stderr, err, args );
-    perror( " " );
-    va_end( args );
-    exit(1);
-}
-
 /* allocate the reply data */
-void *set_reply_data_size( size_t size )
+void *set_reply_data_size( data_size_t size )
 {
     assert( size <= get_reply_max_size() );
     if (size && !(current->reply_data = mem_alloc( size ))) size = 0;
     current->reply_size = size;
     return current->reply_data;
+}
+
+static const struct object_attributes empty_attributes;
+
+/* return object attributes from the current request */
+const struct object_attributes *get_req_object_attributes( const struct security_descriptor **sd,
+                                                           struct unicode_str *name,
+                                                           struct object **root )
+{
+    const struct object_attributes *attr = get_req_data();
+    data_size_t size = get_req_data_size();
+
+    if (root) *root = NULL;
+
+    if (!size)
+    {
+        *sd = NULL;
+        name->len = 0;
+        return &empty_attributes;
+    }
+
+    if ((size < sizeof(*attr)) || (size - sizeof(*attr) < attr->sd_len) ||
+        (size - sizeof(*attr) - attr->sd_len < attr->name_len))
+    {
+        set_error( STATUS_ACCESS_VIOLATION );
+        return NULL;
+    }
+    if (attr->sd_len && !sd_is_valid( (const struct security_descriptor *)(attr + 1), attr->sd_len ))
+    {
+        set_error( STATUS_INVALID_SECURITY_DESCR );
+        return NULL;
+    }
+    if ((attr->name_len & (sizeof(WCHAR) - 1)) || attr->name_len >= 65534)
+    {
+        set_error( STATUS_OBJECT_NAME_INVALID );
+        return NULL;
+    }
+    if (root && attr->rootdir && attr->name_len)
+    {
+        if (!(*root = get_directory_obj( current->process, attr->rootdir ))) return NULL;
+    }
+    *sd = attr->sd_len ? (const struct security_descriptor *)(attr + 1) : NULL;
+    name->len = attr->name_len;
+    name->str = (const WCHAR *)(attr + 1) + attr->sd_len / sizeof(WCHAR);
+    return attr;
+}
+
+/* return a pointer to the request data following an object attributes structure */
+const void *get_req_data_after_objattr( const struct object_attributes *attr, data_size_t *len )
+{
+    data_size_t size = (sizeof(*attr) + (attr->sd_len & ~1) + (attr->name_len & ~1) + 3) & ~3;
+
+    if (attr == &empty_attributes || size >= get_req_data_size())
+    {
+        *len = 0;
+        return NULL;
+    }
+    *len = get_req_data_size() - size;
+    return (const char *)get_req_data() + size;
 }
 
 /* write the remaining part of the reply */
@@ -215,8 +246,8 @@ void write_reply( struct thread *thread )
     }
     if (errno == EPIPE)
         kill_thread( thread, 0 );  /* normal death */
-    else if (errno != EWOULDBLOCK && errno != EAGAIN)
-        fatal_protocol_perror( thread, "reply write" );
+    else if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
+        fatal_protocol_error( thread, "reply write: %s\n", strerror( errno ));
 }
 
 /* send a reply to the current thread */
@@ -248,11 +279,8 @@ static void send_reply( union generic_reply *reply )
             return;
         }
     }
-    if (current->reply_data)
-    {
-        free( current->reply_data );
-        current->reply_data = NULL;
-    }
+    free( current->reply_data );
+    current->reply_data = NULL;
     return;
 
  error:
@@ -261,7 +289,7 @@ static void send_reply( union generic_reply *reply )
     else if (errno == EPIPE)
         kill_thread( current, 0 );  /* normal death */
     else
-        fatal_protocol_perror( current, "reply write" );
+        fatal_protocol_error( current, "reply write: %s\n", strerror( errno ));
 }
 
 /* call a request handler */
@@ -278,23 +306,26 @@ static void call_req_handler( struct thread *thread )
     if (debug_level) trace_request();
 
     if (req < REQ_NB_REQUESTS)
-    {
         req_handlers[req]( &current->req, &reply );
-        if (current)
+    else
+        set_error( STATUS_NOT_IMPLEMENTED );
+
+    if (current)
+    {
+        if (current->reply_fd)
         {
-            if (current->reply_fd)
-            {
-                reply.reply_header.error = current->error;
-                reply.reply_header.reply_size = current->reply_size;
-                if (debug_level) trace_reply( req, &reply );
-                send_reply( &reply );
-            }
-            else fatal_protocol_error( current, "no reply fd for request %d\n", req );
+            reply.reply_header.error = current->error;
+            reply.reply_header.reply_size = current->reply_size;
+            if (debug_level) trace_reply( req, &reply );
+            send_reply( &reply );
         }
-        current = NULL;
-        return;
+        else
+        {
+            current->exit_code = 1;
+            kill_thread( current, 1 );  /* no way to continue without reply fd */
+        }
     }
-    fatal_protocol_error( current, "bad request %d\n", req );
+    current = NULL;
 }
 
 /* read a request from a thread */
@@ -313,7 +344,11 @@ void read_request( struct thread *thread )
             return;
         }
         if (!(thread->req_data = malloc( thread->req_toread )))
-            fatal_protocol_error( thread, "no memory for %d bytes request\n", thread->req_toread );
+        {
+            fatal_protocol_error( thread, "no memory for %u bytes request %d\n",
+                                  thread->req_toread, thread->req.request_header.req );
+            return;
+        }
     }
 
     /* read the variable sized data */
@@ -338,32 +373,48 @@ error:
         kill_thread( thread, 0 );
     else if (ret > 0)
         fatal_protocol_error( thread, "partial read %d\n", ret );
-    else if (errno != EWOULDBLOCK && errno != EAGAIN)
-        fatal_protocol_perror( thread, "read" );
+    else if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
+        fatal_protocol_error( thread, "read: %s\n", strerror( errno ));
 }
 
 /* receive a file descriptor on the process socket */
 int receive_fd( struct process *process )
 {
+    struct iovec vec;
     struct send_fd data;
-    int fd, ret;
+    struct msghdr msghdr;
+    int fd = -1, ret;
 
 #ifdef HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS
     msghdr.msg_accrightslen = sizeof(int);
     msghdr.msg_accrights = (void *)&fd;
 #else  /* HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS */
-    msghdr.msg_control    = &cmsg;
-    msghdr.msg_controllen = sizeof(cmsg.header) + sizeof(fd);
-    cmsg.fd = -1;
+    char cmsg_buffer[256];
+    msghdr.msg_control    = cmsg_buffer;
+    msghdr.msg_controllen = sizeof(cmsg_buffer);
+    msghdr.msg_flags      = 0;
 #endif  /* HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS */
 
-    myiovec.iov_base = (void *)&data;
-    myiovec.iov_len  = sizeof(data);
+    msghdr.msg_name    = NULL;
+    msghdr.msg_namelen = 0;
+    msghdr.msg_iov     = &vec;
+    msghdr.msg_iovlen  = 1;
+    vec.iov_base = (void *)&data;
+    vec.iov_len  = sizeof(data);
 
     ret = recvmsg( get_unix_fd( process->msg_fd ), &msghdr, 0 );
+
 #ifndef HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS
-    fd = cmsg.fd;
-#endif
+    if (ret > 0)
+    {
+        struct cmsghdr *cmsg;
+        for (cmsg = CMSG_FIRSTHDR( &msghdr ); cmsg; cmsg = CMSG_NXTHDR( &msghdr, cmsg ))
+        {
+            if (cmsg->cmsg_level != SOL_SOCKET) continue;
+            if (cmsg->cmsg_type == SCM_RIGHTS) fd = *(int *)CMSG_DATA(cmsg);
+        }
+    }
+#endif  /* HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS */
 
     if (ret == sizeof(data))
     {
@@ -390,20 +441,24 @@ int receive_fd( struct process *process )
         return 0;
     }
 
-    if (ret >= 0)
+    if (!ret)
     {
-        if (ret > 0)
-            fprintf( stderr, "Protocol error: process %p: partial recvmsg %d for fd\n",
-                     process, ret );
-        kill_process( process, NULL, 1 );
+        kill_process( process, 0 );
+    }
+    else if (ret > 0)
+    {
+        fprintf( stderr, "Protocol error: process %04x: partial recvmsg %d for fd\n",
+                 process->id, ret );
+        if (fd != -1) close( fd );
+        kill_process( process, 1 );
     }
     else
     {
-        if (errno != EWOULDBLOCK && errno != EAGAIN)
+        if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
         {
-            fprintf( stderr, "Protocol error: process %p: ", process );
+            fprintf( stderr, "Protocol error: process %04x: ", process->id );
             perror( "recvmsg" );
-            kill_process( process, NULL, 1 );
+            kill_process( process, 1 );
         }
     }
     return -1;
@@ -412,23 +467,37 @@ int receive_fd( struct process *process )
 /* send an fd to a client */
 int send_client_fd( struct process *process, int fd, obj_handle_t handle )
 {
+    struct iovec vec;
+    struct msghdr msghdr;
     int ret;
-
-    if (debug_level)
-        fprintf( stderr, "%04x: *fd* %p -> %d\n",
-                 current ? current->id : process->id, handle, fd );
 
 #ifdef HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS
     msghdr.msg_accrightslen = sizeof(fd);
     msghdr.msg_accrights = (void *)&fd;
 #else  /* HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS */
-    msghdr.msg_control    = &cmsg;
-    msghdr.msg_controllen = sizeof(cmsg.header) + sizeof(fd);
-    cmsg.fd = fd;
+    char cmsg_buffer[256];
+    struct cmsghdr *cmsg;
+    msghdr.msg_control    = cmsg_buffer;
+    msghdr.msg_controllen = sizeof(cmsg_buffer);
+    msghdr.msg_flags      = 0;
+    cmsg = CMSG_FIRSTHDR( &msghdr );
+    cmsg->cmsg_len   = CMSG_LEN( sizeof(fd) );
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type  = SCM_RIGHTS;
+    *(int *)CMSG_DATA(cmsg) = fd;
+    msghdr.msg_controllen = cmsg->cmsg_len;
 #endif  /* HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS */
 
-    myiovec.iov_base = (void *)&handle;
-    myiovec.iov_len  = sizeof(handle);
+    msghdr.msg_name    = NULL;
+    msghdr.msg_namelen = 0;
+    msghdr.msg_iov     = &vec;
+    msghdr.msg_iovlen  = 1;
+
+    vec.iov_base = (void *)&handle;
+    vec.iov_len  = sizeof(handle);
+
+    if (debug_level)
+        fprintf( stderr, "%04x: *fd* %04x -> %d\n", current ? current->id : process->id, handle, fd );
 
     ret = sendmsg( get_unix_fd( process->msg_fd ), &msghdr, 0 );
 
@@ -436,18 +505,18 @@ int send_client_fd( struct process *process, int fd, obj_handle_t handle )
 
     if (ret >= 0)
     {
-        fprintf( stderr, "Protocol error: process %p: partial sendmsg %d\n", process, ret );
-        kill_process( process, NULL, 1 );
+        fprintf( stderr, "Protocol error: process %04x: partial sendmsg %d\n", process->id, ret );
+        kill_process( process, 1 );
     }
     else if (errno == EPIPE)
     {
-        kill_process( process, NULL, 0 );
+        kill_process( process, 0 );
     }
     else
     {
-        fprintf( stderr, "Protocol error: process %p: ", process );
+        fprintf( stderr, "Protocol error: process %04x: ", process->id );
         perror( "sendmsg" );
-        kill_process( process, NULL, 1 );
+        kill_process( process, 1 );
     }
     return -1;
 }
@@ -455,9 +524,21 @@ int send_client_fd( struct process *process, int fd, obj_handle_t handle )
 /* get current tick count to return to client */
 unsigned int get_tick_count(void)
 {
-    struct timeval t;
-    gettimeofday( &t, NULL );
-    return ((t.tv_sec - server_start_time) * 1000) + (t.tv_usec / 1000);
+#ifdef __APPLE__
+    static mach_timebase_info_data_t timebase;
+
+    if (!timebase.denom) mach_timebase_info( &timebase );
+    return mach_absolute_time() * timebase.numer / timebase.denom / 1000000;
+#elif defined(HAVE_CLOCK_GETTIME)
+    struct timespec ts;
+#ifdef CLOCK_MONOTONIC_RAW
+    if (!clock_gettime( CLOCK_MONOTONIC_RAW, &ts ))
+        return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+    if (!clock_gettime( CLOCK_MONOTONIC, &ts ))
+        return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+    return (current_time - server_start_time) / 10000;
 }
 
 static void master_socket_dump( struct object *obj, int verbose )
@@ -486,21 +567,21 @@ static void master_socket_poll_event( struct fd *fd, int event )
     {
         /* this is not supposed to happen */
         fprintf( stderr, "wineserver: Error on master socket\n" );
-        release_object( sock );
+        set_fd_events( sock->fd, -1 );
     }
     else if (event & POLLIN)
     {
+        struct process *process;
         struct sockaddr_un dummy;
-        unsigned int len = sizeof(dummy);
+        socklen_t len = sizeof(dummy);
         int client = accept( get_unix_fd( master_socket->fd ), (struct sockaddr *) &dummy, &len );
         if (client == -1) return;
-        if (sock->timeout)
-        {
-            remove_timeout_user( sock->timeout );
-            sock->timeout = NULL;
-        }
         fcntl( client, F_SETFL, O_NONBLOCK );
-        create_process( client );
+        if ((process = create_process( client, NULL, 0, NULL )))
+        {
+            create_thread( -1, process, NULL );
+            release_object( process );
+        }
     }
 }
 
@@ -516,9 +597,12 @@ static void create_dir( const char *name, struct stat *st )
 {
     if (lstat( name, st ) == -1)
     {
-        if (errno != ENOENT) fatal_perror( "lstat %s", name );
-        if (mkdir( name, 0700 ) == -1 && errno != EEXIST) fatal_perror( "mkdir %s", name );
-        if (lstat( name, st ) == -1) fatal_perror( "lstat %s", name );
+        if (errno != ENOENT)
+            fatal_error( "lstat %s: %s", name, strerror( errno ));
+        if (mkdir( name, 0700 ) == -1 && errno != EEXIST)
+            fatal_error( "mkdir %s: %s\n", name, strerror( errno ));
+        if (lstat( name, st ) == -1)
+            fatal_error( "lstat %s: %s\n", name, strerror( errno ));
     }
     if (!S_ISDIR(st->st_mode)) fatal_error( "%s is not a directory\n", name );
     if (st->st_uid != getuid()) fatal_error( "%s is not owned by you\n", name );
@@ -526,12 +610,12 @@ static void create_dir( const char *name, struct stat *st )
 }
 
 /* create the server directory and chdir to it */
-static void create_server_dir(void)
+static void create_server_dir( const char *dir )
 {
     char *p, *server_dir;
     struct stat st, st2;
 
-    if (!(server_dir = strdup( wine_get_server_dir() ))) fatal_error( "out of memory\n" );
+    if (!(server_dir = strdup( dir ))) fatal_error( "out of memory\n" );
 
     /* first create the base directory if needed */
 
@@ -544,8 +628,12 @@ static void create_server_dir(void)
     *p = '/';
     create_dir( server_dir, &st );
 
-    if (chdir( server_dir ) == -1) fatal_perror( "chdir %s", server_dir );
-    if (stat( ".", &st2 ) == -1) fatal_perror( "stat %s", server_dir );
+    if (chdir( server_dir ) == -1)
+        fatal_error( "chdir %s: %s\n", server_dir, strerror( errno ));
+    if ((server_dir_fd = open( ".", O_RDONLY )) == -1)
+        fatal_error( "open %s: %s\n", server_dir, strerror( errno ));
+    if (fstat( server_dir_fd, &st2 ) == -1)
+        fatal_error( "stat %s: %s\n", server_dir, strerror( errno ));
     if (st.st_dev != st2.st_dev || st.st_ino != st2.st_ino)
         fatal_error( "chdir did not end up in %s\n", server_dir );
 
@@ -561,7 +649,7 @@ static int create_server_lock(void)
     if (lstat( server_lock_name, &st ) == -1)
     {
         if (errno != ENOENT)
-            fatal_perror( "lstat %s/%s", wine_get_server_dir(), server_lock_name );
+            fatal_error( "lstat %s/%s: %s", wine_get_server_dir(), server_lock_name, strerror( errno ));
     }
     else
     {
@@ -570,17 +658,20 @@ static int create_server_lock(void)
     }
 
     if ((fd = open( server_lock_name, O_CREAT|O_TRUNC|O_WRONLY, 0600 )) == -1)
-        fatal_perror( "error creating %s/%s", wine_get_server_dir(), server_lock_name );
+        fatal_error( "error creating %s/%s: %s", wine_get_server_dir(), server_lock_name, strerror( errno ));
     return fd;
 }
 
 /* wait for the server lock */
 int wait_for_lock(void)
 {
+    const char *server_dir = wine_get_server_dir();
     int fd, r;
     struct flock fl;
 
-    create_server_dir();
+    if (!server_dir) return 0;  /* no server dir, so no lock to wait on */
+
+    create_server_dir( server_dir );
     fd = create_server_lock();
 
     fl.l_type   = F_WRLCK;
@@ -596,14 +687,17 @@ int wait_for_lock(void)
 /* kill the wine server holding the lock */
 int kill_lock_owner( int sig )
 {
+    const char *server_dir = wine_get_server_dir();
     int fd, i, ret = 0;
     pid_t pid = 0;
     struct flock fl;
 
-    create_server_dir();
+    if (!server_dir) return 0;  /* no server dir, nothing to do */
+
+    create_server_dir( server_dir );
     fd = create_server_lock();
 
-    for (i = 0; i < 10; i++)
+    for (i = 1; i <= 20; i++)
     {
         fl.l_type   = F_WRLCK;
         fl.l_whence = SEEK_SET;
@@ -627,7 +721,7 @@ int kill_lock_owner( int sig )
             }
         }
         else if (fl.l_pid != pid) goto done;  /* no longer the same process */
-        sleep( 1 );
+        usleep( 50000 * i );
     }
     /* waited long enough, now kill it */
     kill( pid, SIGKILL );
@@ -681,13 +775,13 @@ static void acquire_lock(void)
         case EAGAIN:
             exit(2); /* we didn't get the lock, exit with special status */
         default:
-            fatal_perror( "fcntl %s/%s", wine_get_server_dir(), server_lock_name );
+            fatal_error( "fcntl %s/%s: %s", wine_get_server_dir(), server_lock_name, strerror( errno ));
         }
         /* it seems we can't use locks on this fs, so we will use the socket existence as lock */
         close( fd );
     }
 
-    if ((fd = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1) fatal_perror( "socket" );
+    if ((fd = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1) fatal_error( "socket: %s\n", strerror( errno ));
     addr.sun_family = AF_UNIX;
     strcpy( addr.sun_path, server_socket_name );
     slen = sizeof(addr) - sizeof(addr.sun_path) + strlen(addr.sun_path) + 1;
@@ -702,22 +796,24 @@ static void acquire_lock(void)
                 fatal_error( "couldn't bind to the socket even though we hold the lock\n" );
             exit(2); /* we didn't get the lock, exit with special status */
         }
-        fatal_perror( "bind" );
+        fatal_error( "bind: %s\n", strerror( errno ));
     }
     atexit( socket_cleanup );
     chmod( server_socket_name, 0600 );  /* make sure no other user can connect */
-    if (listen( fd, 5 ) == -1) fatal_perror( "listen" );
+    if (listen( fd, 5 ) == -1) fatal_error( "listen: %s\n", strerror( errno ));
 
     if (!(master_socket = alloc_object( &master_socket_ops )) ||
-        !(master_socket->fd = create_anonymous_fd( &master_socket_fd_ops, fd, &master_socket->obj )))
+        !(master_socket->fd = create_anonymous_fd( &master_socket_fd_ops, fd, &master_socket->obj, 0 )))
         fatal_error( "out of memory\n" );
-    master_socket->timeout = NULL;
     set_fd_events( master_socket->fd, POLLIN );
+    make_object_static( &master_socket->obj );
 }
 
 /* open the master server socket and start waiting for new clients */
 void open_master_socket(void)
 {
+    const char *server_dir = wine_get_server_dir();
+    const char *config_dir = wine_get_config_dir();
     int fd, pid, status, sync_pipe[2];
     char dummy;
 
@@ -725,11 +821,22 @@ void open_master_socket(void)
     assert( sizeof(union generic_request) == sizeof(struct request_max_size) );
     assert( sizeof(union generic_reply) == sizeof(struct request_max_size) );
 
-    create_server_dir();
+    /* make sure the stdio fds are open */
+    fd = open( "/dev/null", O_RDWR );
+    while (fd >= 0 && fd <= 2) fd = dup( fd );
+
+    if (!server_dir)
+        fatal_error( "directory %s cannot be accessed\n", config_dir );
+    if (chdir( config_dir ) == -1)
+        fatal_error( "chdir to %s: %s\n", config_dir, strerror( errno ));
+    if ((config_dir_fd = open( ".", O_RDONLY )) == -1)
+        fatal_error( "open %s: %s\n", config_dir, strerror( errno ));
+
+    create_server_dir( server_dir );
 
     if (!foreground)
     {
-        if (pipe( sync_pipe ) == -1) fatal_perror( "pipe" );
+        if (pipe( sync_pipe ) == -1) fatal_error( "pipe: %s\n", strerror( errno ));
         pid = fork();
         switch( pid )
         {
@@ -740,20 +847,17 @@ void open_master_socket(void)
             acquire_lock();
 
             /* close stdin and stdout */
-            if ((fd = open( "/dev/null", O_RDWR )) != -1)
-            {
-                dup2( fd, 0 );
-                dup2( fd, 1 );
-                close( fd );
-            }
+            dup2( fd, 0 );
+            dup2( fd, 1 );
 
             /* signal parent */
+            dummy = 0;
             write( sync_pipe[1], &dummy, 1 );
             close( sync_pipe[1] );
             break;
 
         case -1:
-            fatal_perror( "fork" );
+            fatal_error( "fork: %s\n", strerror( errno ));
             break;
 
         default:  /* parent */
@@ -763,7 +867,7 @@ void open_master_socket(void)
             if (read( sync_pipe[0], &dummy, 1 ) == 1) _exit(0);
 
             /* child terminated, propagate exit status */
-            wait4( pid, &status, 0, NULL );
+            waitpid( pid, &status, 0 );
             if (WIFEXITED(status)) _exit( WEXITSTATUS(status) );
             _exit(1);
         }
@@ -773,57 +877,34 @@ void open_master_socket(void)
         acquire_lock();
     }
 
-    /* setup msghdr structure constant fields */
-    msghdr.msg_name    = NULL;
-    msghdr.msg_namelen = 0;
-    msghdr.msg_iov     = &myiovec;
-    msghdr.msg_iovlen  = 1;
-
-    /* init startup time */
-    server_start_time = time(NULL);
+    /* init the process tracing mechanism */
+    init_tracing_mechanism();
+    close( fd );
 }
 
 /* master socket timer expiration handler */
 static void close_socket_timeout( void *arg )
 {
-    master_socket->timeout = NULL;
+    master_timeout = NULL;
     flush_registry();
-
-    /* if a new client is waiting, we keep on running */
-    if (check_fd_events( master_socket->fd, POLLIN )) return;
-
     if (debug_level) fprintf( stderr, "wineserver: exiting (pid=%ld)\n", (long) getpid() );
 
 #ifdef DEBUG_OBJECTS
-    /* shut down everything properly */
-    release_object( master_socket );
-    close_signals();
-    close_global_handles();
-    close_registry();
-    dump_objects();  /* dump any remaining objects */
-#else
-    exit(0);
+    close_objects();  /* shut down everything properly */
 #endif
+    exit( 0 );
 }
 
 /* close the master socket and stop waiting for new clients */
-void close_master_socket(void)
+void close_master_socket( timeout_t timeout )
 {
-    struct timeval when;
-
-    if (master_socket_timeout == -1) return;  /* just keep running forever */
-
-    if (master_socket_timeout)
+    if (master_socket)
     {
-        gettimeofday( &when, NULL );
-        add_timeout( &when, master_socket_timeout * 1000 );
-        master_socket->timeout = add_timeout_user( &when, close_socket_timeout, NULL );
+        release_object( master_socket );
+        master_socket = NULL;
     }
-    else close_socket_timeout( NULL );  /* close it right away */
-}
+    if (master_timeout)  /* cancel previous timeout */
+        remove_timeout_user( master_timeout );
 
-/* lock/unlock the master socket to stop accepting new clients */
-void lock_master_socket( int locked )
-{
-    set_fd_events( master_socket->fd, locked ? 0 : POLLIN );
+    master_timeout = add_timeout_user( timeout, close_socket_timeout, NULL );
 }

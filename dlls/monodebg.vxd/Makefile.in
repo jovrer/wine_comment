@@ -1,13 +1,4 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = monodebg.vxd
-IMPORTS   = kernel32
 
 C_SRCS = \
 	monodebg.c
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

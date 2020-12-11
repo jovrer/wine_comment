@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -30,11 +30,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
-#include "winnls.h"
-#include "winreg.h"
 #include "ole2.h"
-
-#include "uuids.h"
 
 #include "wine/itss.h"
 #include "wine/unicode.h"
@@ -44,16 +40,19 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(itss);
 
-extern LONG dll_count;
-
 /*****************************************************************************/
 
 typedef struct {
-    const IMonikerVtbl *vtbl_ITS_IMoniker;
+    IMoniker IMoniker_iface;
     LONG ref;
     LPWSTR szHtml;
     WCHAR szFile[1];
 } ITS_IMonikerImpl;
+
+static inline ITS_IMonikerImpl *impl_from_IMoniker(IMoniker *iface)
+{
+    return CONTAINING_RECORD(iface, ITS_IMonikerImpl, IMoniker_iface);
+}
 
 /*** IUnknown methods ***/
 static HRESULT WINAPI ITS_IMonikerImpl_QueryInterface(
@@ -61,13 +60,13 @@ static HRESULT WINAPI ITS_IMonikerImpl_QueryInterface(
     REFIID riid,
     void** ppvObject)
 {
-    ITS_IMonikerImpl *This = (ITS_IMonikerImpl *)iface;
+    ITS_IMonikerImpl *This = impl_from_IMoniker(iface);
 
     if (IsEqualGUID(riid, &IID_IUnknown)
 	|| IsEqualGUID(riid, &IID_IParseDisplayName))
     {
-	IClassFactory_AddRef(iface);
-	*ppvObject = This;
+	IMoniker_AddRef(iface);
+	*ppvObject = iface;
 	return S_OK;
     }
 
@@ -78,7 +77,7 @@ static HRESULT WINAPI ITS_IMonikerImpl_QueryInterface(
 static ULONG WINAPI ITS_IMonikerImpl_AddRef(
     IMoniker* iface)
 {
-    ITS_IMonikerImpl *This = (ITS_IMonikerImpl *)iface;
+    ITS_IMonikerImpl *This = impl_from_IMoniker(iface);
     TRACE("%p\n", This);
     return InterlockedIncrement(&This->ref);
 }
@@ -86,12 +85,12 @@ static ULONG WINAPI ITS_IMonikerImpl_AddRef(
 static ULONG WINAPI ITS_IMonikerImpl_Release(
     IMoniker* iface)
 {
-    ITS_IMonikerImpl *This = (ITS_IMonikerImpl *)iface;
+    ITS_IMonikerImpl *This = impl_from_IMoniker(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (ref == 0) {
         HeapFree(GetProcessHeap(), 0, This);
-        InterlockedDecrement(&dll_count);
+        ITSS_UnlockModule();
     }
 
     return ref;
@@ -102,10 +101,10 @@ static HRESULT WINAPI ITS_IMonikerImpl_GetClassID(
     IMoniker* iface,
     CLSID* pClassID)
 {
-    ITS_IMonikerImpl *This = (ITS_IMonikerImpl *)iface;
+    ITS_IMonikerImpl *This = impl_from_IMoniker(iface);
 
     TRACE("%p %p\n", This, pClassID);
-    memcpy( pClassID, &CLSID_ITStorage, sizeof (CLSID) );
+    *pClassID = CLSID_ITStorage;
     return S_OK;
 }
 
@@ -161,7 +160,7 @@ static HRESULT WINAPI ITS_IMonikerImpl_BindToStorage(
     REFIID riid,
     void** ppvObj)
 {
-    ITS_IMonikerImpl *This = (ITS_IMonikerImpl *)iface;
+    ITS_IMonikerImpl *This = impl_from_IMoniker(iface);
     DWORD grfMode = STGM_SIMPLE | STGM_READ | STGM_SHARE_EXCLUSIVE;
     HRESULT r;
     IStorage *stg = NULL;
@@ -285,10 +284,10 @@ static HRESULT WINAPI ITS_IMonikerImpl_GetDisplayName(
     IMoniker* pmkToLeft,
     LPOLESTR* ppszDisplayName)
 {
-    ITS_IMonikerImpl *This = (ITS_IMonikerImpl *)iface;
+    ITS_IMonikerImpl *This = impl_from_IMoniker(iface);
     static const WCHAR szFormat[] = {
         'm','s','-','i','t','s',':','%','s',':',':','%','s',0 };
-    DWORD len = sizeof szFormat / sizeof(WCHAR);
+    DWORD len;
     LPWSTR str;
 
     TRACE("%p %p %p %p\n", iface, pbc, pmkToLeft, ppszDisplayName);
@@ -349,16 +348,16 @@ static const IMonikerVtbl ITS_IMonikerImpl_Vtbl =
     ITS_IMonikerImpl_IsSystemMoniker
 };
 
-static HRESULT ITS_IMoniker_create( IMoniker **ppObj, LPWSTR name, DWORD n )
+static HRESULT ITS_IMoniker_create( IMoniker **ppObj, LPCWSTR name, DWORD n )
 {
     ITS_IMonikerImpl *itsmon;
     DWORD sz;
 
     /* szFile[1] has space for one character already */
-    sz = sizeof(ITS_IMonikerImpl) + strlenW( name )*sizeof(WCHAR);
+    sz = FIELD_OFFSET( ITS_IMonikerImpl, szFile[strlenW( name ) + 1] );
 
     itsmon = HeapAlloc( GetProcessHeap(), 0, sz );
-    itsmon->vtbl_ITS_IMoniker = &ITS_IMonikerImpl_Vtbl;
+    itsmon->IMoniker_iface.lpVtbl = &ITS_IMonikerImpl_Vtbl;
     itsmon->ref = 1;
     strcpyW( itsmon->szFile, name );
     itsmon->szHtml = &itsmon->szFile[n];
@@ -368,31 +367,36 @@ static HRESULT ITS_IMoniker_create( IMoniker **ppObj, LPWSTR name, DWORD n )
 
     TRACE("-> %p %s %s\n", itsmon,
           debugstr_w(itsmon->szFile), debugstr_w(itsmon->szHtml) );
-    *ppObj = (IMoniker*) itsmon;
-    InterlockedIncrement(&dll_count);
+    *ppObj = &itsmon->IMoniker_iface;
 
+    ITSS_LockModule();
     return S_OK;
 }
 
 /*****************************************************************************/
 
 typedef struct {
-    const IParseDisplayNameVtbl *vtbl_ITS_IParseDisplayName;
+    IParseDisplayName IParseDisplayName_iface;
     LONG ref;
 } ITS_IParseDisplayNameImpl;
+
+static inline ITS_IParseDisplayNameImpl *impl_from_IParseDisplayName(IParseDisplayName *iface)
+{
+    return CONTAINING_RECORD(iface, ITS_IParseDisplayNameImpl, IParseDisplayName_iface);
+}
 
 static HRESULT WINAPI ITS_IParseDisplayNameImpl_QueryInterface(
     IParseDisplayName* iface,
     REFIID riid,
     void** ppvObject)
 {
-    ITS_IParseDisplayNameImpl *This = (ITS_IParseDisplayNameImpl *)iface;
+    ITS_IParseDisplayNameImpl *This = impl_from_IParseDisplayName(iface);
 
     if (IsEqualGUID(riid, &IID_IUnknown)
 	|| IsEqualGUID(riid, &IID_IParseDisplayName))
     {
-	IClassFactory_AddRef(iface);
-	*ppvObject = This;
+	IParseDisplayName_AddRef(iface);
+	*ppvObject = iface;
 	return S_OK;
     }
 
@@ -403,7 +407,7 @@ static HRESULT WINAPI ITS_IParseDisplayNameImpl_QueryInterface(
 static ULONG WINAPI ITS_IParseDisplayNameImpl_AddRef(
     IParseDisplayName* iface)
 {
-    ITS_IParseDisplayNameImpl *This = (ITS_IParseDisplayNameImpl *)iface;
+    ITS_IParseDisplayNameImpl *This = impl_from_IParseDisplayName(iface);
     TRACE("%p\n", This);
     return InterlockedIncrement(&This->ref);
 }
@@ -411,12 +415,12 @@ static ULONG WINAPI ITS_IParseDisplayNameImpl_AddRef(
 static ULONG WINAPI ITS_IParseDisplayNameImpl_Release(
     IParseDisplayName* iface)
 {
-    ITS_IParseDisplayNameImpl *This = (ITS_IParseDisplayNameImpl *)iface;
+    ITS_IParseDisplayNameImpl *This = impl_from_IParseDisplayName(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (ref == 0) {
         HeapFree(GetProcessHeap(), 0, This);
-        InterlockedDecrement(&dll_count);
+        ITSS_UnlockModule();
     }
 
     return ref;
@@ -431,15 +435,15 @@ static HRESULT WINAPI ITS_IParseDisplayNameImpl_ParseDisplayName(
 {
     static const WCHAR szPrefix[] = { 
         '@','M','S','I','T','S','t','o','r','e',':',0 };
-    const DWORD prefix_len = (sizeof szPrefix/sizeof szPrefix[0])-1;
+    const DWORD prefix_len = ARRAY_SIZE(szPrefix)-1;
     DWORD n;
 
-    ITS_IParseDisplayNameImpl *This = (ITS_IParseDisplayNameImpl *)iface;
+    ITS_IParseDisplayNameImpl *This = impl_from_IParseDisplayName(iface);
 
     TRACE("%p %s %p %p\n", This,
           debugstr_w( pszDisplayName ), pchEaten, ppmkOut );
 
-    if( strncmpW( pszDisplayName, szPrefix, prefix_len ) )
+    if( strncmpiW( pszDisplayName, szPrefix, prefix_len ) )
         return MK_E_SYNTAX;
 
     /* search backwards for a double colon */
@@ -475,12 +479,12 @@ HRESULT ITS_IParseDisplayName_create(IUnknown *pUnkOuter, LPVOID *ppObj)
         return CLASS_E_NOAGGREGATION;
 
     its = HeapAlloc( GetProcessHeap(), 0, sizeof(ITS_IParseDisplayNameImpl) );
-    its->vtbl_ITS_IParseDisplayName = &ITS_IParseDisplayNameImpl_Vtbl;
+    its->IParseDisplayName_iface.lpVtbl = &ITS_IParseDisplayNameImpl_Vtbl;
     its->ref = 1;
 
     TRACE("-> %p\n", its);
-    *ppObj = (LPVOID) its;
-    InterlockedIncrement(&dll_count);
+    *ppObj = its;
 
+    ITSS_LockModule();
     return S_OK;
 }

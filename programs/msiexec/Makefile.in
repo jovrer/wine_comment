@@ -1,16 +1,13 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = msiexec.exe
-APPMODE   = -mconsole
-IMPORTS   = msi ole32 advapi32 user32 kernel32
+APPMODE   = -mwindows
+IMPORTS   = msi ole32 advapi32 user32
 
 C_SRCS = \
-	msiexec.c
+	msiexec.c \
+	service.c
 
-RC_SRCS = version.rc
+RC_SRCS = rsrc.rc
 
-@MAKE_PROG_RULES@
+MANPAGES = msiexec.man.in
 
-### Dependencies:
+SVG_SRCS = msiexec.svg

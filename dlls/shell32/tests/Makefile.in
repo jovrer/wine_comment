@@ -1,20 +1,25 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = shell32.dll
-IMPORTS   = shell32 ole32 oleaut32 shlwapi advapi32 kernel32
-EXTRALIBS = -luuid
+IMPORTS   = shell32 ole32 oleaut32 user32 gdi32 advapi32 shlwapi
 
-CTESTS = \
+C_SRCS = \
+	appbar.c \
+	assoc.c \
+	autocomplete.c \
+	brsfolder.c \
+	ebrowser.c \
 	generated.c \
+	progman_dde.c \
+	recyclebin.c \
+	shelldispatch.c \
 	shelllink.c \
+	shellole.c \
 	shellpath.c \
+	shfldr_special.c \
 	shlexec.c \
 	shlfileop.c \
 	shlfolder.c \
-	string.c
+	shlview.c \
+	string.c \
+	systray.c
 
-@MAKE_TEST_RULES@
-
-### Dependencies:
+RC_SRCS = rsrc.rc

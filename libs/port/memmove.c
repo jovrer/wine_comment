@@ -15,32 +15,33 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
 #include "wine/port.h"
 
 #ifndef HAVE_MEMMOVE
-void *memmove( void *dest, const void *src, size_t len )
+void *memmove( void *dest, const void *source, size_t len )
 {
     register char *dst = dest;
+    register const char *src = source;
 
     /* Use memcpy if not overlapping */
-    if ((dst + len <= (char *)src) || ((char *)src + len <= dst))
+    if ((dst + len <= src) || (src + len <= dst))
     {
         memcpy( dst, src, len );
     }
     /* Otherwise do it the hard way (FIXME: could do better than this) */
-    else if (dst < (char *)src)
+    else if (dst < src)
     {
-        while (len--) *dst++ = *((char *)src)++;
+        while (len--) *dst++ = *src++;
     }
     else
     {
         dst += len - 1;
-        src = (char *)src + len - 1;
-        while (len--) *dst-- = *((char *)src)--;
+        src += len - 1;
+        while (len--) *dst-- = *src--;
     }
     return dest;
 }

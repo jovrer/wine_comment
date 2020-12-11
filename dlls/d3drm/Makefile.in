@@ -1,15 +1,18 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = d3drm.dll
-IMPORTLIB = libd3drm.$(IMPLIBEXT)
-IMPORTS   = kernel32
+IMPORTLIB = d3drm
+IMPORTS   = d3dxof ddraw
 
-C_SRCS = d3drm_main.c
+C_SRCS = \
+	d3drm.c \
+	d3drm_main.c \
+	device.c \
+	face.c \
+	frame.c \
+	light.c \
+	material.c \
+	math.c \
+	meshbuilder.c \
+	texture.c \
+	viewport.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

@@ -2,8 +2,8 @@
 
 @ stub VDMBreakThread
 @ stub VDMDetectWOW
-@ stub VDMEnumProcessWOW
-@ stub VDMEnumTaskWOW
+@ stdcall VDMEnumProcessWOW(ptr long)
+@ stdcall VDMEnumTaskWOW(long ptr long)
 @ stub VDMEnumTaskWOWEx
 @ stub VDMGetModuleSelector
 @ stub VDMGetPointer

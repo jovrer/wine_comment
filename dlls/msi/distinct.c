@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -204,21 +204,22 @@ static UINT DISTINCT_get_dimensions( struct tagMSIVIEW *view, UINT *rows, UINT *
     return dv->table->ops->get_dimensions( dv->table, NULL, cols );
 }
 
-static UINT DISTINCT_get_column_info( struct tagMSIVIEW *view,
-                UINT n, LPWSTR *name, UINT *type )
+static UINT DISTINCT_get_column_info( struct tagMSIVIEW *view, UINT n, LPCWSTR *name,
+                                      UINT *type, BOOL *temporary, LPCWSTR *table_name )
 {
     MSIDISTINCTVIEW *dv = (MSIDISTINCTVIEW*)view;
 
-    TRACE("%p %d %p %p\n", dv, n, name, type );
+    TRACE("%p %d %p %p %p %p\n", dv, n, name, type, temporary, table_name );
 
     if( !dv->table )
          return ERROR_FUNCTION_FAILED;
 
-    return dv->table->ops->get_column_info( dv->table, n, name, type );
+    return dv->table->ops->get_column_info( dv->table, n, name,
+                                            type, temporary, table_name );
 }
 
 static UINT DISTINCT_modify( struct tagMSIVIEW *view, MSIMODIFY eModifyMode,
-                MSIRECORD *rec )
+                             MSIRECORD *rec, UINT row )
 {
     MSIDISTINCTVIEW *dv = (MSIDISTINCTVIEW*)view;
 
@@ -227,7 +228,7 @@ static UINT DISTINCT_modify( struct tagMSIVIEW *view, MSIMODIFY eModifyMode,
     if( !dv->table )
          return ERROR_FUNCTION_FAILED;
 
-    return dv->table->ops->modify( dv->table, eModifyMode, rec );
+    return dv->table->ops->modify( dv->table, eModifyMode, rec, row );
 }
 
 static UINT DISTINCT_delete( struct tagMSIVIEW *view )
@@ -246,10 +247,32 @@ static UINT DISTINCT_delete( struct tagMSIVIEW *view )
     return ERROR_SUCCESS;
 }
 
+static UINT DISTINCT_find_matching_rows( struct tagMSIVIEW *view, UINT col,
+    UINT val, UINT *row, MSIITERHANDLE *handle )
+{
+    MSIDISTINCTVIEW *dv = (MSIDISTINCTVIEW*)view;
+    UINT r;
 
-MSIVIEWOPS distinct_ops =
+    TRACE("%p, %d, %u, %p\n", view, col, val, *handle);
+
+    if( !dv->table )
+         return ERROR_FUNCTION_FAILED;
+
+    r = dv->table->ops->find_matching_rows( dv->table, col, val, row, handle );
+
+    if( *row > dv->row_count )
+        return ERROR_NO_MORE_ITEMS;
+
+    *row = dv->translation[ *row ];
+
+    return r;
+}
+
+static const MSIVIEWOPS distinct_ops =
 {
     DISTINCT_fetch_int,
+    NULL,
+    NULL,
     NULL,
     NULL,
     NULL,
@@ -258,7 +281,14 @@ MSIVIEWOPS distinct_ops =
     DISTINCT_get_dimensions,
     DISTINCT_get_column_info,
     DISTINCT_modify,
-    DISTINCT_delete
+    DISTINCT_delete,
+    DISTINCT_find_matching_rows,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
 };
 
 UINT DISTINCT_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table )

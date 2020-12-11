@@ -15,12 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_SHLWAPI_H
 #define __WINE_SHLWAPI_H
 
+/* FIXME: #include <specstrings.h> */
 #include <objbase.h>
 #include <shtypes.h>
 
@@ -82,9 +83,37 @@ DWORD WINAPI SHCopyKeyA(HKEY,LPCSTR,HKEY,DWORD);
 DWORD WINAPI SHCopyKeyW(HKEY,LPCWSTR,HKEY,DWORD);
 #define SHCopyKey WINELIB_NAME_AW(SHCopyKey)
 
-/* Undocumented registry functions */
-
 HKEY WINAPI  SHRegDuplicateHKey(HKEY);
+
+/* SHRegGetValue flags */
+typedef INT SRRF;
+
+#define SRRF_RT_REG_NONE 0x1
+#define SRRF_RT_REG_SZ 0x2
+#define SRRF_RT_REG_EXPAND_SZ 0x4
+#define SRRF_RT_REG_BINARY 0x8
+#define SRRF_RT_REG_DWORD 0x10
+#define SRRF_RT_REG_MULTI_SZ 0x20
+#define SRRF_RT_REG_QWORD 0x40
+
+#define SRRF_RT_DWORD (SRRF_RT_REG_BINARY|SRRF_RT_REG_DWORD)
+#define SRRF_RT_QWORD (SRRF_RT_REG_BINARY|SRRF_RT_REG_QWORD)
+#define SRRF_RT_ANY 0xffff
+
+#define SRRF_RM_ANY 0
+#define SRRF_RM_NORMAL 0x10000
+#define SRRF_RM_SAFE 0x20000
+#define SRRF_RM_SAFENETWORK 0x40000
+
+#define SRRF_NOEXPAND 0x10000000
+#define SRRF_ZEROONFAILURE 0x20000000
+#define SRRF_NOVIRT 0x40000000
+
+LSTATUS WINAPI SHRegGetValueA(HKEY,LPCSTR,LPCSTR,SRRF,LPDWORD,LPVOID,LPDWORD);
+LSTATUS WINAPI SHRegGetValueW(HKEY,LPCWSTR,LPCWSTR,SRRF,LPDWORD,LPVOID,LPDWORD);
+#define SHRegGetValue WINELIB_NAME_AW(SHRegGetValue)
+
+/* Undocumented registry functions */
 
 DWORD WINAPI SHDeleteOrphanKeyA(HKEY,LPCSTR);
 DWORD WINAPI SHDeleteOrphanKeyW(HKEY,LPCWSTR);
@@ -181,17 +210,22 @@ int WINAPI SHRegGetIntW(HKEY,LPCWSTR,int);
 /* IQueryAssociation and helpers */
 enum
 {
-    ASSOCF_INIT_NOREMAPCLSID    = 0x001, /* Don't map clsid->progid */
-    ASSOCF_INIT_BYEXENAME       = 0x002, /* .exe name given */
-    ASSOCF_OPEN_BYEXENAME       = 0x002, /* Synonym */
-    ASSOCF_INIT_DEFAULTTOSTAR   = 0x004, /* Use * as base */
-    ASSOCF_INIT_DEFAULTTOFOLDER = 0x008, /* Use folder as base */
-    ASSOCF_NOUSERSETTINGS       = 0x010, /* No HKCU reads */
-    ASSOCF_NOTRUNCATE           = 0x020, /* Don't truncate return */
-    ASSOCF_VERIFY               = 0x040, /* Verify data */
-    ASSOCF_REMAPRUNDLL          = 0x080, /* Get rundll args */
-    ASSOCF_NOFIXUPS             = 0x100, /* Don't fixup errors */
-    ASSOCF_IGNOREBASECLASS      = 0x200, /* Don't read baseclass */
+    ASSOCF_NONE                 = 0x0000,
+    ASSOCF_INIT_NOREMAPCLSID    = 0x0001, /* Don't map clsid->progid */
+    ASSOCF_INIT_BYEXENAME       = 0x0002, /* .exe name given */
+    ASSOCF_OPEN_BYEXENAME       = 0x0002, /* Synonym */
+    ASSOCF_INIT_DEFAULTTOSTAR   = 0x0004, /* Use * as base */
+    ASSOCF_INIT_DEFAULTTOFOLDER = 0x0008, /* Use folder as base */
+    ASSOCF_NOUSERSETTINGS       = 0x0010, /* No HKCU reads */
+    ASSOCF_NOTRUNCATE           = 0x0020, /* Don't truncate return */
+    ASSOCF_VERIFY               = 0x0040, /* Verify data */
+    ASSOCF_REMAPRUNDLL          = 0x0080, /* Get rundll args */
+    ASSOCF_NOFIXUPS             = 0x0100, /* Don't fixup errors */
+    ASSOCF_IGNOREBASECLASS      = 0x0200, /* Don't read baseclass */
+    ASSOCF_INIT_IGNOREUNKNOWN   = 0x0400, /* Fail for unknown progid */
+    ASSOCF_INIT_FIXED_PROGID    = 0x0800, /* Used passed string as progid, don't try to map it */
+    ASSOCF_IS_PROTOCOL          = 0x1000, /* Treat as protocol, that should be mapped */
+    ASSOCF_INIT_FOR_FILE        = 0x2000, /* progid is for file extension association */
 };
 
 typedef DWORD ASSOCF;
@@ -289,6 +323,12 @@ BOOL WINAPI AssocIsDangerous(LPCWSTR);
 
 #endif /* NO_SHLWAPI_REG */
 
+void WINAPI IUnknown_Set(IUnknown **ppunk, IUnknown *punk);
+void WINAPI IUnknown_AtomicRelease(IUnknown **punk);
+HRESULT WINAPI IUnknown_GetWindow(IUnknown *punk, HWND *phwnd);
+HRESULT WINAPI IUnknown_SetSite(IUnknown *punk, IUnknown *punkSite);
+HRESULT WINAPI IUnknown_GetSite(IUnknown *punk, REFIID riid, void **ppv);
+HRESULT WINAPI IUnknown_QueryService(IUnknown *punk, REFGUID guidService, REFIID riid, void **ppvOut);
 
 /* Path functions */
 #ifndef NO_SHLWAPI_PATH
@@ -336,16 +376,18 @@ int WINAPI PathCommonPrefixA(LPCSTR,LPCSTR,LPSTR);
 int WINAPI PathCommonPrefixW(LPCWSTR,LPCWSTR,LPWSTR);
 #define PathCommonPrefix WINELIB_NAME_AW(PathCommonPrefix)
 
-HRESULT WINAPI PathCreateFromUrlA(LPCSTR pszUrl, LPSTR pszPath, LPDWORD pcchPath, DWORD dwReserved);
-HRESULT WINAPI PathCreateFromUrlW(LPCWSTR pszUrl, LPWSTR pszPath, LPDWORD pcchPath, DWORD dwReserved);
-#define PathCreateFromUrl WINELIB_NANE_AW(PathCreateFromUrl)
+HRESULT WINAPI PathCreateFromUrlA(LPCSTR,LPSTR,LPDWORD,DWORD);
+HRESULT WINAPI PathCreateFromUrlW(LPCWSTR,LPWSTR,LPDWORD,DWORD);
+#define PathCreateFromUrl WINELIB_NAME_AW(PathCreateFromUrl)
+
+HRESULT WINAPI PathCreateFromUrlAlloc(LPCWSTR,LPWSTR*,DWORD);
 
 BOOL WINAPI PathFileExistsA(LPCSTR);
 BOOL WINAPI PathFileExistsW(LPCWSTR);
 #define PathFileExists WINELIB_NAME_AW(PathFileExists)
 
-BOOL WINAPI PathFileExistsAndAttributesA(LPCSTR lpszPath, DWORD *dwAttr);
-BOOL WINAPI PathFileExistsAndAttributesW(LPCWSTR lpszPath, DWORD *dwAttr);
+BOOL WINAPI PathFileExistsAndAttributesA(LPCSTR,DWORD*);
+BOOL WINAPI PathFileExistsAndAttributesW(LPCWSTR,DWORD*);
 #define PathFileExistsAndAttributes WINELIB_NAME_AW(PathFileExistsAndAttributes)
 
 LPSTR  WINAPI PathFindExtensionA(LPCSTR);
@@ -386,7 +428,7 @@ BOOL WINAPI PathIsDirectoryEmptyW(LPCWSTR);
 
 BOOL WINAPI PathIsFileSpecA(LPCSTR);
 BOOL WINAPI PathIsFileSpecW(LPCWSTR);
-#define PathIsFileSpec WINELIB_NAME_AW(PathIsFileSpec);
+#define PathIsFileSpec WINELIB_NAME_AW(PathIsFileSpec)
 
 BOOL WINAPI PathIsPrefixA(LPCSTR,LPCSTR);
 BOOL WINAPI PathIsPrefixW(LPCWSTR,LPCWSTR);
@@ -549,6 +591,11 @@ typedef enum {
     URL_SCHEME_MSSHELLROOTED,
     URL_SCHEME_MSSHELLIDLIST,
     URL_SCHEME_MSHELP,
+    URL_SCHEME_MSSHELLDEVICE,
+    URL_SCHEME_WILDCARD,
+    URL_SCHEME_SEARCH_MS,
+    URL_SCHEME_SEARCH,
+    URL_SCHEME_KNOWNFOLDER,
     URL_SCHEME_MAXVALUE
 } URL_SCHEME;
 
@@ -603,6 +650,7 @@ typedef enum {
 #define URL_UNESCAPE_INPLACE         0x00100000
 
 #define URL_FILE_USE_PATHURL         0x00010000
+#define URL_ESCAPE_AS_UTF8           0x00040000
 
 #define URL_ESCAPE_SEGMENT_ONLY      0x00002000
 #define URL_ESCAPE_PERCENT           0x00001000
@@ -613,7 +661,7 @@ HRESULT WINAPI UrlApplySchemeW(LPCWSTR,LPWSTR,LPDWORD,DWORD);
 
 HRESULT WINAPI UrlCanonicalizeA(LPCSTR,LPSTR,LPDWORD,DWORD);
 HRESULT WINAPI UrlCanonicalizeW(LPCWSTR,LPWSTR,LPDWORD,DWORD);
-#define UrlCanonicalize WINELIB_NAME_AW(UrlCanoncalize)
+#define UrlCanonicalize WINELIB_NAME_AW(UrlCanonicalize)
 
 HRESULT WINAPI UrlCombineA(LPCSTR,LPCSTR,LPSTR,LPDWORD,DWORD);
 HRESULT WINAPI UrlCombineW(LPCWSTR,LPCWSTR,LPWSTR,LPDWORD,DWORD);
@@ -660,22 +708,22 @@ BOOL    WINAPI UrlIsOpaqueW(LPCWSTR);
 #define UrlIsOpaque WINELIB_NAME_AW(UrlIsOpaque)
 
 #define UrlIsFileUrlA(x) UrlIsA(x, URLIS_FILEURL)
-#define UrlIsFileUrlW(y) UrlIsW(x, URLIS_FILEURL)
+#define UrlIsFileUrlW(x) UrlIsW(x, URLIS_FILEURL)
 #define UrlIsFileUrl WINELIB_NAME_AW(UrlIsFileUrl)
 
 HRESULT WINAPI UrlUnescapeA(LPSTR,LPSTR,LPDWORD,DWORD);
 HRESULT WINAPI UrlUnescapeW(LPWSTR,LPWSTR,LPDWORD,DWORD);
-#define UrlUnescape WINELIB_AW_NAME(UrlUnescape)
+#define UrlUnescape WINELIB_NAME_AW(UrlUnescape)
 
 #define UrlUnescapeInPlaceA(x,y) UrlUnescapeA(x, NULL, NULL, \
                                               y | URL_UNESCAPE_INPLACE)
 #define UrlUnescapeInPlaceW(x,y) UrlUnescapeW(x, NULL, NULL, \
                                               y | URL_UNESCAPE_INPLACE)
-#define UrlUnescapeInPlace WINELIB_AW_NAME(UrlUnescapeInPlace)
+#define UrlUnescapeInPlace WINELIB_NAME_AW(UrlUnescapeInPlace)
 
 HRESULT WINAPI UrlCreateFromPathA(LPCSTR,LPSTR,LPDWORD,DWORD);
 HRESULT WINAPI UrlCreateFromPathW(LPCWSTR,LPWSTR,LPDWORD,DWORD);
-#define UrlCreateFromPath WINELIB_AW_NAME(UrlCreateFromPath)
+#define UrlCreateFromPath WINELIB_NAME_AW(UrlCreateFromPath)
 
 typedef struct tagPARSEDURLA {
     DWORD cbSize;
@@ -697,7 +745,7 @@ typedef struct tagPARSEDURLW {
 
 HRESULT WINAPI ParseURLA(LPCSTR pszUrl, PARSEDURLA *ppu);
 HRESULT WINAPI ParseURLW(LPCWSTR pszUrl, PARSEDURLW *ppu);
-#define ParseURL WINELIB_AW_NAME(ParseUrl)
+#define ParseURL WINELIB_NAME_AW(ParseUrl)
 
 #endif /* NO_SHLWAPI_PATH */
 
@@ -706,8 +754,8 @@ HRESULT WINAPI ParseURLW(LPCWSTR pszUrl, PARSEDURLW *ppu);
 #ifndef NO_SHLWAPI_STRFCNS
 
 /* StrToIntEx flags */
-#define STIF_DEFAULT     0x0L
-#define STIF_SUPPORT_HEX 0x1L
+#define STIF_DEFAULT     __MSABI_LONG(0x0)
+#define STIF_SUPPORT_HEX __MSABI_LONG(0x1)
 
 BOOL WINAPI ChrCmpIA (WORD,WORD);
 BOOL WINAPI ChrCmpIW (WCHAR,WCHAR);
@@ -781,7 +829,7 @@ LPSTR WINAPI StrFormatByteSizeA (DWORD,LPSTR,UINT);
 /* A/W Pairing is broken for this function */
 LPSTR WINAPI StrFormatByteSize64A (LONGLONG,LPSTR,UINT);
 LPWSTR WINAPI StrFormatByteSizeW (LONGLONG,LPWSTR,UINT);
-#ifndef __WINESRC__
+#ifndef WINE_NO_UNICODE_MACROS
 #ifdef UNICODE
 #define StrFormatByteSize StrFormatByteSizeW
 #else
@@ -840,6 +888,9 @@ LPSTR  WINAPI StrStrIA(LPCSTR,LPCSTR);
 LPWSTR WINAPI StrStrIW(LPCWSTR,LPCWSTR);
 #define StrStrI WINELIB_NAME_AW(StrStrI)
 
+LPWSTR WINAPI StrStrNW(LPCWSTR,LPCWSTR,UINT);
+LPWSTR WINAPI StrStrNIW(LPCWSTR,LPCWSTR,UINT);
+
 int WINAPI StrToIntA(LPCSTR);
 int WINAPI StrToIntW(LPCWSTR);
 #define StrToInt WINELIB_NAME_AW(StrToInt)
@@ -857,8 +908,8 @@ BOOL WINAPI StrTrimA(LPSTR,LPCSTR);
 BOOL WINAPI StrTrimW(LPWSTR,LPCWSTR);
 #define StrTrim WINELIB_NAME_AW(StrTrim)
 
-INT WINAPI wvnsprintfA(LPSTR,INT,LPCSTR,va_list);
-INT WINAPI wvnsprintfW(LPWSTR,INT,LPCWSTR,va_list);
+INT WINAPI wvnsprintfA(LPSTR,INT,LPCSTR,__ms_va_list);
+INT WINAPI wvnsprintfW(LPWSTR,INT,LPCWSTR,__ms_va_list);
 #define wvnsprintf WINELIB_NAME_AW(wvnsprintf)
 
 INT WINAPIV wnsprintfA(LPSTR,INT,LPCSTR, ...);
@@ -889,6 +940,10 @@ HRESULT WINAPI StrRetToBufW(STRRET*,LPCITEMIDLIST,LPWSTR,UINT);
 
 HRESULT WINAPI StrRetToBSTR(STRRET*,LPCITEMIDLIST,BSTR*);
 
+BOOL WINAPI IsCharSpaceA(CHAR);
+BOOL WINAPI IsCharSpaceW(WCHAR);
+#define IsCharSpace WINELIB_NAME_AW(IsCharSpace)
+
 #endif /* NO_SHLWAPI_STRFCNS */
 
 
@@ -905,6 +960,8 @@ VOID WINAPI ColorRGBToHLS(COLORREF,LPWORD,LPWORD,LPWORD);
 
 #endif /* NO_SHLWAPI_GDI */
 
+/* Security functions */
+BOOL WINAPI IsInternetESCEnabled(void);
 
 /* Stream functions */
 #ifndef NO_SHLWAPI_STREAM
@@ -921,11 +978,14 @@ HRESULT WINAPI SHCreateStreamOnFileA(LPCSTR,DWORD,struct IStream**);
 HRESULT WINAPI SHCreateStreamOnFileW(LPCWSTR,DWORD,struct IStream**);
 #define SHCreateStreamOnFile WINELIB_NAME_AW(SHCreateStreamOnFile)
 
+struct IStream * WINAPI SHCreateMemStream(const BYTE*,UINT);
 HRESULT WINAPI SHCreateStreamOnFileEx(LPCWSTR,DWORD,DWORD,BOOL,struct IStream*,struct IStream**);
-
 HRESULT WINAPI SHCreateStreamWrapper(LPBYTE,DWORD,DWORD,struct IStream**);
 
 #endif /* NO_SHLWAPI_STREAM */
+
+HRESULT WINAPI IStream_Reset(IStream*);
+HRESULT WINAPI IStream_Size(IStream*,ULARGE_INTEGER*);
 
 /* SHAutoComplete flags */
 #define SHACF_DEFAULT               0x00000000
@@ -944,6 +1004,7 @@ HRESULT WINAPI SHCreateStreamWrapper(LPBYTE,DWORD,DWORD,struct IStream**);
 HRESULT WINAPI SHAutoComplete(HWND,DWORD);
 
 /* Threads */
+HRESULT WINAPI SHCreateThreadRef(LONG*, IUnknown**);
 HRESULT WINAPI SHGetThreadRef(IUnknown**);
 HRESULT WINAPI SHSetThreadRef(IUnknown*);
 HRESULT WINAPI SHReleaseThreadRef(void);
@@ -978,7 +1039,7 @@ typedef HRESULT (CALLBACK *DLLGETVERSIONPROC)(DLLVERSIONINFO *);
 
 #ifdef __WINESRC__
 /* shouldn't be here, but is nice for type checking */
-HRESULT WINAPI DllGetVersion(DLLVERSIONINFO *);
+HRESULT WINAPI DllGetVersion(DLLVERSIONINFO *) DECLSPEC_HIDDEN;
 #endif
 
 typedef struct _DLLVERSIONINFO2 {
@@ -995,7 +1056,7 @@ typedef struct _DLLVERSIONINFO2 {
 #define MAKEDLLVERULL(mjr, mnr, bld, qfe) (((ULONGLONG)(mjr)<< 48)| \
   ((ULONGLONG)(mnr)<< 32) | ((ULONGLONG)(bld)<< 16) | (ULONGLONG)(qfe))
 
-HRESULT WINAPI DllInstall(BOOL,LPCWSTR);
+HRESULT WINAPI DllInstall(BOOL,LPCWSTR) DECLSPEC_HIDDEN;
 
 
 /* IsOS definitions */
@@ -1039,6 +1100,30 @@ HRESULT WINAPI DllInstall(BOOL,LPCWSTR);
 #define OS_APPLIANCE              0x24
 
 BOOL WINAPI IsOS(DWORD);
+
+/* SHSetTimerQueueTimer definitions */
+#define TPS_EXECUTEIO    0x00000001
+#define TPS_LONGEXECTIME 0x00000008
+
+/* SHFormatDateTimeA/SHFormatDateTimeW flags */
+#define FDTF_SHORTTIME          0x00000001
+#define FDTF_SHORTDATE          0x00000002
+#define FDTF_DEFAULT            (FDTF_SHORTDATE | FDTF_SHORTTIME)
+#define FDTF_LONGDATE           0x00000004
+#define FDTF_LONGTIME           0x00000008
+#define FDTF_RELATIVE           0x00000010
+#define FDTF_LTRDATE            0x00000100
+#define FDTF_RTLDATE            0x00000200
+#define FDTF_NOAUTOREADINGORDER 0x00000400
+
+
+typedef struct
+{
+    const IID *piid;
+    int        dwOffset;
+} QITAB, *LPQITAB;
+
+HRESULT WINAPI QISearch(void* base, const QITAB *pqit, REFIID riid, void **ppv);
 
 #include <poppack.h> 
 

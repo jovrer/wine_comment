@@ -1,11 +1,6 @@
-EXTRADEFS = -DUNICODE
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = wineconsole.exe
 APPMODE   = -mwindows
-IMPORTS   = advapi32 kernel32 ntdll
+IMPORTS   = advapi32
 DELAYIMPORTS = comctl32 user32 gdi32
 
 C_SRCS = \
@@ -15,9 +10,6 @@ C_SRCS = \
 	user.c \
 	wineconsole.c
 
-RC_SRCS = wineconsole_res.rc
+RC_SRCS = wineconsole.rc
 
-@MAKE_PROG_RULES@
-
-
-### Dependencies:
+MANPAGES = wineconsole.man.in

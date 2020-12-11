@@ -1,14 +1,12 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = wineboot.exe
 APPMODE   = -mconsole
-IMPORTS   = advapi32 kernel32
+IMPORTS   = uuid advapi32
+DELAYIMPORTS = shell32 shlwapi version user32
 
 C_SRCS = \
+	shutdown.c \
 	wineboot.c
 
-@MAKE_PROG_RULES@
+RC_SRCS = wineboot.rc
 
-### Dependencies:
+MANPAGES = wineboot.man.in

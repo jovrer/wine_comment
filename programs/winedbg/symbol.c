@@ -2,7 +2,7 @@
  * Generate hash tables for Wine debugger symbols
  *
  * Copyright (C) 1993, Eric Youngdale.
- *               2004, Eric Pouech.
+ *               2004-2005, Eric Pouech.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,11 +16,8 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "config.h"
 #include <stdlib.h>
@@ -32,134 +29,196 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
-static BOOL symbol_get_debug_start(DWORD mod_base, DWORD typeid, ULONG64* start)
+static BOOL symbol_get_debug_start(const struct dbg_type* func, ULONG64* start)
 {
     DWORD                       count, tag;
     char                        buffer[sizeof(TI_FINDCHILDREN_PARAMS) + 256 * sizeof(DWORD)];
     TI_FINDCHILDREN_PARAMS*     fcp = (TI_FINDCHILDREN_PARAMS*)buffer;
     int                         i;
-    struct dbg_type             type;
+    struct dbg_type             child;
 
-    type.module = mod_base;
-    type.id = typeid;
+    if (!func->id) return FALSE; /* native dbghelp not always fills the info field */
 
-    if (!types_get_info(&type, TI_GET_CHILDRENCOUNT, &count)) return FALSE;
+    if (!types_get_info(func, TI_GET_CHILDRENCOUNT, &count)) return FALSE;
     fcp->Start = 0;
     while (count)
     {
         fcp->Count = min(count, 256);
-        if (types_get_info(&type, TI_FINDCHILDREN, fcp))
+        if (types_get_info(func, TI_FINDCHILDREN, fcp))
         {
             for (i = 0; i < min(fcp->Count, count); i++)
             {
-                type.id = fcp->ChildId[i];
-                types_get_info(&type, TI_GET_SYMTAG, &tag);
+                child.module = func->module;
+                child.id = fcp->ChildId[i];
+                types_get_info(&child, TI_GET_SYMTAG, &tag);
                 if (tag != SymTagFuncDebugStart) continue;
-                return types_get_info(&type, TI_GET_ADDRESS, start);
+                return types_get_info(&child, TI_GET_ADDRESS, start);
             }
             count -= min(count, 256);
+            fcp->Start += 256;
             fcp->Start += 256;
         }
     }
     return FALSE;
 }
 
+static BOOL fill_sym_lvalue(const SYMBOL_INFO* sym, ULONG_PTR base,
+                            struct dbg_lvalue* lvalue, char* buffer, size_t sz)
+{
+    if (buffer) buffer[0] = '\0';
+    if (sym->Flags & SYMFLAG_REGISTER)
+    {
+        DWORD_PTR* pval;
+
+        if (!memory_get_register(sym->Register, &pval, buffer, sz))
+            return FALSE;
+        lvalue->cookie = DLV_HOST;
+        lvalue->addr.Offset = (DWORD_PTR)pval;
+    }
+    else if (sym->Flags & SYMFLAG_REGREL)
+    {
+        DWORD_PTR* pval;
+        size_t  l;
+
+        *buffer++ = '['; sz--;
+        if (!memory_get_register(sym->Register, &pval, buffer, sz))
+            return FALSE;
+        l = strlen(buffer);
+        sz -= l;
+        buffer += l;
+        lvalue->cookie = DLV_TARGET;
+        lvalue->addr.Offset = (ULONG64)*pval + sym->Address;
+        if ((LONG_PTR)sym->Address >= 0)
+            snprintf(buffer, sz, "+%ld]", (ULONG_PTR)sym->Address);
+        else
+            snprintf(buffer, sz, "-%ld]", -(LONG_PTR)sym->Address);
+    }
+    else if (sym->Flags & SYMFLAG_VALUEPRESENT)
+    {
+        struct dbg_type type;
+        VARIANT         v;
+
+        type.module = sym->ModBase;
+        type.id = sym->Index;
+
+        if (!types_get_info(&type, TI_GET_VALUE, &v))
+        {
+            if (buffer) snprintf(buffer, sz, "Couldn't get full value information for %s", sym->Name);
+            return FALSE;
+        }
+        else if (v.n1.n2.vt & VT_BYREF)
+        {
+            /* FIXME: this won't work for pointers or arrays, as we don't always
+             * know, if the value to be dereferenced lies in debuggee or
+             * debugger address space.
+             */
+            if (sym->Tag == SymTagPointerType || sym->Tag == SymTagArrayType)
+            {
+                if (buffer) snprintf(buffer, sz, "Couldn't dereference pointer for const value for %s", sym->Name);
+                return FALSE;
+            }
+            /* this is likely Wine's dbghelp which passes const values by reference
+             * (object is managed by dbghelp, hence in debugger address space)
+             */
+            lvalue->cookie = DLV_HOST;
+            lvalue->addr.Offset = (DWORD_PTR)sym->Value;
+        }
+        else
+        {
+            DWORD* pdw = (DWORD*)lexeme_alloc_size(sizeof(*pdw));
+            lvalue->cookie = DLV_HOST;
+            lvalue->addr.Offset = (DWORD_PTR)pdw;
+            *pdw = sym->Value;
+        }
+    }
+    else if (sym->Flags & SYMFLAG_LOCAL)
+    {
+        lvalue->cookie = DLV_TARGET;
+        lvalue->addr.Offset = base + sym->Address;
+    }
+    else if (sym->Flags & SYMFLAG_TLSREL)
+    {
+        PROCESS_BASIC_INFORMATION pbi;
+        THREAD_BASIC_INFORMATION  tbi;
+        DWORD_PTR                 addr;
+        PEB                       peb;
+        PEB_LDR_DATA              ldr_data;
+        PLIST_ENTRY               head, current;
+        LDR_MODULE                ldr_module;
+        unsigned                  tlsindex = -1;
+
+        if (NtQueryInformationProcess(dbg_curr_process->handle, ProcessBasicInformation,
+                                      &pbi, sizeof(pbi), NULL) ||
+            NtQueryInformationThread(dbg_curr_thread->handle, ThreadBasicInformation,
+                                     &tbi, sizeof(tbi), NULL))
+        {
+        tls_error:
+            if (buffer) snprintf(buffer, sz, "Cannot read TLS address\n");
+            return FALSE;
+        }
+        addr = (DWORD_PTR)&(((TEB*)tbi.TebBaseAddress)->ThreadLocalStoragePointer);
+        if (!dbg_read_memory((void*)addr, &addr, sizeof(addr)) ||
+            !dbg_read_memory(pbi.PebBaseAddress, &peb, sizeof(peb)) ||
+            !dbg_read_memory(peb.LdrData, &ldr_data, sizeof(ldr_data)))
+            goto tls_error;
+        current = ldr_data.InLoadOrderModuleList.Flink;
+        head = &((PEB_LDR_DATA*)peb.LdrData)->InLoadOrderModuleList;
+        do
+        {
+            if (!dbg_read_memory(CONTAINING_RECORD(current, LDR_MODULE, InLoadOrderModuleList),
+                                 &ldr_module, sizeof(ldr_module))) goto tls_error;
+            if ((DWORD_PTR)ldr_module.BaseAddress == sym->ModBase)
+            {
+                tlsindex = ldr_module.TlsIndex;
+                break;
+            }
+            current = ldr_module.InLoadOrderModuleList.Flink;
+        } while (current != head);
+
+        addr += tlsindex * sizeof(DWORD_PTR);
+        if (!dbg_read_memory((void*)addr, &addr, sizeof(addr))) goto tls_error;
+        lvalue->cookie = DLV_TARGET;
+        lvalue->addr.Offset = addr + sym->Address;
+    }
+    else
+    {
+        lvalue->cookie = DLV_TARGET;
+        lvalue->addr.Offset = sym->Address;
+    }
+    lvalue->addr.Mode = AddrModeFlat;
+    lvalue->type.module = sym->ModBase;
+    lvalue->type.id = sym->TypeIndex;
+
+    return TRUE;
+}
+
 struct sgv_data
 {
 #define NUMDBGV                 100
-    struct {
+    struct
+    {
         /* FIXME: NUMDBGV should be made variable */
         struct dbg_lvalue               lvalue;
         DWORD                           flags;
+        DWORD                           sym_info;
     }                           syms[NUMDBGV];  /* out     : will be filled in with various found symbols */
     int		                num;            /* out     : number of found symbols */
     int                         num_thunks;     /* out     : number of thunks found */
     const char*                 name;           /* in      : name of symbol to look up */
-    const char*                 filename;       /* in (opt): filename where to look up symbol */
-    int                         lineno;         /* in (opt): line number in filename where to look up symbol */
-    unsigned                    bp_disp : 1,    /* in      : whether if we take into account func address or func first displayable insn */
-                                do_thunks : 1;  /* in      : whether we return thunks tags */
-    IMAGEHLP_STACK_FRAME        ihsf;           /* in      : frame for local & parameter variables look up */
+    unsigned                    do_thunks : 1;  /* in      : whether we return thunks tags */
+    ULONG64                     frame_offset;   /* in      : frame for local & parameter variables look up */
 };
 
-static BOOL CALLBACK sgv_cb(SYMBOL_INFO* sym, ULONG size, void* ctx)
+static BOOL CALLBACK sgv_cb(PSYMBOL_INFO sym, ULONG size, PVOID ctx)
 {
-    struct sgv_data*    sgv = (struct sgv_data*)ctx;
-    ULONG64             addr;
-    IMAGEHLP_LINE       il;
-    unsigned            cookie = DLV_TARGET, insp;
+    struct sgv_data*    sgv = ctx;
+    unsigned            insp;
+    char                tmp[64];
 
-    if (sym->Flags & SYMFLAG_REGISTER)
-    {
-        const struct dbg_internal_var*  div;
-
-        if (dbg_curr_frame != 0)
-        {
-            dbg_printf(" %s (register): << cannot display, not in correct frame\n",
-                       sym->Name);
-            return TRUE;
-        }
-        for (div = dbg_context_vars; div->name && div->val != sym->Register; div++);
-        if (!div->name)
-        {
-            dbg_printf(" %s (register): couldn't find register %lu\n",
-                       sym->Name, sym->Register);
-            return TRUE;
-        }
-        addr = (ULONG64)(DWORD_PTR)div->pval;
-        cookie = DLV_HOST;
-    }
-    else if (sym->Flags & SYMFLAG_FRAMEREL)
-    {
-        ULONG   offset;
-        struct dbg_type type;
-
-        type.module = sym->ModBase;
-        type.id = sym->TypeIndex;
-        types_get_info(&type, TI_GET_OFFSET, &offset);
-        addr = sgv->ihsf.FrameOffset + offset;
-    }
-    else if (sym->Flags & SYMFLAG_THUNK)
+    if (sym->Flags & SYMFLAG_THUNK)
     {
         if (!sgv->do_thunks) return TRUE;
         sgv->num_thunks++;
-        addr = sym->Address;
-    }
-    else
-    {
-        DWORD disp;
-        il.SizeOfStruct = sizeof(il);
-        SymGetLineFromAddr(dbg_curr_process->handle, sym->Address, &disp, &il);
-        if (sgv->filename && strcmp(sgv->filename, il.FileName))
-        {
-            WINE_FIXME("File name mismatch (%s / %s)\n", sgv->filename, il.FileName);
-            return TRUE;
-        }
-
-        if (sgv->lineno == -1)
-        {
-            if (!sgv->bp_disp || 
-                !symbol_get_debug_start(sym->ModBase, sym->TypeIndex, &addr))
-                addr = sym->Address;
-        }
-        else
-        {
-            addr = 0;
-            do
-            {
-                if (sgv->lineno == il.LineNumber)
-                {
-                    addr = il.Address;
-                    break;
-                }
-            } while (SymGetLineNext(dbg_curr_process->handle, &il));
-            if (!addr)
-            {
-                WINE_FIXME("No line (%d) found for %s (setting to symbol)\n", 
-                           sgv->lineno, sgv->name);
-                addr = sym->Address;
-            }
-        }
     }
 
     if (sgv->num >= NUMDBGV)
@@ -168,13 +227,15 @@ static BOOL CALLBACK sgv_cb(SYMBOL_INFO* sym, ULONG size, void* ctx)
                    sgv->name, NUMDBGV);
         return FALSE;
     }
-    WINE_TRACE("==> %s %s%s%s%s%s%s\n", 
-               sym->Name, 
+    WINE_TRACE("==> %s %s%s%s%s%s%s%s%s\n",
+               sym->Name,
                (sym->Flags & SYMFLAG_FUNCTION) ? "func " : "",
                (sym->Flags & SYMFLAG_FRAMEREL) ? "framerel " : "",
+               (sym->Flags & SYMFLAG_TLSREL) ? "tlsrel " : "",
                (sym->Flags & SYMFLAG_REGISTER) ? "register " : "",
                (sym->Flags & SYMFLAG_REGREL) ? "regrel " : "",
                (sym->Flags & SYMFLAG_PARAMETER) ? "param " : "",
+               (sym->Flags & SYMFLAG_LOCAL) ? "local " : "",
                (sym->Flags & SYMFLAG_THUNK) ? "thunk " : "");
 
     /* always keep the thunks at end of the array */
@@ -185,18 +246,109 @@ static BOOL CALLBACK sgv_cb(SYMBOL_INFO* sym, ULONG size, void* ctx)
         memmove(&sgv->syms[insp + 1], &sgv->syms[insp],
                 sizeof(sgv->syms[0]) * sgv->num_thunks);
     }
-    sgv->syms[insp].lvalue.cookie      = cookie;
-    sgv->syms[insp].lvalue.addr.Mode   = AddrModeFlat;
-    sgv->syms[insp].lvalue.addr.Offset = addr;
-    sgv->syms[insp].lvalue.type.module = sym->ModBase;
-    sgv->syms[insp].lvalue.type.id = sym->TypeIndex;
-    types_get_info(&sgv->syms[insp].lvalue.type, TI_GET_TYPE, 
-                   &sgv->syms[insp].lvalue.type.id);
+    if (!fill_sym_lvalue(sym, sgv->frame_offset, &sgv->syms[insp].lvalue, tmp, sizeof(tmp)))
+    {
+        dbg_printf("%s: %s\n", sym->Name, tmp);
+        return TRUE;
+    }
     sgv->syms[insp].flags              = sym->Flags;
+    sgv->syms[insp].sym_info           = sym->Index;
     sgv->num++;
-  
+
     return TRUE;
 }
+
+enum sym_get_lval symbol_picker_interactive(const char* name, const struct sgv_data* sgv,
+                                            struct dbg_lvalue* rtn)
+{
+    char        buffer[512];
+    unsigned    i;
+
+    if (!dbg_interactiveP)
+    {
+        dbg_printf("More than one symbol named %s, picking the first one\n", name);
+        *rtn = sgv->syms[0].lvalue;
+        return sglv_found;
+    }
+
+    dbg_printf("Many symbols with name '%s', "
+               "choose the one you want (<cr> to abort):\n", name);
+    for (i = 0; i < sgv->num; i++)
+    {
+        if (sgv->num - sgv->num_thunks > 1 && (sgv->syms[i].flags & SYMFLAG_THUNK) && !DBG_IVAR(AlwaysShowThunks))
+            continue;
+        dbg_printf("[%d]: ", i + 1);
+        if (sgv->syms[i].flags & (SYMFLAG_LOCAL | SYMFLAG_PARAMETER))
+        {
+            dbg_printf("%s %sof %s\n",
+                       sgv->syms[i].flags & SYMFLAG_PARAMETER ? "Parameter" : "Local variable",
+                       sgv->syms[i].flags & (SYMFLAG_REGISTER|SYMFLAG_REGREL) ? "(in a register) " : "",
+                       name);
+        }
+        else if (sgv->syms[i].flags & SYMFLAG_THUNK)
+        {
+            print_address(&sgv->syms[i].lvalue.addr, TRUE);
+            /* FIXME: should display where the thunks points to */
+            dbg_printf(" thunk %s\n", name);
+        }
+        else
+        {
+            print_address(&sgv->syms[i].lvalue.addr, TRUE);
+            dbg_printf("\n");
+        }
+    }
+    do
+    {
+        if (input_read_line("=> ", buffer, sizeof(buffer)))
+        {
+            if (buffer[0] == '\0') return sglv_aborted;
+            i = atoi(buffer);
+            if (i < 1 || i > sgv->num)
+                dbg_printf("Invalid choice %d\n", i);
+        }
+        else return sglv_aborted;
+    } while (i < 1 || i > sgv->num);
+
+    /* The array is 0-based, but the choices are 1..n,
+     * so we have to subtract one before returning.
+     */
+    *rtn = sgv->syms[i - 1].lvalue;
+    return sglv_found;
+}
+
+enum sym_get_lval symbol_picker_scoped(const char* name, const struct sgv_data* sgv,
+                                       struct dbg_lvalue* rtn)
+{
+    unsigned i;
+    int local = -1;
+
+    for (i = 0; i < sgv->num; i++)
+    {
+        if (sgv->num - sgv->num_thunks > 1 && (sgv->syms[i].flags & SYMFLAG_THUNK) && !DBG_IVAR(AlwaysShowThunks))
+            continue;
+        if (sgv->syms[i].flags & (SYMFLAG_LOCAL | SYMFLAG_PARAMETER))
+        {
+            if (local == -1)
+                local = i;
+            else
+            {
+                /* FIXME: several locals with same name... which one to pick ?? */
+                dbg_printf("Several local variables/parameters for %s, aborting\n", name);
+                return sglv_aborted;
+            }
+        }
+    }
+    if (local != -1)
+    {
+        *rtn = sgv->syms[local].lvalue;
+        return sglv_found;
+    }
+    /* no locals found, multiple globals... abort for now */
+    dbg_printf("Several global variables for %s, aborting\n", name);
+    return sglv_aborted;
+}
+
+symbol_picker_t symbol_current_picker = symbol_picker_interactive;
 
 /***********************************************************************
  *           symbol_get_lvalue
@@ -212,11 +364,10 @@ enum sym_get_lval symbol_get_lvalue(const char* name, const int lineno,
                                     struct dbg_lvalue* rtn, BOOL bp_disp)
 {
     struct sgv_data             sgv;
-    int		                i = 0;
-    char                        tmp[sizeof(SYMBOL_INFO) + 256];
-    SYMBOL_INFO*                si = (SYMBOL_INFO*)tmp;
+    int		                i;
     char                        buffer[512];
     DWORD                       opt;
+    IMAGEHLP_STACK_FRAME        ihsf;
 
     if (strlen(name) + 4 > sizeof(buffer))
     {
@@ -227,44 +378,54 @@ enum sym_get_lval symbol_get_lvalue(const char* name, const int lineno,
     sgv.num        = 0;
     sgv.num_thunks = 0;
     sgv.name       = &buffer[2];
-    sgv.filename   = NULL;
-    sgv.lineno     = lineno;
-    sgv.bp_disp    = bp_disp ? TRUE : FALSE;
     sgv.do_thunks  = DBG_IVAR(AlwaysShowThunks);
 
-    buffer[0] = '*';
-    buffer[1] = '!';
-    strcpy(&buffer[2], name);
+    if (strchr(name, '!'))
+    {
+        strcpy(buffer, name);
+    }
+    else
+    {
+        buffer[0] = '*';
+        buffer[1] = '!';
+        strcpy(&buffer[2], name);
+    }
 
     /* this is a wine specific options to return also ELF modules in the
      * enumeration
      */
     SymSetOptions((opt = SymGetOptions()) | 0x40000000);
-    if (!SymEnumSymbols(dbg_curr_process->handle, 0, buffer, sgv_cb, (void*)&sgv))
-    {
-        SymSetOptions(opt);
-        return sglv_unknown;
-    }
+    SymEnumSymbols(dbg_curr_process->handle, 0, buffer, sgv_cb, (void*)&sgv);
 
-    if (!sgv.num && (name[0] != '_'))
+    if (!sgv.num)
     {
-        buffer[2] = '_';
-        strcpy(&buffer[3], name);
-        if (!SymEnumSymbols(dbg_curr_process->handle, 0, buffer, sgv_cb, (void*)&sgv))
+        const char*   ptr = strchr(name, '!');
+        if ((ptr && ptr[1] != '_') || (!ptr && *name != '_'))
         {
-            SymSetOptions(opt);
-            return sglv_unknown;
+            if (ptr)
+            {
+                int offset = ptr - name;
+                memcpy(buffer, name, offset + 1);
+                buffer[offset + 1] = '_';
+                strcpy(&buffer[offset + 2], ptr + 1);
+            }
+            else
+            {
+                buffer[0] = '*';
+                buffer[1] = '!';
+                buffer[2] = '_';
+                strcpy(&buffer[3], name);
+            }
+            SymEnumSymbols(dbg_curr_process->handle, 0, buffer, sgv_cb, (void*)&sgv);
         }
     }
     SymSetOptions(opt);
 
     /* now grab local symbols */
-    si->SizeOfStruct = sizeof(*si);
-    si->MaxNameLen = 256;
-    if (stack_get_frame(si, &sgv.ihsf) && sgv.num < NUMDBGV)
+    if (stack_get_current_frame(&ihsf) && sgv.num < NUMDBGV)
     {
-        if (SymSetContext(dbg_curr_process->handle, &sgv.ihsf, NULL))
-            SymEnumSymbols(dbg_curr_process->handle, 0, name, sgv_cb, (void*)&sgv);
+        sgv.frame_offset = ihsf.FrameOffset;
+        SymEnumSymbols(dbg_curr_process->handle, 0, name, sgv_cb, (void*)&sgv);
     }
 
     if (!sgv.num)
@@ -273,90 +434,76 @@ enum sym_get_lval symbol_get_lvalue(const char* name, const int lineno,
         return sglv_unknown;
     }
 
-    if (dbg_interactiveP)
+    /* recompute potential offsets for functions (linenumber, skip prolog) */
+    for (i = 0; i < sgv.num; i++)
     {
-        if (sgv.num - sgv.num_thunks > 1 || /* many symbols non thunks (and showing only non thunks) */
-            (sgv.num > 1 && DBG_IVAR(AlwaysShowThunks)) || /* many symbols (showing symbols & thunks) */
-            (sgv.num == sgv.num_thunks && sgv.num_thunks > 1))
+        if (sgv.syms[i].flags & (SYMFLAG_REGISTER|SYMFLAG_REGREL|SYMFLAG_LOCAL|SYMFLAG_THUNK))
+            continue;
+
+        if (lineno == -1)
         {
-            dbg_printf("Many symbols with name '%s', "
-                       "choose the one you want (<cr> to abort):\n", name);
-            for (i = 0; i < sgv.num; i++) 
-            {
-                if (sgv.num - sgv.num_thunks > 1 && (sgv.syms[i].flags & SYMFLAG_THUNK) && !DBG_IVAR(AlwaysShowThunks))
-                    continue;
-                dbg_printf("[%d]: ", i + 1);
-                if (sgv.syms[i].flags & SYMFLAG_LOCAL)
-                {
-                    dbg_printf("local variable %sof %s\n", 
-                               sgv.syms[i].flags & SYMFLAG_REGISTER ? "(in a register) " : "",
-                               si->Name);
-                }
-                else if (sgv.syms[i].flags & SYMFLAG_PARAMETER)
-                {
-                    dbg_printf("parameter %sof %s\n", 
-                               sgv.syms[i].flags & SYMFLAG_REGISTER ? "(in a register) " : "",
-                               si->Name);
-                }
-                else if (sgv.syms[i].flags & SYMFLAG_THUNK) 
-                {
-                    print_address(&sgv.syms[i].lvalue.addr, TRUE);
-                    /* FIXME: should display where the thunks points to */
-                    dbg_printf(" thunk %s\n", name);
-                }
-                else
-                {
-                    print_address(&sgv.syms[i].lvalue.addr, TRUE);
-                    dbg_printf("\n");
-                }
-            }
+            struct dbg_type     type;
+            ULONG64             addr;
+
+            type.module = sgv.syms[i].lvalue.type.module;
+            type.id     = sgv.syms[i].sym_info;
+            if (bp_disp && symbol_get_debug_start(&type, &addr))
+                sgv.syms[i].lvalue.addr.Offset = addr;
+        }
+        else
+        {
+            DWORD               disp;
+            IMAGEHLP_LINE64     il;
+            BOOL                found = FALSE;
+
+            il.SizeOfStruct = sizeof(il);
+            SymGetLineFromAddr64(dbg_curr_process->handle,
+                                 (DWORD_PTR)memory_to_linear_addr(&sgv.syms[i].lvalue.addr),
+				 &disp, &il);
             do
             {
-                i = 0;
-                if (input_read_line("=> ", buffer, sizeof(buffer)))
+                if (lineno == il.LineNumber)
                 {
-                    if (buffer[0] == '\0') return sglv_aborted;
-                    i = atoi(buffer);
-                    if (i < 1 || i > sgv.num)
-                        dbg_printf("Invalid choice %d\n", i);
+                    sgv.syms[i].lvalue.addr.Offset = il.Address;
+                    found = TRUE;
+                    break;
                 }
-            } while (i < 1 || i > sgv.num);
-
-            /* The array is 0-based, but the choices are 1..n, 
-             * so we have to subtract one before returning.
-             */
-            i--;
+            } while (SymGetLineNext64(dbg_curr_process->handle, &il));
+            if (!found)
+                WINE_FIXME("No line (%d) found for %s (setting to symbol start)\n",
+                           lineno, name);
         }
     }
-    else
+
+    if (sgv.num - sgv.num_thunks > 1 || /* many symbols non thunks (and showing only non thunks) */
+        (sgv.num > 1 && DBG_IVAR(AlwaysShowThunks)) || /* many symbols (showing symbols & thunks) */
+        (sgv.num == sgv.num_thunks && sgv.num_thunks > 1))
     {
-        /* FIXME: could display the list of non-picked up symbols */
-        if (sgv.num > 1)
-            dbg_printf("More than one symbol named %s, picking the first one\n", name);
+        return symbol_current_picker(name, &sgv, rtn);
     }
-    *rtn = sgv.syms[i].lvalue;
+    /* first symbol is the one we want:
+     * - only one symbol found,
+     * - or many symbols but only one non thunk when AlwaysShowThunks is FALSE
+     */
+    *rtn = sgv.syms[0].lvalue;
     return sglv_found;
 }
 
 BOOL symbol_is_local(const char* name)
 {
     struct sgv_data             sgv;
-    char                        tmp[sizeof(SYMBOL_INFO) + 256];
-    SYMBOL_INFO*                si = (SYMBOL_INFO*)tmp;
+    IMAGEHLP_STACK_FRAME        ihsf;
 
     sgv.num        = 0;
     sgv.num_thunks = 0;
     sgv.name       = name;
-    sgv.filename   = NULL;
-    sgv.lineno     = 0;
-    sgv.bp_disp    = FALSE;
     sgv.do_thunks  = FALSE;
 
-    si->SizeOfStruct = sizeof(*si);
-    si->MaxNameLen = 256;
-    if (stack_get_frame(si, &sgv.ihsf) &&
-        SymSetContext(dbg_curr_process->handle, &sgv.ihsf, NULL))
+    if (stack_get_current_frame(&ihsf))
+    {
+        sgv.frame_offset = ihsf.FrameOffset;
         SymEnumSymbols(dbg_curr_process->handle, 0, name, sgv_cb, (void*)&sgv);
+    }
     return sgv.num > 0;
 }
 
@@ -422,15 +569,15 @@ void symbol_read_symtable(const char* filename, unsigned long offset)
  *
  * Find the symbol nearest to a given address.
  */
-enum dbg_line_status symbol_get_function_line_status(const ADDRESS* addr)
+enum dbg_line_status symbol_get_function_line_status(const ADDRESS64* addr)
 {
-    IMAGEHLP_LINE       il;
-    DWORD               disp, size;
+    IMAGEHLP_LINE64     il;
+    DWORD               disp;
     ULONG64             disp64, start;
-    DWORD               lin = (DWORD)memory_to_linear_addr(addr);
+    DWORD_PTR           lin = (DWORD_PTR)memory_to_linear_addr(addr);
     char                buffer[sizeof(SYMBOL_INFO) + 256];
     SYMBOL_INFO*        sym = (SYMBOL_INFO*)buffer;
-    struct dbg_type     type;
+    struct dbg_type     func;
 
     il.SizeOfStruct = sizeof(il);
     sym->SizeOfStruct = sizeof(SYMBOL_INFO);
@@ -438,7 +585,15 @@ enum dbg_line_status symbol_get_function_line_status(const ADDRESS* addr)
 
     /* do we have some info for lin address ? */
     if (!SymFromAddr(dbg_curr_process->handle, lin, &disp64, sym))
+    {
+        ADDRESS64   jumpee;
+        /* some compilers insert thunks in their code without debug info associated
+         * take care of this situation
+         */
+        if (dbg_curr_process->be_cpu->is_jump((void*)lin, &jumpee))
+            return symbol_get_function_line_status(&jumpee);
         return dbg_no_line_info;
+    }
 
     switch (sym->Tag)
     {
@@ -450,21 +605,22 @@ enum dbg_line_status symbol_get_function_line_status(const ADDRESS* addr)
     case SymTagFunction:
     case SymTagPublicSymbol: break;
     default:
-        WINE_FIXME("Unexpected sym-tag 0x%08lx\n", sym->Tag);
+        WINE_FIXME("Unexpected sym-tag 0x%08x\n", sym->Tag);
     case SymTagData:
         return dbg_no_line_info;
     }
     /* we should have a function now */
-    if (!SymGetLineFromAddr(dbg_curr_process->handle, lin, &disp, &il))
+    if (!SymGetLineFromAddr64(dbg_curr_process->handle, lin, &disp, &il))
         return dbg_no_line_info;
 
-    if (symbol_get_debug_start(sym->ModBase, sym->TypeIndex, &start) && lin < start)
+    func.module = sym->ModBase;
+    func.id     = sym->Index;
+
+    if (symbol_get_debug_start(&func, &start) && lin < start)
         return dbg_not_on_a_line_number;
-    type.module = sym->ModBase;
-    type.id = sym->TypeIndex;
-    if (!types_get_info(&type, TI_GET_LENGTH, &size) || size == 0)
-        size = 0x100000;
-    if (il.FileName && il.FileName[0] && disp < size)
+
+    if (!sym->Size) sym->Size = 0x100000;
+    if (il.FileName && il.FileName[0] && disp < sym->Size)
         return (disp == 0) ? dbg_on_a_line_number : dbg_not_on_a_line_number;
 
     return dbg_no_line_info;
@@ -477,18 +633,19 @@ enum dbg_line_status symbol_get_function_line_status(const ADDRESS* addr)
  * Returns sourcefile name and line number in a format that the listing
  * handler can deal with.
  */
-BOOL symbol_get_line(const char* filename, const char* name, IMAGEHLP_LINE* line)
+BOOL symbol_get_line(const char* filename, const char* name,
+		     IMAGEHLP_LINE64* line)
 {
     struct sgv_data     sgv;
     char                buffer[512];
     DWORD               opt, disp;
+    unsigned            i;
+    BOOL                found = FALSE;
+    IMAGEHLP_LINE64     il;
 
     sgv.num        = 0;
     sgv.num_thunks = 0;
     sgv.name       = &buffer[2];
-    sgv.filename   = filename;
-    sgv.lineno     = -1;
-    sgv.bp_disp    = FALSE;
     sgv.do_thunks  = FALSE;
 
     buffer[0] = '*';
@@ -502,7 +659,7 @@ BOOL symbol_get_line(const char* filename, const char* name, IMAGEHLP_LINE* line
     if (!SymEnumSymbols(dbg_curr_process->handle, 0, buffer, sgv_cb, (void*)&sgv))
     {
         SymSetOptions(opt);
-        return sglv_unknown;
+        return FALSE;
     }
 
     if (!sgv.num && (name[0] != '_'))
@@ -512,99 +669,101 @@ BOOL symbol_get_line(const char* filename, const char* name, IMAGEHLP_LINE* line
         if (!SymEnumSymbols(dbg_curr_process->handle, 0, buffer, sgv_cb, (void*)&sgv))
         {
             SymSetOptions(opt);
-            return sglv_unknown;
+            return FALSE;
         }
     }
     SymSetOptions(opt);
 
-    switch (sgv.num)
+    for (i = 0; i < sgv.num; i++)
     {
-    case 0:
+        DWORD_PTR linear = (DWORD_PTR)memory_to_linear_addr(&sgv.syms[i].lvalue.addr);
+
+        il.SizeOfStruct = sizeof(il);
+        if (!SymGetLineFromAddr64(dbg_curr_process->handle, linear, &disp, &il))
+            continue;
+        if (filename && strcmp(il.FileName, filename)) continue;
+        if (found)
+        {
+            WINE_FIXME("Several found, returning first (may not be what you want)...\n");
+            break;
+        }
+        found = TRUE;
+        *line = il;
+    }
+    if (!found)
+    {
         if (filename)   dbg_printf("No such function %s in %s\n", name, filename);
 	else            dbg_printf("No such function %s\n", name);
         return FALSE;
-    default:
-        WINE_FIXME("Several found, returning first (may not be what you want)...\n");
-    case 1:
-        return SymGetLineFromAddr(dbg_curr_process->handle, 
-                                  (DWORD)memory_to_linear_addr(&sgv.syms[0].lvalue.addr), 
-                                  &disp, line);
     }
     return TRUE;
 }
 
-static BOOL CALLBACK info_locals_cb(SYMBOL_INFO* sym, ULONG size, void* ctx)
+/******************************************************************
+ *		symbol_print_local
+ *
+ * Overall format is:
+ * <name>=<value>                       in non detailed form
+ * <name>=<value> (local|pmt <where>)   in detailed form
+ * Note <value> can be an error message in case of error
+ */
+void symbol_print_local(const SYMBOL_INFO* sym, DWORD_PTR base, BOOL detailed)
 {
-    ULONG               v, val;
-    const char*         explain = NULL;
-    char                buf[128];
+    struct dbg_lvalue   lvalue;
+    char                buffer[64];
+
+    dbg_printf("%s=", sym->Name);
+
+    if (fill_sym_lvalue(sym, base, &lvalue, buffer, sizeof(buffer)))
+    {
+        print_value(&lvalue, 0, 1);
+        if (detailed)
+            dbg_printf(" (%s %s)",
+                       (sym->Flags & SYMFLAG_PARAMETER) ? "parameter" : "local",
+                       buffer);
+    }
+    else
+    {
+        dbg_printf("%s", buffer);
+        if (detailed)
+            dbg_printf(" (%s)",
+                       (sym->Flags & SYMFLAG_PARAMETER) ? "parameter" : "local");
+    }
+}
+
+static BOOL CALLBACK info_locals_cb(PSYMBOL_INFO sym, ULONG size, PVOID ctx)
+{
     struct dbg_type     type;
 
     dbg_printf("\t");
     type.module = sym->ModBase;
     type.id = sym->TypeIndex;
-    types_get_info(&type, TI_GET_TYPE, &type.id);
     types_print_type(&type, FALSE);
 
-    if (sym->Flags & SYMFLAG_LOCAL) explain = "local";
-    else if (sym->Flags & SYMFLAG_PARAMETER) explain = "parameter";
-    else if (sym->Flags & SYMFLAG_REGISTER) explain = buf;
-
-    if (sym->Flags & SYMFLAG_REGISTER)
-    {
-        const struct dbg_internal_var*  div;
-
-        if (dbg_curr_frame != 0)
-        {
-            dbg_printf(" %s (register): << cannot display, not in correct frame\n",
-                       sym->Name);
-            return TRUE;
-        }
-        for (div = dbg_context_vars; div->name; div++)
-        {
-            if (div->val == sym->Register)
-            {
-                val = *div->pval;
-                sprintf(buf, "local in register %s", div->name);
-                break;
-            }
-        }
-    }
-    else if (sym->Flags & SYMFLAG_FRAMEREL)
-    {
-        type.id = sym->TypeIndex;
-        types_get_info(&type, TI_GET_OFFSET, &v);
-        v += ((IMAGEHLP_STACK_FRAME*)ctx)->FrameOffset;
-
-        if (!dbg_read_memory((void*)v, &val, sizeof(val)))
-        {
-            dbg_printf(" %s (%s) *** cannot read value at 0x%08lx\n", sym->Name, explain, v);
-            return TRUE;
-        }
-    }
-    dbg_printf(" %s = 0x%8.8lx (%s)\n", sym->Name, val, explain);
+    dbg_printf(" ");
+    symbol_print_local(sym, (DWORD_PTR)ctx, TRUE);
+    dbg_printf("\n");
 
     return TRUE;
 }
 
-int symbol_info_locals(void)
+BOOL symbol_info_locals(void)
 {
     IMAGEHLP_STACK_FRAME        ihsf;
-    char                        buffer[sizeof(SYMBOL_INFO) + 256];
-    SYMBOL_INFO*                si = (SYMBOL_INFO*)buffer;
+    ADDRESS64                   addr;
 
-    si->SizeOfStruct = sizeof(*si);
-    si->MaxNameLen = 256;
-    if (stack_get_frame(si, &ihsf))
-    {
-        dbg_printf("%s:\n", si->Name);
-        if (SymSetContext(dbg_curr_process->handle, &ihsf, NULL))
-            SymEnumSymbols(dbg_curr_process->handle, 0, NULL, info_locals_cb, &ihsf);
-    }
+    stack_get_current_frame(&ihsf);
+    addr.Mode = AddrModeFlat;
+    addr.Offset = ihsf.InstructionOffset;
+    print_address(&addr, FALSE);
+    dbg_printf(": (%08lx)\n", (DWORD_PTR)ihsf.FrameOffset);
+    SymEnumSymbols(dbg_curr_process->handle, 0, NULL, info_locals_cb, (void*)(DWORD_PTR)ihsf.FrameOffset);
+
     return TRUE;
+
 }
 
-static BOOL CALLBACK symbols_info_cb(SYMBOL_INFO* sym, ULONG size, void* ctx)
+static BOOL CALLBACK symbols_info_cb(PSYMBOL_INFO sym, ULONG size, PVOID ctx)
 {
     struct dbg_type     type;
     IMAGEHLP_MODULE     mi;
@@ -624,8 +783,7 @@ static BOOL CALLBACK symbols_info_cb(SYMBOL_INFO* sym, ULONG size, void* ctx)
     type.id = sym->TypeIndex;
     type.module = sym->ModBase;
 
-    if (sym->TypeIndex != dbg_itype_none && sym->TypeIndex != 0 &&
-        types_get_info(&type, TI_GET_TYPE, &type.id))
+    if (sym->TypeIndex != dbg_itype_none && sym->TypeIndex != 0)
     {
         dbg_printf(" ");
         types_print_type(&type, FALSE);

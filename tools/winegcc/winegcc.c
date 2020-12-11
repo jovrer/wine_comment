@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * DESCRIPTION
  *
@@ -71,8 +71,9 @@
  *
  *      Linker Options
  *          object-file-name  -llibrary -nostartfiles  -nodefaultlibs
- *          -nostdlib -s  -static  -static-libgcc  -shared  -shared-libgcc
- *          -symbolic -Wl,option  -Xlinker option -u symbol --image-base
+ *          -nostdlib -s  -static  -static-libgcc  -static-libstdc++
+ *          -shared  -shared-libgcc  -symbolic  -Wl,option
+ *          -Xlinker option -u symbol --image-base
  *
  *      Directory Options
  *          -Bprefix  -Idir  -I-  -Ldir  -specs=file
@@ -88,6 +89,7 @@
 #include "config.h"
 #include "wine/port.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -144,9 +146,51 @@ static sigset_t signal_mask;
 
 enum processor { proc_cc, proc_cxx, proc_cpp, proc_as };
 
-struct options 
+static const struct
+{
+    const char *name;
+    enum target_cpu cpu;
+} cpu_names[] =
+{
+    { "i386",    CPU_x86 },
+    { "i486",    CPU_x86 },
+    { "i586",    CPU_x86 },
+    { "i686",    CPU_x86 },
+    { "i786",    CPU_x86 },
+    { "amd64",   CPU_x86_64 },
+    { "x86_64",  CPU_x86_64 },
+    { "powerpc", CPU_POWERPC },
+    { "arm",     CPU_ARM },
+    { "armv5",   CPU_ARM },
+    { "armv6",   CPU_ARM },
+    { "armv7",   CPU_ARM },
+    { "arm64",   CPU_ARM64 },
+    { "aarch64", CPU_ARM64 },
+};
+
+static const struct
+{
+    const char *name;
+    enum target_platform platform;
+} platform_names[] =
+{
+    { "macos",   PLATFORM_APPLE },
+    { "darwin",  PLATFORM_APPLE },
+    { "android", PLATFORM_ANDROID },
+    { "solaris", PLATFORM_SOLARIS },
+    { "cygwin",  PLATFORM_CYGWIN },
+    { "mingw32", PLATFORM_WINDOWS },
+    { "windows", PLATFORM_WINDOWS },
+    { "winnt",   PLATFORM_WINDOWS }
+};
+
+struct options
 {
     enum processor processor;
+    enum target_cpu target_cpu;
+    enum target_platform target_platform;
+    const char *target;
+    const char *version;
     int shared;
     int use_msvcrt;
     int nostdinc;
@@ -156,10 +200,18 @@ struct options
     int noshortwchar;
     int gui_app;
     int unicode_app;
+    int win16_app;
     int compile_only;
-    int wine_mode;
+    int force_pointer_size;
+    int large_address_aware;
+    int unwind_tables;
+    int strip;
+    const char* wine_objdir;
     const char* output_name;
     const char* image_base;
+    const char* section_align;
+    const char* lib_suffix;
+    const char* subsystem;
     strarray* prefix;
     strarray* lib_dirs;
     strarray* linker_args;
@@ -168,9 +220,37 @@ struct options
     strarray* files;
 };
 
+#ifdef __i386__
+static const enum target_cpu build_cpu = CPU_x86;
+#elif defined(__x86_64__)
+static const enum target_cpu build_cpu = CPU_x86_64;
+#elif defined(__powerpc__)
+static const enum target_cpu build_cpu = CPU_POWERPC;
+#elif defined(__arm__)
+static const enum target_cpu build_cpu = CPU_ARM;
+#elif defined(__aarch64__)
+static const enum target_cpu build_cpu = CPU_ARM64;
+#else
+#error Unsupported CPU
+#endif
+
+#ifdef __APPLE__
+static enum target_platform build_platform = PLATFORM_APPLE;
+#elif defined(__ANDROID__)
+static enum target_platform build_platform = PLATFORM_ANDROID;
+#elif defined(__sun)
+static enum target_platform build_platform = PLATFORM_SOLARIS;
+#elif defined(__CYGWIN__)
+static enum target_platform build_platform = PLATFORM_CYGWIN;
+#elif defined(_WIN32)
+static enum target_platform build_platform = PLATFORM_WINDOWS;
+#else
+static enum target_platform build_platform = PLATFORM_UNSPECIFIED;
+#endif
+
 static void clean_temp_files(void)
 {
-    int i;
+    unsigned int i;
 
     if (keep_generated) return;
 
@@ -197,11 +277,14 @@ static char* get_temp_file(const char* prefix, const char* suffix)
     fd = mkstemps( tmp, strlen(suffix) );
     if (fd == -1)
     {
-        /* could not create it in current directory, try in /tmp */
+        /* could not create it in current directory, try in TMPDIR */
+        const char* tmpdir;
+
         free(tmp);
-        tmp = strmake("/tmp/%s-XXXXXX%s", prefix, suffix);
+        if (!(tmpdir = getenv("TMPDIR"))) tmpdir = "/tmp";
+        tmp = strmake("%s/%s-XXXXXX%s", tmpdir, prefix, suffix);
         fd = mkstemps( tmp, strlen(suffix) );
-        if (fd == -1) error( "could not create temp file" );
+        if (fd == -1) error( "could not create temp file\n" );
     }
     close( fd );
     strarray_add(tmp_files, tmp);
@@ -211,62 +294,312 @@ static char* get_temp_file(const char* prefix, const char* suffix)
     return tmp;
 }
 
-static const strarray* get_translator(enum processor processor)
+static char* build_tool_name(struct options *opts, const char* base, const char* deflt)
 {
-    static strarray* cpp = 0;
-    static strarray* as = 0;
-    static strarray* cc = 0;
-    static strarray* cxx = 0;
+    char* str;
 
-    switch(processor)
+    if (opts->target && opts->version)
     {
-        case proc_cpp: 
-	    if (!cpp) cpp = strarray_fromstring(CPP, " ");
-	    return cpp;
-        case proc_cc:  
-	    if (!cc) cc = strarray_fromstring(CC, " ");
-	    return cc;
-        case proc_cxx: 
-	    if (!cxx) cxx = strarray_fromstring(CXX, " ");
-	    return cxx;
-        case proc_as:
-	    if (!as) as = strarray_fromstring(AS, " ");
-	    return as;
+        str = strmake("%s-%s-%s", opts->target, base, opts->version);
     }
-    error("Unknown processor");
+    else if (opts->target)
+    {
+        str = strmake("%s-%s", opts->target, base);
+    }
+    else if (opts->version)
+    {
+        str = strmake("%s-%s", base, opts->version);
+    }
+    else
+        str = xstrdup(deflt);
+    return str;
+}
+
+static const strarray* get_translator(struct options *opts)
+{
+    char *str = NULL;
+    strarray *ret;
+
+    switch(opts->processor)
+    {
+    case proc_cpp:
+        str = build_tool_name(opts, "cpp", CPP);
+        break;
+    case proc_cc:
+    case proc_as:
+        str = build_tool_name(opts, "gcc", CC);
+        break;
+    case proc_cxx:
+        str = build_tool_name(opts, "g++", CXX);
+        break;
+    default:
+        assert(0);
+    }
+    ret = strarray_fromstring( str, " " );
+    free(str);
+    if (opts->force_pointer_size)
+        strarray_add( ret, strmake("-m%u", 8 * opts->force_pointer_size ));
+    return ret;
+}
+
+static int try_link( const strarray *prefix, const strarray *link_tool, const char *cflags )
+{
+    const char *in = get_temp_file( "try_link", ".c" );
+    const char *out = get_temp_file( "try_link", ".out" );
+    const char *err = get_temp_file( "try_link", ".err" );
+    strarray *link = strarray_dup( link_tool );
+    int sout = -1, serr = -1;
+    int ret;
+
+    create_file( in, 0644, "int main(void){return 1;}\n" );
+
+    strarray_add( link, "-o" );
+    strarray_add( link, out );
+    strarray_addall( link, strarray_fromstring( cflags, " " ) );
+    strarray_add( link, in );
+
+    sout = dup( fileno(stdout) );
+    freopen( err, "w", stdout );
+    serr = dup( fileno(stderr) );
+    freopen( err, "w", stderr );
+    ret = spawn( prefix, link, 1 );
+    if (sout >= 0)
+    {
+        dup2( sout, fileno(stdout) );
+        close( sout );
+    }
+    if (serr >= 0)
+    {
+        dup2( serr, fileno(stderr) );
+        close( serr );
+    }
+    strarray_free( link );
+    return ret;
+}
+
+static const strarray* get_lddllflags( const struct options *opts, const strarray *link_tool )
+{
+    strarray *flags = strarray_alloc();
+    switch (opts->target_platform)
+    {
+    case PLATFORM_APPLE:
+        strarray_add( flags, "-bundle" );
+        strarray_add( flags, "-multiply_defined" );
+        strarray_add( flags, "suppress" );
+        if (opts->target_cpu == CPU_POWERPC)
+        {
+            strarray_add( flags, "-read_only_relocs" );
+            strarray_add( flags, "warning" );
+        }
+        break;
+
+    case PLATFORM_ANDROID:
+    case PLATFORM_SOLARIS:
+    case PLATFORM_UNSPECIFIED:
+        strarray_add( flags, "-shared" );
+        strarray_add( flags, "-Wl,-Bsymbolic" );
+
+        /* Try all options first - this is likely to succeed on modern compilers */
+        if (!try_link( opts->prefix, link_tool, "-fPIC -shared -Wl,-Bsymbolic "
+                       "-Wl,-z,defs -Wl,-init,__wine_spec_init,-fini,_wine_spec_fini" ))
+        {
+            strarray_add( flags, "-Wl,-z,defs" );
+            strarray_add( flags, "-Wl,-init,__wine_spec_init,-fini,__wine_spec_fini" );
+        }
+        else /* otherwise figure out which ones are allowed */
+        {
+            if (!try_link( opts->prefix, link_tool, "-fPIC -shared -Wl,-Bsymbolic -Wl,-z,defs" ))
+                strarray_add( flags, "-Wl,-z,defs" );
+            if (!try_link( opts->prefix, link_tool, "-fPIC -shared -Wl,-Bsymbolic "
+                           "-Wl,-init,__wine_spec_init,-fini,_wine_spec_fini" ))
+                strarray_add( flags, "-Wl,-init,__wine_spec_init,-fini,__wine_spec_fini" );
+        }
+        break;
+
+    default:
+        assert(0);
+    }
+    return flags;
+}
+
+/* check that file is a library for the correct platform */
+static int check_platform( struct options *opts, const char *file )
+{
+    int ret = 0, fd = open( file, O_RDONLY );
+    if (fd != -1)
+    {
+        unsigned char header[16];
+        if (read( fd, header, sizeof(header) ) == sizeof(header))
+        {
+            /* FIXME: only ELF is supported, platform is not checked beyond 32/64 */
+            if (!memcmp( header, "\177ELF", 4 ))
+            {
+                if (header[4] == 2)  /* 64-bit */
+                    ret = (opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64);
+                else
+                    ret = (opts->target_cpu != CPU_x86_64 && opts->target_cpu != CPU_ARM64);
+            }
+        }
+        close( fd );
+    }
+    return ret;
+}
+
+static const char *get_multiarch_dir( enum target_cpu cpu )
+{
+   switch(cpu)
+   {
+   case CPU_x86:     return "/i386-linux-gnu";
+   case CPU_x86_64:  return "/x86_64-linux-gnu";
+   case CPU_ARM:     return "/arm-linux-gnueabi";
+   case CPU_ARM64:   return "/aarch64-linux-gnu";
+   case CPU_POWERPC: return "/powerpc-linux-gnu";
+   default:
+       assert(0);
+       return NULL;
+   }
+}
+
+static char *get_lib_dir( struct options *opts )
+{
+    static const char *stdlibpath[] = { LIBDIR, "/usr/lib", "/usr/local/lib", "/lib" };
+    static const char libwine[] = "/libwine.so";
+    const char *bit_suffix, *other_bit_suffix, *build_multiarch, *target_multiarch;
+    unsigned int i;
+    size_t build_len, target_len;
+
+    bit_suffix = opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64 ? "64" : "32";
+    other_bit_suffix = opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64 ? "32" : "64";
+    build_multiarch = get_multiarch_dir( build_cpu );
+    target_multiarch = get_multiarch_dir( opts->target_cpu );
+    build_len = strlen( build_multiarch );
+    target_len = strlen( target_multiarch );
+
+    for (i = 0; i < sizeof(stdlibpath)/sizeof(stdlibpath[0]); i++)
+    {
+        char *p, *buffer = xmalloc( strlen(stdlibpath[i]) + strlen("/arm-linux-gnueabi") + strlen(libwine) + 1 );
+        strcpy( buffer, stdlibpath[i] );
+        p = buffer + strlen(buffer);
+        while (p > buffer && p[-1] == '/') p--;
+        strcpy( p, libwine );
+        if (check_platform( opts, buffer )) goto found;
+        if (p > buffer + 2 && (!memcmp( p - 2, "32", 2 ) || !memcmp( p - 2, "64", 2 )))
+        {
+            p -= 2;
+            strcpy( p, libwine );
+            if (check_platform( opts, buffer )) goto found;
+        }
+        strcpy( p, bit_suffix );
+        strcat( p, libwine );
+        if (check_platform( opts, buffer )) goto found;
+        strcpy( p, target_multiarch );
+        strcat( p, libwine );
+        if (check_platform( opts, buffer )) goto found;
+
+        strcpy( buffer, stdlibpath[i] );
+        p = buffer + strlen(buffer);
+        while (p > buffer && p[-1] == '/') p--;
+        strcpy( p, libwine );
+
+        /* try to fixup each parent dirs named lib, lib32 or lib64 with target bitness suffix */
+        while (p > buffer)
+        {
+            p--;
+            while (p > buffer && *p != '/') p--;
+            if (*p != '/') break;
+
+            /* try s/$build_cpu/$target_cpu/ on multiarch */
+            if (build_cpu != opts->target_cpu && !memcmp( p, build_multiarch, build_len ) && p[build_len] == '/')
+            {
+                memmove( p + target_len, p + build_len, strlen( p + build_len ) + 1 );
+                memcpy( p, target_multiarch, target_len );
+                if (check_platform( opts, buffer )) goto found;
+                memmove( p + build_len, p + target_len, strlen( p + target_len ) + 1 );
+                memcpy( p, build_multiarch, build_len );
+            }
+
+            if (memcmp( p + 1, "lib", 3 )) continue;
+            if (p[4] == '/')
+            {
+                memmove( p + 6, p + 4, strlen( p + 4 ) + 1 );
+                memcpy( p + 4, bit_suffix, 2 );
+                if (check_platform( opts, buffer )) goto found;
+                memmove( p + 4, p + 6, strlen( p + 6 ) + 1 );
+            }
+            else if (!memcmp( p + 4, other_bit_suffix, 2 ) && p[6] == '/')
+            {
+                memcpy( p + 4, bit_suffix, 2 );
+                if (check_platform( opts, buffer )) goto found;
+                memmove( p + 4, p + 6, strlen( p + 6 ) + 1 );
+                if (check_platform( opts, buffer )) goto found;
+                memmove( p + 6, p + 4, strlen( p + 4 ) + 1 );
+                memcpy( p + 4, other_bit_suffix, 2 );
+            }
+        }
+
+        free( buffer );
+        continue;
+
+    found:
+        buffer[strlen(buffer) - strlen(libwine)] = 0;
+        return buffer;
+    }
+    return xstrdup( LIBDIR );
 }
 
 static void compile(struct options* opts, const char* lang)
 {
     strarray* comp_args = strarray_alloc();
-    int j, gcc_defs = 0;
+    unsigned int i, j;
+    int gcc_defs = 0;
+    strarray* gcc;
+    strarray* gpp;
 
+    strarray_addall(comp_args, get_translator(opts));
     switch(opts->processor)
     {
-	case proc_cpp:  gcc_defs = 1; break;
-#ifdef __GNUC__
+	case proc_cpp: gcc_defs = 1; break;
+	case proc_as:  gcc_defs = 0; break;
 	/* Note: if the C compiler is gcc we assume the C++ compiler is too */
 	/* mixing different C and C++ compilers isn't supported in configure anyway */
-	case proc_cc:  gcc_defs = 1; break;
-	case proc_cxx: gcc_defs = 1; break;
-#else
-	case proc_cc:  gcc_defs = 0; break;
-	case proc_cxx: gcc_defs = 0; break;
-#endif
-	case proc_as:  gcc_defs = 0; break;
+	case proc_cc:
+	case proc_cxx:
+            gcc = strarray_fromstring(build_tool_name(opts, "gcc", CC), " ");
+            gpp = strarray_fromstring(build_tool_name(opts, "g++", CXX), " ");
+            for ( j = 0; !gcc_defs && j < comp_args->size; j++ )
+            {
+                const char *cc = comp_args->base[j];
+
+                for (i = 0; !gcc_defs && i < gcc->size; i++)
+                    gcc_defs = gcc->base[i][0] != '-' && strendswith(cc, gcc->base[i]);
+                for (i = 0; !gcc_defs && i < gpp->size; i++)
+                    gcc_defs = gpp->base[i][0] != '-' && strendswith(cc, gpp->base[i]);
+            }
+            strarray_free(gcc);
+            strarray_free(gpp);
+            break;
     }
-    strarray_addall(comp_args, get_translator(opts->processor));
+
+    if (opts->target_platform == PLATFORM_WINDOWS || opts->target_platform == PLATFORM_CYGWIN)
+        goto no_compat_defines;
 
     if (opts->processor != proc_cpp)
     {
-#ifdef CC_FLAG_SHORT_WCHAR
-	if (!opts->wine_mode && !opts->noshortwchar)
+	if (gcc_defs && !opts->wine_objdir && !opts->noshortwchar)
 	{
-            strarray_add(comp_args, CC_FLAG_SHORT_WCHAR);
+            strarray_add(comp_args, "-fshort-wchar");
             strarray_add(comp_args, "-DWINE_UNICODE_NATIVE");
 	}
-#endif
-        strarray_addall(comp_args, strarray_fromstring(DLLFLAGS, " "));
+        strarray_add(comp_args, "-D_REENTRANT");
+        strarray_add(comp_args, "-fPIC");
+    }
+
+    if (opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64)
+    {
+        strarray_add(comp_args, "-DWIN64");
+        strarray_add(comp_args, "-D_WIN64");
+        strarray_add(comp_args, "-D__WIN64");
+        strarray_add(comp_args, "-D__WIN64__");
     }
 
     strarray_add(comp_args, "-DWIN32");
@@ -278,12 +611,35 @@ static void compile(struct options* opts, const char* lang)
 
     if (gcc_defs)
     {
-	strarray_add(comp_args, "-D__stdcall=__attribute__((__stdcall__))");
-	strarray_add(comp_args, "-D__cdecl=__attribute__((__cdecl__))");
-	strarray_add(comp_args, "-D__fastcall=__attribute__((__fastcall__))");
-	strarray_add(comp_args, "-D_stdcall=__attribute__((__stdcall__))");
-	strarray_add(comp_args, "-D_cdecl=__attribute__((__cdecl__))");
-	strarray_add(comp_args, "-D_fastcall=__attribute__((__fastcall__))");
+        switch (opts->target_cpu)
+        {
+        case CPU_x86_64:
+            strarray_add(comp_args, "-D__stdcall=__attribute__((ms_abi))");
+            strarray_add(comp_args, "-D__cdecl=__attribute__((ms_abi))");
+            strarray_add(comp_args, "-D_stdcall=__attribute__((ms_abi))");
+            strarray_add(comp_args, "-D_cdecl=__attribute__((ms_abi))");
+            strarray_add(comp_args, "-D__fastcall=__attribute__((ms_abi))");
+            strarray_add(comp_args, "-D_fastcall=__attribute__((ms_abi))");
+            break;
+        case CPU_x86:
+            strarray_add(comp_args, "-D__stdcall=__attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))");
+            strarray_add(comp_args, "-D__cdecl=__attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))");
+            strarray_add(comp_args, "-D_stdcall=__attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))");
+            strarray_add(comp_args, "-D_cdecl=__attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))");
+            strarray_add(comp_args, "-D__fastcall=__attribute__((__fastcall__))");
+            strarray_add(comp_args, "-D_fastcall=__attribute__((__fastcall__))");
+            break;
+        case CPU_ARM:
+        case CPU_ARM64:
+        case CPU_POWERPC:
+            strarray_add(comp_args, "-D__stdcall=");
+            strarray_add(comp_args, "-D__cdecl=");
+            strarray_add(comp_args, "-D_stdcall=");
+            strarray_add(comp_args, "-D_cdecl=");
+            strarray_add(comp_args, "-D__fastcall=");
+            strarray_add(comp_args, "-D_fastcall=");
+            break;
+        }
 	strarray_add(comp_args, "-D__declspec(x)=__declspec_##x");
 	strarray_add(comp_args, "-D__declspec_align(x)=__attribute__((aligned(x)))");
 	strarray_add(comp_args, "-D__declspec_allocate(x)=__attribute__((section(x)))");
@@ -299,15 +655,16 @@ static void compile(struct options* opts, const char* lang)
 	strarray_add(comp_args, "-D__declspec_thread=__thread");
     }
 
-    /* Wine specific defines */
-    strarray_add(comp_args, "-D__WINE__");
     strarray_add(comp_args, "-D__int8=char");
     strarray_add(comp_args, "-D__int16=short");
-    /* FIXME: what about 64-bit platforms? */
     strarray_add(comp_args, "-D__int32=int");
-#ifdef HAVE_LONG_LONG
-    strarray_add(comp_args, "-D__int64=long long");
-#endif
+    if (opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64)
+        strarray_add(comp_args, "-D__int64=long");
+    else
+        strarray_add(comp_args, "-D__int64=long long");
+
+no_compat_defines:
+    strarray_add(comp_args, "-D__WINE__");
 
     /* options we handle explicitly */
     if (opts->compile_only)
@@ -334,23 +691,21 @@ static void compile(struct options* opts, const char* lang)
     }
 
     /* standard includes come last in the include search path */
-#ifdef __GNUC__
-#define SYS_INCLUDE "-isystem"
-#else
-#define SYS_INCLUDE "-I"
-#endif
-    if (!opts->wine_mode && !opts->nostdinc)
+    if (!opts->wine_objdir && !opts->nostdinc)
     {
         if (opts->use_msvcrt)
         {
-            strarray_add(comp_args, SYS_INCLUDE INCLUDEDIR "/msvcrt");
+            strarray_add(comp_args, gcc_defs ? "-isystem" INCLUDEDIR "/wine/msvcrt" : "-I" INCLUDEDIR "/wine/msvcrt" );
             strarray_add(comp_args, "-D__MSVCRT__");
         }
-        strarray_add(comp_args, SYS_INCLUDE INCLUDEDIR "/windows");
+        strarray_add(comp_args, "-I" INCLUDEDIR );
+        strarray_add(comp_args, gcc_defs ? "-isystem" INCLUDEDIR "/wine/windows" : "-I" INCLUDEDIR "/wine/windows" );
     }
-#undef SYS_INCLUDE
+    else if (opts->wine_objdir)
+        strarray_add(comp_args, strmake("-I%s/include", opts->wine_objdir) );
 
     spawn(opts->prefix, comp_args, 0);
+    strarray_free(comp_args);
 }
 
 static const char* compile_to_object(struct options* opts, const char* file, const char* lang)
@@ -373,6 +728,41 @@ static const char* compile_to_object(struct options* opts, const char* file, con
     return copts.output_name;
 }
 
+/* return the initial set of options needed to run winebuild */
+static strarray *get_winebuild_args(struct options *opts)
+{
+    const char* winebuild = getenv("WINEBUILD");
+    strarray *spec_args = strarray_alloc();
+
+    if (!winebuild) winebuild = "winebuild";
+    strarray_add( spec_args, winebuild );
+    if (verbose) strarray_add( spec_args, "-v" );
+    if (keep_generated) strarray_add( spec_args, "--save-temps" );
+    if (opts->target)
+    {
+        strarray_add( spec_args, "--target" );
+        strarray_add( spec_args, opts->target );
+    }
+    if (opts->unwind_tables) strarray_add( spec_args, "-fasynchronous-unwind-tables" );
+    else strarray_add( spec_args, "-fno-asynchronous-unwind-tables" );
+    return spec_args;
+}
+
+static const char* compile_resources_to_object(struct options* opts, const strarray *resources,
+                                               const char *res_o_name)
+{
+    strarray *winebuild_args = get_winebuild_args( opts );
+
+    strarray_add( winebuild_args, "--resources" );
+    strarray_add( winebuild_args, "-o" );
+    strarray_add( winebuild_args, res_o_name );
+    strarray_addall( winebuild_args, resources );
+
+    spawn( opts->prefix, winebuild_args, 0 );
+    strarray_free( winebuild_args );
+    return res_o_name;
+}
+
 /* check if there is a static lib associated to a given dll */
 static char *find_static_lib( const char *dll )
 {
@@ -382,17 +772,65 @@ static char *find_static_lib( const char *dll )
     return NULL;
 }
 
+/* add specified library to the list of files */
+static void add_library( struct options *opts, strarray *lib_dirs, strarray *files, const char *library )
+{
+    char *static_lib, *fullname = 0;
+
+    switch(get_lib_type(opts->target_platform, lib_dirs, library, opts->lib_suffix, &fullname))
+    {
+    case file_arh:
+        strarray_add(files, strmake("-a%s", fullname));
+        break;
+    case file_dll:
+        strarray_add(files, strmake("-d%s", fullname));
+        if ((static_lib = find_static_lib(fullname)))
+        {
+            strarray_add(files, strmake("-a%s",static_lib));
+            free(static_lib);
+        }
+        break;
+    case file_so:
+    default:
+        /* keep it anyway, the linker may know what to do with it */
+        strarray_add(files, strmake("-l%s", library));
+        break;
+    }
+    free(fullname);
+}
+
+/* hack a main or WinMain function to work around Mingw's lack of Unicode support */
+static const char *mingw_unicode_hack( struct options *opts )
+{
+    char *main_stub = get_temp_file( opts->output_name, ".c" );
+
+    create_file( main_stub, 0644,
+                 "typedef unsigned short wchar_t;\n"
+                 "extern void * __stdcall LoadLibraryA(const char *);\n"
+                 "extern void * __stdcall GetProcAddress(void *,const char *);\n"
+                 "extern int wmain( int argc, wchar_t *argv[] );\n\n"
+                 "int main( int argc, char *argv[] )\n{\n"
+                 "    int wargc;\n"
+                 "    wchar_t **wargv, **wenv;\n"
+                 "    void *msvcrt = LoadLibraryA( \"msvcrt.dll\" );\n"
+                 "    void (*__wgetmainargs)(int *argc, wchar_t** *wargv, wchar_t** *wenvp, int expand_wildcards,\n"
+                 "                           int *new_mode) = GetProcAddress( msvcrt, \"__wgetmainargs\" );\n"
+                 "    __wgetmainargs( &wargc, &wargv, &wenv, 0, 0 );\n"
+                 "    return wmain( wargc, wargv );\n}\n" );
+    return compile_to_object( opts, main_stub, NULL );
+}
+
 static void build(struct options* opts)
 {
-    static const char *stdlibpath[] = { DLLDIR, LIBDIR, "/usr/lib", "/usr/local/lib", "/lib" };
     strarray *lib_dirs, *files;
     strarray *spec_args, *link_args;
     char *output_file;
     const char *spec_o_name;
     const char *output_name, *spec_file, *lang;
-    const char* winebuild = getenv("WINEBUILD");
+    const char *prelink = NULL;
     int generate_app_loader = 1;
-    int j;
+    int fake_module = 0;
+    unsigned int j;
 
     /* NOTE: for the files array we'll use the following convention:
      *    -axxx:  xxx is an archive (.a)
@@ -404,8 +842,6 @@ static void build(struct options* opts)
      *    -xlll:  lll is the language (c, c++, etc.)
      */
 
-    if (!winebuild) winebuild = "winebuild";
-
     output_file = strdup( opts->output_name ? opts->output_name : "a.out" );
 
     /* 'winegcc -o app xxx.exe.so' only creates the load script */
@@ -416,37 +852,43 @@ static void build(struct options* opts)
     }
 
     /* generate app loader only for .exe */
-    if (opts->shared || strendswith(output_file, ".exe.so"))
+    if (opts->shared || strendswith(output_file, ".so"))
 	generate_app_loader = 0;
+
+    if (strendswith(output_file, ".fake")) fake_module = 1;
 
     /* normalize the filename a bit: strip .so, ensure it has proper ext */
     if (strendswith(output_file, ".so")) 
 	output_file[strlen(output_file) - 3] = 0;
-    if (opts->shared)
-    {
-	if ((output_name = strrchr(output_file, '/'))) output_name++;
-	else output_name = output_file;
-	if (!strchr(output_name, '.'))
-	    output_file = strmake("%s.dll", output_file);
-    }
-    else if (!strendswith(output_file, ".exe"))
-	output_file = strmake("%s.exe", output_file);
+    if ((output_name = strrchr(output_file, '/'))) output_name++;
+    else output_name = output_file;
+    if (!strchr(output_name, '.'))
+        output_file = strmake("%s.%s", output_file, opts->shared ? "dll" : "exe");
 
     /* get the filename from the path */
     if ((output_name = strrchr(output_file, '/'))) output_name++;
     else output_name = output_file;
 
     /* prepare the linking path */
-    lib_dirs = strarray_dup(opts->lib_dirs);
-    if (!opts->wine_mode)
+    if (!opts->wine_objdir)
     {
-	for ( j = 0; j < sizeof(stdlibpath)/sizeof(stdlibpath[0]); j++ )
-	    strarray_add(lib_dirs, stdlibpath[j]);
+        char *lib_dir = get_lib_dir( opts );
+        lib_dirs = strarray_dup(opts->lib_dirs);
+        strarray_add( lib_dirs, strmake( "%s/wine", lib_dir ));
+        strarray_add( lib_dirs, lib_dir );
+    }
+    else
+    {
+        lib_dirs = strarray_alloc();
+        strarray_add(lib_dirs, strmake("%s/dlls", opts->wine_objdir));
+        strarray_add(lib_dirs, strmake("%s/libs/wine", opts->wine_objdir));
+        strarray_addall(lib_dirs, opts->lib_dirs);
     }
 
     /* mark the files with their appropriate type */
     spec_file = lang = 0;
     files = strarray_alloc();
+    link_args = strarray_alloc();
     for ( j = 0; j < opts->files->size; j++ )
     {
 	const char* file = opts->files->base[j];
@@ -457,12 +899,12 @@ static void build(struct options* opts)
 		case file_def:
 		case file_spec:
 		    if (spec_file)
-			error("Only one spec file can be specified.");
+			error("Only one spec file can be specified\n");
 		    spec_file = file;
 		    break;
 		case file_rc:
 		    /* FIXME: invoke wrc to build it */
-		    error("Can't compile .rc file at the moment: %s", file);
+		    error("Can't compile .rc file at the moment: %s\n", file);
 	            break;
 	    	case file_res:
 		    strarray_add(files, strmake("-r%s", file));
@@ -477,7 +919,7 @@ static void build(struct options* opts)
 		    strarray_add(files, strmake("-s%s", file));
 		    break;
 	    	case file_na:
-		    error("File does not exist: %s", file);
+		    error("File does not exist: %s\n", file);
 		    break;
 	        default:
 		    file = compile_to_object(opts, file, lang);
@@ -486,83 +928,201 @@ static void build(struct options* opts)
 	    }
 	}
 	else if (file[1] == 'l')
-	{
-	    char *static_lib, *fullname = 0;
-	    switch(get_lib_type(lib_dirs, file + 2, &fullname))
-	    {
-	    	case file_arh:
-		    strarray_add(files, strmake("-a%s", fullname));
-		    break;
-	        case file_dll:
-		    strarray_add(files, strmake("-d%s", file + 2));
-                    if ((static_lib = find_static_lib(fullname)))
-                    {
-                        strarray_add(files, strmake("-a%s",static_lib));
-                        free(static_lib);
-                    }
-		    break;
-	        case file_so:
-		    strarray_add(files, strmake("-s%s", file + 2));
-		    break;
-	        default:
-                    /* keep it anyway, the linker may know what to do with it */
-                    strarray_add(files, file);
-                    break;
-	    }
-	    free(fullname);
-	}
+            add_library(opts, lib_dirs, files, file + 2 );
 	else if (file[1] == 'x')
 	    lang = file;
     }
-    if (opts->shared && !spec_file)
-	error("A spec file is currently needed in shared mode");
 
-    /* add the default libraries, if needed */
-    if (!opts->nostdlib) 
+    /* building for Windows is completely different */
+
+    if (opts->target_platform == PLATFORM_WINDOWS || opts->target_platform == PLATFORM_CYGWIN)
     {
-        if (opts->use_msvcrt) strarray_add(files, "-dmsvcrt");
+        strarray *resources = strarray_alloc();
+        char *res_o_name = NULL;
+
+        if (opts->win16_app)
+            error( "Building 16-bit code is not supported for Windows\n" );
+
+        strarray_addall(link_args, get_translator(opts));
+
+        if (opts->shared)
+        {
+            /* run winebuild to generate the .def file */
+            char *spec_def_name = get_temp_file(output_name, ".spec.def");
+            spec_args = get_winebuild_args( opts );
+            strarray_add(spec_args, "--def");
+            strarray_add(spec_args, "-o");
+            strarray_add(spec_args, spec_def_name);
+            if (spec_file)
+            {
+                strarray_add(spec_args, "--export");
+                strarray_add(spec_args, spec_file);
+            }
+            spawn(opts->prefix, spec_args, 0);
+            strarray_free(spec_args);
+
+            strarray_add(link_args, "-shared");
+            if (verbose) strarray_add(link_args, "-v");
+            strarray_add(link_args, "-Wl,--kill-at");
+            strarray_add(link_args, spec_def_name);
+        }
+        else
+        {
+            strarray_add(link_args, opts->gui_app ? "-mwindows" : "-mconsole");
+        }
+
+        if (opts->nodefaultlibs) strarray_add(link_args, "-nodefaultlibs");
+        if (opts->nostartfiles) strarray_add(link_args, "-nostartfiles" );
+
+        if (opts->subsystem)
+        {
+            strarray_add(link_args, strmake("-Wl,--subsystem,%s", opts->subsystem));
+            if (!strcmp( opts->subsystem, "native" ))
+            {
+                const char *entry = opts->target_cpu == CPU_x86 ? "_DriverEntry@8" : "DriverEntry";
+                strarray_add(link_args, strmake( "-Wl,--entry,%s", entry ));
+            }
+        }
+
+        for ( j = 0 ; j < opts->linker_args->size ; j++ )
+            strarray_add(link_args, opts->linker_args->base[j]);
+
+        strarray_add(link_args, "-o");
+        strarray_add(link_args, output_file);
+
+        if (opts->image_base)
+            strarray_add(link_args, strmake("-Wl,--image-base,%s", opts->image_base));
+
+        if (opts->large_address_aware && opts->target_cpu == CPU_x86)
+            strarray_add( link_args, "-Wl,--large-address-aware" );
+
+        if (opts->unicode_app && !opts->shared)
+            strarray_add(link_args, mingw_unicode_hack(opts));
+
+        for ( j = 0; j < lib_dirs->size; j++ )
+            strarray_add(link_args, strmake("-L%s", lib_dirs->base[j]));
+
+        if (!opts->nodefaultlibs)
+        {
+            add_library(opts, lib_dirs, files, "winecrt0");
+            add_library(opts, lib_dirs, files, "kernel32");
+            add_library(opts, lib_dirs, files, "ntdll");
+        }
+        if (!opts->shared && opts->use_msvcrt && opts->target_platform == PLATFORM_CYGWIN)
+            add_library(opts, lib_dirs, files, "msvcrt");
+
+        for ( j = 0; j < files->size; j++ )
+        {
+            const char* name = files->base[j] + 2;
+
+            switch(files->base[j][1])
+            {
+            case 'l':
+            case 'd':
+                strarray_add(link_args, strmake("-l%s", name));
+                break;
+            case 's':
+            case 'o':
+                strarray_add(link_args, name);
+                break;
+            case 'a':
+                if (!opts->lib_suffix && strchr(name, '/'))
+                {
+                    /* turn the path back into -Ldir -lfoo options
+                     * this makes sure that we use the specified libs even
+                     * when mingw adds its own import libs to the link */
+                    char *lib = xstrdup( name );
+                    char *p = strrchr( lib, '/' );
+
+                    *p++ = 0;
+                    if (!strncmp( p, "lib", 3 ))
+                    {
+                        char *ext = strrchr( p, '.' );
+
+                        if (ext) *ext = 0;
+                        p += 3;
+                        strarray_add(link_args, strmake("-L%s", lib ));
+                        strarray_add(link_args, strmake("-l%s", p ));
+                        free( lib );
+                        break;
+                    }
+                    free( lib );
+                }
+                strarray_add(link_args, name);
+                break;
+            case 'r':
+                if (!res_o_name)
+                {
+                    res_o_name = get_temp_file( output_name, ".res.o" );
+                    strarray_add( link_args, res_o_name );
+                }
+                strarray_add( resources, name );
+                break;
+            }
+        }
+
+        if (res_o_name) compile_resources_to_object( opts, resources, res_o_name );
+
+        spawn(opts->prefix, link_args, 0);
+        strarray_free (resources);
+        strarray_free (link_args);
+        strarray_free (lib_dirs);
+        strarray_free (files);
+        return;
     }
 
-    if (!opts->wine_mode && !opts->nodefaultlibs) 
+    /* add the default libraries, if needed */
+    if (!opts->nostdlib && opts->use_msvcrt) add_library(opts, lib_dirs, files, "msvcrt");
+
+    if (!opts->wine_objdir && !opts->nodefaultlibs) 
     {
         if (opts->gui_app) 
 	{
-            strarray_add(files, "-dshell32");
-	    strarray_add(files, "-dcomdlg32");
-	    strarray_add(files, "-dgdi32");
+	    add_library(opts, lib_dirs, files, "shell32");
+	    add_library(opts, lib_dirs, files, "comdlg32");
+	    add_library(opts, lib_dirs, files, "gdi32");
 	}
-        strarray_add(files, "-dadvapi32");
-        strarray_add(files, "-duser32");
-        strarray_add(files, "-dkernel32");
+        add_library(opts, lib_dirs, files, "advapi32");
+        add_library(opts, lib_dirs, files, "user32");
     }
 
-    if (!opts->nostartfiles)
+    if (!opts->nodefaultlibs)
     {
-        char *fullname = NULL;
-        if (get_lib_type(lib_dirs, "winecrt0", &fullname) == file_arh)
-            strarray_add(files, strmake("-a%s", fullname));
-        free( fullname );
+        add_library(opts, lib_dirs, files, "winecrt0");
+        if (opts->win16_app) add_library(opts, lib_dirs, files, "kernel");
+        add_library(opts, lib_dirs, files, "kernel32");
+        add_library(opts, lib_dirs, files, "ntdll");
     }
+    if (!opts->nostdlib) add_library(opts, lib_dirs, files, "wine");
 
     /* run winebuild to generate the .spec.o file */
-    spec_args = strarray_alloc();
+    spec_args = get_winebuild_args( opts );
+    strarray_add( spec_args, strmake( "--cc-cmd=%s", build_tool_name( opts, "gcc", CC )));
+    strarray_add( spec_args, strmake( "--ld-cmd=%s", build_tool_name( opts, "ld", LD )));
+
     spec_o_name = get_temp_file(output_name, ".spec.o");
-    strarray_add(spec_args, winebuild);
-    if (verbose) strarray_add(spec_args, "-v");
-    if (keep_generated) strarray_add(spec_args, "--save-temps");
-    strarray_add(spec_args, "--as-cmd");
-    strarray_add(spec_args, AS);
-    strarray_add(spec_args, "--ld-cmd");
-    strarray_add(spec_args, LD);
-    strarray_addall(spec_args, strarray_fromstring(DLLFLAGS, " "));
+    if (opts->force_pointer_size)
+        strarray_add(spec_args, strmake("-m%u", 8 * opts->force_pointer_size ));
+    strarray_add(spec_args, "-D_REENTRANT");
+    strarray_add(spec_args, "-fPIC");
     strarray_add(spec_args, opts->shared ? "--dll" : "--exe");
-    strarray_add(spec_args, "-o");
-    strarray_add(spec_args, spec_o_name);
+    if (fake_module)
+    {
+        strarray_add(spec_args, "--fake-module");
+        strarray_add(spec_args, "-o");
+        strarray_add(spec_args, output_file);
+    }
+    else
+    {
+        strarray_add(spec_args, "-o");
+        strarray_add(spec_args, spec_o_name);
+    }
     if (spec_file)
     {
         strarray_add(spec_args, "-E");
         strarray_add(spec_args, spec_file);
     }
+    if (opts->win16_app) strarray_add(spec_args, "-m16");
 
     if (!opts->shared)
     {
@@ -575,6 +1135,13 @@ static void build(struct options* opts)
             strarray_add(spec_args, "--entry");
             strarray_add(spec_args, "__wine_spec_exe_wentry");
         }
+        if (opts->large_address_aware) strarray_add( spec_args, "--large-address-aware" );
+    }
+
+    if (opts->subsystem)
+    {
+        strarray_add(spec_args, "--subsystem");
+        strarray_add(spec_args, opts->subsystem);
     }
 
     for ( j = 0; j < lib_dirs->size; j++ )
@@ -583,30 +1150,31 @@ static void build(struct options* opts)
     for ( j = 0 ; j < opts->winebuild_args->size ; j++ )
         strarray_add(spec_args, opts->winebuild_args->base[j]);
 
+    /* add resource files */
+    for ( j = 0; j < files->size; j++ )
+	if (files->base[j][1] == 'r') strarray_add(spec_args, files->base[j]);
+
+    /* add other files */
+    strarray_add(spec_args, "--");
     for ( j = 0; j < files->size; j++ )
     {
-	const char* name = files->base[j] + 2;
 	switch(files->base[j][1])
 	{
 	    case 'd':
-		strarray_add(spec_args, strmake("-l%s", name));
-		break;
-	    case 'r':
-		strarray_add(spec_args, files->base[j]);
-		break;
 	    case 'a':
 	    case 'o':
-		strarray_add(spec_args, name);
+		strarray_add(spec_args, files->base[j] + 2);
 		break;
 	}
     }
 
     spawn(opts->prefix, spec_args, 0);
+    strarray_free (spec_args);
+    if (fake_module) return;  /* nothing else to do */
 
     /* link everything together now */
-    link_args = strarray_alloc();
-    strarray_addall(link_args, get_translator(opts->processor));
-    strarray_addall(link_args, strarray_fromstring(LDDLLFLAGS, " "));
+    strarray_addall(link_args, get_translator(opts));
+    strarray_addall(link_args, get_lddllflags(opts, link_args));
 
     strarray_add(link_args, "-o");
     strarray_add(link_args, strmake("%s.so", output_file));
@@ -614,13 +1182,43 @@ static void build(struct options* opts)
     for ( j = 0 ; j < opts->linker_args->size ; j++ ) 
         strarray_add(link_args, opts->linker_args->base[j]);
 
-#ifdef __APPLE__
-    if (opts->image_base)
+    switch (opts->target_platform)
     {
-        strarray_add(link_args, "-image_base");
-        strarray_add(link_args, opts->image_base);
+    case PLATFORM_APPLE:
+        if (opts->image_base)
+        {
+            strarray_add(link_args, "-image_base");
+            strarray_add(link_args, opts->image_base);
+        }
+        if (opts->strip)
+            strarray_add(link_args, "-Wl,-x");
+        break;
+    case PLATFORM_SOLARIS:
+        {
+            char *mapfile = get_temp_file( output_name, ".map" );
+            const char *align = opts->section_align ? opts->section_align : "0x1000";
+
+            create_file( mapfile, 0644, "text = A%s;\ndata = A%s;\n", align, align );
+            strarray_add(link_args, strmake("-Wl,-M,%s", mapfile));
+            strarray_add(tmp_files, mapfile);
+        }
+        break;
+    case PLATFORM_ANDROID:
+        /* the Android loader requires a soname for all libraries */
+        strarray_add( link_args, strmake( "-Wl,-soname,%s.so", output_name ));
+        break;
+    default:
+        if (opts->image_base)
+        {
+            if (!try_link(opts->prefix, link_args, strmake("-Wl,-Ttext-segment=%s", opts->image_base)))
+                strarray_add(link_args, strmake("-Wl,-Ttext-segment=%s", opts->image_base));
+            else
+                prelink = PRELINK;
+        }
+        if (!try_link(opts->prefix, link_args, "-Wl,-z,max-page-size=0x1000"))
+            strarray_add(link_args, "-Wl,-z,max-page-size=0x1000");
+        break;
     }
-#endif
 
     for ( j = 0; j < lib_dirs->size; j++ )
 	strarray_add(link_args, strmake("-L%s", lib_dirs->base[j]));
@@ -633,9 +1231,9 @@ static void build(struct options* opts)
 	switch(files->base[j][1])
 	{
 	    case 'l':
-	    case 's':
 		strarray_add(link_args, strmake("-l%s", name));
 		break;
+	    case 's':
 	    case 'a':
 	    case 'o':
 		strarray_add(link_args, name);
@@ -645,17 +1243,16 @@ static void build(struct options* opts)
 
     if (!opts->nostdlib) 
     {
-	strarray_add(link_args, "-lwine");
 	strarray_add(link_args, "-lm");
 	strarray_add(link_args, "-lc");
     }
 
     spawn(opts->prefix, link_args, 0);
+    strarray_free (link_args);
 
-    /* set the base address */
-    if (opts->image_base)
+    /* set the base address with prelink if linker support is not present */
+    if (prelink && !opts->target)
     {
-        const char *prelink = PRELINK;
         if (prelink[0] && strcmp(prelink,"false"))
         {
             strarray *prelink_args = strarray_alloc();
@@ -670,10 +1267,7 @@ static void build(struct options* opts)
 
     /* create the loader script */
     if (generate_app_loader)
-    {
-        if (strendswith(output_file, ".exe")) output_file[strlen(output_file) - 4] = 0;
-        create_file(output_file, 0755, app_loader_template, strmake("%s.exe.so", output_name));
-    }
+        create_file(output_file, 0755, app_loader_template, strmake("%s.so", output_name));
 }
 
 
@@ -682,34 +1276,30 @@ static void forward(int argc, char **argv, struct options* opts)
     strarray* args = strarray_alloc();
     int j;
 
-    strarray_addall(args, get_translator(opts->processor));
+    strarray_addall(args, get_translator(opts));
 
     for( j = 1; j < argc; j++ ) 
 	strarray_add(args, argv[j]);
 
     spawn(opts->prefix, args, 0);
+    strarray_free (args);
 }
 
-/*
- *      Linker Options
- *          object-file-name  -llibrary -nostartfiles  -nodefaultlibs
- *          -nostdlib -s  -static  -static-libgcc  -shared  -shared-libgcc
- *          -symbolic -Wl,option  -Xlinker option -u symbol
- *	    -framework name
- */
 static int is_linker_arg(const char* arg)
 {
     static const char* link_switches[] = 
     {
-	"-nostartfiles", "-nodefaultlibs", "-nostdlib", "-s", 
-	"-static", "-static-libgcc", "-shared", "-shared-libgcc", "-symbolic",
-	"-framework"
+	"-nostdlib", "-s", "-static", "-static-libgcc", "-static-libstdc++",
+	"-shared", "-shared-libgcc", "-symbolic", "-framework", "--coverage",
+	"-fprofile-generate", "-fprofile-use"
     };
-    int j;
+    unsigned int j;
 
     switch (arg[1]) 
     {
-	case 'l': 
+	case 'R':
+	case 'z':
+	case 'l':
 	case 'u':
 	    return 1;
         case 'W':
@@ -717,6 +1307,9 @@ static int is_linker_arg(const char* arg)
 	    break;
 	case 'X':
 	    if (strcmp("-Xlinker", arg) == 0) return 1;
+	    break;
+	case 'a':
+	    if (strcmp("-arch", arg) == 0) return 1;
 	    break;
     }
 
@@ -732,7 +1325,7 @@ static int is_linker_arg(const char* arg)
  */
 static int is_target_arg(const char* arg)
 {
-    return arg[1] == 'b' || arg[2] == 'V';
+    return arg[1] == 'b' || arg[1] == 'V';
 }
 
 
@@ -755,12 +1348,61 @@ static int is_mingw_arg(const char* arg)
     {
         "-mno-cygwin", "-mwindows", "-mconsole", "-mthreads", "-municode"
     };
-    int j;
+    unsigned int j;
 
     for (j = 0; j < sizeof(mingw_switches)/sizeof(mingw_switches[0]); j++)
 	if (strcmp(mingw_switches[j], arg) == 0) return 1;
 
     return 0;
+}
+
+static void parse_target_option( struct options *opts, const char *target )
+{
+    char *p, *platform, *spec = xstrdup( target );
+    unsigned int i;
+
+    /* target specification is in the form CPU-MANUFACTURER-OS or CPU-MANUFACTURER-KERNEL-OS */
+
+    /* get the CPU part */
+
+    if ((p = strchr( spec, '-' )))
+    {
+        *p++ = 0;
+        for (i = 0; i < sizeof(cpu_names)/sizeof(cpu_names[0]); i++)
+        {
+            if (!strcmp( cpu_names[i].name, spec ))
+            {
+                opts->target_cpu = cpu_names[i].cpu;
+                break;
+            }
+        }
+        if (i == sizeof(cpu_names)/sizeof(cpu_names[0]))
+            error( "Unrecognized CPU '%s'\n", spec );
+        platform = p;
+        if ((p = strrchr( p, '-' ))) platform = p + 1;
+    }
+    else if (!strcmp( spec, "mingw32" ))
+    {
+        opts->target_cpu = CPU_x86;
+        platform = spec;
+    }
+    else
+        error( "Invalid target specification '%s'\n", target );
+
+    /* get the OS part */
+
+    opts->target_platform = PLATFORM_UNSPECIFIED;  /* default value */
+    for (i = 0; i < sizeof(platform_names)/sizeof(platform_names[0]); i++)
+    {
+        if (!strncmp( platform_names[i].name, platform, strlen(platform_names[i].name) ))
+        {
+            opts->target_platform = platform_names[i].platform;
+            break;
+        }
+    }
+
+    free( spec );
+    opts->target = xstrdup( target );
 }
 
 int main(int argc, char **argv)
@@ -790,6 +1432,8 @@ int main(int argc, char **argv)
     
     /* initialize options */
     memset(&opts, 0, sizeof(opts));
+    opts.target_cpu = build_cpu;
+    opts.target_platform = build_platform;
     opts.lib_dirs = strarray_alloc();
     opts.files = strarray_alloc();
     opts.linker_args = strarray_alloc();
@@ -805,7 +1449,7 @@ int main(int argc, char **argv)
     {
         if (argv[i][0] == '-')  /* option */
 	{
-	    /* determine if tihs switch is followed by a separate argument */
+	    /* determine if this switch is followed by a separate argument */
 	    next_is_arg = 0;
 	    option_arg = 0;
 	    switch(argv[i][1])
@@ -813,7 +1457,7 @@ int main(int argc, char **argv)
 		case 'x': case 'o': case 'D': case 'U':
 		case 'I': case 'A': case 'l': case 'u':
 		case 'b': case 'V': case 'G': case 'L':
-		case 'B':
+		case 'B': case 'R': case 'z':
 		    if (argv[i][2]) option_arg = &argv[i][2];
 		    else next_is_arg = 1;
 		    break;
@@ -822,6 +1466,8 @@ int main(int argc, char **argv)
 		    break;
 		case 'a':
 		    if (strcmp("-aux-info", argv[i]) == 0)
+			next_is_arg = 1;
+		    if (strcmp("-arch", argv[i]) == 0)
 			next_is_arg = 1;
 		    break;
 		case 'X':
@@ -840,8 +1486,16 @@ int main(int argc, char **argv)
 		    if (strcmp("-framework", argv[i]) == 0)
 			next_is_arg = 1;
 		    break;
+		case '-':
+		    if (strcmp("--param", argv[i]) == 0)
+			next_is_arg = 1;
+		    break;
 	    }
-	    if (next_is_arg) option_arg = argv[i+1];
+	    if (next_is_arg)
+            {
+                if (i + 1 >= argc) error("option -%c requires an argument\n", argv[i][1]);
+                option_arg = argv[i+1];
+            }
 
 	    /* determine what options go 'as is' to the linker & the compiler */
 	    raw_compiler_arg = raw_linker_arg = 0;
@@ -861,7 +1515,7 @@ int main(int argc, char **argv)
 		raw_linker_arg = 0;
 	    if (argv[i][1] == 'c' || argv[i][1] == 'L')
 		raw_compiler_arg = 0;
-	    if (argv[i][1] == 'o')
+	    if (argv[i][1] == 'o' || argv[i][1] == 'b' || argv[i][1] == 'V')
 		raw_compiler_arg = raw_linker_arg = 0;
 
 	    /* do a bit of semantic analysis */
@@ -869,16 +1523,29 @@ int main(int argc, char **argv)
 	    {
 		case 'B':
 		    str = strdup(option_arg);
+		    if (strendswith(str, "/")) str[strlen(str) - 1] = 0;
 		    if (strendswith(str, "/tools/winebuild"))
                     {
-                        opts.wine_mode = 1;
+                        char *objdir = strdup(str);
+                        objdir[strlen(objdir) - sizeof("/tools/winebuild") + 1] = 0;
+                        opts.wine_objdir = objdir;
                         /* don't pass it to the compiler, this generates warnings */
                         raw_compiler_arg = raw_linker_arg = 0;
                     }
-		    if (strendswith(str, "/")) str[strlen(str) - 1] = 0;
+                    else if (!strcmp(str, "tools/winebuild"))
+                    {
+                        opts.wine_objdir = ".";
+                        raw_compiler_arg = raw_linker_arg = 0;
+                    }
                     if (!opts.prefix) opts.prefix = strarray_alloc();
                     strarray_add(opts.prefix, str);
 		    break;
+                case 'b':
+                    parse_target_option( &opts, option_arg );
+                    break;
+                case 'V':
+                    opts.version = xstrdup( option_arg );
+                    break;
                 case 'c':        /* compile or assemble */
 		    if (argv[i][2] == 0) opts.compile_only = 1;
 		    /* fall through */
@@ -889,6 +1556,10 @@ int main(int argc, char **argv)
 		case 'f':
 		    if (strcmp("-fno-short-wchar", argv[i]) == 0)
                         opts.noshortwchar = 1;
+		    else if (!strcmp("-fasynchronous-unwind-tables", argv[i]))
+                        opts.unwind_tables = 1;
+		    else if (!strcmp("-fno-asynchronous-unwind-tables", argv[i]))
+                        opts.unwind_tables = 0;
 		    break;
 		case 'l':
 		    strarray_add(opts.files, strmake("-l%s", option_arg));
@@ -908,6 +1579,36 @@ int main(int argc, char **argv)
 			opts.gui_app = 0;
 		    else if (strcmp("-municode", argv[i]) == 0)
 			opts.unicode_app = 1;
+		    else if (strcmp("-m16", argv[i]) == 0)
+			opts.win16_app = 1;
+		    else if (strcmp("-m32", argv[i]) == 0)
+                    {
+                        if (opts.target_cpu == CPU_x86_64)
+                            opts.target_cpu = CPU_x86;
+                        else if (opts.target_cpu == CPU_ARM64)
+                            opts.target_cpu = CPU_ARM;
+                        opts.force_pointer_size = 4;
+			raw_linker_arg = 1;
+                    }
+		    else if (strcmp("-m64", argv[i]) == 0)
+                    {
+                        if (opts.target_cpu == CPU_x86)
+                            opts.target_cpu = CPU_x86_64;
+                        else if (opts.target_cpu == CPU_ARM)
+                            opts.target_cpu = CPU_ARM64;
+                        opts.force_pointer_size = 8;
+			raw_linker_arg = 1;
+                    }
+                    else if (!strcmp("-marm", argv[i] ) || !strcmp("-mthumb", argv[i] ))
+                    {
+                        strarray_add(opts.winebuild_args, argv[i]);
+			raw_linker_arg = 1;
+                    }
+                    else if (!strncmp("-mcpu=", argv[i], 6) ||
+                             !strncmp("-mfpu=", argv[i], 6) ||
+                             !strncmp("-march=", argv[i], 7) ||
+                             !strncmp("-mfloat-abi=", argv[i], 12))
+                        strarray_add(opts.winebuild_args, argv[i]);
 		    break;
                 case 'n':
                     if (strcmp("-nostdinc", argv[i]) == 0)
@@ -932,6 +1633,15 @@ int main(int argc, char **argv)
 			opts.shared = 1;
                         raw_compiler_arg = raw_linker_arg = 0;
 		    }
+                    else if (strcmp("-s", argv[i]) == 0 && opts.target_platform == PLATFORM_APPLE)
+                    {
+                        /* On Mac, change -s into -Wl,-x. ld's -s switch
+                         * is deprecated, and it doesn't work on Tiger with
+                         * MH_BUNDLEs anyway
+                         */
+                        opts.strip = 1;
+                        raw_linker_arg = 0;
+                    }
                     break;
                 case 'v':
                     if (argv[i][2] == 0) verbose++;
@@ -946,6 +1656,21 @@ int main(int argc, char **argv)
                             if (!strcmp(Wl->base[j], "--image-base") && j < Wl->size - 1)
                             {
                                 opts.image_base = strdup( Wl->base[++j] );
+                                continue;
+                            }
+                            if (!strcmp(Wl->base[j], "--section-alignment") && j < Wl->size - 1)
+                            {
+                                opts.section_align = strdup( Wl->base[++j] );
+                                continue;
+                            }
+                            if (!strcmp(Wl->base[j], "--large-address-aware"))
+                            {
+                                opts.large_address_aware = 1;
+                                continue;
+                            }
+                            if (!strcmp(Wl->base[j], "--subsystem") && j < Wl->size - 1)
+                            {
+                                opts.subsystem = strdup( Wl->base[++j] );
                                 continue;
                             }
                             if (!strcmp(Wl->base[j], "-static")) linking = -1;
@@ -966,12 +1691,24 @@ int main(int argc, char **argv)
 		case 'x':
 		    lang = strmake("-x%s", option_arg);
 		    strarray_add(opts.files, lang);
-		    /* we'll pass these flags ourselves, explicitely */
+		    /* we'll pass these flags ourselves, explicitly */
                     raw_compiler_arg = raw_linker_arg = 0;
 		    break;
                 case '-':
                     if (strcmp("-static", argv[i]+1) == 0)
                         linking = -1;
+                    else if (!strncmp("--sysroot", argv[i], 9) && opts.wine_objdir)
+                    {
+                        if (argv[i][9] == '=') opts.wine_objdir = argv[i] + 10;
+                        else opts.wine_objdir = argv[++i];
+                        raw_compiler_arg = raw_linker_arg = 0;
+                    }
+                    else if (!strncmp("--lib-suffix", argv[i], 12) && opts.wine_objdir)
+                    {
+                        if (argv[i][12] == '=') opts.lib_suffix = argv[i] + 13;
+                        else opts.lib_suffix = argv[++i];
+                        raw_compiler_arg = raw_linker_arg = 0;
+                    }
                     break;
             }
 
@@ -999,7 +1736,7 @@ int main(int argc, char **argv)
     }
 
     if (opts.processor == proc_cpp) linking = 0;
-    if (linking == -1) error("Static linking is not supported.");
+    if (linking == -1) error("Static linking is not supported\n");
 
     if (opts.files->size == 0) forward(argc, argv, &opts);
     else if (linking) build(&opts);

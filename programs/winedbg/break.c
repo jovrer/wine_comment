@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -25,6 +25,16 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
+
+static BOOL is_xpoint_break(int bpnum)
+{
+    int type = dbg_curr_process->bp[bpnum].xpoint_type;
+
+    if (type == be_xpoint_break || type == be_xpoint_watch_exec) return TRUE;
+    if (type == be_xpoint_watch_read || type == be_xpoint_watch_write) return FALSE;
+    RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
+    return FALSE; /* never reached */
+}
 
 /***********************************************************************
  *           break_set_xpoints
@@ -46,22 +56,20 @@ void  break_set_xpoints(BOOL set)
     {
         if (!bp[i].refcount || !bp[i].enabled) continue;
 
-        if (bp[i].xpoint_type == be_xpoint_break)
+        if (is_xpoint_break(i))
             size = 0;
         else
             size = bp[i].w.len + 1;
-        addr = (void*)memory_to_linear_addr(&bp[i].addr);
+        addr = memory_to_linear_addr(&bp[i].addr);
 
         if (set)
-            ret = be_cpu->insert_Xpoint(dbg_curr_process->handle,
-                                        dbg_curr_process->process_io,
-                                        &dbg_context, bp[i].xpoint_type, addr,
-                                        &bp[i].info, size);
+            ret = dbg_curr_process->be_cpu->insert_Xpoint(dbg_curr_process->handle,
+                dbg_curr_process->process_io, &dbg_context, bp[i].xpoint_type,
+                addr, &bp[i].info, size);
         else
-            ret = be_cpu->remove_Xpoint(dbg_curr_process->handle, 
-                                        dbg_curr_process->process_io,
-                                        &dbg_context, bp[i].xpoint_type, addr,
-                                        bp[i].info, size);
+            ret = dbg_curr_process->be_cpu->remove_Xpoint(dbg_curr_process->handle,
+                dbg_curr_process->process_io, &dbg_context, bp[i].xpoint_type,
+                addr, bp[i].info, size);
         if (!ret)
         {
             dbg_printf("Invalid address (");
@@ -78,7 +86,7 @@ void  break_set_xpoints(BOOL set)
  * Find the breakpoint for a given address. Return the breakpoint
  * number or -1 if none.
  */
-static int find_xpoint(const ADDRESS* addr, enum be_xpoint_type type)
+static int find_xpoint(const ADDRESS64* addr, enum be_xpoint_type type)
 {
     int                         i;
     void*                       lin = memory_to_linear_addr(addr);
@@ -98,7 +106,7 @@ static int find_xpoint(const ADDRESS* addr, enum be_xpoint_type type)
  *
  * Find an empty slot in BP table to add a new break/watch point
  */
-static	int init_xpoint(int type, const ADDRESS* addr)
+static	int init_xpoint(int type, const ADDRESS64* addr)
 {
     int	                        num;
     struct dbg_breakpoint*      bp = dbg_curr_process->bp;
@@ -127,9 +135,9 @@ static	int init_xpoint(int type, const ADDRESS* addr)
  *
  * Returns the value watched by watch point 'num'.
  */
-static	BOOL	get_watched_value(int num, LPDWORD val)
+static	BOOL	get_watched_value(int num, DWORD64* val)
 {
-    BYTE        buf[4];
+    DWORD64     buf[1];
 
     if (!dbg_read_memory(memory_to_linear_addr(&dbg_curr_process->bp[num].addr),
                          buf, dbg_curr_process->bp[num].w.len + 1))
@@ -137,6 +145,7 @@ static	BOOL	get_watched_value(int num, LPDWORD val)
 
     switch (dbg_curr_process->bp[num].w.len + 1)
     {
+    case 8:	*val = *(DWORD64*)buf;	break;
     case 4:	*val = *(DWORD*)buf;	break;
     case 2:	*val = *(WORD*)buf;	break;
     case 1:	*val = *(BYTE*)buf;	break;
@@ -150,13 +159,14 @@ static	BOOL	get_watched_value(int num, LPDWORD val)
  *
  * Add a breakpoint.
  */
-BOOL break_add_break(const ADDRESS* addr, BOOL verbose)
+BOOL break_add_break(const ADDRESS64* addr, BOOL verbose, BOOL swbp)
 {
     int                         num;
     BYTE                        ch;
     struct dbg_breakpoint*      bp = dbg_curr_process->bp;
+    int                         type = swbp ? be_xpoint_break : be_xpoint_watch_exec;
 
-    if ((num = find_xpoint(addr, be_xpoint_break)) >= 1)
+    if ((num = find_xpoint(addr, type)) >= 1)
     {
         bp[num].refcount++;
         dbg_printf("Breakpoint %d at ", num);
@@ -176,7 +186,7 @@ BOOL break_add_break(const ADDRESS* addr, BOOL verbose)
         return FALSE;
     }
 
-    if ((num = init_xpoint(be_xpoint_break, addr)) == -1)
+    if ((num = init_xpoint(type, addr)) == -1)
         return FALSE;
 
     dbg_printf("Breakpoint %d at ", num);
@@ -191,14 +201,13 @@ BOOL break_add_break(const ADDRESS* addr, BOOL verbose)
  *
  * Add a breakpoint.
  */
-BOOL break_add_break_from_lvalue(const struct dbg_lvalue* lvalue)
+BOOL break_add_break_from_lvalue(const struct dbg_lvalue* lvalue, BOOL swbp)
 {
-    ADDRESS     addr;
+    ADDRESS64   addr;
 
-    addr.Mode = AddrModeFlat;
-    addr.Offset = types_extract_as_integer(lvalue);
+    types_extract_as_address(lvalue, &addr);
 
-    if (!break_add_break(&addr, TRUE))
+    if (!break_add_break(&addr, TRUE, swbp))
     {
         if (!DBG_IVAR(CanDeferOnBPByAddr))
         {
@@ -211,8 +220,9 @@ BOOL break_add_break_from_lvalue(const struct dbg_lvalue* lvalue)
             dbg_heap_realloc(dbg_curr_process->delayed_bp,
                              sizeof(struct dbg_delayed_bp) * ++dbg_curr_process->num_delayed_bp);
 
-        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].is_symbol = FALSE;
-        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.addr    = addr;
+        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].is_symbol   = FALSE;
+        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].software_bp = swbp;
+        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.addr      = addr;
         return TRUE;
     }
     return FALSE;
@@ -223,7 +233,7 @@ BOOL break_add_break_from_lvalue(const struct dbg_lvalue* lvalue)
  *
  * Add a breakpoint from a function name (and eventually a line #)
  */
-void	break_add_break_from_id(const char *name, int lineno)
+void	break_add_break_from_id(const char *name, int lineno, BOOL swbp)
 {
     struct dbg_lvalue 	lvalue;
     int		        i;
@@ -231,7 +241,7 @@ void	break_add_break_from_id(const char *name, int lineno)
     switch (symbol_get_lvalue(name, lineno, &lvalue, TRUE))
     {
     case sglv_found:
-        break_add_break(&lvalue.addr, TRUE);
+        break_add_break(&lvalue.addr, TRUE, swbp);
         return;
     case sglv_unknown:
         break;
@@ -250,15 +260,17 @@ void	break_add_break_from_id(const char *name, int lineno)
     dbg_curr_process->delayed_bp = dbg_heap_realloc(dbg_curr_process->delayed_bp,
                                                     sizeof(struct dbg_delayed_bp) * ++dbg_curr_process->num_delayed_bp);
 
-    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].is_symbol = TRUE;
-    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.symbol.name = strcpy(HeapAlloc(GetProcessHeap(), 0, strlen(name) + 1), name);
+    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].is_symbol       = TRUE;
+    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].software_bp     = swbp;
+    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.symbol.name   = strcpy(HeapAlloc(GetProcessHeap(), 0, strlen(name) + 1), name);
     dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.symbol.lineno = lineno;
 }
 
 struct cb_break_lineno
 {
+    const char* filename;
     int         lineno;
-    ADDRESS     addr;
+    ADDRESS64   addr;
 };
 
 static BOOL CALLBACK line_cb(SRCCODEINFO* sci, void* user)
@@ -274,44 +286,57 @@ static BOOL CALLBACK line_cb(SRCCODEINFO* sci, void* user)
     return TRUE;
 }
 
+static BOOL CALLBACK mcb(PCWSTR module, DWORD64 base, void* user)
+{
+    struct cb_break_lineno*      bkln = user;
+
+    SymEnumLines(dbg_curr_process->handle, base, NULL, bkln->filename, line_cb, bkln);
+    /* continue module enum if no addr found
+     * FIXME: we don't report when several addresses match the same filename/lineno pair
+     */
+    return !bkln->addr.Offset;
+}
+
 /***********************************************************************
  *           break_add_break_from_lineno
  *
  * Add a breakpoint from a line number in current file
  */
-void	break_add_break_from_lineno(int lineno)
+void break_add_break_from_lineno(const char *filename, int lineno, BOOL swbp)
 {
     struct cb_break_lineno      bkln;
+    bkln.addr.Offset = 0;
+    bkln.lineno = lineno;
 
-    memory_get_current_pc(&bkln.addr);
-
-    if (lineno != -1)
+    if (!filename)
     {
-        IMAGEHLP_LINE   il;
+        DWORD disp;
+        ADDRESS64 curr;
+        IMAGEHLP_LINE64 il;
+        DWORD_PTR linear;
 
-
-        DWORD           disp;
-        DWORD           linear = (DWORD)memory_to_linear_addr(&bkln.addr);
-
+        memory_get_current_pc(&curr);
+        linear = (DWORD_PTR)memory_to_linear_addr(&curr);
         il.SizeOfStruct = sizeof(il);
-        if (!SymGetLineFromAddr(dbg_curr_process->handle, linear, &disp, &il))
-
+        if (!SymGetLineFromAddr64(dbg_curr_process->handle, linear, &disp, &il))
         {
             dbg_printf("Unable to add breakpoint (unknown address %lx)\n", linear);
             return;
         }
-        bkln.addr.Offset = 0;
-        bkln.lineno = lineno;
-        SymEnumLines(dbg_curr_process->handle, linear, NULL, il.FileName, line_cb, &bkln);
-        if (!bkln.addr.Offset)
-        {
-            dbg_printf("Unknown line number\n"
-                       "(either out of file, or no code at given line number)\n");
-            return;
-        }
+        filename = il.FileName;
+        SymEnumLines(dbg_curr_process->handle, linear, NULL, filename, line_cb, &bkln);
     }
-
-    break_add_break(&bkln.addr, TRUE);
+    else
+    {
+        /* we have to enumerate across modules */
+        bkln.filename = filename;
+        SymEnumerateModulesW64(dbg_curr_process->handle, mcb, &bkln);
+    }
+    if (bkln.addr.Offset)
+        break_add_break(&bkln.addr, TRUE, swbp);
+    else
+        dbg_printf("Unknown line number\n"
+                   "(either out of file, or no code at given line number)\n");
 }
 
 /***********************************************************************
@@ -324,6 +349,7 @@ void break_check_delayed_bp(void)
     struct dbg_lvalue	        lvalue;
     int			        i;
     struct dbg_delayed_bp*	dbp = dbg_curr_process->delayed_bp;
+    char                        hexbuf[MAX_OFFSET_TO_STR_LEN];
 
     for (i = 0; i < dbg_curr_process->num_delayed_bp; i++)
     {
@@ -338,13 +364,14 @@ void break_check_delayed_bp(void)
             lvalue.addr = dbp[i].u.addr;
         WINE_TRACE("trying to add delayed %s-bp\n", dbp[i].is_symbol ? "S" : "A");
         if (!dbp[i].is_symbol)
-            WINE_TRACE("\t%04x:%08lx\n", 
-                       dbp[i].u.addr.Segment, dbp[i].u.addr.Offset);
+            WINE_TRACE("\t%04x:%s\n", 
+                       dbp[i].u.addr.Segment,
+                       memory_offset_to_string(hexbuf, dbp[i].u.addr.Offset, 0));
         else
             WINE_TRACE("\t'%s' @ %d\n", 
                        dbp[i].u.symbol.name, dbp[i].u.symbol.lineno);
 
-        if (break_add_break(&lvalue.addr, FALSE))
+        if (break_add_break(&lvalue.addr, FALSE, dbp[i].software_bp))
             memmove(&dbp[i], &dbp[i+1], (--dbg_curr_process->num_delayed_bp - i) * sizeof(*dbp));
     }
 }
@@ -357,8 +384,13 @@ void break_check_delayed_bp(void)
 static void break_add_watch(const struct dbg_lvalue* lvalue, BOOL is_write)
 {
     int         num;
-    DWORD       l = 4;
+    DWORD64     l = 4;
 
+    if (lvalue->cookie == DLV_HOST)
+    {
+        dbg_printf("Cannot set a watch point on register or register-based variable\n");
+        return;
+    }
     num = init_xpoint((is_write) ? be_xpoint_watch_write : be_xpoint_watch_read,
                       &lvalue->addr);
     if (num == -1) return;
@@ -371,13 +403,14 @@ static void break_add_watch(const struct dbg_lvalue* lvalue, BOOL is_write)
             {
             case 4: case 2: case 1: break;
             default:
-                dbg_printf("Unsupported length (%lu) for watch-points, defaulting to 4\n", l);
+                dbg_printf("Unsupported length (%s) for watch-points, defaulting to 4\n",
+                           wine_dbgstr_longlong(l));
                 break;
             }
         }
         else dbg_printf("Cannot get watch size, defaulting to 4\n");
     }
-    dbg_curr_process->bp[num].w.len = l - 1;
+    dbg_curr_process->bp[num].w.len = (DWORD)l - 1;
 
     if (!get_watched_value(num, &dbg_curr_process->bp[num].w.oldval))
     {
@@ -395,15 +428,14 @@ static void break_add_watch(const struct dbg_lvalue* lvalue, BOOL is_write)
  *
  * Adds a watch point from an address (stored in a lvalue)
  */
-void break_add_watch_from_lvalue(const struct dbg_lvalue* lvalue)
+void break_add_watch_from_lvalue(const struct dbg_lvalue* lvalue,BOOL is_write)
 {
     struct dbg_lvalue   lval;
 
-    lval.addr.Mode = AddrModeFlat;
-    lval.addr.Offset = types_extract_as_integer(lvalue);
+    types_extract_as_address(lvalue, &lval.addr);
     lval.type.id = dbg_itype_none;
 
-    break_add_watch(&lval, TRUE);
+    break_add_watch(&lval, is_write);
 }
 
 /***********************************************************************
@@ -411,14 +443,14 @@ void break_add_watch_from_lvalue(const struct dbg_lvalue* lvalue)
  *
  * Add a watchpoint from a symbol name
  */
-void	break_add_watch_from_id(const char *name)
+void	break_add_watch_from_id(const char *name, BOOL is_write)
 {
     struct dbg_lvalue    lvalue;
 
     switch (symbol_get_lvalue(name, -1, &lvalue, TRUE))
     {
     case sglv_found:
-        break_add_watch(&lvalue, 1);
+        break_add_watch(&lvalue, is_write);
         break;
     case sglv_unknown:
         dbg_printf("Unable to add watchpoint\n");
@@ -458,44 +490,38 @@ void break_delete_xpoint(int num)
     bp[num].skipcount = 0;
 }
 
-static inline BOOL module_is_container(const IMAGEHLP_MODULE* wmod_cntnr,
-                                     const IMAGEHLP_MODULE* wmod_child)
-{
-    return wmod_cntnr->BaseOfImage <= wmod_child->BaseOfImage &&
-        (DWORD)wmod_cntnr->BaseOfImage + wmod_cntnr->ImageSize >=
-        (DWORD)wmod_child->BaseOfImage + wmod_child->ImageSize;
-}
-
 /******************************************************************
  *		break_delete_xpoints_from_module
  *
  * Remove all Xpoints from module which base is 'base'
  */
-void break_delete_xpoints_from_module(unsigned long base)
+void break_delete_xpoints_from_module(DWORD64 base)
 {
-    IMAGEHLP_MODULE             im, im_elf;
+    IMAGEHLP_MODULE64           im, im_elf;
     int                         i;
-    DWORD                       linear;
+    DWORD_PTR                   linear;
     struct dbg_breakpoint*      bp = dbg_curr_process->bp;
 
-    /* FIXME: should do it also on the ELF sibbling if any */
+    /* FIXME: should do it also on the ELF sibling if any */
     im.SizeOfStruct = sizeof(im);
     im_elf.SizeOfStruct = sizeof(im_elf);
-    if (!SymGetModuleInfo(dbg_curr_process->handle, base, &im)) return;
+    if (!SymGetModuleInfo64(dbg_curr_process->handle, base, &im)) return;
 
     /* try to get in fact the underlying ELF module (if any) */
-    if (SymGetModuleInfo(dbg_curr_process->handle, im.BaseOfImage - 1, &im_elf) &&
+    if (SymGetModuleInfo64(dbg_curr_process->handle, im.BaseOfImage - 1, &im_elf) &&
         im_elf.BaseOfImage <= im.BaseOfImage &&
-        (DWORD)im_elf.BaseOfImage + im_elf.ImageSize >= (DWORD)im.BaseOfImage + im.ImageSize)
+        im_elf.BaseOfImage + im_elf.ImageSize >= im.BaseOfImage + im.ImageSize)
         im = im_elf;
 
     for (i = 0; i < dbg_curr_process->next_bp; i++)
     {
-        linear = (DWORD)memory_to_linear_addr(&bp[i].addr);
-        if (bp[i].refcount && bp[i].enabled &&
-            im.BaseOfImage <= linear && linear < im.BaseOfImage + im.ImageSize)
+        if (bp[i].refcount && bp[i].enabled)
         {
-            break_delete_xpoint(i);
+            linear = (DWORD_PTR)memory_to_linear_addr(&bp[i].addr);
+            if (im.BaseOfImage <= linear && linear < im.BaseOfImage + im.ImageSize)
+            {
+                break_delete_xpoint(i);
+            }
         }
     }
 }
@@ -513,7 +539,7 @@ void break_enable_xpoint(int num, BOOL enable)
         dbg_printf("Invalid breakpoint number %d\n", num);
         return;
     }
-    dbg_curr_process->bp[num].enabled = (enable) ? TRUE : FALSE;
+    dbg_curr_process->bp[num].enabled = enable != 0;
     dbg_curr_process->bp[num].skipcount = 0;
 }
 
@@ -522,16 +548,15 @@ void break_enable_xpoint(int num, BOOL enable)
  *           find_triggered_watch
  *
  * Lookup the watchpoints to see if one has been triggered
- * Return >= (watch point index) if one is found and *oldval is set to
- * 	the value watched before the TRAP
- * Return -1 if none found (*oldval is undetermined)
+ * Return >= (watch point index) if one is found
+ * Return -1 if none found
  *
- * Unfortunately, Linux does *NOT* (A REAL PITA) report with ptrace
+ * Unfortunately, Linux used to *NOT* (A REAL PITA) report with ptrace
  * the DR6 register value, so we have to look with our own need the
  * cause of the TRAP.
  * -EP
  */
-static int find_triggered_watch(LPDWORD oldval)
+static int find_triggered_watch(void)
 {
     int                         found = -1;
     int                         i;
@@ -542,14 +567,13 @@ static int find_triggered_watch(LPDWORD oldval)
      */
     for (i = 0; i < dbg_curr_process->next_bp; i++)
     {
-        DWORD val = 0;
+        DWORD64 val = 0;
 
-        if (bp[i].refcount && bp[i].enabled && bp[i].xpoint_type != be_xpoint_break &&
-            (be_cpu->is_watchpoint_set(&dbg_context, bp[i].info)))
+        if (bp[i].refcount && bp[i].enabled && !is_xpoint_break(i) &&
+            (dbg_curr_process->be_cpu->is_watchpoint_set(&dbg_context, bp[i].info)))
         {
-            be_cpu->clear_watchpoint(&dbg_context, bp[i].info);
+            dbg_curr_process->be_cpu->clear_watchpoint(&dbg_context, bp[i].info);
 
-            *oldval = bp[i].w.oldval;
             if (get_watched_value(i, &val))
             {
                 bp[i].w.oldval = val;
@@ -566,15 +590,14 @@ static int find_triggered_watch(LPDWORD oldval)
      */
     for (i = 0; i < dbg_curr_process->next_bp; i++)
     {
-        DWORD val = 0;
+        DWORD64 val = 0;
 
-        if (bp[i].refcount && bp[i].enabled && bp[i].xpoint_type != be_xpoint_break &&
+        if (bp[i].refcount && bp[i].enabled && !is_xpoint_break(i) &&
             get_watched_value(i, &val))
         {
-            *oldval = bp[i].w.oldval;
-            if (val != *oldval)
+            if (val != bp[i].w.oldval)
             {
-                be_cpu->clear_watchpoint(&dbg_context, bp[i].info);
+                dbg_curr_process->be_cpu->clear_watchpoint(&dbg_context, bp[i].info);
                 bp[i].w.oldval = val;
                 found = i;
                 /* cannot break, because two watch points may have been triggered on
@@ -603,7 +626,7 @@ void break_info(void)
     {
         if (bp[i].refcount)
         {
-            if (bp[i].xpoint_type == be_xpoint_break) nbp++; else nwp++;
+            if (is_xpoint_break(i)) nbp++; else nwp++;
         }
     }
 
@@ -612,11 +635,12 @@ void break_info(void)
         dbg_printf("Breakpoints:\n");
         for (i = 1; i < dbg_curr_process->next_bp; i++)
         {
-            if (!bp[i].refcount || bp[i].xpoint_type != be_xpoint_break)
+            if (!bp[i].refcount || !is_xpoint_break(i))
                 continue;
             dbg_printf("%d: %c ", i, bp[i].enabled ? 'y' : 'n');
             print_address(&bp[i].addr, TRUE);
-            dbg_printf(" (%u)\n", bp[i].refcount);
+            dbg_printf(" (%u)%s\n", bp[i].refcount, 
+                       bp[i].xpoint_type == be_xpoint_watch_exec ? " (hardware assisted)" : "");
 	    if (bp[i].condition != NULL)
 	    {
 	        dbg_printf("\t\tstop when  ");
@@ -631,7 +655,7 @@ void break_info(void)
         dbg_printf("Watchpoints:\n");
         for (i = 1; i < dbg_curr_process->next_bp; i++)
         {
-            if (!bp[i].refcount || bp[i].xpoint_type == be_xpoint_break)
+            if (!bp[i].refcount || is_xpoint_break(i))
                 continue;
             dbg_printf("%d: %c ", i, bp[i].enabled ? 'y' : 'n');
             print_address(&bp[i].addr, TRUE);
@@ -708,44 +732,30 @@ static	BOOL should_stop(int bpnum)
  * Determine if we should continue execution after a SIGTRAP signal when
  * executing in the given mode.
  */
-BOOL break_should_continue(ADDRESS* addr, DWORD code, int* count, BOOL* is_break)
+BOOL break_should_continue(ADDRESS64* addr, DWORD code)
 {
-    int 	        bpnum;
-    DWORD	        oldval = 0;
-    int 	        wpnum;
     enum dbg_exec_mode  mode = dbg_curr_thread->exec_mode;
 
-    *is_break = FALSE;
-    /* If not single-stepping, back up to the break instruction */
-    if (code == EXCEPTION_BREAKPOINT)
-        addr->Offset += be_cpu->adjust_pc_for_break(&dbg_context, TRUE);
 
-    bpnum = find_xpoint(addr, be_xpoint_break);
-    dbg_curr_process->bp[0].enabled = FALSE;  /* disable the step-over breakpoint */
-
-    if (bpnum > 0)
+    if (dbg_curr_thread->stopped_xpoint > 0)
     {
-        if (!should_stop(bpnum)) return TRUE;
+        if (!should_stop(dbg_curr_thread->stopped_xpoint)) return TRUE;
 
-        dbg_printf("Stopped on breakpoint %d at ", bpnum);
-        print_address(&dbg_curr_process->bp[bpnum].addr, TRUE);
-        dbg_printf("\n");
-        return FALSE;
-    }
-
-    wpnum = find_triggered_watch(&oldval);
-    if (wpnum > 0)
-    {
-        /* If not single-stepping, do not back up over the break instruction */
-        if (code == EXCEPTION_BREAKPOINT)
-            addr->Offset += be_cpu->adjust_pc_for_break(&dbg_context, FALSE);
-
-        if (!should_stop(wpnum)) return TRUE;
-
-        dbg_printf("Stopped on watchpoint %d at ", wpnum);
-        print_address(addr, TRUE);
-        dbg_printf(" values: old=%lu new=%lu\n",
-                     oldval, dbg_curr_process->bp[wpnum].w.oldval);
+        switch (dbg_curr_process->bp[dbg_curr_thread->stopped_xpoint].xpoint_type)
+        {
+        case be_xpoint_break:
+        case be_xpoint_watch_exec:
+            dbg_printf("Stopped on breakpoint %d at ", dbg_curr_thread->stopped_xpoint);
+            print_address(&dbg_curr_process->bp[dbg_curr_thread->stopped_xpoint].addr, TRUE);
+            dbg_printf("\n");
+            break;
+        case be_xpoint_watch_read:
+        case be_xpoint_watch_write:
+            dbg_printf("Stopped on watchpoint %d at ", dbg_curr_thread->stopped_xpoint);
+            print_address(addr, TRUE);
+            dbg_printf(" new value %s\n",
+                       wine_dbgstr_longlong(dbg_curr_process->bp[dbg_curr_thread->stopped_xpoint].w.oldval));
+        }
         return FALSE;
     }
 
@@ -757,16 +767,12 @@ BOOL break_should_continue(ADDRESS* addr, DWORD code, int* count, BOOL* is_break
     if (mode == dbg_exec_step_over_line || mode == dbg_exec_step_into_line)
     {
 	if (symbol_get_function_line_status(addr) == dbg_on_a_line_number)
-	{
-	    (*count)--;
-	}
+            dbg_curr_thread->exec_count--;
     }
     else if (mode == dbg_exec_step_over_insn || mode == dbg_exec_step_into_insn)
-    {
-	(*count)--;
-    }
+        dbg_curr_thread->exec_count--;
 
-    if (*count > 0 || mode == dbg_exec_finish)
+    if (dbg_curr_thread->exec_count > 0 || mode == dbg_exec_finish)
     {
 	/*
 	 * We still need to execute more instructions.
@@ -774,19 +780,59 @@ BOOL break_should_continue(ADDRESS* addr, DWORD code, int* count, BOOL* is_break
 	return TRUE;
     }
 
+    /* no breakpoint, continue if in continuous mode */
+    return mode == dbg_exec_cont || mode == dbg_exec_finish;
+}
+
+/***********************************************************************
+ *           break_adjust_pc
+ *
+ * Adjust PC to the address where the trap (if any) actually occurred
+ * Also sets dbg_curr_thread->stopped_xpoint
+ */
+void break_adjust_pc(ADDRESS64* addr, DWORD code, BOOL first_chance, BOOL* is_break)
+{
+    /* break / watch points are handled on first chance */
+    if ( !first_chance )
+    {
+        *is_break = TRUE;
+        dbg_curr_thread->stopped_xpoint = -1;
+        return;
+    }
+    *is_break = FALSE;
+
+    /* If not single-stepping, back up to the break instruction */
+    if (code == EXCEPTION_BREAKPOINT)
+        addr->Offset += dbg_curr_process->be_cpu->adjust_pc_for_break(&dbg_context, TRUE);
+
+    dbg_curr_thread->stopped_xpoint = find_xpoint(addr, be_xpoint_break);
+    dbg_curr_process->bp[0].enabled = FALSE;  /* disable the step-over breakpoint */
+
+    if (dbg_curr_thread->stopped_xpoint > 0) return;
+
+    if (dbg_curr_thread->stopped_xpoint < 0)
+    {
+        dbg_curr_thread->stopped_xpoint = find_xpoint(addr, be_xpoint_watch_exec);
+        if (dbg_curr_thread->stopped_xpoint < 0)
+            dbg_curr_thread->stopped_xpoint = find_triggered_watch();
+        if (dbg_curr_thread->stopped_xpoint > 0)
+        {
+            /* If not single-stepping, do not back up over the break instruction */
+            if (code == EXCEPTION_BREAKPOINT)
+                addr->Offset += dbg_curr_process->be_cpu->adjust_pc_for_break(&dbg_context, FALSE);
+            return;
+        }
+    }
+
     /* If there's no breakpoint and we are not single-stepping, then
      * either we must have encountered a break insn in the Windows program
      * or someone is trying to stop us
      */
-    if (bpnum == -1 && code == EXCEPTION_BREAKPOINT)
+    if (dbg_curr_thread->stopped_xpoint == -1 && code == EXCEPTION_BREAKPOINT)
     {
         *is_break = TRUE;
-        addr->Offset += be_cpu->adjust_pc_for_break(&dbg_context, FALSE);
-        return FALSE;
+        addr->Offset += dbg_curr_process->be_cpu->adjust_pc_for_break(&dbg_context, FALSE);
     }
-
-    /* no breakpoint, continue if in continuous mode */
-    return mode == dbg_exec_cont || mode == dbg_exec_finish;
 }
 
 /***********************************************************************
@@ -808,11 +854,10 @@ void	break_suspend_execution(void)
  */
 void break_restart_execution(int count)
 {
-    ADDRESS                     addr;
-    int                         bp;
+    ADDRESS64                   addr;
     enum dbg_line_status        status;
     enum dbg_exec_mode          mode, ret_mode;
-    ADDRESS                     callee;
+    ADDRESS64                   callee;
     void*                       linear;
 
     memory_get_current_pc(&addr);
@@ -824,24 +869,26 @@ void break_restart_execution(int count)
      */
     ret_mode = mode = dbg_curr_thread->exec_mode;
 
-    bp = find_xpoint(&addr, be_xpoint_break);
-    if (bp != -1 && bp != 0)
+    /* we've stopped on a xpoint (other than step over) */
+    if (dbg_curr_thread->stopped_xpoint > 0)
     {
 	/*
 	 * If we have set a new value, then save it in the BP number.
 	 */
 	if (count != 0 && mode == dbg_exec_cont)
         {
-	    dbg_curr_process->bp[bp].skipcount = count;
+	    dbg_curr_process->bp[dbg_curr_thread->stopped_xpoint].skipcount = count;
         }
-        mode = dbg_exec_step_into_insn;  /* If there's a breakpoint, skip it */
+        /* If we've stopped on a breakpoint, single step over it (, then run) */
+        if (is_xpoint_break(dbg_curr_thread->stopped_xpoint))
+            mode = dbg_exec_step_into_insn;
     }
     else if (mode == dbg_exec_cont && count > 1)
     {
         dbg_printf("Not stopped at any breakpoint; argument ignored.\n");
     }
 
-    if (mode == dbg_exec_finish && be_cpu->is_function_return(linear))
+    if (mode == dbg_exec_finish && dbg_curr_process->be_cpu->is_function_return(linear))
     {
 	mode = ret_mode = dbg_exec_step_into_insn;
     }
@@ -852,7 +899,7 @@ void break_restart_execution(int count)
      * FIXME - we need to check for things like thunks or trampolines,
      * as the actual function may in fact have debug info.
      */
-    if (be_cpu->is_function_call(linear, &callee))
+    if (dbg_curr_process->be_cpu->is_function_call(linear, &callee))
     {
 	status = symbol_get_function_line_status(&callee);
 #if 0
@@ -879,7 +926,7 @@ void break_restart_execution(int count)
     if (mode == dbg_exec_step_into_line && 
         symbol_get_function_line_status(&addr) == dbg_no_line_info)
     {
-        dbg_printf("Single stepping until exit from function, \n"
+        dbg_printf("Single stepping until exit from function,\n"
                    "which has no line number information.\n");
         ret_mode = mode = dbg_exec_finish;
     }
@@ -887,7 +934,7 @@ void break_restart_execution(int count)
     switch (mode)
     {
     case dbg_exec_cont: /* Continuous execution */
-        be_cpu->single_step(&dbg_context, FALSE);
+        dbg_curr_process->be_cpu->single_step(&dbg_context, FALSE);
         break_set_xpoints(TRUE);
         break;
 
@@ -919,16 +966,16 @@ void break_restart_execution(int count)
     case dbg_exec_finish:
     case dbg_exec_step_over_insn:  /* Stepping over a call */
     case dbg_exec_step_over_line:  /* Stepping over a call */
-        if (be_cpu->is_step_over_insn(linear))
+        if (dbg_curr_process->be_cpu->is_step_over_insn(linear))
         {
-            be_cpu->disasm_one_insn(&addr, FALSE);
+            dbg_curr_process->be_cpu->disasm_one_insn(&addr, FALSE);
             dbg_curr_process->bp[0].addr = addr;
             dbg_curr_process->bp[0].enabled = TRUE;
             dbg_curr_process->bp[0].refcount = 1;
 	    dbg_curr_process->bp[0].skipcount = 0;
             dbg_curr_process->bp[0].xpoint_type = be_xpoint_break;
             dbg_curr_process->bp[0].condition = NULL;
-            be_cpu->single_step(&dbg_context, FALSE);
+            dbg_curr_process->be_cpu->single_step(&dbg_context, FALSE);
             break_set_xpoints(TRUE);
             break;
         }
@@ -936,7 +983,7 @@ void break_restart_execution(int count)
 
     case dbg_exec_step_into_line: /* Single-stepping a line */
     case dbg_exec_step_into_insn: /* Single-stepping an instruction */
-        be_cpu->single_step(&dbg_context, TRUE);
+        dbg_curr_process->be_cpu->single_step(&dbg_context, TRUE);
         break;
     default: RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
     }
@@ -944,7 +991,7 @@ void break_restart_execution(int count)
     dbg_curr_thread->exec_mode = ret_mode;
 }
 
-int break_add_condition(int num, struct expr* exp)
+BOOL break_add_condition(int num, struct expr* exp)
 {
     if (num <= 0 || num >= dbg_curr_process->next_bp || 
         !dbg_curr_process->bp[num].refcount)

@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef WINE_MTDLL_H
@@ -24,8 +24,8 @@
 #define _mlock(locknum)   _lock(locknum)
 #define _munlock(locknum) _unlock(locknum)
 
-void _unlock( int locknum );
-void _lock( int locknum );
+void __cdecl _unlock( int locknum );
+void __cdecl _lock( int locknum );
 
 #else
 

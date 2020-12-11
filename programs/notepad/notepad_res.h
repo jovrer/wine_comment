@@ -16,12 +16,17 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include <windef.h>
+#include <winuser.h>
 
 #define MAIN_MENU               0x201
 #define DIALOG_PAGESETUP        0x202
 #define ID_ACCEL                0x203
+
+#define IDI_NOTEPAD             0x300
 
 /* Commands */
 #define CMD_NEW                 0x100
@@ -43,36 +48,42 @@
 
 #define CMD_SEARCH              0x120
 #define CMD_SEARCH_NEXT         0x121
+#define CMD_REPLACE             0x122
 
 #define CMD_WRAP                0x119
 #define CMD_FONT                0x140
 
 #define CMD_HELP_CONTENTS       0x130
-#define CMD_HELP_SEARCH         0x131
-#define CMD_HELP_ON_HELP        0x132
-#define CMD_LICENSE             0x135
-#define CMD_NO_WARRANTY         0x136
-#define CMD_ABOUT_WINE          0x137
+#define CMD_HELP_ABOUT_NOTEPAD  0x134
+
+/* Control IDs */
+#define IDC_PAGESETUP_HEADERVALUE 0x141
+#define IDC_PAGESETUP_FOOTERVALUE 0x143
+#define IDC_PAGESETUP_LEFTVALUE   0x147
+#define IDC_PAGESETUP_RIGHTVALUE  0x14A
+#define IDC_PAGESETUP_TOPVALUE    0x14D
+#define IDC_PAGESETUP_BOTTOMVALUE 0x150
 
 /* Strings */
 #define STRING_PAGESETUP_HEADERVALUE 0x160
 #define STRING_PAGESETUP_FOOTERVALUE 0x161
-#define STRING_PAGESETUP_LEFTVALUE 0x162
-#define STRING_PAGESETUP_RIGHTVALUE 0x163
-#define STRING_PAGESETUP_TOPVALUE 0x164
-#define STRING_PAGESETUP_BOTTOMVALUE 0x165
 
 #define STRING_NOTEPAD 0x170
 #define STRING_ERROR 0x171
-#define STRING_WARNING 0x172
-#define STRING_INFO 0x173
 #define STRING_UNTITLED 0x174
 #define STRING_ALL_FILES 0x175
 #define STRING_TEXT_FILES_TXT 0x176
-#define STRING_TOOLARGE 0x177
-#define STRING_NOTEXT 0x178
 #define STRING_DOESNOTEXIST 0x179
 #define STRING_NOTSAVED 0x17A
 
 #define STRING_NOTFOUND 0x17B
-#define STRING_OUT_OF_MEMORY 0x17C
+
+#define STRING_UNICODE_LE      0x180
+#define STRING_UNICODE_BE      0x181
+#define STRING_UTF8            0x182
+
+#define STRING_LOSS_OF_UNICODE_CHARACTERS 0x183
+
+/* Open/Save As dialog template */
+#define IDD_OFN_TEMPLATE       0x190
+#define IDC_OFN_ENCCOMBO       0x191

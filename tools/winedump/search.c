@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -26,7 +26,7 @@
 static char *grep_buff = NULL;
 static char *fgrep_buff = NULL;
 
-static int symbol_from_prototype (parsed_symbol *sym, const char *prototype);
+static BOOL symbol_from_prototype (parsed_symbol *sym, const char *prototype);
 static const char *get_type (parsed_symbol *sym, const char *proto, int arg);
 
 
@@ -36,7 +36,7 @@ static const char *get_type (parsed_symbol *sym, const char *proto, int arg);
  * Call Patrik Stridvall's 'function_grep.pl' script to retrieve a
  * function prototype from include file(s)
  */
-int symbol_search (parsed_symbol *sym)
+BOOL symbol_search (parsed_symbol *sym)
 {
   static const size_t MAX_RESULT_LEN = 1024;
   FILE *grep;
@@ -47,13 +47,13 @@ int symbol_search (parsed_symbol *sym)
   assert (sym && sym->symbol);
 
   if (!symbol_is_valid_c (sym))
-    return - 1;
+    return FALSE;
 
   if (!grep_buff)
-    grep_buff = (char *) malloc (MAX_RESULT_LEN);
+    grep_buff = malloc (MAX_RESULT_LEN);
 
   if (!fgrep_buff)
-    fgrep_buff = (char *) malloc (MAX_RESULT_LEN);
+    fgrep_buff = malloc (MAX_RESULT_LEN);
 
   if (!grep_buff || !fgrep_buff)
     fatal ("Out of Memory");
@@ -133,11 +133,11 @@ int symbol_search (parsed_symbol *sym)
             if (VERBOSE)
               printf ("Prototype '%s' looks OK, processing\n", grep_buff);
 
-            if (!symbol_from_prototype (sym, grep_buff))
+            if (symbol_from_prototype (sym, grep_buff))
             {
               pclose (f_grep);
               pclose (grep);
-              return 0;  /* OK */
+              return TRUE;  /* OK */
             }
             if (VERBOSE)
               puts ("Failed, trying next");
@@ -152,7 +152,7 @@ int symbol_search (parsed_symbol *sym)
     attempt++;
   }
 
-  return -1; /* Not found */
+  return FALSE; /* Not found */
 }
 
 
@@ -161,14 +161,14 @@ int symbol_search (parsed_symbol *sym)
  *
  * Convert a C prototype into a symbol
  */
-static int symbol_from_prototype (parsed_symbol *sym, const char *proto)
+static BOOL symbol_from_prototype (parsed_symbol *sym, const char *proto)
 {
   const char *iter;
-  int found;
+  BOOL found;
 
   proto = get_type (sym, proto, -1); /* Get return type */
   if (!proto)
-    return -1;
+    return FALSE;
 
   iter = str_match (proto, sym->symbol, &found);
 
@@ -178,7 +178,7 @@ static int symbol_from_prototype (parsed_symbol *sym, const char *proto)
     /* Calling Convention */
     iter = strchr (iter, ' ');
     if (!iter)
-      return -1;
+      return FALSE;
 
     call = str_substring (proto, iter);
 
@@ -190,7 +190,7 @@ static int symbol_from_prototype (parsed_symbol *sym, const char *proto)
     iter = str_match (iter, sym->symbol, &found);
 
     if (!found)
-      return -1;
+      return FALSE;
 
     if (VERBOSE)
       printf ("Using %s calling convention\n",
@@ -204,33 +204,33 @@ static int symbol_from_prototype (parsed_symbol *sym, const char *proto)
 
   /* Now should be the arguments */
   if (*proto++ != '(')
-    return -1;
+    return FALSE;
 
   for (; *proto == ' '; proto++);
 
   if (!strncmp (proto, "void", 4))
-    return 0;
+    return TRUE;
 
   do
   {
     /* Process next argument */
     str_match (proto, "...", &sym->varargs);
     if (sym->varargs)
-      return 0;
+      return TRUE;
 
     if (!(proto = get_type (sym, proto, sym->argc)))
-      return -1;
+      return FALSE;
 
     sym->argc++;
 
     if (*proto == ',')
       proto++;
     else if (*proto != ')')
-      return -1;
+      return FALSE;
 
   } while (*proto != ')');
 
-  return 0;
+  return TRUE;
 }
 
 
@@ -241,35 +241,35 @@ static int symbol_from_prototype (parsed_symbol *sym, const char *proto)
  */
 static const char *get_type (parsed_symbol *sym, const char *proto, int arg)
 {
-  int is_const, is_volatile, is_struct, is_signed, is_unsigned, ptrs = 0;
-  const char *iter, *type_str, *base_type, *catch_unsigned;
-  char dest_type;
+  BOOL is_const, is_volatile, is_struct, is_signed, is_unsigned;
+  int ptrs = 0;
+  const char *iter, *base_type, *catch_unsigned, *proto_str;
+  char dest_type, *type_str;
 
   assert (sym && sym->symbol);
   assert (proto && *proto);
   assert (arg < 0 || (unsigned)arg == sym->argc);
 
-  type_str = proto;
 
-  proto = str_match (proto, "const", &is_const);
-  proto = str_match (proto, "volatile", &is_volatile);
-  proto = str_match (proto, "struct", &is_struct);
+  proto_str = str_match (proto, "const", &is_const);
+  proto_str = str_match (proto_str, "volatile", &is_volatile);
+  proto_str = str_match (proto_str, "struct", &is_struct);
   if (!is_struct)
-    proto = str_match (proto, "union", &is_struct);
+    proto_str = str_match (proto_str, "union", &is_struct);
 
-  catch_unsigned = proto;
+  catch_unsigned = proto_str;
 
-  proto = str_match (proto, "unsigned", &is_unsigned);
-  proto = str_match (proto, "signed", &is_signed);
+  proto_str = str_match (proto_str, "unsigned", &is_unsigned);
+  proto_str = str_match (proto_str, "signed", &is_signed);
 
   /* Can have 'unsigned const' or 'const unsigned' etc */
   if (!is_const)
-    proto = str_match (proto, "const", &is_const);
+    proto_str = str_match (proto_str, "const", &is_const);
   if (!is_volatile)
-    proto = str_match (proto, "volatile", &is_volatile);
+    proto_str = str_match (proto_str, "volatile", &is_volatile);
 
-  base_type = proto;
-  iter = str_find_set (proto, " ,*)");
+  base_type = proto_str;
+  iter = str_find_set (proto_str, " ,*)");
   if (!iter)
     return NULL;
 
@@ -279,7 +279,7 @@ static const char *get_type (parsed_symbol *sym, const char *proto, int arg)
     if (strncmp (base_type, "int", 3) && strncmp (base_type, "long", 4) &&
         strncmp (base_type, "short", 5) && strncmp (base_type, "char", 4))
     {
-      iter = proto;
+      iter = proto_str;
       base_type = catch_unsigned;
     } else
       catch_unsigned = NULL;
@@ -288,21 +288,21 @@ static const char *get_type (parsed_symbol *sym, const char *proto, int arg)
     catch_unsigned = NULL;
 
   /* FIXME: skip const/volatile here too */
-  for (proto = iter; *proto; proto++)
-    if (*proto == '*')
+  for (proto_str = iter; *proto_str; proto_str++)
+    if (*proto_str == '*')
       ptrs++;
-    else if (*proto != ' ')
+    else if (*proto_str != ' ')
       break;
 
-  if (!*proto)
+  if (!*proto_str)
     return NULL;
 
-  type_str = str_substring (type_str, proto);
+  type_str = str_substring (proto, proto_str);
   if (iter == base_type || catch_unsigned)
   {
     /* 'unsigned' with no type */
     char *tmp = str_create (2, type_str, " int");
-    free ((char*)type_str);
+    free (type_str);
     type_str = tmp;
   }
   symbol_clean_string (type_str);
@@ -319,23 +319,23 @@ static const char *get_type (parsed_symbol *sym, const char *proto, int arg)
     sym->arg_type [arg] = dest_type;
     sym->arg_flag [arg] = is_const ? CT_CONST : is_volatile ? CT_VOLATILE : 0;
 
-    if (*proto == ',' || *proto == ')')
+    if (*proto_str == ',' || *proto_str == ')')
       sym->arg_name [arg] = str_create_num (1, arg, "arg");
     else
     {
-      iter = str_find_set (proto, " ,)");
+      iter = str_find_set (proto_str, " ,)");
       if (!iter)
       {
-        free ((char*)type_str);
+        free (type_str);
         return NULL;
       }
-      sym->arg_name [arg] = str_substring (proto, iter);
-      proto = iter;
+      sym->arg_name [arg] = str_substring (proto_str, iter);
+      proto_str = iter;
     }
     sym->arg_text [arg] = (char*)type_str;
 
   }
-  return proto;
+  return proto_str;
 }
 
 
@@ -348,10 +348,7 @@ static const char *get_type (parsed_symbol *sym, const char *proto, int arg)
 void search_cleanup (void) __attribute__ ((destructor));
 void search_cleanup (void)
 {
-  if (grep_buff)
-    free (grep_buff);
-
-  if (fgrep_buff)
-    free (fgrep_buff);
+  free (grep_buff);
+  free (fgrep_buff);
 }
 #endif

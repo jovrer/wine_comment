@@ -11,29 +11,35 @@
 @ stub SnmpSvcGenerateTrap
 @ stub SnmpSvcGenerateWarmStartTrap
 @ stub SnmpSvcGetEnterpriseOID
-@ stub SnmpSvcGetUptime
+@ stdcall SnmpSvcGetUptime()
 @ stub SnmpSvcInitUptime
 @ stub SnmpSvcReleaseMessage
 @ stub SnmpSvcReportEvent
 @ stub SnmpSvcSetLogLevel
 @ stub SnmpSvcSetLogType
 @ stub SnmpUtilAnsiToUnicode
-@ stub SnmpUtilDbgPrint
-@ stub SnmpUtilIdsToA
-@ stub SnmpUtilMemAlloc
-@ stub SnmpUtilMemFree
-@ stub SnmpUtilMemReAlloc
-@ stub SnmpUtilOidAppend
-@ stub SnmpUtilOidCmp
-@ stub SnmpUtilOidCpy
-@ stub SnmpUtilOidFree
-@ stub SnmpUtilOidNCmp
-@ stub SnmpUtilOidToA
-@ stub SnmpUtilPrintAsnAny
-@ stub SnmpUtilPrintOid
+@ stdcall SnmpUtilAsnAnyCpy(ptr ptr)
+@ stdcall SnmpUtilAsnAnyFree(ptr)
+@ varargs SnmpUtilDbgPrint(long str)
+@ stdcall SnmpUtilIdsToA(ptr long)
+@ stdcall SnmpUtilMemAlloc(long)
+@ stdcall SnmpUtilMemFree(ptr)
+@ stdcall SnmpUtilMemReAlloc(ptr long)
+@ stdcall SnmpUtilOctetsCmp(ptr ptr)
+@ stdcall SnmpUtilOctetsCpy(ptr ptr)
+@ stdcall SnmpUtilOctetsFree(ptr)
+@ stdcall SnmpUtilOctetsNCmp(ptr ptr long)
+@ stdcall SnmpUtilOidAppend(ptr ptr)
+@ stdcall SnmpUtilOidCmp(ptr ptr)
+@ stdcall SnmpUtilOidCpy(ptr ptr)
+@ stdcall SnmpUtilOidFree(ptr)
+@ stdcall SnmpUtilOidNCmp(ptr ptr long)
+@ stdcall SnmpUtilOidToA(ptr)
+@ stdcall SnmpUtilPrintAsnAny(ptr)
+@ stdcall SnmpUtilPrintOid(ptr)
 @ stub SnmpUtilStrlenW
 @ stub SnmpUtilUnicodeToAnsi
-@ stub SnmpUtilVarBindCpy
-@ stub SnmpUtilVarBindFree
-@ stub SnmpUtilVarBindListCpy
-@ stub SnmpUtilVarBindListFree
+@ stdcall SnmpUtilVarBindCpy(ptr ptr)
+@ stdcall SnmpUtilVarBindFree(ptr)
+@ stdcall SnmpUtilVarBindListCpy(ptr ptr)
+@ stdcall SnmpUtilVarBindListFree(ptr)

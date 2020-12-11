@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -73,28 +73,10 @@ static UINT DELETE_fetch_stream( struct tagMSIVIEW *view, UINT row, UINT col, IS
     return ERROR_FUNCTION_FAILED;
 }
 
-static UINT DELETE_set_int( struct tagMSIVIEW *view, UINT row, UINT col, UINT val )
-{
-    MSIDELETEVIEW *dv = (MSIDELETEVIEW*)view;
-
-    TRACE("%p %d %d %04x\n", dv, row, col, val );
-
-    return ERROR_FUNCTION_FAILED;
-}
-
-static UINT DELETE_insert_row( struct tagMSIVIEW *view, MSIRECORD *record )
-{
-    MSIDELETEVIEW *dv = (MSIDELETEVIEW*)view;
-
-    TRACE("%p %p\n", dv, record );
-
-    return ERROR_FUNCTION_FAILED;
-}
-
 static UINT DELETE_execute( struct tagMSIVIEW *view, MSIRECORD *record )
 {
     MSIDELETEVIEW *dv = (MSIDELETEVIEW*)view;
-    UINT r, i, j, rows = 0, cols = 0;
+    UINT r, i, rows = 0, cols = 0;
 
     TRACE("%p %p\n", dv, record);
 
@@ -109,12 +91,11 @@ static UINT DELETE_execute( struct tagMSIVIEW *view, MSIRECORD *record )
     if( r != ERROR_SUCCESS )
         return r;
 
-    TRACE("blanking %d rows\n", rows); 
+    TRACE("deleting %d rows\n", rows);
 
     /* blank out all the rows that match */
-    for( i=0; i<rows; i++ )
-        for( j=1; j<=cols; j++ )
-            dv->table->ops->set_int( dv->table, i, j, 0 );
+    for ( i=0; i<rows; i++ )
+        dv->table->ops->delete_row( dv->table, i );
 
     return ERROR_SUCCESS;
 }
@@ -145,21 +126,22 @@ static UINT DELETE_get_dimensions( struct tagMSIVIEW *view, UINT *rows, UINT *co
     return dv->table->ops->get_dimensions( dv->table, NULL, cols );
 }
 
-static UINT DELETE_get_column_info( struct tagMSIVIEW *view,
-                UINT n, LPWSTR *name, UINT *type )
+static UINT DELETE_get_column_info( struct tagMSIVIEW *view, UINT n, LPCWSTR *name,
+                                    UINT *type, BOOL *temporary, LPCWSTR *table_name )
 {
     MSIDELETEVIEW *dv = (MSIDELETEVIEW*)view;
 
-    TRACE("%p %d %p %p\n", dv, n, name, type );
+    TRACE("%p %d %p %p %p %p\n", dv, n, name, type, temporary, table_name );
 
     if( !dv->table )
          return ERROR_FUNCTION_FAILED;
 
-    return dv->table->ops->get_column_info( dv->table, n, name, type );
+    return dv->table->ops->get_column_info( dv->table, n, name,
+                                            type, temporary, table_name);
 }
 
 static UINT DELETE_modify( struct tagMSIVIEW *view, MSIMODIFY eModifyMode,
-                MSIRECORD *rec )
+                           MSIRECORD *rec, UINT row )
 {
     MSIDELETEVIEW *dv = (MSIDELETEVIEW*)view;
 
@@ -182,19 +164,36 @@ static UINT DELETE_delete( struct tagMSIVIEW *view )
     return ERROR_SUCCESS;
 }
 
+static UINT DELETE_find_matching_rows( struct tagMSIVIEW *view, UINT col,
+    UINT val, UINT *row, MSIITERHANDLE *handle )
+{
+    TRACE("%p, %d, %u, %p\n", view, col, val, *handle);
 
-MSIVIEWOPS delete_ops =
+    return ERROR_FUNCTION_FAILED;
+}
+
+
+static const MSIVIEWOPS delete_ops =
 {
     DELETE_fetch_int,
     DELETE_fetch_stream,
-    DELETE_set_int,
-    DELETE_insert_row,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
     DELETE_execute,
     DELETE_close,
     DELETE_get_dimensions,
     DELETE_get_column_info,
     DELETE_modify,
-    DELETE_delete
+    DELETE_delete,
+    DELETE_find_matching_rows,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
 };
 
 UINT DELETE_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table )

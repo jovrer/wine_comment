@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_IMM_H
@@ -28,6 +28,15 @@ extern "C" {
 typedef HANDLE HIMC;
 typedef HANDLE HIMCC;
 
+typedef struct tagREGISTERWORDA {
+    LPSTR lpReading;
+    LPSTR lpWord;
+} REGISTERWORDA, *PREGISTERWORDA, *NPREGISTERWORDA, *LPREGISTERWORDA;
+
+typedef struct tagREGISTERWORDW {
+    LPWSTR lpReading;
+    LPWSTR lpWord;
+} REGISTERWORDW, *PREGISTERWORDW, *NPREGISTERWORDW, *LPREGISTERWORDW;
 
 typedef int (CALLBACK *REGISTERWORDENUMPROCA)(LPCSTR, DWORD, LPCSTR, LPVOID);
 typedef int (CALLBACK *REGISTERWORDENUMPROCW)(LPCWSTR, DWORD, LPCWSTR, LPVOID);
@@ -118,6 +127,17 @@ typedef struct _tagCOMPOSITIONFORM
 				RECT  rcArea;
 } COMPOSITIONFORM, *LPCOMPOSITIONFORM;
 
+typedef BOOL (CALLBACK* IMCENUMPROC)(HIMC, LPARAM);
+
+typedef struct _tagIMECHARPOSITION
+{
+    DWORD dwSize;
+    DWORD dwCharPos;
+    POINT pt;
+    UINT  cLineHeight;
+    RECT  rcDocument;
+} IMECHARPOSITION, *LPIMECHARPOSITION;
+
 /* wParam for WM_IME_CONTROL */
 #define IMC_GETCANDIDATEPOS             0x0007
 #define IMC_SETCANDIDATEPOS             0x0008
@@ -183,7 +203,7 @@ typedef struct _tagCOMPOSITIONFORM
 #define IME_KHOTKEY_SHAPE_TOGGLE                0x50
 #define IME_KHOTKEY_HANJACONVERT                0x51
 #define IME_KHOTKEY_ENGLISH                     0x52
-/* Windows for Tranditional Chinese Edition hot key ID from 0x70 - 0x8F */
+/* Windows for Traditional Chinese Edition hot key ID from 0x70 - 0x8F */
 #define IME_THOTKEY_IME_NONIME_TOGGLE           0x70
 #define IME_THOTKEY_SHAPE_TOGGLE                0x71
 #define IME_THOTKEY_SYMBOL_TOGGLE               0x72
@@ -385,6 +405,8 @@ typedef struct _tagCOMPOSITIONFORM
 #define IMR_COMPOSITIONFONT		0x0003
 #define IMR_RECONVERTSTRING		0x0004
 #define IMR_CONFIRMRECONVERTSTRING	0x0005
+#define IMR_QUERYCHARPOSITION		0x0006
+#define IMR_DOCUMENTFEED		0x0007
 
 
 /* error code of ImmGetCompositionString */
@@ -456,7 +478,7 @@ typedef struct _tagCOMPOSITIONFORM
 
 /*
  * type of soft keyboard
- * for Windows Tranditional Chinese Edition
+ * for Windows Traditional Chinese Edition
  */
 #define SOFTKEYBOARD_TYPE_T1            0x0001
 /* for Windows Simplified Chinese Edition */
@@ -471,6 +493,8 @@ BOOL   WINAPI ImmConfigureIMEW(HKL, HWND, DWORD, LPVOID);
 HIMC   WINAPI ImmCreateContext(void);
 BOOL   WINAPI ImmDestroyContext(HIMC hIMC);
 BOOL   WINAPI ImmDisableIME(DWORD idThread);
+BOOL   WINAPI ImmDisableLegacyIME(void);
+BOOL   WINAPI ImmEnumInputContext(DWORD, IMCENUMPROC, LPARAM);
 UINT   WINAPI ImmEnumRegisterWordA(HKL, REGISTERWORDENUMPROCA, LPCSTR, DWORD, LPCSTR, LPVOID);
 UINT   WINAPI ImmEnumRegisterWordW(HKL, REGISTERWORDENUMPROCW, LPCWSTR, DWORD, LPCWSTR, LPVOID);
 #define  ImmEnumRegisterWord WINELIB_NAME_AW(ImmEnumRegisterWord)
@@ -484,7 +508,7 @@ DWORD    WINAPI ImmGetCandidateListCountA(HIMC, LPDWORD);
 DWORD    WINAPI ImmGetCandidateListCountW(HIMC, LPDWORD);
 #define  ImmGetCandidateListCount WINELIB_NAME_AW(ImmGetCandidateListCount)
 BOOL   WINAPI ImmGetCandidateWindow(HIMC, DWORD, LPCANDIDATEFORM);
-#ifndef NOGDI
+#if defined(_WINGDI_) && !defined(NOGDI)
 BOOL   WINAPI ImmGetCompositionFontA(HIMC, LPLOGFONTA);
 BOOL   WINAPI ImmGetCompositionFontW(HIMC, LPLOGFONTW);
 #define  ImmGetCompositionFont WINELIB_NAME_AW(ImmGetCompositionFont)
@@ -511,6 +535,9 @@ DWORD    WINAPI ImmGetGuideLineW(HIMC, DWORD, LPWSTR, DWORD);
 UINT   WINAPI ImmGetIMEFileNameA(HKL, LPSTR, UINT);
 UINT   WINAPI ImmGetIMEFileNameW(HKL, LPWSTR, UINT);
 #define  ImmGetIMEFileName WINELIB_NAME_AW(ImmGetIMEFileName)
+DWORD  WINAPI ImmGetImeMenuItemsA(HIMC, DWORD, DWORD, LPIMEMENUITEMINFOA, LPIMEMENUITEMINFOA, DWORD);
+DWORD  WINAPI ImmGetImeMenuItemsW(HIMC, DWORD, DWORD, LPIMEMENUITEMINFOW, LPIMEMENUITEMINFOW, DWORD);
+#define ImmGetImeMenuItems  WINELIB_NAME_AW(ImmGetImeMenuItems)
 BOOL   WINAPI ImmGetOpenStatus(HIMC);
 DWORD    WINAPI ImmGetProperty(HKL, DWORD);
 UINT   WINAPI ImmGetRegisterWordStyleA(HKL, UINT, LPSTYLEBUFA);
@@ -526,6 +553,7 @@ BOOL   WINAPI ImmIsUIMessageA(HWND, UINT, WPARAM, LPARAM);
 BOOL   WINAPI ImmIsUIMessageW(HWND, UINT, WPARAM, LPARAM);
 #define  ImmIsUIMessage WINELIB_NAME_AW(ImmIsUIMessage)
 BOOL   WINAPI ImmNotifyIME(HIMC, DWORD, DWORD, DWORD);
+BOOL   WINAPI ImmProcessKey(HWND, HKL, UINT, LPARAM, DWORD);
 BOOL   WINAPI ImmRegisterWordA(HKL, LPCSTR, DWORD, LPCSTR);
 BOOL   WINAPI ImmRegisterWordW(HKL, LPCWSTR, DWORD, LPCWSTR);
 #define  ImmRegisterWord WINELIB_NAME_AW(ImmRegisterWord)

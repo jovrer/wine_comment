@@ -13,17 +13,21 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_FCI_H
 #define __WINE_FCI_H
 
+#include <basetsd.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+#ifndef _WIN64
 #include <pshpack4.h>
+#endif
 
 #ifndef INCLUDED_TYPES_FCI_FDI
 #define INCLUDED_TYPES_FCI_FDI 1
@@ -32,10 +36,10 @@ extern "C" {
  * Common FCI/TDI declarations
  */
 
-typedef unsigned long CHECKSUM;
+typedef ULONG CHECKSUM;
 
-typedef unsigned long UOFF;
-typedef unsigned long COFF;
+typedef ULONG UOFF;
+typedef ULONG COFF;
 
 /**********************************************************************/
 
@@ -48,7 +52,7 @@ typedef struct {
 /**********************************************************************/
 
 #define CB_MAX_CHUNK         32768U
-#define CB_MAX_DISK          0x7fffffffL
+#define CB_MAX_DISK          __MSABI_LONG(0x7fffffff)
 #define CB_MAX_FILENAME      256
 #define CB_MAX_CABINET_NAME  256
 #define CB_MAX_CAB_PATH      256
@@ -161,7 +165,7 @@ typedef struct {
 
 /**********************************************************************/
 
-typedef void * (__cdecl *PFNFCIALLOC)(ULONG cb);
+typedef void * (__cdecl __WINE_ALLOC_SIZE(1) *PFNFCIALLOC)(ULONG cb);
 #define FNFCIALLOC(fn) void * __cdecl fn(ULONG cb)
 
 typedef void (__cdecl *PFNFCIFREE)(void *memory);
@@ -179,8 +183,8 @@ typedef UINT (__cdecl *PFNFCIWRITE)(INT_PTR hf, void *memory, UINT cb, int *err,
 typedef int  (__cdecl *PFNFCICLOSE)(INT_PTR hf, int *err, void *pv);
 #define FNFCICLOSE(fn) int __cdecl fn(INT_PTR hf, int *err, void *pv)
 
-typedef long (__cdecl *PFNFCISEEK) (INT_PTR hf, long dist, int seektype, int *err, void *pv);
-#define FNFCISEEK(fn) long __cdecl fn(INT_PTR hf, long dist, int seektype, int *err, void *pv)
+typedef LONG (__cdecl *PFNFCISEEK) (INT_PTR hf, LONG dist, int seektype, int *err, void *pv);
+#define FNFCISEEK(fn) LONG __cdecl fn(INT_PTR hf, LONG dist, int seektype, int *err, void *pv)
 
 typedef int  (__cdecl *PFNFCIDELETE) (char *pszFile, int *err, void *pv);
 #define FNFCIDELETE(fn) int __cdecl fn(char *pszFile, int *err, void *pv)
@@ -192,12 +196,12 @@ typedef BOOL (__cdecl *PFNFCIGETNEXTCABINET)(PCCAB pccab, ULONG  cbPrevCab, void
 
 typedef int (__cdecl *PFNFCIFILEPLACED)(PCCAB pccab,
 					char *pszFile,
-					long  cbFile,
+					LONG  cbFile,
 					BOOL  fContinuation,
 					void *pv);
 #define FNFCIFILEPLACED(fn) int __cdecl fn(PCCAB pccab, \
 					   char *pszFile, \
-					   long  cbFile, \
+                                           LONG  cbFile, \
 					   BOOL  fContinuation, \
 					   void *pv)
 
@@ -218,11 +222,11 @@ typedef INT_PTR (__cdecl *PFNFCIGETOPENINFO)(char *pszName,
 #define statusFolder   1  /* Add Folder to Cabinet callback */
 #define statusCabinet  2  /* Write out a completed cabinet callback */
 
-typedef long (__cdecl *PFNFCISTATUS)(UINT typeStatus,
+typedef LONG (__cdecl *PFNFCISTATUS)(UINT typeStatus,
 				     ULONG cb1,
 				     ULONG cb2,
 				     void *pv);
-#define FNFCISTATUS(fn) long __cdecl fn(UINT typeStatus, \
+#define FNFCISTATUS(fn) LONG __cdecl fn(UINT typeStatus, \
 					ULONG  cb1, \
 					ULONG  cb2, \
 					void *pv)
@@ -248,7 +252,9 @@ BOOL __cdecl FCIDestroy(HFCI hfci);
 
 /**********************************************************************/
 
+#ifndef _WIN64
 #include <poppack.h>
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" */

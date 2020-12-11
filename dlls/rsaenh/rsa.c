@@ -6,7 +6,7 @@
  * Based on public domain code by Tom St Denis (tomstdenis@iahu.ca)
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public 
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /*
@@ -29,6 +29,7 @@
  */
 
 #include "tomcrypt.h"
+#include "windef.h"
 
 static const struct {
     int mpi_code, ltc_code;
@@ -39,11 +40,11 @@ static const struct {
 };
 
 /* convert a MPI error to a LTC error (Possibly the most powerful function ever!  Oh wait... no) */
-int mpi_to_ltc_error(int err)
+static int mpi_to_ltc_error(int err)
 {
-   int x;
+   unsigned int x;
 
-   for (x = 0; x < (int)(sizeof(mpi_to_ltc_codes)/sizeof(mpi_to_ltc_codes[0])); x++) {
+   for (x = 0; x < ARRAY_SIZE(mpi_to_ltc_codes); x++) {
        if (err == mpi_to_ltc_codes[x].mpi_code) { 
           return mpi_to_ltc_codes[x].ltc_code;
        }
@@ -58,16 +59,10 @@ static int rand_prime_helper(unsigned char *dst, int len, void *dat)
     return gen_rand_impl(dst, len) ? len : 0;
 }
 
-int rand_prime(mp_int *N, long len)
+static int rand_prime(mp_int *N, long len)
 {
    int type;
 
-   /* allow sizes between 2 and 256 bytes for a prime size */
-   if (len < 16 || len > 8192) {
-	  printf("Invalid prime size!\n");
-      return CRYPT_INVALID_PRIME_SIZE;
-   }
-   
    /* get type */
    if (len < 0) {
       type = LTM_PRIME_BBS;
@@ -78,6 +73,12 @@ int rand_prime(mp_int *N, long len)
       /* Original LibTomCrypt: type = 0; */
    }
 
+   /* allow sizes between 2 and 256 bytes for a prime size */
+   if (len < 16 || len > 8192) {
+      printf("Invalid prime size!\n");
+      return CRYPT_INVALID_PRIME_SIZE;
+   }
+   
    /* New prime generation makes the code even more cryptoish-insane.  Do you know what this means!!!
       -- Gir:  Yeah, oh wait, er, no.
     */
@@ -196,8 +197,8 @@ int rsa_exptmod(const unsigned char *in,   unsigned long inlen,
    }
 
    /* init and copy into tmp */
-   if ((err = mp_init_multi(&tmp, &tmpa, &tmpb, NULL)) != MP_OKAY)                     { return mpi_to_ltc_error(err); }
-   if ((err = mp_read_unsigned_bin(&tmp, (unsigned char *)in, (int)inlen)) != MP_OKAY) { goto error; }
+   if ((err = mp_init_multi(&tmp, &tmpa, &tmpb, NULL)) != MP_OKAY)    { return mpi_to_ltc_error(err); }
+   if ((err = mp_read_unsigned_bin(&tmp, in, (int)inlen)) != MP_OKAY) { goto error; }
 
    /* sanity check on the input */
    if (mp_cmp(&key->N, &tmp) == MP_LT) {

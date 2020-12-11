@@ -15,12 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
+#include "devenum_private.h"
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
@@ -32,57 +33,3 @@ LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 #define WINE_PRODUCTVERSION_STR "6.5"
 
 #include "wine/wine_common_ver.rc"
-
-STRINGTABLE DISCARDABLE
-LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
-{
-	7  "Default DirectSound"
-	8  "DirectSound: %s"
-	9  "Default WaveOut Device"
-	10 "Default MidiOut Device"
-}
-
-STRINGTABLE DISCARDABLE
-LANGUAGE LANG_GERMAN, SUBLANG_DEFAULT
-{
-	7  "Standard DirectSound"
-	8  "DirectSound: %s"
-	9  "Standard WaveOut - Gerät"
-	10 "Standard MidiOut - Gerät"
-}
-
-STRINGTABLE DISCARDABLE
-LANGUAGE LANG_ITALIAN, SUBLANG_DEFAULT
-{
-	7  "DirectSound di Default"
-	8  "DirectSound: %s"
-	9  "Dispositivo WaveOut di Default"
-	10 "Dispositivo MidiOut di Default"
-}
-
-STRINGTABLE DISCARDABLE
-LANGUAGE LANG_PORTUGUESE, SUBLANG_DEFAULT
-{
-	7  "DirectSound padrão"
-	8  "DirectSound: %s"
-	9  "Dispositivo padrão WaveOut"
-	10 "Dispositivo padrão MidiOut"
-}
-
-STRINGTABLE DISCARDABLE
-LANGUAGE LANG_SPANISH, SUBLANG_DEFAULT
-{
-	7  "DirectSound por defecto"
-	8  "DirectSound: %s"
-	9  "Dispositivo WaveOut por defecto"
-	10 "Dispositivo MidiOut por defecto"
-}
-
-STRINGTABLE DISCARDABLE
-LANGUAGE LANG_CZECH, SUBLANG_DEFAULT
-{
-	7  "Dafaultní DirectSound"
-	8  "DirectSound: %s"
-	9  "Standardní zaøízení WaveOut"
-	10 "Standardní zaøízení MidiOut"
-}

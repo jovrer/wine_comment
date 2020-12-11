@@ -1,12 +1,9 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = winecfg.exe
 APPMODE   = -mwindows
-IMPORTS   = comdlg32 comctl32 shell32 ole32 winmm shlwapi uxtheme user32 advapi32 kernel32
+IMPORTS   = uuid comdlg32 comctl32 shell32 ole32 winmm shlwapi uxtheme user32 gdi32 advapi32
 
 C_SRCS = \
+	about.c \
 	appdefaults.c \
 	audio.c \
 	drive.c \
@@ -14,15 +11,14 @@ C_SRCS = \
 	driveui.c \
 	libraries.c \
 	main.c \
-	properties.c \
 	theme.c \
 	winecfg.c \
 	x11drvdlg.c
 
 RC_SRCS = winecfg.rc
-RC_BINSRC = winecfg.rc
-RC_BINARIES = idb_wine.bmp 
 
-@MAKE_PROG_RULES@
+MANPAGES = winecfg.man.in
 
-### Dependencies:
+SVG_SRCS = \
+	logo.svg \
+	winecfg.svg

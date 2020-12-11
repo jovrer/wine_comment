@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_SHELL_MAIN_H
@@ -35,80 +35,89 @@
 #include "undocshell.h"
 #include "shlobj.h"
 #include "shellapi.h"
-#include "wine/windef16.h"
+#include "wine/heap.h"
 #include "wine/unicode.h"
+#include "wine/list.h"
 
 /*******************************************
 *  global SHELL32.DLL variables
 */
-extern HMODULE	huser32;
-extern HINSTANCE shell32_hInstance;
-extern HIMAGELIST	ShellSmallIconList;
-extern HIMAGELIST	ShellBigIconList;
+extern HMODULE	huser32 DECLSPEC_HIDDEN;
+extern HINSTANCE shell32_hInstance DECLSPEC_HIDDEN;
 
-BOOL WINAPI Shell_GetImageList(HIMAGELIST * lpBigList, HIMAGELIST * lpSmallList);
+extern CLSID CLSID_ShellImageDataFactory;
 
 /* Iconcache */
 #define INVALID_INDEX -1
-BOOL SIC_Initialize(void);
-void SIC_Destroy(void);
-BOOL PidlToSicIndex (IShellFolder * sh, LPCITEMIDLIST pidl, BOOL bBigIcon, UINT uFlags, int * pIndex);
-INT SIC_GetIconIndex (LPCWSTR sSourceFile, INT dwSourceIndex, DWORD dwFlags );
+void SIC_Destroy(void) DECLSPEC_HIDDEN;
+BOOL PidlToSicIndex (IShellFolder * sh, LPCITEMIDLIST pidl, BOOL bBigIcon, UINT uFlags, int * pIndex) DECLSPEC_HIDDEN;
+INT SIC_GetIconIndex (LPCWSTR sSourceFile, INT dwSourceIndex, DWORD dwFlags ) DECLSPEC_HIDDEN;
+HRESULT SIC_get_location( int list_idx, WCHAR *file, DWORD *size, int *res_idx ) DECLSPEC_HIDDEN;
 
 /* Classes Root */
-BOOL HCR_MapTypeToValueW(LPCWSTR szExtension, LPWSTR szFileType, LONG len, BOOL bPrependDot);
-BOOL HCR_GetExecuteCommandW( HKEY hkeyClass, LPCWSTR szClass, LPCWSTR szVerb, LPWSTR szDest, DWORD len );
-BOOL HCR_GetDefaultIconW(LPCWSTR szClass, LPWSTR szDest, DWORD len, LPDWORD dwNr);
-BOOL HCR_GetDefaultIconFromGUIDW(REFIID riid, LPWSTR szDest, DWORD len, LPDWORD dwNr);
-BOOL HCR_GetClassNameW(REFIID riid, LPWSTR szDest, DWORD len);
+BOOL HCR_MapTypeToValueW(LPCWSTR szExtension, LPWSTR szFileType, LONG len, BOOL bPrependDot) DECLSPEC_HIDDEN;
+BOOL HCR_GetDefaultVerbW( HKEY hkeyClass, LPCWSTR szVerb, LPWSTR szDest, DWORD len ) DECLSPEC_HIDDEN;
+BOOL HCR_GetExecuteCommandW( HKEY hkeyClass, LPCWSTR szClass, LPCWSTR szVerb, LPWSTR szDest, DWORD len ) DECLSPEC_HIDDEN;
+BOOL HCR_GetDefaultIconW(LPCWSTR szClass, LPWSTR szDest, DWORD len, int* picon_idx) DECLSPEC_HIDDEN;
+BOOL HCR_GetClassNameW(REFIID riid, LPWSTR szDest, DWORD len) DECLSPEC_HIDDEN;
 
 /* ANSI versions of above functions, supposed to go away as soon as they are not used anymore */
-BOOL HCR_MapTypeToValueA(LPCSTR szExtension, LPSTR szFileType, LONG len, BOOL bPrependDot);
-BOOL HCR_GetDefaultIconA(LPCSTR szClass, LPSTR szDest, DWORD len, LPDWORD dwNr);
-BOOL HCR_GetClassNameA(REFIID riid, LPSTR szDest, DWORD len);
+BOOL HCR_MapTypeToValueA(LPCSTR szExtension, LPSTR szFileType, LONG len, BOOL bPrependDot) DECLSPEC_HIDDEN;
+BOOL HCR_GetDefaultIconA(LPCSTR szClass, LPSTR szDest, DWORD len, int* picon_idx) DECLSPEC_HIDDEN;
+BOOL HCR_GetClassNameA(REFIID riid, LPSTR szDest, DWORD len) DECLSPEC_HIDDEN;
 
-BOOL HCR_GetFolderAttributes(LPCITEMIDLIST pidlFolder, LPDWORD dwAttributes);
+BOOL HCR_GetFolderAttributes(LPCITEMIDLIST pidlFolder, LPDWORD dwAttributes) DECLSPEC_HIDDEN;
 
-INT_PTR CALLBACK AboutDlgProc(HWND,UINT,WPARAM,LPARAM);
-DWORD WINAPI ParseFieldA(LPCSTR src, DWORD nField, LPSTR dst, DWORD len);
-DWORD WINAPI ParseFieldW(LPCWSTR src, DWORD nField, LPWSTR dst, DWORD len);
+DWORD WINAPI ParseFieldA(LPCSTR src, DWORD nField, LPSTR dst, DWORD len) DECLSPEC_HIDDEN;
+DWORD WINAPI ParseFieldW(LPCWSTR src, DWORD nField, LPWSTR dst, DWORD len) DECLSPEC_HIDDEN;
+
+BOOL WINAPI GUIDFromStringW(LPCWSTR, LPGUID) DECLSPEC_HIDDEN;
 
 /****************************************************************************
  * Class constructors
  */
-LPDATAOBJECT	IDataObject_Constructor(HWND hwndOwner, LPCITEMIDLIST myPidl, LPCITEMIDLIST * apidl, UINT cidl);
-LPENUMFORMATETC	IEnumFORMATETC_Constructor(UINT, const FORMATETC []);
+LPDATAOBJECT	IDataObject_Constructor(HWND hwndOwner, LPCITEMIDLIST myPidl, LPCITEMIDLIST * apidl, UINT cidl) DECLSPEC_HIDDEN;
+LPENUMFORMATETC	IEnumFORMATETC_Constructor(UINT, const FORMATETC []) DECLSPEC_HIDDEN;
 
-LPCLASSFACTORY	IClassFactory_Constructor(REFCLSID);
-IContextMenu2 *	ISvItemCm_Constructor(LPSHELLFOLDER pSFParent, LPCITEMIDLIST pidl, LPCITEMIDLIST *aPidls, UINT uItemCount);
-IContextMenu2 *	ISvBgCm_Constructor(LPSHELLFOLDER pSFParent, BOOL bDesktop);
-LPSHELLVIEW	IShellView_Constructor(LPSHELLFOLDER);
+LPCLASSFACTORY	IClassFactory_Constructor(REFCLSID) DECLSPEC_HIDDEN;
+HRESULT ItemMenu_Constructor(IShellFolder*, LPCITEMIDLIST, const LPCITEMIDLIST*, UINT, REFIID, void**) DECLSPEC_HIDDEN;
+HRESULT BackgroundMenu_Constructor(IShellFolder*, BOOL, REFIID, void**) DECLSPEC_HIDDEN;
+LPSHELLVIEW	IShellView_Constructor(LPSHELLFOLDER) DECLSPEC_HIDDEN;
 
-HRESULT WINAPI IFSFolder_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
-HRESULT WINAPI IShellLink_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
-HRESULT WINAPI IShellLink_ConstructFromFile(IUnknown * pUnkOuter, REFIID riid, LPCITEMIDLIST pidl, LPVOID * ppv);
-HRESULT WINAPI ISF_Desktop_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
-HRESULT WINAPI ISF_MyComputer_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
-HRESULT WINAPI IDropTargetHelper_Constructor (IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
-HRESULT WINAPI IFileSystemBindData_Constructor(const WIN32_FIND_DATAW *pfd, LPBC *ppV);
-HRESULT WINAPI IControlPanel_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
-HRESULT WINAPI UnixFolder_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
-HRESULT WINAPI UnixDosFolder_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppv);
-HRESULT WINAPI FolderShortcut_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppv);
-HRESULT WINAPI MyDocuments_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppv);
-extern HRESULT CPanel_GetIconLocationW(LPITEMIDLIST, LPWSTR, UINT, int*);
-HRESULT WINAPI CPanel_ExtractIconA(LPITEMIDLIST pidl, LPCSTR pszFile, UINT nIconIndex, HICON *phiconLarge, HICON *phiconSmall, UINT nIconSize);
-HRESULT WINAPI CPanel_ExtractIconW(LPITEMIDLIST pidl, LPCWSTR pszFile, UINT nIconIndex, HICON *phiconLarge, HICON *phiconSmall, UINT nIconSize);
+HRESULT WINAPI IFSFolder_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI IShellDispatch_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI IShellItem_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI IShellLink_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI ISF_Desktop_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI ISF_MyComputer_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI ISF_NetworkPlaces_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI Printers_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI IDropTargetHelper_Constructor (IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI IFileSystemBindData_Constructor(const WIN32_FIND_DATAW *pfd, LPBC *ppV) DECLSPEC_HIDDEN;
+HRESULT WINAPI IControlPanel_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI UnixFolder_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI UnixDosFolder_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI FolderShortcut_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI MyDocuments_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI RecycleBin_Constructor(IUnknown * pUnkOuter, REFIID riif, LPVOID *ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI QueryAssociations_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppOutput) DECLSPEC_HIDDEN;
+HRESULT WINAPI ExplorerBrowser_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI KnownFolderManager_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
+extern HRESULT CPanel_GetIconLocationW(LPCITEMIDLIST, LPWSTR, UINT, int*) DECLSPEC_HIDDEN;
+HRESULT WINAPI CPanel_ExtractIconA(LPITEMIDLIST pidl, LPCSTR pszFile, UINT nIconIndex, HICON *phiconLarge, HICON *phiconSmall, UINT nIconSize) DECLSPEC_HIDDEN;
+HRESULT WINAPI CPanel_ExtractIconW(LPITEMIDLIST pidl, LPCWSTR pszFile, UINT nIconIndex, HICON *phiconLarge, HICON *phiconSmall, UINT nIconSize) DECLSPEC_HIDDEN;
 
-HRESULT WINAPI IAutoComplete_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv);
+HRESULT WINAPI IAutoComplete_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
+HRESULT WINAPI ApplicationAssociationRegistration_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
 
-LPEXTRACTICONA	IExtractIconA_Constructor(LPCITEMIDLIST);
-LPEXTRACTICONW	IExtractIconW_Constructor(LPCITEMIDLIST);
+HRESULT WINAPI ApplicationDestinations_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
 
-/* menu merging */
-#define MM_ADDSEPARATOR         0x00000001L
-#define MM_SUBMENUSHAVEIDS      0x00000002L
-HRESULT WINAPI Shell_MergeMenus (HMENU hmDst, HMENU hmSrc, UINT uInsert, UINT uIDAdjust, UINT uIDAdjustMax, ULONG uFlags);
+HRESULT IShellLink_ConstructFromFile(IUnknown * pUnkOuter, REFIID riid, LPCITEMIDLIST pidl, IUnknown **ppv) DECLSPEC_HIDDEN;
+
+LPEXTRACTICONA	IExtractIconA_Constructor(LPCITEMIDLIST) DECLSPEC_HIDDEN;
+LPEXTRACTICONW	IExtractIconW_Constructor(LPCITEMIDLIST) DECLSPEC_HIDDEN;
+
+HRESULT WINAPI CustomDestinationList_Constructor(IUnknown *outer, REFIID riid, void **obj) DECLSPEC_HIDDEN;
 
 /* initialisation for FORMATETC */
 #define InitFormatEtc(fe, cf, med) \
@@ -121,26 +130,19 @@ HRESULT WINAPI Shell_MergeMenus (HMENU hmDst, HMENU hmSrc, UINT uInsert, UINT uI
 	};
 
 #define KeyStateToDropEffect(kst)\
-	(((kst) & MK_CONTROL) ?\
-	(((kst) & MK_SHIFT) ? DROPEFFECT_LINK : DROPEFFECT_COPY):\
-	DROPEFFECT_MOVE)
-
-/* Systray */
-BOOL SYSTRAY_Init(void);
+    ((((kst)&(MK_CONTROL|MK_SHIFT))==(MK_CONTROL|MK_SHIFT)) ? DROPEFFECT_LINK :\
+    (((kst)&(MK_CONTROL|MK_SHIFT)) ? DROPEFFECT_COPY :\
+    DROPEFFECT_MOVE))
 
 
-HGLOBAL RenderHDROP(LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderSHELLIDLIST (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderSHELLIDLISTOFFSET (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderFILECONTENTS (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderFILEDESCRIPTOR (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderFILENAMEA (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderFILENAMEW (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderPREFEREDDROPEFFECT (DWORD dwFlags);
+HGLOBAL RenderHDROP(LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl) DECLSPEC_HIDDEN;
+HGLOBAL RenderSHELLIDLIST (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl) DECLSPEC_HIDDEN;
+HGLOBAL RenderFILENAMEA (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl) DECLSPEC_HIDDEN;
+HGLOBAL RenderFILENAMEW (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl) DECLSPEC_HIDDEN;
 
 /* Change Notification */
-void InitChangeNotifications(void);
-void FreeChangeNotifications(void);
+void InitChangeNotifications(void) DECLSPEC_HIDDEN;
+void FreeChangeNotifications(void) DECLSPEC_HIDDEN;
 
 /* file operation */
 #define ASK_DELETE_FILE           1
@@ -148,59 +150,22 @@ void FreeChangeNotifications(void);
 #define ASK_DELETE_MULTIPLE_ITEM  3
 #define ASK_CREATE_FOLDER         4
 #define ASK_OVERWRITE_FILE        5
+#define ASK_DELETE_SELECTED       6
+#define ASK_TRASH_FILE            7
+#define ASK_TRASH_FOLDER          8
+#define ASK_TRASH_MULTIPLE_ITEM   9
+#define ASK_CANT_TRASH_ITEM      10
+#define ASK_OVERWRITE_FOLDER     11
 
-BOOL SHELL_DeleteDirectoryA(LPCSTR pszDir, BOOL bShowUI);
-BOOL SHELL_DeleteFileA(LPCSTR pszFile, BOOL bShowUI);
-BOOL SHELL_ConfirmDialog(int nKindOfDialog, LPCSTR szDir);
+BOOL SHELL_ConfirmYesNoW(HWND hWnd, int nKindOfDialog, LPCWSTR szDir) DECLSPEC_HIDDEN;
 
-/* 16-bit functions */
-void        WINAPI DragAcceptFiles16(HWND16 hWnd, BOOL16 b);
-UINT16      WINAPI DragQueryFile16(HDROP16 hDrop, WORD wFile, LPSTR lpszFile, WORD wLength);
-void        WINAPI DragFinish16(HDROP16 h);
-BOOL16      WINAPI DragQueryPoint16(HDROP16 hDrop, POINT16 *p);
-HINSTANCE16 WINAPI ShellExecute16(HWND16,LPCSTR,LPCSTR,LPCSTR,LPCSTR,INT16);
-HICON16     WINAPI ExtractIcon16(HINSTANCE16,LPCSTR,UINT16);
-HICON16     WINAPI ExtractAssociatedIcon16(HINSTANCE16,LPSTR,LPWORD);
-HICON16     WINAPI ExtractIconEx16 ( LPCSTR, INT16, HICON16 *, HICON16 *, UINT16 );
-HINSTANCE16 WINAPI FindExecutable16(LPCSTR,LPCSTR,LPSTR);
-HGLOBAL16   WINAPI InternalExtractIcon16(HINSTANCE16,LPCSTR,UINT16,WORD);
-BOOL16      WINAPI ShellAbout16(HWND16,LPCSTR,LPCSTR,HICON16);
-BOOL16      WINAPI AboutDlgProc16(HWND16,UINT16,WPARAM16,LPARAM);
-
-void WINAPI _InsertMenuItem (HMENU hmenu, UINT indexMenu, BOOL fByPosition,
-			UINT wID, UINT fType, LPCSTR dwTypeData, UINT fState);
-
-inline static BOOL SHELL_OsIsUnicode(void)
+static inline BOOL SHELL_OsIsUnicode(void)
 {
     /* if high-bit of version is 0, we are emulating NT */
     return !(GetVersion() & 0x80000000);
 }
 
-#define __SHFreeAndNil(ptr) \
-	{\
-	  SHFree(*ptr); \
-	  *ptr = NULL; \
-	};
-inline static void __SHCloneStrA(char ** target,const char * source)
-{
-	*target = SHAlloc(strlen(source)+1);
-	strcpy(*target, source);
-}
-
-inline static void __SHCloneStrWtoA(char ** target, const WCHAR * source)
-{
-	int len = WideCharToMultiByte(CP_ACP, 0, source, -1, NULL, 0, NULL, NULL);
-	*target = SHAlloc(len);
-	WideCharToMultiByte(CP_ACP, 0, source, -1, *target, len, NULL, NULL);
-}
-
-inline static void __SHCloneStrW(WCHAR ** target, const WCHAR * source)
-{
-	*target = SHAlloc( (strlenW(source)+1) * sizeof(WCHAR) );
-	strcpyW(*target, source);
-}
-
-inline static WCHAR * __SHCloneStrAtoW(WCHAR ** target, const char * source)
+static inline WCHAR * __SHCloneStrAtoW(WCHAR ** target, const char * source)
 {
 	int len = MultiByteToWideChar(CP_ACP, 0, source, -1, NULL, 0);
 	*target = SHAlloc(len*sizeof(WCHAR));
@@ -208,27 +173,98 @@ inline static WCHAR * __SHCloneStrAtoW(WCHAR ** target, const char * source)
 	return *target;
 }
 
-/* handle conversions */
-#define HICON_16(h32)		(LOWORD(h32))
-#define HICON_32(h16)		((HICON)(ULONG_PTR)(h16))
-#define HINSTANCE_32(h16)	((HINSTANCE)(ULONG_PTR)(h16))
-#define HINSTANCE_16(h32)	(LOWORD(h32))
 
-typedef UINT_PTR (*SHELL_ExecuteW32)(const WCHAR *lpCmd, WCHAR *env, BOOL shWait,
-			    LPSHELLEXECUTEINFOW sei, LPSHELLEXECUTEINFOW sei_out);
+extern WCHAR swShell32Name[MAX_PATH] DECLSPEC_HIDDEN;
 
-BOOL SHELL_execute(LPSHELLEXECUTEINFOW sei, SHELL_ExecuteW32 execfunc, BOOL unicode);
+BOOL UNIXFS_is_rooted_at_desktop(void) DECLSPEC_HIDDEN;
+extern const GUID CLSID_UnixFolder DECLSPEC_HIDDEN;
+extern const GUID CLSID_UnixDosFolder DECLSPEC_HIDDEN;
 
-UINT SHELL_FindExecutable(LPCWSTR lpPath, LPCWSTR lpFile, LPCWSTR lpOperation,
-                          LPWSTR lpResult, int resultLen, LPWSTR key, WCHAR **env, LPITEMIDLIST pidl, LPCWSTR args);
-
-extern WCHAR swShell32Name[MAX_PATH];
-
-BOOL UNIXFS_is_rooted_at_desktop(void);
-extern const GUID CLSID_UnixFolder;
-extern const GUID CLSID_UnixDosFolder;
+extern BOOL run_winemenubuilder( const WCHAR *args ) DECLSPEC_HIDDEN;
 
 /* Default shell folder value registration */
-HRESULT SHELL_RegisterShellFolders(void);
+HRESULT SHELL_RegisterShellFolders(void) DECLSPEC_HIDDEN;
+
+/* Detect Shell Links */
+BOOL SHELL_IsShortcut(LPCITEMIDLIST) DECLSPEC_HIDDEN;
+
+
+/* IEnumIDList stuff */
+struct pidl_enum_entry
+{
+    struct list entry;
+    LPITEMIDLIST pidl;
+};
+
+typedef struct
+{
+    IEnumIDList  IEnumIDList_iface;
+    LONG         ref;
+    struct list  pidls;
+    struct list *current;
+} IEnumIDListImpl;
+
+/* Creates an IEnumIDList; add LPITEMIDLISTs to it with AddToEnumList. */
+IEnumIDListImpl *IEnumIDList_Constructor(void) DECLSPEC_HIDDEN;
+BOOL AddToEnumList(IEnumIDListImpl *list, LPITEMIDLIST pidl) DECLSPEC_HIDDEN;
+
+/* Enumerates the folders and/or files (depending on dwFlags) in lpszPath and
+ * adds them to the already-created list.
+ */
+BOOL CreateFolderEnumList(IEnumIDListImpl *list, LPCWSTR lpszPath, DWORD dwFlags) DECLSPEC_HIDDEN;
+
+enum tid_t {
+    NULL_tid,
+    IShellDispatch6_tid,
+    IShellFolderViewDual3_tid,
+    Folder3_tid,
+    FolderItem2_tid,
+    FolderItems3_tid,
+    FolderItemVerb_tid,
+    FolderItemVerbs_tid,
+    LAST_tid
+};
+
+HRESULT get_typeinfo(enum tid_t, ITypeInfo**) DECLSPEC_HIDDEN;
+void release_typelib(void) DECLSPEC_HIDDEN;
+void release_desktop_folder(void) DECLSPEC_HIDDEN;
+
+static inline WCHAR *strdupW(const WCHAR *src)
+{
+    WCHAR *dest;
+    if (!src) return NULL;
+    dest = heap_alloc((lstrlenW(src) + 1) * sizeof(*dest));
+    if (dest)
+        lstrcpyW(dest, src);
+    return dest;
+}
+
+static inline WCHAR *strndupW(const WCHAR *src, DWORD len)
+{
+    WCHAR *dest;
+    if (!src) return NULL;
+    dest = heap_alloc((len + 1) * sizeof(*dest));
+    if (dest)
+    {
+        memcpy(dest, src, len * sizeof(WCHAR));
+        dest[len] = '\0';
+    }
+    return dest;
+}
+
+static inline WCHAR *strdupAtoW(const char *str)
+{
+    WCHAR *ret;
+    DWORD len;
+
+    if (!str) return NULL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
+    ret = heap_alloc(len * sizeof(WCHAR));
+    if (ret)
+        MultiByteToWideChar(CP_ACP, 0, str, -1, ret, len);
+
+    return ret;
+}
 
 #endif

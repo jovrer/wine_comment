@@ -14,7 +14,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  * We use function pointers here as there is no import library for NTDLL on
@@ -102,7 +102,6 @@ static const magic_divide_t magic_divide[] = {
     { ULL(0x74ae3b5f,0x1558c800),  ULL(0x2f1e28fd,0x1b5cca00), 41,            0xabcde},
 
 };
-#define NB_MAGIC_DIVIDE (sizeof(magic_divide)/sizeof(*magic_divide))
 
 
 static void test_RtlExtendedMagicDivide(void)
@@ -110,11 +109,12 @@ static void test_RtlExtendedMagicDivide(void)
     int i;
     LONGLONG result;
 
-    for (i = 0; i < NB_MAGIC_DIVIDE; i++) {
+    for (i = 0; i < ARRAY_SIZE(magic_divide); i++) {
 	result = pRtlExtendedMagicDivide(magic_divide[i].a, magic_divide[i].b, magic_divide[i].shift);
 	ok(result == magic_divide[i].result,
-	   "call failed: RtlExtendedMagicDivide(%lld, %llu, %d) has result %llx, expected %llx\n",
-	   magic_divide[i].a, magic_divide[i].b, magic_divide[i].shift, result, magic_divide[i].result);
+           "call failed: RtlExtendedMagicDivide(0x%s, 0x%s, %d) has result 0x%s, expected 0x%s\n",
+	   wine_dbgstr_longlong(magic_divide[i].a), wine_dbgstr_longlong(magic_divide[i].b), magic_divide[i].shift,
+       wine_dbgstr_longlong(result), wine_dbgstr_longlong(magic_divide[i].result));
     }
 }
 
@@ -270,7 +270,6 @@ static const largeint2str_t largeint2str[] = {
     {20,   0xdeadbeef,  0,  9, "-------------------------------------------------------------------",  STATUS_INVALID_PARAMETER},
     {-8,     07654321,  0, 12, "-------------------------------------------------------------------",  STATUS_INVALID_PARAMETER},
 };
-#define NB_LARGEINT2STR (sizeof(largeint2str)/sizeof(*largeint2str))
 
 
 static void one_RtlInt64ToUnicodeString_test(int test_num, const largeint2str_t *largeint2str)
@@ -283,6 +282,14 @@ static void one_RtlInt64ToUnicodeString_test(int test_num, const largeint2str_t 
     UNICODE_STRING unicode_string;
     STRING ansi_str;
     NTSTATUS result;
+
+#ifdef _WIN64
+    if (largeint2str->value >> 32 == 0xffffffff)  /* this crashes on 64-bit Vista */
+    {
+        skip( "Value ffffffff%08x broken on 64-bit windows\n", (DWORD)largeint2str->value );
+        return;
+    }
+#endif
 
     for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
 	expected_str_Buffer[pos] = largeint2str->Buffer[pos];
@@ -316,29 +323,32 @@ static void one_RtlInt64ToUnicodeString_test(int test_num, const largeint2str_t 
 	/* the string would have (which can be larger than the MaximumLength). */
 	/* To allow all this in the tests we do the following: */
 	if (expected_unicode_string.Length >= 64) {
-	    /* The value is too large to convert only triggerd when testing native */
+	    /* The value is too large to convert only triggered when testing native */
 	    /* Length is not filled with the expected string length (garbage?) */
 	    expected_unicode_string.Length = unicode_string.Length;
 	} /* if */
     } else {
 	ok(result == largeint2str->result,
-	   "(test %d): RtlInt64ToUnicodeString(%llu, %d, [out]) has result %lx, expected: %lx\n",
-	   test_num, largeint2str->value, largeint2str->base, result, largeint2str->result);
+           "(test %d): RtlInt64ToUnicodeString(0x%s, %d, [out]) has result %x, expected: %x\n",
+	   test_num, wine_dbgstr_longlong(largeint2str->value), largeint2str->base, result, largeint2str->result);
 	if (result == STATUS_SUCCESS) {
 	    ok(unicode_string.Buffer[unicode_string.Length/sizeof(WCHAR)] == '\0',
-	       "(test %d): RtlInt64ToUnicodeString(%llu, %d, [out]) string \"%s\" is not NULL terminated\n",
-	       test_num, largeint2str->value, largeint2str->base, ansi_str.Buffer);
+               "(test %d): RtlInt64ToUnicodeString(0x%s, %d, [out]) string \"%s\" is not NULL terminated\n",
+	       test_num, wine_dbgstr_longlong(largeint2str->value), largeint2str->base, ansi_str.Buffer);
 	} /* if */
     } /* if */
     ok(memcmp(unicode_string.Buffer, expected_unicode_string.Buffer, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) == 0,
-       "(test %d): RtlInt64ToUnicodeString(%llu, %d, [out]) assigns string \"%s\", expected: \"%s\"\n",
-       test_num, largeint2str->value, largeint2str->base, ansi_str.Buffer, expected_ansi_str.Buffer);
+       "(test %d): RtlInt64ToUnicodeString(0x%x%08x, %d, [out]) assigns string \"%s\", expected: \"%s\"\n",
+       test_num, (DWORD)(largeint2str->value >>32), (DWORD)largeint2str->value, largeint2str->base, 
+       ansi_str.Buffer, expected_ansi_str.Buffer);
     ok(unicode_string.Length == expected_unicode_string.Length,
-       "(test %d): RtlInt64ToUnicodeString(%llu, %d, [out]) string has Length %d, expected: %d\n",
-       test_num, largeint2str->value, largeint2str->base, unicode_string.Length, expected_unicode_string.Length);
+       "(test %d): RtlInt64ToUnicodeString(0x%s, %d, [out]) string has Length %d, expected: %d\n",
+       test_num, wine_dbgstr_longlong(largeint2str->value), largeint2str->base,
+       unicode_string.Length, expected_unicode_string.Length);
     ok(unicode_string.MaximumLength == expected_unicode_string.MaximumLength,
-       "(test %d): RtlInt64ToUnicodeString(%llu, %d, [out]) string has MaximumLength %d, expected: %d\n",
-       test_num, largeint2str->value, largeint2str->base, unicode_string.MaximumLength, expected_unicode_string.MaximumLength);
+       "(test %d): RtlInt64ToUnicodeString(0x%s, %d, [out]) string has MaximumLength %d, expected: %d\n",
+       test_num, wine_dbgstr_longlong(largeint2str->value), largeint2str->base,
+       unicode_string.MaximumLength, expected_unicode_string.MaximumLength);
     pRtlFreeAnsiString(&expected_ansi_str);
     pRtlFreeAnsiString(&ansi_str);
 }
@@ -348,7 +358,7 @@ static void test_RtlInt64ToUnicodeString(void)
 {
     int test_num;
 
-    for (test_num = 0; test_num < NB_LARGEINT2STR; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(largeint2str); test_num++) {
 	one_RtlInt64ToUnicodeString_test(test_num, &largeint2str[test_num]);
     } /* for */
 }
@@ -360,6 +370,14 @@ static void one_RtlLargeIntegerToChar_test(int test_num, const largeint2str_t *l
     char dest_str[LARGE_STRI_BUFFER_LENGTH + 1];
     ULONGLONG value;
 
+#ifdef _WIN64
+    if (largeint2str->value >> 32 == 0xffffffff)  /* this crashes on 64-bit Vista */
+    {
+        skip( "Value ffffffff%08x broken on 64-bit windows\n", (DWORD)largeint2str->value );
+        return;
+    }
+#endif
+
     memset(dest_str, '-', LARGE_STRI_BUFFER_LENGTH);
     dest_str[LARGE_STRI_BUFFER_LENGTH] = '\0';
     value = largeint2str->value;
@@ -369,11 +387,13 @@ static void one_RtlLargeIntegerToChar_test(int test_num, const largeint2str_t *l
 	result = pRtlLargeIntegerToChar(&value, largeint2str->base, largeint2str->MaximumLength, dest_str);
     } /* if */
     ok(result == largeint2str->result,
-       "(test %d): RtlLargeIntegerToChar(%llu, %d, %d, [out]) has result %lx, expected: %lx\n",
-       test_num, largeint2str->value, largeint2str->base, largeint2str->MaximumLength, result, largeint2str->result);
+       "(test %d): RtlLargeIntegerToChar(0x%s, %d, %d, [out]) has result %x, expected: %x\n",
+       test_num, wine_dbgstr_longlong(largeint2str->value), largeint2str->base,
+       largeint2str->MaximumLength, result, largeint2str->result);
     ok(memcmp(dest_str, largeint2str->Buffer, LARGE_STRI_BUFFER_LENGTH) == 0,
-       "(test %d): RtlLargeIntegerToChar(%llu, %d, %d, [out]) assigns string \"%s\", expected: \"%s\"\n",
-       test_num, largeint2str->value, largeint2str->base, largeint2str->MaximumLength, dest_str, largeint2str->Buffer);
+       "(test %d): RtlLargeIntegerToChar(0x%s, %d, %d, [out]) assigns string \"%s\", expected: \"%s\"\n",
+       test_num, wine_dbgstr_longlong(largeint2str->value), largeint2str->base,
+       largeint2str->MaximumLength, dest_str, largeint2str->Buffer);
 }
 
 
@@ -383,30 +403,33 @@ static void test_RtlLargeIntegerToChar(void)
     int test_num;
     ULONGLONG value;
 
-    for (test_num = 0; test_num < NB_LARGEINT2STR; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(largeint2str); test_num++) {
 	one_RtlLargeIntegerToChar_test(test_num, &largeint2str[test_num]);
     } /* for */
 
     value = largeint2str[0].value;
     result = pRtlLargeIntegerToChar(&value, 20, largeint2str[0].MaximumLength, NULL);
     ok(result == STATUS_INVALID_PARAMETER,
-       "(test a): RtlLargeIntegerToChar(%llu, %d, %d, NULL) has result %lx, expected: %x\n",
-       largeint2str[0].value, 20, largeint2str[0].MaximumLength, result, STATUS_INVALID_PARAMETER);
+       "(test a): RtlLargeIntegerToChar(0x%s, %d, %d, NULL) has result %x, expected: %x\n",
+       wine_dbgstr_longlong(largeint2str[0].value), 20,
+       largeint2str[0].MaximumLength, result, STATUS_INVALID_PARAMETER);
 
     result = pRtlLargeIntegerToChar(&value, 20, 0, NULL);
     ok(result == STATUS_INVALID_PARAMETER,
-       "(test b): RtlLargeIntegerToChar(%llu, %d, %d, NULL) has result %lx, expected: %x\n",
-       largeint2str[0].value, 20, largeint2str[0].MaximumLength, result, STATUS_INVALID_PARAMETER);
+       "(test b): RtlLargeIntegerToChar(0x%s, %d, %d, NULL) has result %x, expected: %x\n",
+       wine_dbgstr_longlong(largeint2str[0].value), 20,
+       largeint2str[0].MaximumLength, result, STATUS_INVALID_PARAMETER);
 
     result = pRtlLargeIntegerToChar(&value, largeint2str[0].base, 0, NULL);
     ok(result == STATUS_BUFFER_OVERFLOW,
-       "(test c): RtlLargeIntegerToChar(%llu, %d, %d, NULL) has result %lx, expected: %x\n",
-       largeint2str[0].value, largeint2str[0].base, 0, result, STATUS_BUFFER_OVERFLOW);
+       "(test c): RtlLargeIntegerToChar(0x%s, %d, %d, NULL) has result %x, expected: %x\n",
+       wine_dbgstr_longlong(largeint2str[0].value), largeint2str[0].base, 0, result, STATUS_BUFFER_OVERFLOW);
 
     result = pRtlLargeIntegerToChar(&value, largeint2str[0].base, largeint2str[0].MaximumLength, NULL);
     ok(result == STATUS_ACCESS_VIOLATION,
-       "(test d): RtlLargeIntegerToChar(%llu, %d, %d, NULL) has result %lx, expected: %x\n",
-       largeint2str[0].value, largeint2str[0].base, largeint2str[0].MaximumLength, result, STATUS_ACCESS_VIOLATION);
+       "(test d): RtlLargeIntegerToChar(0x%s, %d, %d, NULL) has result %x, expected: %x\n",
+       wine_dbgstr_longlong(largeint2str[0].value),
+       largeint2str[0].base, largeint2str[0].MaximumLength, result, STATUS_ACCESS_VIOLATION);
 }
 
 

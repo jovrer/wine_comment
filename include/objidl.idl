@@ -13,10 +13,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef DO_NO_IMPORTS
 import "unknwn.idl";
+#endif
 
 interface IStream;
 interface IEnumString;
@@ -160,16 +162,16 @@ interface IMalloc : IUnknown
   typedef [unique] IMalloc *LPMALLOC;
 
   LPVOID Alloc(
-    [in] ULONG cb);
+    [in] SIZE_T cb);
 
   LPVOID Realloc(
     [in] LPVOID pv,
-    [in] ULONG cb);
+    [in] SIZE_T cb);
 
   void Free(
     [in] LPVOID pv);
 
-  ULONG GetSize(
+  SIZE_T GetSize(
     [in] LPVOID pv);
 
   int DidAlloc(LPVOID pv);
@@ -186,8 +188,8 @@ interface IMallocSpy : IUnknown
 {
   typedef [unique] IMallocSpy *LPMALLOCSPY;
 
-  ULONG PreAlloc(
-    [in] ULONG cbRequest);
+  SIZE_T PreAlloc(
+    [in] SIZE_T cbRequest);
 
   LPVOID PostAlloc(
     [in] LPVOID pActual);
@@ -199,9 +201,9 @@ interface IMallocSpy : IUnknown
   void PostFree(
     [in] BOOL fSpyed);
 
-  ULONG PreRealloc(
+  SIZE_T PreRealloc(
     [in] LPVOID pRequest,
-    [in] ULONG cbRequest,
+    [in] SIZE_T cbRequest,
     [out] LPVOID *ppNewRequest,
     [in] BOOL fSpyed);
 
@@ -213,8 +215,8 @@ interface IMallocSpy : IUnknown
     [in] LPVOID pRequest,
     [in] BOOL fSpyed);
 
-  ULONG PostGetSize(
-    [in] ULONG cbActual,
+  SIZE_T PostGetSize(
+    [in] SIZE_T cbActual,
     [in] BOOL fSpyed);
 
   LPVOID PreDidAlloc(
@@ -342,6 +344,18 @@ interface IBindCtx : IUnknown
     LCID  locale;
     COSERVERINFO *pServerInfo;
   } BIND_OPTS2, *LPBIND_OPTS2;
+
+  typedef struct tagBIND_OPTS3 {
+    DWORD cbStruct;
+    DWORD grfFlags;
+    DWORD grfMode;
+    DWORD dwTickCountDeadline;
+    DWORD dwTrackFlags;
+    DWORD dwClassContext;
+    LCID  locale;
+    COSERVERINFO *pServerInfo;
+    HWND hwnd;
+  } BIND_OPTS3, *LPBIND_OPTS3;
 
   typedef enum tagBIND_FLAGS {
     BIND_MAYBOTHERUSER   = 1,
@@ -1376,7 +1390,6 @@ interface IAdviseSink : IUnknown
     [size_is(cbData)] byte data[];
   } RemSTGMEDIUM;
 
-  /* FIXME: C/C++ nameless union version */
   typedef struct tagSTGMEDIUM {
     DWORD tymed;
     [switch_is(tymed)] union {
@@ -1388,7 +1401,7 @@ interface IAdviseSink : IUnknown
     [case(TYMED_ISTREAM)]  IStream *pstm;
     [case(TYMED_ISTORAGE)] IStorage *pstg;
     [default]              ;
-    };
+    } DUMMYUNIONNAME;
     [unique] IUnknown *pUnkForRelease;
   } uSTGMEDIUM;
 
@@ -1423,7 +1436,7 @@ interface IAdviseSink : IUnknown
     case TYMED_FILE:     LPOLESTR lpszFileName;
     case TYMED_ISTREAM:  BYTE_BLOB *pstm;
     case TYMED_ISTORAGE: BYTE_BLOB *pstg;
-    };
+    } DUMMYUNIONNAME;
     IUnknown *pUnkForRelease;
   } userSTGMEDIUM;
 
@@ -1454,9 +1467,8 @@ interface IAdviseSink : IUnknown
     [in, unique] FORMATETC *pFormatetc,
     [in, unique] STGMEDIUM *pStgmed);
 
-  [call_as(OnDataChange), async]
+  [call_as(OnDataChange)]
   HRESULT  RemoteOnDataChange(
-    [in] IAsyncManager **ppIAM,
     [in, unique] FORMATETC *pFormatetc,
     [in, unique] ASYNC_STGMEDIUM *pStgmed);
 
@@ -1465,9 +1477,8 @@ interface IAdviseSink : IUnknown
     [in] DWORD dwAspect,
     [in] LONG lindex);
 
-  [call_as(OnViewChange), async]
+  [call_as(OnViewChange)]
   HRESULT RemoteOnViewChange(
-    [in] IAsyncManager **ppIAM,
     [in] DWORD dwAspect,
     [in] LONG lindex);
 
@@ -1475,17 +1486,15 @@ interface IAdviseSink : IUnknown
   void OnRename(
     [in] IMoniker *pmk);
 
-  [call_as(OnRename), async]
+  [call_as(OnRename)]
   HRESULT RemoteOnRename(
-    [in] IAsyncManager **ppIAM,
     [in] IMoniker *pmk);
 
   [local]
   void OnSave();
 
-  [call_as(OnSave), async]
-  HRESULT RemoteOnSave(
-    [in] IAsyncManager **ppIAM);
+  [call_as(OnSave)]
+  HRESULT RemoteOnSave();
 
   [local]
   void OnClose();
@@ -1507,9 +1516,8 @@ interface IAdviseSink2 : IAdviseSink
   void OnLinkSrcChange(
     [in, unique] IMoniker *pmk);
 
-  [call_as(OnLinkSrcChange), async]
+  [call_as(OnLinkSrcChange)]
   HRESULT RemoteOnLinkSrcChange(
-    [in] IAsyncManager **ppIAM,
     [in, unique] IMoniker *pmk);
 }
 
@@ -1785,7 +1793,7 @@ interface IAsyncRpcChannelBuffer : IRpcChannelBuffer2
         [in] RPCOLEMESSAGE *pMsg,
         [out] DWORD *pdwDestContext,
         [out] void **ppvDestContext);
-};
+}
 
 [
     local,
@@ -1948,13 +1956,36 @@ interface IClientSecurity : IUnknown
 
   typedef SOLE_AUTHENTICATION_SERVICE *PSOLE_AUTHENTICATION_SERVICE;
 
+  typedef struct tagSOLE_AUTHENTICATION_INFO {
+    DWORD dwAuthnSvc;
+    DWORD dwAuthzSvc;
+    void *pAuthInfo;
+  } SOLE_AUTHENTICATION_INFO;
+
+  const OLECHAR *COLE_DEFAULT_PRINCIPAL = (OLECHAR*) -1;
+  const void *COLE_DEFAULT_AUTHINFO = (void*) -1;
+
+  typedef struct tagSOLE_AUTHENTICATION_LIST {
+    DWORD cAuthInfo;
+    SOLE_AUTHENTICATION_INFO *aAuthInfo;
+  } SOLE_AUTHENTICATION_LIST;
+
   typedef enum tagEOLE_AUTHENTICATION_CAPABILITIES {
-    EOAC_NONE           = 0x0,
-    EOAC_MUTUAL_AUTH    = 0x1,
-    EOAC_CLOAKING       = 0x10,
-    EOAC_SECURE_REFS    = 0x2,
-    EOAC_ACCESS_CONTROL = 0x4,
-    EOAC_APPID          = 0x8
+    EOAC_NONE               = 0x0,
+    EOAC_MUTUAL_AUTH        = 0x1,
+    EOAC_SECURE_REFS        = 0x2, /* CoInitializeSecurity only */
+    EOAC_ACCESS_CONTROL     = 0x4, /* CoInitializeSecurity only */
+    EOAC_APPID              = 0x8, /* CoInitializeSecurity only */
+    EOAC_DYNAMIC            = 0x10, /* CoInitializeSecurity only */
+    EOAC_STATIC_CLOAKING    = 0x20,
+    EOAC_DYNAMIC_CLOAKING   = 0x40,
+    EOAC_ANY_AUTHORITY      = 0x80,
+    EOAC_MAKE_FULLSIC       = 0x100,
+    EOAC_REQUIRE_FULLSIC    = 0x200, /* CoInitializeSecurity only */
+    EOAC_AUTO_IMPERSONATE   = 0x400, /* CoInitializeSecurity only */
+    EOAC_DEFAULT            = 0x800,
+    EOAC_DISABLE_AAA        = 0x1000, /* CoInitializeSecurity only */
+    EOAC_NO_CUSTOM_MARSHAL  = 0x2000, /* CoInitializeSecurity only */
   } EOLE_AUTHENTICATION_CAPABILITIES;
 
   HRESULT QueryBlanket(
@@ -1965,7 +1996,7 @@ interface IClientSecurity : IUnknown
     [out] DWORD *pAuthnLevel,
     [out] DWORD *pImpLevel,
     [out] void **pAuthInfo,
-    [out] DWORD *pCapabilites);
+    [out] DWORD *pCapabilities);
 
   HRESULT SetBlanket(
     [in] IUnknown *pProxy,
@@ -2270,7 +2301,7 @@ interface IAddrTrackingControl : IUnknown
 
     HRESULT EnableCOMDynamicAddrTracking();
     HRESULT DisableCOMDynamicAddrTracking();
-};
+}
 
 [
     local,
@@ -2286,7 +2317,7 @@ interface IAddrExclusionControl : IUnknown
         [out, iid_is(riid)] void **ppEnumerator);
     HRESULT UpdateAddrExclusionList(
         [in] IUnknown *pEnumerator);
-};
+}
 
 typedef enum _APTTYPE {
     APTTYPE_CURRENT = -1,
@@ -2295,6 +2326,15 @@ typedef enum _APTTYPE {
     APTTYPE_NA      = 2,
     APTTYPE_MAINSTA = 3
 } APTTYPE;
+
+typedef enum _APTTYPEQUALIFIER {
+    APTTYPEQUALIFIER_NONE,
+    APTTYPEQUALIFIER_IMPLICIT_MTA,
+    APTTYPEQUALIFIER_NA_ON_MTA,
+    APTTYPEQUALIFIER_NA_ON_STA,
+    APTTYPEQUALIFIER_NA_ON_IMPLICIT_MTA,
+    APTTYPEQUALIFIER_NA_ON_MAINSTA
+} APTTYPEQUALIFIER;
 
 typedef enum _THDTYPE {
     THDTYPE_BLOCKMESSAGES   = 0,
@@ -2317,7 +2357,7 @@ interface IComThreadingInfo : IUnknown
         [out] GUID *pguidLogicalThreadId);
     HRESULT SetCurrentLogicalThreadId(
         [in] REFGUID rguid);
-};
+}
 
 
 [
@@ -2329,7 +2369,7 @@ interface IProcessInitControl : IUnknown
 {
     HRESULT ResetInitializerTimeout(
         [in] DWORD dwSecondsRemaining);
-};
+}
 
 [
     local,
@@ -2355,7 +2395,7 @@ interface IInitializeSpy : IUnknown
 
     HRESULT PostUninitialize(
         [in] DWORD dwNewThreadAptRefs);
-};
+}
 
 [
     object,
@@ -2375,3 +2415,138 @@ interface IThumbnailExtractor : IUnknown
     HRESULT OnFileUpdated(
         [in] IStorage *pStg);
 }
+
+typedef enum tagGLOBALOPT_PROPERTIES
+{
+    COMGLB_EXCEPTION_HANDLING     = 1,
+    COMGLB_APPID                  = 2,
+    COMGLB_RPC_THREADPOOL_SETTING = 3
+} GLOBALOPT_PROPERTIES;
+
+typedef enum tagGLOBALOPT_EH_VALUES
+{
+    COMGLB_EXCEPTION_HANDLE               = 0,
+    COMGLB_EXCEPTION_DONOT_HANDLE_FATAL   = 1,
+    COMGLB_EXCEPTION_DONOT_HANDLE         = COMGLB_EXCEPTION_DONOT_HANDLE_FATAL,
+    COMGLB_EXCEPTION_DONOT_HANDLE_ANY     = 2
+} GLOBALOPT_EH_VALUES;
+
+typedef enum tagGLOBALOPT_RPCTP_VALUES
+{
+    COMGLB_RPC_THREADPOOL_SETTING_DEFAULT_POOL = 0,
+    COMGLB_RPC_THREADPOOL_SETTING_PRIVATE_POOL = 1
+} GLOBALOPT_RPCTP_VALUES;
+
+
+[
+    object,
+    local,
+    pointer_default(unique),
+    uuid(0000015B-0000-0000-C000-000000000046)
+]
+interface IGlobalOptions : IUnknown
+{
+    HRESULT Set([in] GLOBALOPT_PROPERTIES property, [in] ULONG_PTR value);
+    HRESULT Query([in] GLOBALOPT_PROPERTIES property, [out ] ULONG_PTR *value);
+}
+
+[
+    object,
+    pointer_default(unique),
+    uuid(947990de-cc28-11d2-a0f7-00805f858fb1)
+]
+interface IDummyHICONIncluder : IUnknown
+{
+    HRESULT Dummy([in] HICON hIcon, [in] HDC hdc);
+}
+
+[
+    object,
+    local,
+    pointer_default(unique),
+    uuid(a2f05a09-27a2-42b5-bc0e-ac163ef49d9b)
+]
+interface IApartmentShutdown : IUnknown
+{
+    void OnUninitialize([in] UINT64 identifier);
+}
+
+cpp_quote("#ifdef USE_COM_CONTEXT_DEF")
+
+typedef DWORD CPFLAGS;
+
+typedef struct tagContextProperty
+{
+    GUID policyId;
+    CPFLAGS flags;
+    [unique] IUnknown *pUnk;
+} ContextProperty;
+
+[
+    local,
+    object,
+    uuid(000001c1-0000-0000-C000-000000000046)
+]
+interface IEnumContextProps : IUnknown
+{
+    typedef [unique] IEnumContextProps *LPENUMCONTEXTPROPS;
+
+    HRESULT Next(
+        [in] ULONG celt,
+        [out, size_is(celt), length_is(*pceltFetched)] ContextProperty *pContextProperties,
+        [out] ULONG *pceltFetched);
+
+    HRESULT Skip(
+        [in] ULONG celt);
+
+    HRESULT Reset();
+
+    HRESULT Clone(
+        [out] IEnumContextProps **ppEnumContextProps);
+
+    HRESULT Count(
+        [out] ULONG *pcelt);
+}
+
+[
+    local,
+    object,
+    uuid(000001c0-0000-0000-C000-000000000046)
+]
+interface IContext : IUnknown
+{
+    HRESULT SetProperty(
+        [in] REFGUID policyId,
+        [in] CPFLAGS flags,
+        [in] IUnknown *pUnk);
+
+    HRESULT RemoveProperty(
+        [in] REFGUID policyId);
+
+    HRESULT GetProperty(
+        [in] REFGUID guid,
+        [out] CPFLAGS *pFlags,
+        [out] IUnknown **ppUnk);
+
+    HRESULT EnumContextProps(
+        [out] IEnumContextProps **ppEnumContextProps);
+}
+
+[
+    local,
+    object,
+    uuid(000001c6-0000-0000-c000-000000000046),
+    pointer_default(unique)
+]
+interface IObjContext : IContext
+{
+    void Reserved1();
+    void Reserved2();
+    void Reserved3();
+    void Reserved4();
+    void Reserved5();
+    void Reserved6();
+    void Reserved7();
+}
+
+cpp_quote("#endif /* defined USE_COM_CONTEXT_DEF */")

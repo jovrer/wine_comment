@@ -15,11 +15,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "config.h"
+
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
+#include <limits.h>
 
 #define COBJMACROS
 
@@ -32,24 +36,15 @@
 #include "ole2.h"
 #include "olectl.h"
 #include "oleauto.h"
+#include "initguid.h"
 #include "typelib.h"
+#include "oleaut32_oaidl.h"
 
 #include "wine/debug.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
-
-/* The OLE Automation ProxyStub Interface Class (aka Typelib Marshaler) */
-extern const GUID CLSID_PSOAInterface;
-
-extern const GUID CLSID_PSDispatch;
-extern const GUID CLSID_PSEnumVariant;
-extern const GUID CLSID_PSTypeInfo;
-extern const GUID CLSID_PSTypeLib;
-extern const GUID CLSID_PSTypeComp;
-
-static BOOL BSTR_bCache = TRUE; /* Cache allocations to minimise alloc calls? */
-
-HMODULE OLEAUT32_hModule = NULL;
+WINE_DECLARE_DEBUG_CHANNEL(heap);
 
 /******************************************************************************
  * BSTR  {OLEAUT32}
@@ -59,8 +54,8 @@ HMODULE OLEAUT32_hModule = NULL;
  *  string type in ole automation. When encapsulated in a Variant type they are
  *  automatically copied and destroyed as the variant is processed.
  *
- *  The low level BSTR Api allows manipulation of these strings and is used by
- *  higher level Api calls to manage the strings transparently to the caller.
+ *  The low level BSTR API allows manipulation of these strings and is used by
+ *  higher level API calls to manage the strings transparently to the caller.
  *
  *  Internally the BSTR type is allocated with space for a DWORD byte count before
  *  the string data begins. This is undocumented and non-system code should not
@@ -77,6 +72,112 @@ HMODULE OLEAUT32_hModule = NULL;
  * SEE ALSO
  *  'Inside OLE, second edition' by Kraig Brockshmidt.
  */
+
+static BOOL bstr_cache_enabled;
+
+static CRITICAL_SECTION cs_bstr_cache;
+static CRITICAL_SECTION_DEBUG cs_bstr_cache_dbg =
+{
+    0, 0, &cs_bstr_cache,
+    { &cs_bstr_cache_dbg.ProcessLocksList, &cs_bstr_cache_dbg.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": bstr_cache") }
+};
+static CRITICAL_SECTION cs_bstr_cache = { &cs_bstr_cache_dbg, -1, 0, 0, 0, 0 };
+
+typedef struct {
+#ifdef _WIN64
+    DWORD pad;
+#endif
+    DWORD size;
+    union {
+        char ptr[1];
+        WCHAR str[1];
+        DWORD dwptr[1];
+    } u;
+} bstr_t;
+
+#define BUCKET_SIZE 16
+#define BUCKET_BUFFER_SIZE 6
+
+typedef struct {
+    unsigned short head;
+    unsigned short cnt;
+    bstr_t *buf[BUCKET_BUFFER_SIZE];
+} bstr_cache_entry_t;
+
+#define ARENA_INUSE_FILLER     0x55
+#define ARENA_TAIL_FILLER      0xab
+#define ARENA_FREE_FILLER      0xfeeefeee
+
+static bstr_cache_entry_t bstr_cache[0x10000/BUCKET_SIZE];
+
+static inline size_t bstr_alloc_size(size_t size)
+{
+    return (FIELD_OFFSET(bstr_t, u.ptr[size]) + sizeof(WCHAR) + BUCKET_SIZE-1) & ~(BUCKET_SIZE-1);
+}
+
+static inline bstr_t *bstr_from_str(BSTR str)
+{
+    return CONTAINING_RECORD(str, bstr_t, u.str);
+}
+
+static inline bstr_cache_entry_t *get_cache_entry_from_idx(unsigned cache_idx)
+{
+    return bstr_cache_enabled && cache_idx < ARRAY_SIZE(bstr_cache) ? bstr_cache + cache_idx : NULL;
+}
+
+static inline bstr_cache_entry_t *get_cache_entry(size_t size)
+{
+    unsigned cache_idx = FIELD_OFFSET(bstr_t, u.ptr[size+sizeof(WCHAR)-1])/BUCKET_SIZE;
+    return get_cache_entry_from_idx(cache_idx);
+}
+
+static inline bstr_cache_entry_t *get_cache_entry_from_alloc_size(SIZE_T alloc_size)
+{
+    unsigned cache_idx;
+    if (alloc_size < BUCKET_SIZE) return NULL;
+    cache_idx = (alloc_size - BUCKET_SIZE) / BUCKET_SIZE;
+    return get_cache_entry_from_idx(cache_idx);
+}
+
+static bstr_t *alloc_bstr(size_t size)
+{
+    bstr_cache_entry_t *cache_entry = get_cache_entry(size);
+    bstr_t *ret;
+
+    if(cache_entry) {
+        EnterCriticalSection(&cs_bstr_cache);
+
+        if(!cache_entry->cnt) {
+            cache_entry = get_cache_entry(size+BUCKET_SIZE);
+            if(cache_entry && !cache_entry->cnt)
+                cache_entry = NULL;
+        }
+
+        if(cache_entry) {
+            ret = cache_entry->buf[cache_entry->head++];
+            cache_entry->head %= BUCKET_BUFFER_SIZE;
+            cache_entry->cnt--;
+        }
+
+        LeaveCriticalSection(&cs_bstr_cache);
+
+        if(cache_entry) {
+            if(WARN_ON(heap)) {
+                size_t fill_size = (FIELD_OFFSET(bstr_t, u.ptr[size])+2*sizeof(WCHAR)-1) & ~(sizeof(WCHAR)-1);
+                memset(ret, ARENA_INUSE_FILLER, fill_size);
+                memset((char *)ret+fill_size, ARENA_TAIL_FILLER, bstr_alloc_size(size)-fill_size);
+            }
+            ret->size = size;
+            return ret;
+        }
+    }
+
+    ret = CoTaskMemAlloc(bstr_alloc_size(size));
+    if(ret)
+        ret->size = size;
+    return ret;
+}
 
 /******************************************************************************
  *             SysStringLen  [OLEAUT32.7]
@@ -97,18 +198,7 @@ HMODULE OLEAUT32_hModule = NULL;
  */
 UINT WINAPI SysStringLen(BSTR str)
 {
-    DWORD* bufferPointer;
-
-     if (!str) return 0;
-    /*
-     * The length of the string (in bytes) is contained in a DWORD placed
-     * just before the BSTR pointer
-     */
-    bufferPointer = (DWORD*)str;
-
-    bufferPointer--;
-
-    return (int)(*bufferPointer/sizeof(WCHAR));
+    return str ? bstr_from_str(str)->size/sizeof(WCHAR) : 0;
 }
 
 /******************************************************************************
@@ -127,18 +217,7 @@ UINT WINAPI SysStringLen(BSTR str)
  */
 UINT WINAPI SysStringByteLen(BSTR str)
 {
-    DWORD* bufferPointer;
-
-     if (!str) return 0;
-    /*
-     * The length of the string (in bytes) is contained in a DWORD placed
-     * just before the BSTR pointer
-     */
-    bufferPointer = (DWORD*)str;
-
-    bufferPointer--;
-
-    return (int)(*bufferPointer);
+    return str ? bstr_from_str(str)->size : 0;
 }
 
 /******************************************************************************
@@ -167,6 +246,16 @@ BSTR WINAPI SysAllocString(LPCOLESTR str)
     return SysAllocStringLen(str, lstrlenW(str));
 }
 
+static inline IMalloc *get_malloc(void)
+{
+    static IMalloc *malloc;
+
+    if (!malloc)
+        CoGetMalloc(1, &malloc);
+
+    return malloc;
+}
+
 /******************************************************************************
  *		SysFreeString	[OLEAUT32.6]
  *
@@ -182,26 +271,56 @@ BSTR WINAPI SysAllocString(LPCOLESTR str)
  *  See BSTR.
  *  str may be NULL, in which case this function does nothing.
  */
-void WINAPI SysFreeString(BSTR str)
+void WINAPI DECLSPEC_HOTPATCH SysFreeString(BSTR str)
 {
-    DWORD* bufferPointer;
+    bstr_cache_entry_t *cache_entry;
+    bstr_t *bstr;
+    IMalloc *malloc = get_malloc();
+    SIZE_T alloc_size;
 
-    /* NULL is a valid parameter */
-    if(!str) return;
+    if(!str)
+        return;
 
-    /*
-     * We have to be careful when we free a BSTR pointer, it points to
-     * the beginning of the string but it skips the byte count contained
-     * before the string.
-     */
-    bufferPointer = (DWORD*)str;
+    bstr = bstr_from_str(str);
 
-    bufferPointer--;
+    alloc_size = IMalloc_GetSize(malloc, bstr);
+    if (alloc_size == ~0UL)
+        return;
 
-    /*
-     * Free the memory from its "real" origin.
-     */
-    HeapFree(GetProcessHeap(), 0, bufferPointer);
+    cache_entry = get_cache_entry_from_alloc_size(alloc_size);
+    if(cache_entry) {
+        unsigned i;
+
+        EnterCriticalSection(&cs_bstr_cache);
+
+        /* According to tests, freeing a string that's already in cache doesn't corrupt anything.
+         * For that to work we need to search the cache. */
+        for(i=0; i < cache_entry->cnt; i++) {
+            if(cache_entry->buf[(cache_entry->head+i) % BUCKET_BUFFER_SIZE] == bstr) {
+                WARN_(heap)("String already is in cache!\n");
+                LeaveCriticalSection(&cs_bstr_cache);
+                return;
+            }
+        }
+
+        if(cache_entry->cnt < ARRAY_SIZE(cache_entry->buf)) {
+            cache_entry->buf[(cache_entry->head+cache_entry->cnt) % BUCKET_BUFFER_SIZE] = bstr;
+            cache_entry->cnt++;
+
+            if(WARN_ON(heap)) {
+                unsigned n = (alloc_size-FIELD_OFFSET(bstr_t, u.ptr))/sizeof(DWORD);
+                for(i=0; i<n; i++)
+                    bstr->u.dwptr[i] = ARENA_FREE_FILLER;
+            }
+
+            LeaveCriticalSection(&cs_bstr_cache);
+            return;
+        }
+
+        LeaveCriticalSection(&cs_bstr_cache);
+    }
+
+    CoTaskMemFree(bstr);
 }
 
 /******************************************************************************
@@ -222,58 +341,28 @@ void WINAPI SysFreeString(BSTR str)
  */
 BSTR WINAPI SysAllocStringLen(const OLECHAR *str, unsigned int len)
 {
-    DWORD  bufferSize;
-    DWORD* newBuffer;
-    WCHAR* stringBuffer;
+    bstr_t *bstr;
+    DWORD size;
 
-    /*
-     * Find the length of the buffer passed-in in bytes.
-     */
-    bufferSize = len * sizeof (WCHAR);
+    /* Detect integer overflow. */
+    if (len >= ((UINT_MAX-sizeof(WCHAR)-sizeof(DWORD))/sizeof(WCHAR)))
+	return NULL;
 
-    /*
-     * Allocate a new buffer to hold the string.
-     * don't forget to keep an empty spot at the beginning of the
-     * buffer for the character count and an extra character at the
-     * end for the NULL.
-     */
-    newBuffer = HeapAlloc(GetProcessHeap(), 0,
-                          bufferSize + sizeof(WCHAR) + sizeof(DWORD));
+    TRACE("%s\n", debugstr_wn(str, len));
 
-    /*
-     * If the memory allocation failed, return a null pointer.
-     */
-    if (newBuffer==0)
-      return 0;
+    size = len*sizeof(WCHAR);
+    bstr = alloc_bstr(size);
+    if(!bstr)
+        return NULL;
 
-    /*
-     * Copy the length of the string in the placeholder.
-     */
-    *newBuffer = bufferSize;
+    if(str) {
+        memcpy(bstr->u.str, str, size);
+        bstr->u.str[len] = 0;
+    }else {
+        memset(bstr->u.str, 0, size+sizeof(WCHAR));
+    }
 
-    /*
-     * Skip the byte count.
-     */
-    newBuffer++;
-
-    /*
-     * Copy the information in the buffer.
-     * Since it is valid to pass a NULL pointer here, we'll initialize the
-     * buffer to nul if it is the case.
-     */
-    if (str != 0)
-      memcpy(newBuffer, str, bufferSize);
-    else
-      memset(newBuffer, 0, bufferSize);
-
-    /*
-     * Make sure that there is a nul character at the end of the
-     * string.
-     */
-    stringBuffer = (WCHAR*)newBuffer;
-    stringBuffer[len] = L'\0';
-
-    return (LPWSTR)stringBuffer;
+    return bstr->u.str;
 }
 
 /******************************************************************************
@@ -292,32 +381,31 @@ BSTR WINAPI SysAllocStringLen(const OLECHAR *str, unsigned int len)
  *
  * NOTES
  *  See BSTR(), SysAllocStringByteLen().
- *  *pbstr may be changed by this function.
+ *  *old may be changed by this function.
  */
 int WINAPI SysReAllocStringLen(BSTR* old, const OLECHAR* str, unsigned int len)
 {
+    /* Detect integer overflow. */
+    if (len >= ((UINT_MAX-sizeof(WCHAR)-sizeof(DWORD))/sizeof(WCHAR)))
+	return FALSE;
+
     if (*old!=NULL) {
       DWORD newbytelen = len*sizeof(WCHAR);
-      DWORD *ptr = HeapReAlloc(GetProcessHeap(),0,((DWORD*)*old)-1,newbytelen+sizeof(WCHAR)+sizeof(DWORD));
-      *old = (BSTR)(ptr+1);
-      *ptr = newbytelen;
-      if (str) {
-        memcpy(*old, str, newbytelen);
-        (*old)[len] = 0;
-      } else {
-	/* Subtle hidden feature: The old string data is still there
-	 * when 'in' is NULL!
-	 * Some Microsoft program needs it.
-	 */
-      }
+      bstr_t *old_bstr = bstr_from_str(*old);
+      bstr_t *bstr = CoTaskMemRealloc(old_bstr, bstr_alloc_size(newbytelen));
+
+      if (!bstr) return FALSE;
+
+      *old = bstr->u.str;
+      bstr->size = newbytelen;
+      /* The old string data is still there when str is NULL */
+      if (str && old_bstr->u.str != str) memmove(bstr->u.str, str, newbytelen);
+      bstr->u.str[len] = 0;
     } else {
-      /*
-       * Allocate the new string
-       */
       *old = SysAllocStringLen(str, len);
     }
 
-    return 1;
+    return TRUE;
 }
 
 /******************************************************************************
@@ -340,53 +428,27 @@ int WINAPI SysReAllocStringLen(BSTR* old, const OLECHAR* str, unsigned int len)
  *  without checking for a terminating NUL.
  *  See BSTR.
  */
-BSTR WINAPI SysAllocStringByteLen(LPCSTR str, UINT len)
+BSTR WINAPI DECLSPEC_HOTPATCH SysAllocStringByteLen(LPCSTR str, UINT len)
 {
-    DWORD* newBuffer;
-    char* stringBuffer;
+    bstr_t *bstr;
 
-    /*
-     * Allocate a new buffer to hold the string.
-     * don't forget to keep an empty spot at the beginning of the
-     * buffer for the character count and an extra character at the
-     * end for the NULL.
-     */
-    newBuffer = HeapAlloc(GetProcessHeap(), 0,
-                          len + sizeof(WCHAR) + sizeof(DWORD));
+    /* Detect integer overflow. */
+    if (len >= (UINT_MAX-sizeof(WCHAR)-sizeof(DWORD)))
+	return NULL;
 
-    /*
-     * If the memory allocation failed, return a null pointer.
-     */
-    if (newBuffer==0)
-      return 0;
+    bstr = alloc_bstr(len);
+    if(!bstr)
+        return NULL;
 
-    /*
-     * Copy the length of the string in the placeholder.
-     */
-    *newBuffer = len;
+    if(str) {
+        memcpy(bstr->u.ptr, str, len);
+        bstr->u.ptr[len] = 0;
+    }else {
+        memset(bstr->u.ptr, 0, len+1);
+    }
+    bstr->u.str[(len+sizeof(WCHAR)-1)/sizeof(WCHAR)] = 0;
 
-    /*
-     * Skip the byte count.
-     */
-    newBuffer++;
-
-    /*
-     * Copy the information in the buffer.
-     * Since it is valid to pass a NULL pointer here, we'll initialize the
-     * buffer to nul if it is the case.
-     */
-    if (str != 0)
-      memcpy(newBuffer, str, len);
-
-    /*
-     * Make sure that there is a nul character at the end of the
-     * string.
-     */
-    stringBuffer = (char *)newBuffer;
-    stringBuffer[len] = 0;
-    stringBuffer[len+1] = 0;
-
-    return (LPWSTR)stringBuffer;
+    return bstr->u.str;
 }
 
 /******************************************************************************
@@ -416,8 +478,7 @@ INT WINAPI SysReAllocString(LPBSTR old,LPCOLESTR str)
     /*
      * Make sure we free the old string.
      */
-    if (*old!=NULL)
-      SysFreeString(*old);
+    SysFreeString(*old);
 
     /*
      * Allocate the new string
@@ -439,15 +500,16 @@ INT WINAPI SysReAllocString(LPBSTR old,LPCOLESTR str)
  *  Nothing.
  *
  * NOTES
- *  See BSTR.
+ *  SetOaNoCache does not release cached strings, so it leaks by design.
  */
 void WINAPI SetOaNoCache(void)
 {
-  BSTR_bCache = FALSE;
+    TRACE("\n");
+    bstr_cache_enabled = FALSE;
 }
 
-static WCHAR	_delimiter[2] = {'!',0}; /* default delimiter apparently */
-static WCHAR	*pdelimiter = &_delimiter[0];
+static const WCHAR	_delimiter[] = {'!',0}; /* default delimiter apparently */
+static const WCHAR	*pdelimiter = &_delimiter[0];
 
 /***********************************************************************
  *		RegisterActiveObject (OLEAUT32.33)
@@ -464,13 +526,14 @@ static WCHAR	*pdelimiter = &_delimiter[0];
  *  Success: S_OK.
  *  Failure: HRESULT code.
  */
-HRESULT WINAPI RegisterActiveObject(
+HRESULT WINAPI DECLSPEC_HOTPATCH RegisterActiveObject(
 	LPUNKNOWN punk,REFCLSID rcid,DWORD dwFlags,LPDWORD pdwRegister
 ) {
 	WCHAR 			guidbuf[80];
 	HRESULT			ret;
 	LPRUNNINGOBJECTTABLE	runobtable;
 	LPMONIKER		moniker;
+        DWORD                   rot_flags = ROTFLAGS_REGISTRATIONKEEPSALIVE; /* default registration is strong */
 
 	StringFromGUID2(rcid,guidbuf,39);
 	ret = CreateItemMoniker(pdelimiter,guidbuf,&moniker);
@@ -481,7 +544,9 @@ HRESULT WINAPI RegisterActiveObject(
 		IMoniker_Release(moniker);
 		return ret;
 	}
-	ret = IRunningObjectTable_Register(runobtable,dwFlags,punk,moniker,pdwRegister);
+        if(dwFlags == ACTIVEOBJECT_WEAK)
+          rot_flags = 0;
+	ret = IRunningObjectTable_Register(runobtable,rot_flags,punk,moniker,pdwRegister);
 	IRunningObjectTable_Release(runobtable);
 	IMoniker_Release(moniker);
 	return ret;
@@ -500,7 +565,7 @@ HRESULT WINAPI RegisterActiveObject(
  *  Success: S_OK.
  *  Failure: HRESULT code.
  */
-HRESULT WINAPI RevokeActiveObject(DWORD xregister,LPVOID reserved)
+HRESULT WINAPI DECLSPEC_HOTPATCH RevokeActiveObject(DWORD xregister,LPVOID reserved)
 {
 	LPRUNNINGOBJECTTABLE	runobtable;
 	HRESULT			ret;
@@ -527,7 +592,7 @@ HRESULT WINAPI RevokeActiveObject(DWORD xregister,LPVOID reserved)
  *  Success: S_OK.
  *  Failure: HRESULT code.
  */
-HRESULT WINAPI GetActiveObject(REFCLSID rcid,LPVOID preserved,LPUNKNOWN *ppunk)
+HRESULT WINAPI DECLSPEC_HOTPATCH GetActiveObject(REFCLSID rcid,LPVOID preserved,LPUNKNOWN *ppunk)
 {
 	WCHAR 			guidbuf[80];
 	HRESULT			ret;
@@ -579,7 +644,7 @@ HRESULT WINAPI GetActiveObject(REFCLSID rcid,LPVOID preserved,LPUNKNOWN *ppunk)
  * Currently the versions returned are 2.20 for Win3.1, 2.30 for Win95 & NT 3.51,
  * and 2.40 for all later versions. The build number is maximum, i.e. 0xffff.
  */
-ULONG WINAPI OaBuildVersion()
+ULONG WINAPI OaBuildVersion(void)
 {
     switch(GetVersion() & 0x8000ffff)  /* mask off build number */
     {
@@ -596,8 +661,11 @@ ULONG WINAPI OaBuildVersion()
     case 0x80000a04:  /* WIN98 */
     case 0x00000004:  /* NT40 */
     case 0x00000005:  /* W2K */
-    case 0x00000105:  /* WinXP */
 		return MAKELONG(0xffff, 40);
+    case 0x00000105:  /* WinXP */
+    case 0x00000006:  /* Vista */
+    case 0x00000106:  /* Win7 */
+		return MAKELONG(0xffff, 50);
     default:
 		FIXME("Version value not known yet. Please investigate it !\n");
 		return MAKELONG(0xffff, 40);  /* for now return the same value as for w2k */
@@ -629,7 +697,7 @@ HRESULT WINAPI OleTranslateColor(
   COLORREF colorref;
   BYTE b = HIBYTE(HIWORD(clr));
 
-  TRACE("(%08lx, %p, %p):stub\n", clr, hpal, pColorRef);
+  TRACE("(%08x, %p, %p)\n", clr, hpal, pColorRef);
 
   /*
    * In case pColorRef is NULL, provide our own to simplify the code.
@@ -694,18 +762,245 @@ HRESULT WINAPI OleTranslateColor(
   return S_OK;
 }
 
-extern HRESULT OLEAUTPS_DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv);
+extern HRESULT WINAPI OLEAUTPS_DllGetClassObject(REFCLSID, REFIID, LPVOID *) DECLSPEC_HIDDEN;
+extern BOOL WINAPI OLEAUTPS_DllMain(HINSTANCE, DWORD, LPVOID) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI OLEAUTPS_DllRegisterServer(void) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI OLEAUTPS_DllUnregisterServer(void) DECLSPEC_HIDDEN;
 
-extern void _get_STDFONT_CF(LPVOID);
-extern void _get_STDPIC_CF(LPVOID);
+extern HRESULT WINAPI CreateProxyFromTypeInfo(ITypeInfo *typeinfo,
+        IUnknown *outer, REFIID iid, IRpcProxyBuffer **proxy, void **obj);
+extern HRESULT WINAPI CreateStubFromTypeInfo(ITypeInfo *typeinfo, REFIID iid,
+        IUnknown *server, IRpcStubBuffer **stub);
+
+struct ifacepsredirect_data
+{
+    ULONG size;
+    DWORD mask;
+    GUID  iid;
+    ULONG nummethods;
+    GUID  tlbid;
+    GUID  base;
+    ULONG name_len;
+    ULONG name_offset;
+};
+
+struct tlibredirect_data
+{
+    ULONG  size;
+    DWORD  res;
+    ULONG  name_len;
+    ULONG  name_offset;
+    LANGID langid;
+    WORD   flags;
+    ULONG  help_len;
+    ULONG  help_offset;
+    WORD   major_version;
+    WORD   minor_version;
+};
+
+static BOOL actctx_get_typelib_module(REFIID iid, WCHAR *module, DWORD len)
+{
+    struct ifacepsredirect_data *iface;
+    struct tlibredirect_data *tlib;
+    ACTCTX_SECTION_KEYED_DATA data;
+    WCHAR *ptrW;
+
+    data.cbSize = sizeof(data);
+    if (!FindActCtxSectionGuid(0, NULL, ACTIVATION_CONTEXT_SECTION_COM_INTERFACE_REDIRECTION,
+            iid, &data))
+        return FALSE;
+
+    iface = (struct ifacepsredirect_data *)data.lpData;
+    if (!FindActCtxSectionGuid(0, NULL, ACTIVATION_CONTEXT_SECTION_COM_TYPE_LIBRARY_REDIRECTION,
+            &iface->tlbid, &data))
+        return FALSE;
+
+    tlib = (struct tlibredirect_data *)data.lpData;
+    ptrW = (WCHAR *)((BYTE *)data.lpSectionBase + tlib->name_offset);
+
+    if (tlib->name_len/sizeof(WCHAR) >= len)
+    {
+        ERR("need larger module buffer, %u\n", tlib->name_len);
+        return FALSE;
+    }
+
+    memcpy(module, ptrW, tlib->name_len);
+    module[tlib->name_len/sizeof(WCHAR)] = 0;
+    return TRUE;
+}
+
+static HRESULT reg_get_typelib_module(REFIID iid, WCHAR *module, DWORD len)
+{
+    REGSAM opposite = (sizeof(void*) == 8) ? KEY_WOW64_32KEY : KEY_WOW64_64KEY;
+    char tlguid[200], typelibkey[300], interfacekey[300], ver[100], tlfn[260];
+    DWORD tlguidlen, verlen, type;
+    LONG tlfnlen, err;
+    BOOL is_wow64;
+    HKEY ikey;
+
+    sprintf( interfacekey, "Interface\\{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\\Typelib",
+        iid->Data1, iid->Data2, iid->Data3,
+        iid->Data4[0], iid->Data4[1], iid->Data4[2], iid->Data4[3],
+        iid->Data4[4], iid->Data4[5], iid->Data4[6], iid->Data4[7]
+    );
+
+    err = RegOpenKeyExA(HKEY_CLASSES_ROOT,interfacekey,0,KEY_READ,&ikey);
+    if (err && (opposite == KEY_WOW64_32KEY || (IsWow64Process(GetCurrentProcess(), &is_wow64)
+                                                && is_wow64)))
+        err = RegOpenKeyExA(HKEY_CLASSES_ROOT,interfacekey,0,KEY_READ|opposite,&ikey);
+
+    if (err)
+    {
+        ERR("No %s key found.\n", interfacekey);
+        return E_FAIL;
+    }
+
+    tlguidlen = sizeof(tlguid);
+    if (RegQueryValueExA(ikey, NULL, NULL, &type, (BYTE *)tlguid, &tlguidlen))
+    {
+        ERR("Getting typelib guid failed.\n");
+        RegCloseKey(ikey);
+        return E_FAIL;
+    }
+
+    verlen = sizeof(ver);
+    if (RegQueryValueExA(ikey, "Version", NULL, &type, (BYTE *)ver, &verlen))
+    {
+        ERR("Could not get version value?\n");
+        RegCloseKey(ikey);
+        return E_FAIL;
+    }
+
+    RegCloseKey(ikey);
+
+    sprintf(typelibkey, "Typelib\\%s\\%s\\0\\win%u", tlguid, ver, sizeof(void *) == 8 ? 64 : 32);
+    tlfnlen = sizeof(tlfn);
+    if (RegQueryValueA(HKEY_CLASSES_ROOT, typelibkey, tlfn, &tlfnlen))
+    {
+#ifdef _WIN64
+        sprintf(typelibkey, "Typelib\\%s\\%s\\0\\win32", tlguid, ver);
+        tlfnlen = sizeof(tlfn);
+        if (RegQueryValueA(HKEY_CLASSES_ROOT, typelibkey, tlfn, &tlfnlen))
+        {
+#endif
+            ERR("Could not get typelib fn?\n");
+            return E_FAIL;
+#ifdef _WIN64
+        }
+#endif
+    }
+    MultiByteToWideChar(CP_ACP, 0, tlfn, -1, module, len);
+    return S_OK;
+}
+
+static HRESULT get_typeinfo_for_iid(REFIID iid, ITypeInfo **typeinfo)
+{
+    WCHAR module[MAX_PATH];
+    ITypeLib *typelib;
+    HRESULT hr;
+
+    *typeinfo = NULL;
+
+    module[0] = 0;
+    if (!actctx_get_typelib_module(iid, module, ARRAY_SIZE(module)))
+    {
+        hr = reg_get_typelib_module(iid, module, ARRAY_SIZE(module));
+        if (FAILED(hr))
+            return hr;
+    }
+
+    hr = LoadTypeLib(module, &typelib);
+    if (hr != S_OK) {
+        ERR("Failed to load typelib for %s, but it should be there.\n", debugstr_guid(iid));
+        return hr;
+    }
+
+    hr = ITypeLib_GetTypeInfoOfGuid(typelib, iid, typeinfo);
+    ITypeLib_Release(typelib);
+    if (hr != S_OK)
+        ERR("typelib does not contain info for %s\n", debugstr_guid(iid));
+
+    return hr;
+}
+
+static HRESULT WINAPI typelib_ps_QueryInterface(IPSFactoryBuffer *iface, REFIID iid, void **out)
+{
+    if (IsEqualIID(iid, &IID_IPSFactoryBuffer) || IsEqualIID(iid, &IID_IUnknown))
+    {
+        *out = iface;
+        return S_OK;
+    }
+
+    FIXME("No interface for %s.\n", debugstr_guid(iid));
+    *out = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI typelib_ps_AddRef(IPSFactoryBuffer *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI typelib_ps_Release(IPSFactoryBuffer *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI typelib_ps_CreateProxy(IPSFactoryBuffer *iface,
+    IUnknown *outer, REFIID iid, IRpcProxyBuffer **proxy, void **out)
+{
+    ITypeInfo *typeinfo;
+    HRESULT hr;
+
+    hr = get_typeinfo_for_iid(iid, &typeinfo);
+    if (FAILED(hr)) return hr;
+
+    hr = CreateProxyFromTypeInfo(typeinfo, outer, iid, proxy, out);
+    if (FAILED(hr))
+        ERR("Failed to create proxy, hr %#x.\n", hr);
+
+    ITypeInfo_Release(typeinfo);
+    return hr;
+}
+
+static HRESULT WINAPI typelib_ps_CreateStub(IPSFactoryBuffer *iface, REFIID iid,
+    IUnknown *server, IRpcStubBuffer **stub)
+{
+    ITypeInfo *typeinfo;
+    HRESULT hr;
+
+    hr = get_typeinfo_for_iid(iid, &typeinfo);
+    if (FAILED(hr)) return hr;
+
+    hr = CreateStubFromTypeInfo(typeinfo, iid, server, stub);
+    if (FAILED(hr))
+        ERR("Failed to create stub, hr %#x.\n", hr);
+
+    ITypeInfo_Release(typeinfo);
+    return hr;
+}
+
+static const IPSFactoryBufferVtbl typelib_ps_vtbl =
+{
+    typelib_ps_QueryInterface,
+    typelib_ps_AddRef,
+    typelib_ps_Release,
+    typelib_ps_CreateProxy,
+    typelib_ps_CreateStub,
+};
+
+static IPSFactoryBuffer typelib_ps = { &typelib_ps_vtbl };
+
+extern void _get_STDFONT_CF(LPVOID *);
+extern void _get_STDPIC_CF(LPVOID *);
 
 static HRESULT WINAPI PSDispatchFacBuf_QueryInterface(IPSFactoryBuffer *iface, REFIID riid, void **ppv)
 {
     if (IsEqualIID(riid, &IID_IUnknown) ||
         IsEqualIID(riid, &IID_IPSFactoryBuffer))
     {
-        IUnknown_AddRef(iface);
-        *ppv = (void *)iface;
+        IPSFactoryBuffer_AddRef(iface);
+        *ppv = iface;
         return S_OK;
     }
     return E_NOINTERFACE;
@@ -721,40 +1016,42 @@ static ULONG WINAPI PSDispatchFacBuf_Release(IPSFactoryBuffer *iface)
     return 1;
 }
 
-static HRESULT WINAPI PSDispatchFacBuf_CreateProxy(IPSFactoryBuffer *iface, IUnknown *pUnkOuter, REFIID riid, IRpcProxyBuffer **ppProxy, void **ppv)
+static HRESULT WINAPI PSDispatchFacBuf_CreateProxy(IPSFactoryBuffer *iface,
+    IUnknown *outer, REFIID iid, IRpcProxyBuffer **proxy, void **obj)
 {
-    IPSFactoryBuffer *pPSFB;
+    IPSFactoryBuffer *factory;
     HRESULT hr;
 
-    if (IsEqualIID(riid, &IID_IDispatch))
-        hr = OLEAUTPS_DllGetClassObject(&CLSID_PSDispatch, &IID_IPSFactoryBuffer, (void **)&pPSFB);
+    if (IsEqualIID(iid, &IID_IDispatch))
+    {
+        hr = OLEAUTPS_DllGetClassObject(&CLSID_PSFactoryBuffer, &IID_IPSFactoryBuffer, (void **)&factory);
+        if (FAILED(hr)) return hr;
+
+        hr = IPSFactoryBuffer_CreateProxy(factory, outer, iid, proxy, obj);
+        IPSFactoryBuffer_Release(factory);
+        return hr;
+    }
     else
-        hr = TMARSHAL_DllGetClassObject(&CLSID_PSOAInterface, &IID_IPSFactoryBuffer, (void **)&pPSFB);
-
-    if (FAILED(hr)) return hr;
-
-    hr = IPSFactoryBuffer_CreateProxy(pPSFB, pUnkOuter, riid, ppProxy, ppv);
-
-    IPSFactoryBuffer_Release(pPSFB);
-    return hr;
+        return IPSFactoryBuffer_CreateProxy(&typelib_ps, outer, iid, proxy, obj);
 }
 
-static HRESULT WINAPI PSDispatchFacBuf_CreateStub(IPSFactoryBuffer *iface, REFIID riid, IUnknown *pUnkOuter, IRpcStubBuffer **ppStub)
+static HRESULT WINAPI PSDispatchFacBuf_CreateStub(IPSFactoryBuffer *iface,
+    REFIID iid, IUnknown *server, IRpcStubBuffer **stub)
 {
-    IPSFactoryBuffer *pPSFB;
+    IPSFactoryBuffer *factory;
     HRESULT hr;
 
-    if (IsEqualIID(riid, &IID_IDispatch))
-        hr = OLEAUTPS_DllGetClassObject(&CLSID_PSDispatch, &IID_IPSFactoryBuffer, (void **)&pPSFB);
+    if (IsEqualIID(iid, &IID_IDispatch))
+    {
+        hr = OLEAUTPS_DllGetClassObject(&CLSID_PSFactoryBuffer, &IID_IPSFactoryBuffer, (void **)&factory);
+        if (FAILED(hr)) return hr;
+
+        hr = IPSFactoryBuffer_CreateStub(factory, iid, server, stub);
+        IPSFactoryBuffer_Release(factory);
+        return hr;
+    }
     else
-        hr = TMARSHAL_DllGetClassObject(&CLSID_PSOAInterface, &IID_IPSFactoryBuffer, (void **)&pPSFB);
-
-    if (FAILED(hr)) return hr;
-
-    hr = IPSFactoryBuffer_CreateStub(pPSFB, riid, pUnkOuter, ppStub);
-
-    IPSFactoryBuffer_Release(pPSFB);
-    return hr;
+        return IPSFactoryBuffer_CreateStub(&typelib_ps, iid, server, stub);
 }
 
 static const IPSFactoryBufferVtbl PSDispatchFacBuf_Vtbl =
@@ -789,23 +1086,23 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
 	    return S_OK;
 	}
     }
-    if (IsEqualCLSID(rclsid, &CLSID_PSTypeInfo) ||
-        IsEqualCLSID(rclsid, &CLSID_PSTypeLib) ||
-        IsEqualCLSID(rclsid, &CLSID_PSEnumVariant)) {
-        return OLEAUTPS_DllGetClassObject(&CLSID_PSDispatch, iid, ppv);
-    }
     if (IsEqualCLSID(rclsid, &CLSID_PSDispatch) && IsEqualIID(iid, &IID_IPSFactoryBuffer)) {
         *ppv = &pPSDispatchFacBuf;
         IPSFactoryBuffer_AddRef((IPSFactoryBuffer *)*ppv);
         return S_OK;
     }
-    if (IsEqualGUID(rclsid,&CLSID_PSOAInterface)) {
-	if (S_OK==TMARSHAL_DllGetClassObject(rclsid,iid,ppv))
-	    return S_OK;
-	/*FALLTHROUGH*/
-    }
-    FIXME("\n\tCLSID:\t%s,\n\tIID:\t%s\n",debugstr_guid(rclsid),debugstr_guid(iid));
-    return CLASS_E_CLASSNOTAVAILABLE;
+
+    if (IsEqualGUID(rclsid, &CLSID_PSOAInterface))
+        return IPSFactoryBuffer_QueryInterface(&typelib_ps, iid, ppv);
+
+    if (IsEqualCLSID(rclsid, &CLSID_PSTypeComp) ||
+        IsEqualCLSID(rclsid, &CLSID_PSTypeInfo) ||
+        IsEqualCLSID(rclsid, &CLSID_PSTypeLib) ||
+        IsEqualCLSID(rclsid, &CLSID_PSDispatch) ||
+        IsEqualCLSID(rclsid, &CLSID_PSEnumVariant))
+        return OLEAUTPS_DllGetClassObject(&CLSID_PSFactoryBuffer, iid, ppv);
+
+    return OLEAUTPS_DllGetClassObject(rclsid, iid, ppv);
 }
 
 /***********************************************************************
@@ -829,16 +1126,145 @@ HRESULT WINAPI DllCanUnloadNow(void)
  */
 BOOL WINAPI DllMain(HINSTANCE hInstDll, DWORD fdwReason, LPVOID lpvReserved)
 {
-  TRACE("(%p,%ld,%p)\n", hInstDll, fdwReason, lpvReserved);
+    static const WCHAR oanocacheW[] = {'o','a','n','o','c','a','c','h','e',0};
 
-  switch (fdwReason) {
-  case DLL_PROCESS_ATTACH:
-    DisableThreadLibraryCalls(hInstDll);
-    OLEAUT32_hModule = (HMODULE)hInstDll;
-    break;
-  case DLL_PROCESS_DETACH:
-    break;
-  };
+    if(fdwReason == DLL_PROCESS_ATTACH)
+        bstr_cache_enabled = !GetEnvironmentVariableW(oanocacheW, NULL, 0);
 
-  return TRUE;
+    return OLEAUTPS_DllMain( hInstDll, fdwReason, lpvReserved );
+}
+
+/***********************************************************************
+ *		DllRegisterServer (OLEAUT32.@)
+ */
+HRESULT WINAPI DllRegisterServer(void)
+{
+    return OLEAUTPS_DllRegisterServer();
+}
+
+/***********************************************************************
+ *		DllUnregisterServer (OLEAUT32.@)
+ */
+HRESULT WINAPI DllUnregisterServer(void)
+{
+    return OLEAUTPS_DllUnregisterServer();
+}
+
+/***********************************************************************
+ *              OleIconToCursor (OLEAUT32.415)
+ */
+HCURSOR WINAPI OleIconToCursor( HINSTANCE hinstExe, HICON hIcon)
+{
+    FIXME("(%p,%p), partially implemented.\n",hinstExe,hIcon);
+    /* FIXME: make an extended conversation from HICON to HCURSOR */
+    return CopyCursor(hIcon);
+}
+
+/***********************************************************************
+ *              GetAltMonthNames (OLEAUT32.@)
+ */
+HRESULT WINAPI GetAltMonthNames(LCID lcid, LPOLESTR **str)
+{
+    static const WCHAR ar_month1W[] = {0x645,0x62d,0x631,0x645,0};
+    static const WCHAR ar_month2W[] = {0x635,0x641,0x631,0};
+    static const WCHAR ar_month3W[] = {0x631,0x628,0x64a,0x639,' ',0x627,0x644,0x627,0x648,0x644,0};
+    static const WCHAR ar_month4W[] = {0x631,0x628,0x64a,0x639,' ',0x627,0x644,0x62b,0x627,0x646,0x64a,0};
+    static const WCHAR ar_month5W[] = {0x62c,0x645,0x627,0x62f,0x649,' ',0x627,0x644,0x627,0x648,0x644,0x649,0};
+    static const WCHAR ar_month6W[] = {0x62c,0x645,0x627,0x62f,0x649,' ',0x627,0x644,0x62b,0x627,0x646,0x64a,0x629,0};
+    static const WCHAR ar_month7W[] = {0x631,0x62c,0x628,0};
+    static const WCHAR ar_month8W[] = {0x634,0x639,0x628,0x627,0x646,0};
+    static const WCHAR ar_month9W[] = {0x631,0x645,0x636,0x627,0x646,0};
+    static const WCHAR ar_month10W[] = {0x634,0x648,0x627,0x643,0};
+    static const WCHAR ar_month11W[] = {0x630,0x648,' ',0x627,0x644,0x642,0x639,0x62f,0x629,0};
+    static const WCHAR ar_month12W[] = {0x630,0x648,' ',0x627,0x644,0x62d,0x62c,0x629,0};
+
+    static const WCHAR *arabic_hijri[] =
+    {
+        ar_month1W,
+        ar_month2W,
+        ar_month3W,
+        ar_month4W,
+        ar_month5W,
+        ar_month6W,
+        ar_month7W,
+        ar_month8W,
+        ar_month9W,
+        ar_month10W,
+        ar_month11W,
+        ar_month12W,
+        NULL
+    };
+
+    static const WCHAR pl_month1W[] = {'s','t','y','c','z','n','i','a',0};
+    static const WCHAR pl_month2W[] = {'l','u','t','e','g','o',0};
+    static const WCHAR pl_month3W[] = {'m','a','r','c','a',0};
+    static const WCHAR pl_month4W[] = {'k','w','i','e','t','n','i','a',0};
+    static const WCHAR pl_month5W[] = {'m','a','j','a',0};
+    static const WCHAR pl_month6W[] = {'c','z','e','r','w','c','a',0};
+    static const WCHAR pl_month7W[] = {'l','i','p','c','a',0};
+    static const WCHAR pl_month8W[] = {'s','i','e','r','p','n','i','a',0};
+    static const WCHAR pl_month9W[] = {'w','r','z','e',0x15b,'n','i','a',0};
+    static const WCHAR pl_month10W[] = {'p','a',0x17a,'d','z','i','e','r','n','i','k','a',0};
+    static const WCHAR pl_month11W[] = {'l','i','s','t','o','p','a','d','a',0};
+    static const WCHAR pl_month12W[] = {'g','r','u','d','n','i','a',0};
+
+    static const WCHAR *polish_genitive_names[] =
+    {
+        pl_month1W,
+        pl_month2W,
+        pl_month3W,
+        pl_month4W,
+        pl_month5W,
+        pl_month6W,
+        pl_month7W,
+        pl_month8W,
+        pl_month9W,
+        pl_month10W,
+        pl_month11W,
+        pl_month12W,
+        NULL
+    };
+
+    static const WCHAR ru_month1W[] = {0x44f,0x43d,0x432,0x430,0x440,0x44f,0};
+    static const WCHAR ru_month2W[] = {0x444,0x435,0x432,0x440,0x430,0x43b,0x44f,0};
+    static const WCHAR ru_month3W[] = {0x43c,0x430,0x440,0x442,0x430,0};
+    static const WCHAR ru_month4W[] = {0x430,0x43f,0x440,0x435,0x43b,0x44f,0};
+    static const WCHAR ru_month5W[] = {0x43c,0x430,0x44f,0};
+    static const WCHAR ru_month6W[] = {0x438,0x44e,0x43d,0x44f,0};
+    static const WCHAR ru_month7W[] = {0x438,0x44e,0x43b,0x44f,0};
+    static const WCHAR ru_month8W[] = {0x430,0x432,0x433,0x443,0x441,0x442,0x430,0};
+    static const WCHAR ru_month9W[] = {0x441,0x435,0x43d,0x442,0x44f,0x431,0x440,0x44f,0};
+    static const WCHAR ru_month10W[] = {0x43e,0x43a,0x442,0x44f,0x431,0x440,0x44f,0};
+    static const WCHAR ru_month11W[] = {0x43d,0x43e,0x44f,0x431,0x440,0x44f,0};
+    static const WCHAR ru_month12W[] = {0x434,0x435,0x43a,0x430,0x431,0x440,0x44f,0};
+
+    static const WCHAR *russian_genitive_names[] =
+    {
+        ru_month1W,
+        ru_month2W,
+        ru_month3W,
+        ru_month4W,
+        ru_month5W,
+        ru_month6W,
+        ru_month7W,
+        ru_month8W,
+        ru_month9W,
+        ru_month10W,
+        ru_month11W,
+        ru_month12W,
+        NULL
+    };
+
+    TRACE("%#x, %p\n", lcid, str);
+
+    if (PRIMARYLANGID(LANGIDFROMLCID(lcid)) == LANG_ARABIC)
+        *str = (LPOLESTR *)arabic_hijri;
+    else if (PRIMARYLANGID(LANGIDFROMLCID(lcid)) == LANG_POLISH)
+        *str = (LPOLESTR *)polish_genitive_names;
+    else if (PRIMARYLANGID(LANGIDFROMLCID(lcid)) == LANG_RUSSIAN)
+        *str = (LPOLESTR *)russian_genitive_names;
+    else
+        *str = NULL;
+
+    return S_OK;
 }

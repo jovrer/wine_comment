@@ -19,18 +19,21 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 usage()
 {
     cat >&2 <<EOF
 
-Usage: $0 [options] input_file
+Usage: $0 [options] [input_file]
+
+input_file:  the source code for the test program
 
 Options:
     -q       quiet mode
     -v       verbose mode (can be specified multiple times)
+    -i       interactive mode (runs even more tests)
     -s       announce successful tests
     -p prog  name of the program to run for C tests
     -P name  set the current platform name
@@ -46,7 +49,7 @@ platform=$WINETEST_PLATFORM
 WINETEST_DEBUG=${WINETEST_DEBUG:-1}
 
 # parse command-line options
-while [ "$#" != 0 ]; do
+while [ "$#" -gt 0 ]; do
     case "$1" in
     -h)
 	usage
@@ -59,6 +62,10 @@ while [ "$#" != 0 ]; do
     ;;
     -v)
 	WINETEST_DEBUG=`expr $WINETEST_DEBUG + 1`
+    ;;
+    -i)
+	WINETEST_INTERACTIVE=1
+	export WINETEST_INTERACTIVE
     ;;
     -s)
 	WINETEST_REPORT_SUCCESS=1
@@ -74,29 +81,43 @@ while [ "$#" != 0 ]; do
 	shift; topobjdir="$1"
 	if [ ! -d "$topobjdir" ]; then usage; fi
     ;;
-    --)
-	break
-    ;;
     *)
-	infile="$1"
+	break
     ;;
     esac
     shift
 done	    
 	
-# we must have found an input file
-if [ ! -f "$infile" ]; then usage; fi
-
-# set program to the .c file base name if not specified otherwise
 if [ -z "$program" ]; then
-    program=`basename "$infile" .c`
+    # try to autodetect the test program name based on the working directory
+    working_path=`pwd`
+    case $working_path in
+        */dlls/*/tests)
+          parent_path=`dirname "$working_path"`
+          program=`basename "$parent_path"`_test.exe.so
+          ;;
+        */dlls/*)
+          program=tests/`basename "$working_path"`_test.exe.so
+          ;;
+        */programs/*/tests)
+          parent_path=`dirname "$working_path"`
+          program=`basename "$parent_path"`.exe_test.exe.so
+          ;;
+        */programs/*)
+          program=tests/`basename "$working_path"`.exe_test.exe.so
+          ;;
+    esac
+fi
+if [ ! -f "$program" ]; then
+    echo "Can't find the test program, use the -p argument to specify one" 1>&2
+    usage
 fi
 
 # check/detect topobjdir
 if [ -n "$topobjdir" ]; then
     if [ ! -f "$topobjdir/server/wineserver" ]
     then
-	echo "Wrong -T argument, $topobjdir/server/wineserver does not exist" 2>&1
+	echo "Wrong -T argument, $topobjdir/server/wineserver does not exist" 1>&2
 	usage
     fi
 else
@@ -104,6 +125,9 @@ else
     elif [ -f "../server/wineserver" ]; then topobjdir=".."
     elif [ -f "../../server/wineserver" ]; then topobjdir="../.."
     elif [ -f "../../../server/wineserver" ]; then topobjdir="../../.."
+    else
+        echo "Can't find the top of the Wine tree (use the -T argument)" 1>&2
+        usage
     fi
 fi
 
@@ -116,4 +140,10 @@ fi
 WINETEST_PLATFORM=${platform:-wine}
 export WINETEST_PLATFORM WINETEST_DEBUG
 
-exec "$topobjdir/wine" "$program" "$infile" "$@"
+# WINETEST_WRAPPER is normally empty, but can be set by caller, e.g.
+#  WINETEST_WRAPPER=time
+# would give data about how long each test takes, and
+#  WINETEST_WRAPPER=valgrind
+# would run the tests under valgrind to look for memory errors.
+
+exec $WINETEST_WRAPPER "$topobjdir/wine" "$program" "$@"

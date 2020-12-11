@@ -1,5 +1,5 @@
 /* ifenum.h
- * Copyright (C) 2003 Juan Lang
+ * Copyright (C) 2003,2006 Juan Lang
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,13 +13,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
- * This module implements functions shared by DLLs that need to enumerate
- * network interfaces and addresses.  It's meant to hide some problematic
- * defines like socket(), as well as provide only one file
- * that needs to be ported to implement these functions on different platforms,
- * since the Windows API provides multiple ways to get at this info.
+ * This module implements network interface and address enumeration.  It's
+ * meant to hide some problematic defines like socket(), and make iphlpapi
+ * more portable.
  *
  * Like Windows, it uses a numeric index to identify an interface uniquely.
  * As implemented, an interface represents a UNIX network interface, virtual
@@ -39,61 +37,41 @@
 
 #include "windef.h"
 #include "winbase.h"
+#define USE_WS_PREFIX
 #include "iprtrmib.h"
+#include "winsock2.h"
 
 #define MAX_INTERFACE_PHYSADDR    8
 #define MAX_INTERFACE_DESCRIPTION 256
 
-/* Call before using the functions in this module */
-void interfaceMapInit(void);
-/* Call to free resources allocated in interfaceMapInit() */
-void interfaceMapFree(void);
+BOOL isIfIndexLoopback(ULONG idx) DECLSPEC_HIDDEN;
 
-DWORD getNumInterfaces(void);
-DWORD getNumNonLoopbackInterfaces(void);
-
-/* A table of interface indexes, see get*InterfaceTable().  Ignore numAllocated,
- * it's used during the creation of the table.
- */
+/* A table of interface indexes, see get_interface_indices(). */
 typedef struct _InterfaceIndexTable {
   DWORD numIndexes;
-  DWORD numAllocated;
-  DWORD indexes[1];
+  IF_INDEX indexes[1];
 } InterfaceIndexTable;
 
-/* Returns a table with all known interface indexes, or NULL if one could not
- * be allocated.  HeapFree() the returned table.
+/* Returns the count of all interface indexes and optionally a ptr to an interface table.
+ * HeapFree() the returned table.  Will optionally ignore loopback devices.
  */
-InterfaceIndexTable *getInterfaceIndexTable(void);
-
-/* Like getInterfaceIndexTable, but filters out loopback interfaces. */
-InterfaceIndexTable *getNonLoopbackInterfaceIndexTable(void);
+DWORD get_interface_indices( BOOL skip_loopback, InterfaceIndexTable **table ) DECLSPEC_HIDDEN;
 
 /* ByName/ByIndex versions of various getter functions. */
 
 /* can be used as quick check to see if you've got a valid index, returns NULL
- * if not.  The buffer's only valid till the next call, so copy it right away
- * if you care.
+ * if not.  Overwrites your buffer, which should be at least of size
+ * MAX_ADAPTER_NAME.
  */
-const char *getInterfaceNameByIndex(DWORD index);
+char *getInterfaceNameByIndex(IF_INDEX index, char *name) DECLSPEC_HIDDEN;
 
 /* Fills index with the index of name, if found.  Returns
  * ERROR_INVALID_PARAMETER if name or index is NULL, ERROR_INVALID_DATA if name
  * is not found, and NO_ERROR on success.
  */
-DWORD getInterfaceIndexByName(const char *name, PDWORD index);
+DWORD getInterfaceIndexByName(const char *name, IF_INDEX *index) DECLSPEC_HIDDEN;
 
-/* This bunch returns IP addresses, and INADDR_ANY or INADDR_NONE if not found,
- * appropriately depending on the f/n.
- */
-DWORD getInterfaceIPAddrByName(const char *name);
-DWORD getInterfaceIPAddrByIndex(DWORD index);
-DWORD getInterfaceMaskByName(const char *name);
-DWORD getInterfaceMaskByIndex(DWORD index);
-DWORD getInterfaceBCastAddrByName(const char *name);
-DWORD getInterfaceBCastAddrByIndex(DWORD index);
-
-/* Gets a few physical charactersistics of a device:  MAC addr len, MAC addr,
+/* Gets a few physical characteristics of a device:  MAC addr len, MAC addr,
  * and type as one of the MIB_IF_TYPEs.
  * len's in-out: on in, needs to say how many bytes are available in addr,
  * which to be safe should be MAX_INTERFACE_PHYSADDR.  On out, it's how many
@@ -106,30 +84,37 @@ DWORD getInterfaceBCastAddrByIndex(DWORD index);
  * if internal errors occur.
  * Returns NO_ERROR on success.
  */
-DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
- PDWORD type);
-DWORD getInterfacePhysicalByIndex(DWORD index, PDWORD len, PBYTE addr,
- PDWORD type);
+DWORD getInterfacePhysicalByIndex(IF_INDEX index, PDWORD len, PBYTE addr,
+ PDWORD type) DECLSPEC_HIDDEN;
 
-/* Get the operational status as a (MIB_)IF_OPER_STATUS type.
- */
-DWORD getInterfaceStatusByName(const char *name, PDWORD status);
-DWORD getInterfaceStatusByIndex(DWORD index, PDWORD status);
-
-DWORD getInterfaceMtuByName(const char *name, PDWORD mtu);
-DWORD getInterfaceMtuByIndex(DWORD index, PDWORD mtu);
-
-/* Fills in the MIB_IFROW by name/index.  Doesn't fill in interface statistics,
+/* Fills in the MIB_IFROW by name.  Doesn't fill in interface statistics,
  * see ipstats.h for that.
- * Returns ERROR_INVALID_PARAMETER if name or entry is NULL, ERROR_INVALID_DATA
- * if name/index isn't valid, and NO_ERROR otherwise.
+ * Returns ERROR_INVALID_PARAMETER if name is NULL, ERROR_INVALID_DATA
+ * if name isn't valid, and NO_ERROR otherwise.
  */
-DWORD getInterfaceEntryByName(const char *name, PMIB_IFROW entry);
-DWORD getInterfaceEntryByIndex(DWORD index, PMIB_IFROW entry);
+DWORD getInterfaceEntryByName(const char *name, PMIB_IFROW entry) DECLSPEC_HIDDEN;
+
+DWORD getNumIPAddresses(void) DECLSPEC_HIDDEN;
+
+/* Gets the configured IP addresses for the system, and sets *ppIpAddrTable to
+ * a table of them allocated from heap, or NULL if out of memory.  Returns
+ * NO_ERROR on success, something else on failure.  Note there may be more than
+ * one IP address may exist per interface.
+ */
+DWORD getIPAddrTable(PMIB_IPADDRTABLE *ppIpAddrTable, HANDLE heap, DWORD flags) DECLSPEC_HIDDEN;
+
+/* Returns the IPv6 addresses for a particular interface index.
+ * Returns NO_ERROR on success, something else on failure.
+ */
+ULONG v6addressesFromIndex(IF_INDEX index, SOCKET_ADDRESS **addrs, ULONG *num_addrs,
+ SOCKET_ADDRESS **masks) DECLSPEC_HIDDEN;
 
 /* Converts the network-order bytes in addr to a printable string.  Returns
  * string.
  */
-char *toIPAddressString(unsigned int addr, char string[16]);
+char *toIPAddressString(unsigned int addr, char string[16]) DECLSPEC_HIDDEN;
+
+DWORD getInterfaceMtuByName(const char *name, PDWORD mtu) DECLSPEC_HIDDEN;
+DWORD getInterfaceStatusByName(const char *name, INTERNAL_IF_OPER_STATUS *status) DECLSPEC_HIDDEN;
 
 #endif /* ndef WINE_IFENUM_H_ */

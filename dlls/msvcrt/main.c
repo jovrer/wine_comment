@@ -15,9 +15,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #include "msvcrt.h"
+#include "winternl.h"
 
 #include "wine/debug.h"
 
@@ -26,55 +27,16 @@ WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 /* Index to TLS */
 DWORD msvcrt_tls_index;
 
-static inline BOOL msvcrt_init_tls(void);
-static inline BOOL msvcrt_free_tls(void);
-const char* msvcrt_get_reason(DWORD reason);
-
-/*********************************************************************
- *                  Init
- */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+static const char* msvcrt_get_reason(DWORD reason)
 {
-  thread_data_t *tls;
-
-  TRACE("(%p, %s, %p) pid(%lx), tid(%lx), tls(%ld)\n",
-        hinstDLL, msvcrt_get_reason(fdwReason), lpvReserved,
-        GetCurrentProcessId(), GetCurrentThreadId(),
-        (long)msvcrt_tls_index);
-
-  switch (fdwReason)
+  switch (reason)
   {
-  case DLL_PROCESS_ATTACH:
-    if (!msvcrt_init_tls())
-      return FALSE;
-    msvcrt_init_mt_locks();
-    msvcrt_init_io();
-    msvcrt_init_console();
-    msvcrt_init_args();
-    msvcrt_init_signals();
-    MSVCRT_setlocale(0, "C");
-    TRACE("finished process init\n");
-    break;
-  case DLL_THREAD_ATTACH:
-    break;
-  case DLL_PROCESS_DETACH:
-    msvcrt_free_mt_locks();
-    msvcrt_free_io();
-    msvcrt_free_console();
-    msvcrt_free_args();
-    msvcrt_free_signals();
-    if (!msvcrt_free_tls())
-      return FALSE;
-    TRACE("finished process free\n");
-    break;
-  case DLL_THREAD_DETACH:
-    /* Free TLS */
-    tls = TlsGetValue(msvcrt_tls_index);
-    HeapFree(GetProcessHeap(), 0, tls);
-    TRACE("finished thread free\n");
-    break;
+  case DLL_PROCESS_ATTACH: return "DLL_PROCESS_ATTACH";
+  case DLL_PROCESS_DETACH: return "DLL_PROCESS_DETACH";
+  case DLL_THREAD_ATTACH:  return "DLL_THREAD_ATTACH";
+  case DLL_THREAD_DETACH:  return "DLL_THREAD_DETACH";
   }
-  return TRUE;
+  return "UNKNOWN";
 }
 
 static inline BOOL msvcrt_init_tls(void)
@@ -99,33 +61,99 @@ static inline BOOL msvcrt_free_tls(void)
   return TRUE;
 }
 
-const char* msvcrt_get_reason(DWORD reason)
+static inline void msvcrt_free_tls_mem(void)
 {
-  switch (reason)
+  thread_data_t *tls = TlsGetValue(msvcrt_tls_index);
+
+  if (tls)
   {
-  case DLL_PROCESS_ATTACH: return "DLL_PROCESS_ATTACH";
-  case DLL_PROCESS_DETACH: return "DLL_PROCESS_DETACH";
-  case DLL_THREAD_ATTACH:  return "DLL_THREAD_ATTACH";
-  case DLL_THREAD_DETACH:  return "DLL_THREAD_DETACH";
+    MSVCRT_free(tls->efcvt_buffer);
+    MSVCRT_free(tls->asctime_buffer);
+    MSVCRT_free(tls->wasctime_buffer);
+    MSVCRT_free(tls->strerror_buffer);
+    MSVCRT_free(tls->wcserror_buffer);
+    MSVCRT_free(tls->time_buffer);
+    MSVCRT_free(tls->tmpnam_buffer);
+    MSVCRT_free(tls->wtmpnam_buffer);
+    if(tls->have_locale) {
+        free_locinfo(tls->locinfo);
+        free_mbcinfo(tls->mbcinfo);
+    }
   }
-  return "UNKNOWN";
+  HeapFree(GetProcessHeap(), 0, tls);
 }
 
-
 /*********************************************************************
- *		$I10_OUTPUT (MSVCRT.@)
- * Function not really understood but needed to make the DLL work
+ *                  Init
  */
-void MSVCRT_I10_OUTPUT(void)
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-  /* FIXME: This is probably data, not a function */
-  /* no it is a function. I10 is an Int of 10 bytes */
-  /* also known as 80 bit flotaing point (long double */
-  /* for some compilers, not MSVC) */
-}
+  TRACE("(%p, %s, %p) pid(%x), tid(%x), tls(%u)\n",
+        hinstDLL, msvcrt_get_reason(fdwReason), lpvReserved,
+        GetCurrentProcessId(), GetCurrentThreadId(),
+        msvcrt_tls_index);
 
-/*********************************************************************
- *		_adjust_fdiv (MSVCRT.@)
- * Used by the MSVC compiler to work around the Pentium FDIV bug.
- */
-int MSVCRT__adjust_fdiv = 0;
+  switch (fdwReason)
+  {
+  case DLL_PROCESS_ATTACH:
+    msvcrt_init_exception(hinstDLL);
+    if(!msvcrt_init_heap())
+        return FALSE;
+    if(!msvcrt_init_tls()) {
+      msvcrt_destroy_heap();
+      return FALSE;
+    }
+    msvcrt_init_mt_locks();
+    if(!msvcrt_init_locale()) {
+        msvcrt_free_locks();
+        msvcrt_free_tls_mem();
+        msvcrt_destroy_heap();
+        return FALSE;
+    }
+    msvcrt_init_math();
+    msvcrt_init_io();
+    msvcrt_init_console();
+    msvcrt_init_args();
+    msvcrt_init_signals();
+#if _MSVCR_VER >= 100 && _MSVCR_VER <= 120
+    msvcrt_init_scheduler(hinstDLL);
+#endif
+#if _MSVCR_VER == 0
+    /* don't allow unloading msvcrt, we can't setup file handles twice */
+    LdrAddRefDll( LDR_ADDREF_DLL_PIN, hinstDLL );
+#elif _MSVCR_VER >= 80
+    MSVCRT__set_printf_count_output(0);
+#endif
+    TRACE("finished process init\n");
+    break;
+  case DLL_THREAD_ATTACH:
+    break;
+  case DLL_PROCESS_DETACH:
+    msvcrt_free_io();
+    if (lpvReserved) break;
+    msvcrt_free_popen_data();
+    msvcrt_free_locks();
+    msvcrt_free_console();
+    msvcrt_free_args();
+    msvcrt_free_signals();
+    msvcrt_free_tls_mem();
+    if (!msvcrt_free_tls())
+      return FALSE;
+    MSVCRT__free_locale(MSVCRT_locale);
+#if _MSVCR_VER >= 100 && _MSVCR_VER <= 120
+    msvcrt_free_scheduler_thread();
+    msvcrt_free_scheduler();
+#endif
+    msvcrt_destroy_heap();
+    TRACE("finished process free\n");
+    break;
+  case DLL_THREAD_DETACH:
+    msvcrt_free_tls_mem();
+#if _MSVCR_VER >= 100 && _MSVCR_VER <= 120
+    msvcrt_free_scheduler_thread();
+#endif
+    TRACE("finished thread free\n");
+    break;
+  }
+  return TRUE;
+}

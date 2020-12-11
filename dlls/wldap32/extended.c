@@ -15,44 +15,61 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
-
 #include "wine/port.h"
-#include "wine/debug.h"
 
 #include <stdarg.h>
+#ifdef HAVE_LDAP_H
+#include <ldap.h>
+#endif
 
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
 
-#ifdef HAVE_LDAP_H
-#include <ldap.h>
-#else
-#define LDAP_SUCCESS        0x00
-#define LDAP_NOT_SUPPORTED  0x5c
-#endif
-
 #include "winldap_private.h"
 #include "wldap32.h"
+#include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wldap32);
 
-ULONG ldap_close_extended_op( WLDAP32_LDAP *ld, ULONG msgid )
+/***********************************************************************
+ *      ldap_close_extended_op     (WLDAP32.@)
+ *
+ * Close an extended operation.
+ *
+ * PARAMS
+ *  ld    [I] Pointer to an LDAP context.
+ *  msgid [I] Message ID of the operation to be closed.
+ *
+ * RETURNS
+ *  Success: LDAP_SUCCESS
+ *  Failure: An LDAP error code.
+ *
+ * NOTES
+ *  Contrary to native, OpenLDAP does not require us to close
+ *  extended operations, so this is a no-op.
+ */
+ULONG CDECL ldap_close_extended_op( WLDAP32_LDAP *ld, ULONG msgid )
 {
-    TRACE( "(%p, 0x%08lx)\n", ld, msgid );
+    TRACE( "(%p, 0x%08x)\n", ld, msgid );
 
     if (!ld) return WLDAP32_LDAP_PARAM_ERROR;
-    return LDAP_SUCCESS;
+    return WLDAP32_LDAP_SUCCESS;
 }
 
-ULONG ldap_extended_operationA( WLDAP32_LDAP *ld, PCHAR oid, struct WLDAP32_berval *data,
+/***********************************************************************
+ *      ldap_extended_operationA     (WLDAP32.@)
+ *
+ * See ldap_extended_operationW.
+ */
+ULONG CDECL ldap_extended_operationA( WLDAP32_LDAP *ld, PCHAR oid, struct WLDAP32_berval *data,
     PLDAPControlA *serverctrls, PLDAPControlA *clientctrls, ULONG *message )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *oidW = NULL;
     LDAPControlW **serverctrlsW = NULL, **clientctrlsW = NULL;
@@ -88,10 +105,35 @@ exit:
     return ret;
 }
 
-ULONG ldap_extended_operationW( WLDAP32_LDAP *ld, PWCHAR oid, struct WLDAP32_berval *data,
+/***********************************************************************
+ *      ldap_extended_operationW     (WLDAP32.@)
+ *
+ * Perform an extended operation (asynchronous mode).
+ *
+ * PARAMS
+ *  ld          [I] Pointer to an LDAP context.
+ *  oid         [I] OID of the extended operation.
+ *  data        [I] Data needed by the operation.
+ *  serverctrls [I] Array of LDAP server controls.
+ *  clientctrls [I] Array of LDAP client controls.
+ *  message     [O] Message ID of the extended operation.
+ *
+ * RETURNS
+ *  Success: LDAP_SUCCESS
+ *  Failure: An LDAP error code.
+ *
+ * NOTES
+ *  The data parameter should be set to NULL if the operation
+ *  requires no data. Call ldap_result with the message ID to
+ *  get the result of the operation or ldap_abandon to cancel
+ *  the operation. The serverctrls and clientctrls parameters
+ *  are optional and should be set to NULL if not used. Call
+ *  ldap_close_extended_op to close the operation.
+ */
+ULONG CDECL ldap_extended_operationW( WLDAP32_LDAP *ld, PWCHAR oid, struct WLDAP32_berval *data,
     PLDAPControlW *serverctrls, PLDAPControlW *clientctrls, ULONG *message )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *oidU = NULL;
     LDAPControl **serverctrlsU = NULL, **clientctrlsU = NULL;
@@ -116,8 +158,8 @@ ULONG ldap_extended_operationW( WLDAP32_LDAP *ld, PWCHAR oid, struct WLDAP32_ber
         if (!clientctrlsU) goto exit;
     }
 
-    ret = ldap_extended_operation( ld, oid ? oidU : "", (struct berval *)data,
-                                   serverctrlsU, clientctrlsU, (int *)message );
+    ret = map_error( ldap_extended_operation( ld, oid ? oidU : "", (struct berval *)data,
+                                              serverctrlsU, clientctrlsU, (int *)message ));
 
 exit:
     strfreeU( oidU );
@@ -128,11 +170,16 @@ exit:
     return ret;
 }
 
-ULONG ldap_extended_operation_sA( WLDAP32_LDAP *ld, PCHAR oid, struct WLDAP32_berval *data,
+/***********************************************************************
+ *      ldap_extended_operation_sA     (WLDAP32.@)
+ *
+ * See ldap_extended_operation_sW.
+ */
+ULONG CDECL ldap_extended_operation_sA( WLDAP32_LDAP *ld, PCHAR oid, struct WLDAP32_berval *data,
     PLDAPControlA *serverctrls, PLDAPControlA *clientctrls, PCHAR *retoid,
     struct WLDAP32_berval **retdata )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *oidW = NULL, *retoidW = NULL;
     LDAPControlW **serverctrlsW = NULL, **clientctrlsW = NULL;
@@ -175,11 +222,35 @@ exit:
     return ret;
 }
 
-ULONG ldap_extended_operation_sW( WLDAP32_LDAP *ld, PWCHAR oid, struct WLDAP32_berval *data,
+/***********************************************************************
+ *      ldap_extended_operation_sW     (WLDAP32.@)
+ *
+ * Perform an extended operation (synchronous mode).
+ *
+ * PARAMS
+ *  ld          [I] Pointer to an LDAP context.
+ *  oid         [I] OID of the extended operation.
+ *  data        [I] Data needed by the operation.
+ *  serverctrls [I] Array of LDAP server controls.
+ *  clientctrls [I] Array of LDAP client controls.
+ *  retoid      [O] OID of the server response message.
+ *  retdata     [O] Data returned by the server.
+ *
+ * RETURNS
+ *  Success: LDAP_SUCCESS
+ *  Failure: An LDAP error code.
+ *
+ * NOTES
+ *  The data parameter should be set to NULL if the operation
+ *  requires no data. The serverctrls, clientctrls, retoid and
+ *  and retdata parameters are also optional. Set to NULL if not
+ *  used. Free retoid and retdata after use with ldap_memfree.
+ */
+ULONG CDECL ldap_extended_operation_sW( WLDAP32_LDAP *ld, PWCHAR oid, struct WLDAP32_berval *data,
     PLDAPControlW *serverctrls, PLDAPControlW *clientctrls, PWCHAR *retoid,
     struct WLDAP32_berval **retdata )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *oidU = NULL, *retoidU = NULL;
     LDAPControl **serverctrlsU = NULL, **clientctrlsU = NULL;
@@ -204,8 +275,8 @@ ULONG ldap_extended_operation_sW( WLDAP32_LDAP *ld, PWCHAR oid, struct WLDAP32_b
         if (!clientctrlsU) goto exit;
     }
 
-    ret = ldap_extended_operation_s( ld, oid ? oidU : "", (struct berval *)data, serverctrlsU,
-                                     clientctrlsU, &retoidU, (struct berval **)retdata );
+    ret = map_error( ldap_extended_operation_s( ld, oid ? oidU : "", (struct berval *)data, serverctrlsU,
+                                                clientctrlsU, &retoidU, (struct berval **)retdata ));
 
     if (retoid && retoidU) {
         *retoid = strUtoW( retoidU );

@@ -1,24 +1,21 @@
-EXTRADEFS = -D_MT
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
+EXTRADEFS = -D_MT -D_MSVCR_VER=0
 MODULE    = msvcrt.dll
-IMPORTLIB = libmsvcrt.$(IMPLIBEXT)
-IMPORTS   = kernel32 ntdll
-DELAYIMPORTS = user32
-EXTRALIBS = $(LIBUNICODE)
+IMPORTLIB = msvcrt
+DELAYIMPORTS = advapi32 user32
 
 C_SRCS = \
 	console.c \
 	cpp.c \
-	cppexcept.c \
 	ctype.c \
 	data.c \
 	dir.c \
 	environ.c \
 	errno.c \
 	except.c \
+	except_arm.c \
+	except_arm64.c \
+	except_i386.c \
+	except_x86_64.c \
 	exit.c \
 	file.c \
 	heap.c \
@@ -30,6 +27,7 @@ C_SRCS = \
 	misc.c \
 	process.c \
 	scanf.c \
+	scheduler.c \
 	string.c \
 	thread.c \
 	time.c \
@@ -38,9 +36,3 @@ C_SRCS = \
 
 RC_SRCS = \
 	rsrc.rc
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

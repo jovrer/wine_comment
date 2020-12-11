@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 #include "config.h"
@@ -26,27 +26,35 @@
 
 #include "dbghelp_private.h"
 #include "wine/debug.h"
-#ifdef HAVE_REGEX_H
-# include <regex.h>
-#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
+
+static struct module*   rb_module;
+struct source_rb
+{
+    struct wine_rb_entry        entry;
+    unsigned                    source;
+};
+
+int source_rb_compare(const void *key, const struct wine_rb_entry *entry)
+{
+    const struct source_rb *t = WINE_RB_ENTRY_VALUE(entry, const struct source_rb, entry);
+
+    return strcmp((const char*)key, rb_module->sources + t->source);
+}
 
 /******************************************************************
  *		source_find
  *
  * check whether a source file has already been stored
  */
-static unsigned source_find(const struct module* module, const char* name)
+static unsigned source_find(const char* name)
 {
-    char*       ptr = module->sources;
+    struct wine_rb_entry*       e;
 
-    while (*ptr)
-    {
-        if (strcmp(ptr, name) == 0) return ptr - module->sources;
-        ptr += strlen(ptr) + 1;
-    }
-    return (unsigned)-1;
+    e = wine_rb_get(&rb_module->sources_offsets_tree, name);
+    if (!e) return -1;
+    return WINE_RB_ENTRY_VALUE(e, struct source_rb, entry)->source;
 }
 
 /******************************************************************
@@ -54,30 +62,62 @@ static unsigned source_find(const struct module* module, const char* name)
  *
  * checks if source exists. if not, add it
  */
-unsigned source_new(struct module* module, const char* name)
+unsigned source_new(struct module* module, const char* base, const char* name)
 {
-    int         len;
-    unsigned    ret;
+    unsigned    ret = -1;
+    const char* full;
+    char*       tmp = NULL;
 
-    if (!name) return (unsigned)-1;
-    if (module->sources && (ret = source_find(module, name)) != (unsigned)-1)
-        return ret;
-
-    len = strlen(name) + 1;
-    if (module->sources_used + len + 1 > module->sources_alloc)
+    if (!name) return ret;
+    if (!base || *name == '/')
+        full = name;
+    else
     {
-        /* Alloc by block of 256 bytes */
-        module->sources_alloc = (module->sources_used + len + 1 + 255) & ~255;
-        if (!module->sources)
-            module->sources = HeapAlloc(GetProcessHeap(), 0, module->sources_alloc);
-        else
-            module->sources = HeapReAlloc(GetProcessHeap(), 0, module->sources,
-                                          module->sources_alloc);
+        unsigned bsz = strlen(base);
+
+        tmp = HeapAlloc(GetProcessHeap(), 0, bsz + 1 + strlen(name) + 1);
+        if (!tmp) return ret;
+        full = tmp;
+        strcpy(tmp, base);
+        if (tmp[bsz - 1] != '/') tmp[bsz++] = '/';
+        strcpy(&tmp[bsz], name);
     }
-    ret = module->sources_used;
-    strcpy(module->sources + module->sources_used, name);
-    module->sources_used += len;
-    module->sources[module->sources_used] = '\0';
+    rb_module = module;
+    if (!module->sources || (ret = source_find(full)) == (unsigned)-1)
+    {
+        char* new;
+        int len = strlen(full) + 1;
+        struct source_rb* rb;
+
+        if (module->sources_used + len + 1 > module->sources_alloc)
+        {
+            if (!module->sources)
+            {
+                module->sources_alloc = (module->sources_used + len + 1 + 255) & ~255;
+                new = HeapAlloc(GetProcessHeap(), 0, module->sources_alloc);
+            }
+            else
+            {
+                module->sources_alloc = max( module->sources_alloc * 2,
+                                             (module->sources_used + len + 1 + 255) & ~255 );
+                new = HeapReAlloc(GetProcessHeap(), 0, module->sources,
+                                  module->sources_alloc);
+            }
+            if (!new) goto done;
+            module->sources = new;
+        }
+        ret = module->sources_used;
+        memcpy(module->sources + module->sources_used, full, len);
+        module->sources_used += len;
+        module->sources[module->sources_used] = '\0';
+        if ((rb = pool_alloc(&module->pool, sizeof(*rb))))
+        {
+            rb->source = ret;
+            wine_rb_put(&module->sources_offsets_tree, full, &rb->entry);
+        }
+    }
+done:
+    HeapFree(GetProcessHeap(), 0, tmp);
     return ret;
 }
 
@@ -94,33 +134,34 @@ const char* source_get(const struct module* module, unsigned idx)
 }
 
 /******************************************************************
- *		SymEnumSourceFiles (DBGHELP.@)
+ *		SymEnumSourceFilesW (DBGHELP.@)
  *
  */
-BOOL WINAPI SymEnumSourceFiles(HANDLE hProcess, ULONG64 ModBase, LPSTR Mask,
-                               PSYM_ENUMSOURCEFILES_CALLBACK cbSrcFiles,
-                               PVOID UserContext)
+BOOL WINAPI SymEnumSourceFilesW(HANDLE hProcess, ULONG64 ModBase, PCWSTR Mask,
+                                PSYM_ENUMSOURCEFILES_CALLBACKW cbSrcFiles,
+                                PVOID UserContext)
 {
-    struct process*     pcs;
-    struct module*      module;
-    SOURCEFILE          sf;
+    struct module_pair  pair;
+    SOURCEFILEW         sf;
     char*               ptr;
-    
+    WCHAR*              conversion_buffer = NULL;
+    DWORD               conversion_buffer_len = 0;
+
     if (!cbSrcFiles) return FALSE;
-    pcs = process_find_by_handle(hProcess);
-    if (!pcs) return FALSE;
+    pair.pcs = process_find_by_handle(hProcess);
+    if (!pair.pcs) return FALSE;
          
     if (ModBase)
     {
-        module = module_find_by_addr(pcs, ModBase, DMT_UNKNOWN);
-        if (!(module = module_get_debug(pcs, module))) return FALSE;
+        pair.requested = module_find_by_addr(pair.pcs, ModBase, DMT_UNKNOWN);
+        if (!module_get_debug(&pair)) return FALSE;
     }
     else
     {
         if (Mask[0] == '!')
         {
-            module = module_find_by_name(pcs, Mask + 1, DMT_UNKNOWN);
-            if (!(module = module_get_debug(pcs, module))) return FALSE;
+            pair.requested = module_find_by_nameW(pair.pcs, Mask + 1);
+            if (!module_get_debug(&pair)) return FALSE;
         }
         else
         {
@@ -128,77 +169,176 @@ BOOL WINAPI SymEnumSourceFiles(HANDLE hProcess, ULONG64 ModBase, LPSTR Mask,
             return FALSE;
         }
     }
-    if (!module->sources) return FALSE;
-    for (ptr = module->sources; *ptr; ptr += strlen(ptr) + 1)
+    if (!pair.effective->sources) return FALSE;
+    for (ptr = pair.effective->sources; *ptr; ptr += strlen(ptr) + 1)
     {
+        DWORD len = MultiByteToWideChar(CP_ACP, 0, ptr, -1, NULL, 0);
+
+        if (len > conversion_buffer_len)
+        {
+            HeapFree(GetProcessHeap(), 0, conversion_buffer);
+            conversion_buffer = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+            if (!conversion_buffer) return FALSE;
+            conversion_buffer_len = len;
+        }
+
+        MultiByteToWideChar(CP_ACP, 0, ptr, -1, conversion_buffer, len);
+
         /* FIXME: not using Mask */
         sf.ModBase = ModBase;
-        sf.FileName = ptr;
+        sf.FileName = conversion_buffer;
         if (!cbSrcFiles(&sf, UserContext)) break;
     }
 
+    HeapFree(GetProcessHeap(), 0, conversion_buffer);
     return TRUE;
 }
 
+struct enum_sources_files_context
+{
+    PSYM_ENUMSOURCEFILES_CALLBACK callbackA;
+    PVOID caller_context;
+    char *conversion_buffer;
+    DWORD conversion_buffer_len;
+    DWORD callback_error;
+};
+
+static BOOL CALLBACK enum_source_files_W_to_A(PSOURCEFILEW source_file, PVOID context)
+{
+    struct enum_sources_files_context *ctx = context;
+    SOURCEFILE source_fileA;
+    DWORD len;
+
+    len = WideCharToMultiByte(CP_ACP, 0, source_file->FileName, -1, NULL, 0, NULL, NULL);
+    if (len > ctx->conversion_buffer_len)
+    {
+        char *ptr = ctx->conversion_buffer ? HeapReAlloc(GetProcessHeap(), 0, ctx->conversion_buffer, len) :
+                                             HeapAlloc(GetProcessHeap(), 0, len);
+
+        if (!ptr)
+        {
+            ctx->callback_error = ERROR_OUTOFMEMORY;
+            return FALSE;
+        }
+
+        ctx->conversion_buffer = ptr;
+        ctx->conversion_buffer_len = len;
+    }
+
+    WideCharToMultiByte(CP_ACP, 0, source_file->FileName, -1, ctx->conversion_buffer, len, NULL, NULL);
+
+    source_fileA.ModBase = source_file->ModBase;
+    source_fileA.FileName = ctx->conversion_buffer;
+    return ctx->callbackA(&source_fileA, ctx->caller_context);
+}
+
 /******************************************************************
- *		SymEnumLines (DBGHELP.@)
+ *		SymEnumSourceFiles (DBGHELP.@)
  *
  */
-BOOL WINAPI SymEnumLines(HANDLE hProcess, ULONG64 base, PCSTR compiland,
-                         PCSTR srcfile, PSYM_ENUMLINES_CALLBACK cb, PVOID user)
+BOOL WINAPI SymEnumSourceFiles(HANDLE hProcess, ULONG64 ModBase, PCSTR Mask,
+                               PSYM_ENUMSOURCEFILES_CALLBACK cbSrcFiles,
+                               PVOID UserContext)
 {
-    struct process*             pcs;
-    struct module*              module;
-    struct hash_table_iter      hti;
-    struct symt_ht*             sym;
-    regex_t                     re;
-    struct line_info*           dli;
-    void*                       ptr;
-    SRCCODEINFO                 sci;
-    char*                       file;
+    WCHAR *maskW = NULL;
+    PSYM_ENUMSOURCEFILES_CALLBACKW callbackW;
+    PVOID context;
+    struct enum_sources_files_context callback_context = {cbSrcFiles, UserContext};
+    BOOL ret;
 
-    if (!cb) return FALSE;
-    pcs = process_find_by_handle(hProcess);
-    if (!pcs) return FALSE;
-    if (!(dbghelp_options & SYMOPT_LOAD_LINES)) return TRUE;
-    if (regcomp(&re, srcfile, REG_NOSUB))
+    if (Mask)
     {
-        FIXME("Couldn't compile %s\n", srcfile);
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    if (compiland) FIXME("Unsupported yet (filtering on compiland %s)\n", compiland);
-    module = module_find_by_addr(pcs, base, DMT_UNKNOWN);
-    if (!(module = module_get_debug(pcs, module))) return FALSE;
+        DWORD len = MultiByteToWideChar(CP_ACP, 0, Mask, -1, NULL, 0);
 
-    sci.SizeOfStruct = sizeof(sci);
-    sci.ModBase      = base;
-
-    hash_table_iter_init(&module->ht_symbols, &hti, NULL);
-    while ((ptr = hash_table_iter_up(&hti)))
-    {
-        sym = GET_ENTRY(ptr, struct symt_ht, hash_elt);
-        if (sym->symt.tag != SymTagFunction) continue;
-
-        dli = NULL;
-        sci.FileName[0] = '\0';
-        while ((dli = vector_iter_up(&((struct symt_function*)sym)->vlines, dli)))
+        maskW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+        if (!maskW)
         {
-            if (dli->is_source_file)
-            {
-                file = (char*)source_get(module, dli->u.source_file);
-                if (regexec(&re, file, 0, NULL, 0) != 0) file = "";
-                strcpy(sci.FileName, file);
-            }
-            else if (sci.FileName[0])
-            {
-                sci.Key = dli;
-                sci.Obj[0] = '\0'; /* FIXME */
-                sci.LineNumber = dli->line_number;
-                sci.Address = dli->u.pc_offset;
-                if (!cb(&sci, user)) break;
-            }
+            SetLastError(ERROR_OUTOFMEMORY);
+            return FALSE;
         }
+
+        MultiByteToWideChar(CP_ACP, 0, Mask, -1, maskW, len);
     }
-    return TRUE;
+
+    if (cbSrcFiles)
+    {
+        callbackW = enum_source_files_W_to_A;
+        context = &callback_context;
+    }
+    else
+    {
+        callbackW = NULL;
+        context = UserContext;
+    }
+
+    ret = SymEnumSourceFilesW(hProcess, ModBase, maskW, callbackW, context);
+
+    if (callback_context.callback_error)
+    {
+        SetLastError(callback_context.callback_error);
+        ret = FALSE;
+    }
+
+    HeapFree(GetProcessHeap(), 0, callback_context.conversion_buffer);
+    HeapFree(GetProcessHeap(), 0, maskW);
+
+    return ret;
+}
+
+/******************************************************************
+ *              SymEnumSourceLines (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymEnumSourceLines(HANDLE hProcess, ULONG64 base, PCSTR obj,
+                               PCSTR file, DWORD line, DWORD flags,
+                               PSYM_ENUMLINES_CALLBACK EnumLinesCallback,
+                               PVOID UserContext)
+{
+    FIXME("%p %s %s %s %u %u %p %p: stub!\n",
+          hProcess, wine_dbgstr_longlong(base), debugstr_a(obj), debugstr_a(file),
+          line, flags, EnumLinesCallback, UserContext);
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+/******************************************************************
+ *               SymEnumSourceLinesW(DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymEnumSourceLinesW(HANDLE hProcess, ULONG64 base, PCWSTR obj,
+                                PCWSTR file, DWORD line, DWORD flags,
+                                PSYM_ENUMLINES_CALLBACKW EnumLinesCallback,
+                                PVOID UserContext)
+{
+    FIXME("%p %s %s %s %u %u %p %p: stub!\n",
+          hProcess, wine_dbgstr_longlong(base), debugstr_w(obj), debugstr_w(file),
+          line, flags, EnumLinesCallback, UserContext);
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+/******************************************************************
+ *		SymGetSourceFileToken (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymGetSourceFileToken(HANDLE hProcess, ULONG64 base,
+                                  PCSTR src, PVOID* token, DWORD* size)
+{
+    FIXME("%p %s %s %p %p: stub!\n",
+          hProcess, wine_dbgstr_longlong(base), debugstr_a(src), token, size);
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+/******************************************************************
+ *		SymGetSourceFileTokenW (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymGetSourceFileTokenW(HANDLE hProcess, ULONG64 base,
+                                   PCWSTR src, PVOID* token, DWORD* size)
+{
+    FIXME("%p %s %s %p %p: stub!\n",
+          hProcess, wine_dbgstr_longlong(base), debugstr_w(src), token, size);
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
 }

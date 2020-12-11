@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
@@ -34,14 +34,10 @@
 #include "objbase.h"
 #include "oleauto.h"
 #include "winerror.h"
-#include "winreg.h"
-#include "winnls.h"         /* for PRIMARYLANGID */
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
-
-static IDispatch * WINAPI StdDispatch_Construct(IUnknown * punkOuter, void * pvThis, ITypeInfo * pTypeInfo);
 
 /******************************************************************************
  *		DispInvoke (OLEAUT32.30)
@@ -85,7 +81,7 @@ HRESULT WINAPI DispInvoke(
 /******************************************************************************
  *		DispGetIDsOfNames (OLEAUT32.29)
  *
- * Convert a set of parameter names to DISPID's for DispInvoke().
+ * Convert a set of parameter names to DISPIDs for DispInvoke().
  *
  * RETURNS
  *  Success: S_OK.
@@ -93,13 +89,13 @@ HRESULT WINAPI DispInvoke(
  *
  * NOTES
  *  This call defers to ITypeInfo_GetIDsOfNames(). The ITypeInfo interface passed
- *  as ptinfo contains the information to map names to DISPID's.
+ *  as ptinfo contains the information to map names to DISPIDs.
  */
 HRESULT WINAPI DispGetIDsOfNames(
 	ITypeInfo  *ptinfo,    /* [in] Object's type info */
-	OLECHAR   **rgszNames, /* [in] Array of names to get DISPID's for */
+	OLECHAR   **rgszNames, /* [in] Array of names to get DISPIDs for */
 	UINT        cNames,    /* [in] Number of names in rgszNames */
-	DISPID     *rgdispid)  /* [out] Destination for converted DISPID's */
+	DISPID     *rgdispid)  /* [out] Destination for converted DISPIDs */
 {
     return ITypeInfo_GetIDsOfNames(ptinfo, rgszNames, cNames, rgdispid);
 }
@@ -107,7 +103,7 @@ HRESULT WINAPI DispGetIDsOfNames(
 /******************************************************************************
  *		DispGetParam (OLEAUT32.28)
  *
- * Retrive a parameter from a DISPPARAMS structure and coerce it to the
+ * Retrieve a parameter from a DISPPARAMS structure and coerce it to the
  * specified variant type.
  *
  * NOTES
@@ -132,10 +128,14 @@ HRESULT WINAPI DispGetParam(
 
     TRACE("position=%d, cArgs=%d, cNamedArgs=%d\n",
           position, pdispparams->cArgs, pdispparams->cNamedArgs);
-    if (position < pdispparams->cArgs) {
+
+    if (position < pdispparams->cArgs)
+    {
       /* positional arg? */
       pos = pdispparams->cArgs - position - 1;
-    } else {
+    }
+    else
+    {
       /* FIXME: is this how to handle named args? */
       for (pos=0; pos<pdispparams->cNamedArgs; pos++)
         if (pdispparams->rgdispidNamedArgs[pos] == position) break;
@@ -143,37 +143,28 @@ HRESULT WINAPI DispGetParam(
       if (pos==pdispparams->cNamedArgs)
         return DISP_E_PARAMNOTFOUND;
     }
+
+    if (pdispparams->cArgs > 0 && !pdispparams->rgvarg)
+    {
+        hr = E_INVALIDARG;
+        goto done;
+    }
+
+    if (!pvarResult)
+    {
+        hr = E_INVALIDARG;
+        goto done;
+    }
+
     hr = VariantChangeType(pvarResult,
                            &pdispparams->rgvarg[pos],
                            0, vtTarg);
-    if (hr == DISP_E_TYPEMISMATCH) *puArgErr = pos;
+
+done:
+    if (FAILED(hr))
+        *puArgErr = pos;
+
     return hr;
-}
-
-/******************************************************************************
- * CreateStdDispatch [OLEAUT32.32]
- *
- * Create and return a standard IDispatch object.
- *
- * RETURNS
- *  Success: S_OK. ppunkStdDisp contains the new object.
- *  Failure: An HRESULT error code.
- *
- * NOTES
- *  Outer unknown appears to be completely ignored.
- */
-HRESULT WINAPI CreateStdDispatch(
-        IUnknown* punkOuter,
-        void* pvThis,
-	ITypeInfo* ptinfo,
-	IUnknown** ppunkStdDisp)
-{
-    TRACE("(%p, %p, %p, %p)\n", punkOuter, pvThis, ptinfo, ppunkStdDisp);
-
-    *ppunkStdDisp = (LPUNKNOWN)StdDispatch_Construct(punkOuter, pvThis, ptinfo);
-    if (!*ppunkStdDisp)
-        return E_OUTOFMEMORY;
-    return S_OK;
 }
 
 
@@ -194,7 +185,7 @@ HRESULT WINAPI CreateStdDispatch(
  *  Method, property and parameter names can be localised. The details required to
  *  map names to methods and parameters are collected in a type library, usually
  *  output by an IDL compiler using the objects IDL description. This information is
- *  accessible programatically through the ITypeLib interface (for a type library),
+ *  accessible programmatically through the ITypeLib interface (for a type library),
  *  and the ITypeInfo interface (for an object within the type library). Type information
  *  can also be created at run-time using CreateDispTypeInfo().
  *
@@ -203,21 +194,26 @@ HRESULT WINAPI CreateStdDispatch(
  *  to simplify the process of calling an objects methods through IDispatch.
  *
  *  A standard implementation of an IDispatch object is created by calling
- *  CreateStdDispatch(). Numeric Id values for the parameters and methods (DISPID's)
+ *  CreateStdDispatch(). Numeric Id values for the parameters and methods (DISPIDs)
  *  of an object of interest are retrieved by calling DispGetIDsOfNames(). DispGetParam()
  *  retrieves information about a particular parameter. Finally the DispInvoke()
- *  function is responsable for actually calling methods on an object.
+ *  function is responsible for actually calling methods on an object.
  *
  * METHODS
  */
 
 typedef struct
 {
-    const IDispatchVtbl *lpVtbl;
+    IDispatch IDispatch_iface;
     void * pvThis;
     ITypeInfo * pTypeInfo;
     LONG ref;
 } StdDispatch;
+
+static inline StdDispatch *impl_from_IDispatch(IDispatch *iface)
+{
+    return CONTAINING_RECORD(iface, StdDispatch, IDispatch_iface);
+}
 
 /******************************************************************************
  * IDispatch_QueryInterface {OLEAUT32}
@@ -229,15 +225,17 @@ static HRESULT WINAPI StdDispatch_QueryInterface(
   REFIID riid,
   void** ppvObject)
 {
-    StdDispatch *This = (StdDispatch *)iface;
-    TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppvObject);
+    StdDispatch *This = impl_from_IDispatch(iface);
+    TRACE("(%p)->(%s, %p)\n", This, debugstr_guid(riid), ppvObject);
+
+    *ppvObject = NULL;
 
     if (IsEqualIID(riid, &IID_IDispatch) ||
         IsEqualIID(riid, &IID_IUnknown))
     {
-        *ppvObject = (LPVOID)This;
-	IUnknown_AddRef((LPUNKNOWN)*ppvObject);
-	return S_OK;
+        *ppvObject = iface;
+        IDispatch_AddRef(iface);
+        return S_OK;
     }
     return E_NOINTERFACE;
 }
@@ -249,10 +247,10 @@ static HRESULT WINAPI StdDispatch_QueryInterface(
  */
 static ULONG WINAPI StdDispatch_AddRef(LPDISPATCH iface)
 {
-    StdDispatch *This = (StdDispatch *)iface;
+    StdDispatch *This = impl_from_IDispatch(iface);
     ULONG refCount = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p)->(ref before=%lu)\n",This, refCount - 1);
+    TRACE("(%p)->(ref before=%u)\n",This, refCount - 1);
 
     return refCount;
 }
@@ -264,10 +262,10 @@ static ULONG WINAPI StdDispatch_AddRef(LPDISPATCH iface)
  */
 static ULONG WINAPI StdDispatch_Release(LPDISPATCH iface)
 {
-    StdDispatch *This = (StdDispatch *)iface;
+    StdDispatch *This = impl_from_IDispatch(iface);
     ULONG refCount = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p)->(ref before=%lu)\n", This, refCount + 1);
+    TRACE("(%p)->(ref before=%u)\n", This, refCount + 1);
 
     if (!refCount)
     {
@@ -297,10 +295,8 @@ static ULONG WINAPI StdDispatch_Release(LPDISPATCH iface)
  */
 static HRESULT WINAPI StdDispatch_GetTypeInfoCount(LPDISPATCH iface, UINT * pctinfo)
 {
-    StdDispatch *This = (StdDispatch *)iface;
     TRACE("(%p)\n", pctinfo);
-
-    *pctinfo = This->pTypeInfo ? 1 : 0;
+    *pctinfo = 1;
     return S_OK;
 }
 
@@ -324,25 +320,23 @@ static HRESULT WINAPI StdDispatch_GetTypeInfoCount(LPDISPATCH iface, UINT * pcti
  */
 static HRESULT WINAPI StdDispatch_GetTypeInfo(LPDISPATCH iface, UINT iTInfo, LCID lcid, ITypeInfo** ppTInfo)
 {
-    StdDispatch *This = (StdDispatch *)iface;
-    TRACE("(%d, %lx, %p)\n", iTInfo, lcid, ppTInfo);
+    StdDispatch *This = impl_from_IDispatch(iface);
+    TRACE("(%d, %x, %p)\n", iTInfo, lcid, ppTInfo);
 
     *ppTInfo = NULL;
     if (iTInfo != 0)
         return DISP_E_BADINDEX;
 
-    if (This->pTypeInfo)
-    {
-      *ppTInfo = This->pTypeInfo;
-      ITypeInfo_AddRef(*ppTInfo);
-    }
+    *ppTInfo = This->pTypeInfo;
+    ITypeInfo_AddRef(*ppTInfo);
+
     return S_OK;
 }
 
 /******************************************************************************
  * IDispatch_GetIDsOfNames {OLEAUT32}
  *
- * Convert a methods name and an optional set of parameter names into DISPID's
+ * Convert a methods name and an optional set of parameter names into DISPIDs
  * for passing to IDispatch_Invoke().
  *
  * PARAMS
@@ -351,13 +345,13 @@ static HRESULT WINAPI StdDispatch_GetTypeInfo(LPDISPATCH iface, UINT iTInfo, LCI
  *  rgszNames [I] Name to convert
  *  cNames    [I] Number of names in rgszNames
  *  lcid      [I] Locale of the type information to convert from
- *  rgDispId  [O] Destination for converted DISPID's.
+ *  rgDispId  [O] Destination for converted DISPIDs.
  *
  * RETURNS
  *  Success: S_OK.
  *  Failure: DISP_E_UNKNOWNNAME, if any of the names is invalid.
  *           DISP_E_UNKNOWNLCID if lcid is invalid.
- *           Otherwise, an An HRESULT error code.
+ *           Otherwise, an HRESULT error code.
  *
  * NOTES
  *  This call defers to ITypeInfo_GetIDsOfNames(), using the ITypeInfo object
@@ -367,8 +361,8 @@ static HRESULT WINAPI StdDispatch_GetTypeInfo(LPDISPATCH iface, UINT iTInfo, LCI
  */
 static HRESULT WINAPI StdDispatch_GetIDsOfNames(LPDISPATCH iface, REFIID riid, LPOLESTR * rgszNames, UINT cNames, LCID lcid, DISPID * rgDispId)
 {
-    StdDispatch *This = (StdDispatch *)iface;
-    TRACE("(%s, %p, %d, 0x%lx, %p)\n", debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
+    StdDispatch *This = impl_from_IDispatch(iface);
+    TRACE("(%s, %p, %d, 0x%x, %p)\n", debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
 
     if (!IsEqualGUID(riid, &IID_NULL))
     {
@@ -405,8 +399,8 @@ static HRESULT WINAPI StdDispatch_Invoke(LPDISPATCH iface, DISPID dispIdMember, 
                                          WORD wFlags, DISPPARAMS * pDispParams, VARIANT * pVarResult,
                                          EXCEPINFO * pExcepInfo, UINT * puArgErr)
 {
-    StdDispatch *This = (StdDispatch *)iface;
-    TRACE("(%ld, %s, 0x%lx, 0x%x, %p, %p, %p, %p)\n", dispIdMember, debugstr_guid(riid), lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+    StdDispatch *This = impl_from_IDispatch(iface);
+    TRACE("(%d, %s, 0x%x, 0x%x, %p, %p, %p, %p)\n", dispIdMember, debugstr_guid(riid), lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 
     if (!IsEqualGUID(riid, &IID_NULL))
     {
@@ -427,25 +421,44 @@ static const IDispatchVtbl StdDispatch_VTable =
   StdDispatch_Invoke
 };
 
-static IDispatch * WINAPI StdDispatch_Construct(
-  IUnknown * punkOuter,
-  void * pvThis,
-  ITypeInfo * pTypeInfo)
+/******************************************************************************
+ * CreateStdDispatch [OLEAUT32.32]
+ *
+ * Create and return a standard IDispatch object.
+ *
+ * RETURNS
+ *  Success: S_OK. ppunkStdDisp contains the new object.
+ *  Failure: An HRESULT error code.
+ *
+ * NOTES
+ *  Outer unknown appears to be completely ignored.
+ */
+HRESULT WINAPI CreateStdDispatch(
+        IUnknown* punkOuter,
+        void* pvThis,
+	ITypeInfo* ptinfo,
+	IUnknown** stddisp)
 {
-    StdDispatch * pStdDispatch;
+    StdDispatch *pStdDispatch;
+
+    TRACE("(%p, %p, %p, %p)\n", punkOuter, pvThis, ptinfo, stddisp);
+
+    if (!pvThis || !ptinfo || !stddisp)
+        return E_INVALIDARG;
 
     pStdDispatch = CoTaskMemAlloc(sizeof(StdDispatch));
     if (!pStdDispatch)
-        return (IDispatch *)pStdDispatch;
+        return E_OUTOFMEMORY;
 
-    pStdDispatch->lpVtbl = &StdDispatch_VTable;
+    pStdDispatch->IDispatch_iface.lpVtbl = &StdDispatch_VTable;
     pStdDispatch->pvThis = pvThis;
-    pStdDispatch->pTypeInfo = pTypeInfo;
+    pStdDispatch->pTypeInfo = ptinfo;
     pStdDispatch->ref = 1;
 
     /* we keep a reference to the type info so prevent it from
      * being destroyed until we are done with it */
-    ITypeInfo_AddRef(pTypeInfo);
+    ITypeInfo_AddRef(ptinfo);
+    *stddisp = (IUnknown*)&pStdDispatch->IDispatch_iface;
 
-    return (IDispatch *)pStdDispatch;
+    return S_OK;
 }

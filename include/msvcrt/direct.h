@@ -7,24 +7,13 @@
  */
 #ifndef __WINE_DIRECT_H
 #define __WINE_DIRECT_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
+
+#include <pshpack8.h>
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-
-#ifndef _WCHAR_T_DEFINED
-#define _WCHAR_T_DEFINED
-#ifndef __cplusplus
-typedef unsigned short wchar_t;
-#endif
-#endif
-
-#ifndef _SIZE_T_DEFINED
-typedef unsigned int size_t;
-#define _SIZE_T_DEFINED
 #endif
 
 #ifndef _DISKFREE_T_DEFINED
@@ -37,22 +26,22 @@ struct _diskfree_t {
 };
 #endif /* _DISKFREE_T_DEFINED */
 
-int         _chdir(const char*);
-int         _chdrive(int);
-char*       _getcwd(char*,int);
-char*       _getdcwd(int,char*,int);
-int         _getdrive(void);
-unsigned long _getdrives(void);
-int         _mkdir(const char*);
-int         _rmdir(const char*);
+int           __cdecl _chdir(const char*);
+int           __cdecl _chdrive(int);
+char*         __cdecl _getcwd(char*,int);
+char*         __cdecl _getdcwd(int,char*,int);
+int           __cdecl _getdrive(void);
+__msvcrt_ulong __cdecl _getdrives(void);
+int           __cdecl _mkdir(const char*);
+int           __cdecl _rmdir(const char*);
 
 #ifndef _WDIRECT_DEFINED
 #define _WDIRECT_DEFINED
-int              _wchdir(const wchar_t*);
-wchar_t* _wgetcwd(wchar_t*,int);
-wchar_t* _wgetdcwd(int,wchar_t*,int);
-int              _wmkdir(const wchar_t*);
-int              _wrmdir(const wchar_t*);
+int      __cdecl _wchdir(const wchar_t*);
+wchar_t* __cdecl _wgetcwd(wchar_t*,int);
+wchar_t* __cdecl _wgetdcwd(int,wchar_t*,int);
+int      __cdecl _wmkdir(const wchar_t*);
+int      __cdecl _wrmdir(const wchar_t*);
 #endif /* _WDIRECT_DEFINED */
 
 #ifdef __cplusplus
@@ -64,5 +53,7 @@ static inline int chdir(const char* newdir) { return _chdir(newdir); }
 static inline char* getcwd(char * buf, int size) { return _getcwd(buf, size); }
 static inline int mkdir(const char* newdir) { return _mkdir(newdir); }
 static inline int rmdir(const char* dir) { return _rmdir(dir); }
+
+#include <poppack.h>
 
 #endif /* __WINE_DIRECT_H */

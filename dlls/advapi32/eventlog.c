@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -25,12 +25,15 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
-#include "winreg.h"
 #include "winternl.h"
 #include "wmistr.h"
 #include "evntrace.h"
+#include "evntprov.h"
 
+#include "wine/unicode.h"
 #include "wine/debug.h"
+
+#include "advapi32_misc.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(advapi);
 WINE_DECLARE_DEBUG_CHANNEL(eventlog);
@@ -51,8 +54,14 @@ WINE_DECLARE_DEBUG_CHANNEL(eventlog);
  */
 BOOL WINAPI BackupEventLogA( HANDLE hEventLog, LPCSTR lpBackupFileName )
 {
-	FIXME("(%p,%s) stub\n", hEventLog, debugstr_a(lpBackupFileName));
-	return TRUE;
+    LPWSTR backupW;
+    BOOL ret;
+
+    backupW = SERV_dup(lpBackupFileName);
+    ret = BackupEventLogW(hEventLog, backupW);
+    heap_free(backupW);
+
+    return ret;
 }
 
 /******************************************************************************
@@ -62,14 +71,33 @@ BOOL WINAPI BackupEventLogA( HANDLE hEventLog, LPCSTR lpBackupFileName )
  */
 BOOL WINAPI BackupEventLogW( HANDLE hEventLog, LPCWSTR lpBackupFileName )
 {
-	FIXME("(%p,%s) stub\n", hEventLog, debugstr_w(lpBackupFileName));
-	return TRUE;
+    FIXME("(%p,%s) stub\n", hEventLog, debugstr_w(lpBackupFileName));
+
+    if (!lpBackupFileName)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (!hEventLog)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    if (GetFileAttributesW(lpBackupFileName) != INVALID_FILE_ATTRIBUTES)
+    {
+        SetLastError(ERROR_ALREADY_EXISTS);
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 /******************************************************************************
  * ClearEventLogA [ADVAPI32.@]
  *
- * Clears the event log and/or saves the log to a backup file.
+ * Clears the event log and optionally saves the log to a backup file.
  *
  * PARAMS
  *  hEvenLog         [I] Handle to event log to clear.
@@ -83,8 +111,14 @@ BOOL WINAPI BackupEventLogW( HANDLE hEventLog, LPCWSTR lpBackupFileName )
  */
 BOOL WINAPI ClearEventLogA( HANDLE hEventLog, LPCSTR lpBackupFileName )
 {
-	FIXME("(%p,%s) stub\n", hEventLog, debugstr_a(lpBackupFileName));
-	return TRUE;
+    LPWSTR backupW;
+    BOOL ret;
+
+    backupW = SERV_dup(lpBackupFileName);
+    ret = ClearEventLogW(hEventLog, backupW);
+    heap_free(backupW);
+
+    return ret;
 }
 
 /******************************************************************************
@@ -94,8 +128,15 @@ BOOL WINAPI ClearEventLogA( HANDLE hEventLog, LPCSTR lpBackupFileName )
  */
 BOOL WINAPI ClearEventLogW( HANDLE hEventLog, LPCWSTR lpBackupFileName )
 {
-	FIXME("(%p,%s) stub\n", hEventLog, debugstr_w(lpBackupFileName));
-	return TRUE;
+    FIXME("(%p,%s) stub\n", hEventLog, debugstr_w(lpBackupFileName));
+
+    if (!hEventLog)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 /******************************************************************************
@@ -112,9 +153,57 @@ BOOL WINAPI ClearEventLogW( HANDLE hEventLog, LPCWSTR lpBackupFileName )
  */
 BOOL WINAPI CloseEventLog( HANDLE hEventLog )
 {
-	FIXME("(%p) stub\n", hEventLog);
-	return TRUE;
+    FIXME("(%p) stub\n", hEventLog);
+
+    if (!hEventLog)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    return TRUE;
 }
+
+/******************************************************************************
+ * ControlTraceW [ADVAPI32.@]
+ *
+ * Control a givel event trace session
+ *
+ */
+ULONG WINAPI ControlTraceW( TRACEHANDLE hSession, LPCWSTR SessionName, PEVENT_TRACE_PROPERTIES Properties, ULONG control )
+{
+    FIXME("(%s, %s, %p, %d) stub\n", wine_dbgstr_longlong(hSession), debugstr_w(SessionName), Properties, control);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * ControlTraceA [ADVAPI32.@]
+ *
+ * See ControlTraceW.
+ *
+ */
+ULONG WINAPI ControlTraceA( TRACEHANDLE hSession, LPCSTR SessionName, PEVENT_TRACE_PROPERTIES Properties, ULONG control )
+{
+    FIXME("(%s, %s, %p, %d) stub\n", wine_dbgstr_longlong(hSession), debugstr_a(SessionName), Properties, control);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * FlushTraceA [ADVAPI32.@]
+ */
+ULONG WINAPI FlushTraceA ( TRACEHANDLE hSession, LPCSTR SessionName, PEVENT_TRACE_PROPERTIES Properties )
+{
+    return ControlTraceA( hSession, SessionName, Properties, EVENT_TRACE_CONTROL_FLUSH );
+}
+
+/******************************************************************************
+ * FlushTraceW [ADVAPI32.@]
+ */
+ULONG WINAPI FlushTraceW ( TRACEHANDLE hSession, LPCWSTR SessionName, PEVENT_TRACE_PROPERTIES Properties )
+{
+    return ControlTraceW( hSession, SessionName, Properties, EVENT_TRACE_CONTROL_FLUSH );
+}
+
 
 /******************************************************************************
  * DeregisterEventSource [ADVAPI32.@]
@@ -131,6 +220,104 @@ BOOL WINAPI CloseEventLog( HANDLE hEventLog )
 BOOL WINAPI DeregisterEventSource( HANDLE hEventLog )
 {
     FIXME("(%p) stub\n", hEventLog);
+    return TRUE;
+}
+
+/******************************************************************************
+ * EnableTraceEx [ADVAPI32.@]
+ */
+ULONG WINAPI EnableTraceEx( LPCGUID provider, LPCGUID source, TRACEHANDLE hSession, ULONG enable,
+                            UCHAR level, ULONGLONG anykeyword, ULONGLONG allkeyword, ULONG enableprop,
+                            PEVENT_FILTER_DESCRIPTOR filterdesc )
+{
+    FIXME("(%s, %s, %s, %u, %u, %s, %s, %u, %p): stub\n", debugstr_guid(provider),
+            debugstr_guid(source), wine_dbgstr_longlong(hSession), enable, level,
+            wine_dbgstr_longlong(anykeyword), wine_dbgstr_longlong(allkeyword),
+            enableprop, filterdesc);
+
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * EnableTraceEx2 [ADVAPI32.@]
+ */
+ULONG WINAPI EnableTraceEx2( TRACEHANDLE handle, LPCGUID provider, ULONG control, UCHAR level,
+                             ULONGLONG match_any, ULONGLONG match_all, ULONG timeout,
+                             PENABLE_TRACE_PARAMETERS params )
+{
+    FIXME("(%s, %s, %u, %u, %s, %s, %u, %p): stub\n", wine_dbgstr_longlong(handle),
+          debugstr_guid(provider), control, level, wine_dbgstr_longlong(match_any),
+          wine_dbgstr_longlong(match_all), timeout, params);
+
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * EnableTrace [ADVAPI32.@]
+ */
+ULONG WINAPI EnableTrace( ULONG enable, ULONG flag, ULONG level, LPCGUID guid, TRACEHANDLE hSession )
+{
+    FIXME("(%d, 0x%x, %d, %s, %s): stub\n", enable, flag, level,
+            debugstr_guid(guid), wine_dbgstr_longlong(hSession));
+
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * GetEventLogInformation [ADVAPI32.@]
+ *
+ * Retrieve some information about an event log.
+ *
+ * PARAMS
+ *  hEventLog      [I]   Handle to an open event log.
+ *  dwInfoLevel    [I]   Level of information (only EVENTLOG_FULL_INFO)
+ *  lpBuffer       [I/O] The buffer for the returned information
+ *  cbBufSize      [I]   The size of the buffer
+ *  pcbBytesNeeded [O]   The needed bytes to hold the information
+ *
+ * RETURNS
+ *  Success: TRUE. lpBuffer will hold the information and pcbBytesNeeded shows
+ *           the needed buffer size.
+ *  Failure: FALSE.
+ */
+BOOL WINAPI GetEventLogInformation( HANDLE hEventLog, DWORD dwInfoLevel, LPVOID lpBuffer, DWORD cbBufSize, LPDWORD pcbBytesNeeded)
+{
+    EVENTLOG_FULL_INFORMATION *efi;
+
+    FIXME("(%p, %d, %p, %d, %p) stub\n", hEventLog, dwInfoLevel, lpBuffer, cbBufSize, pcbBytesNeeded);
+
+    if (dwInfoLevel != EVENTLOG_FULL_INFO)
+    {
+        SetLastError(ERROR_INVALID_LEVEL);
+        return FALSE;
+    }
+
+    if (!hEventLog)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    if (!lpBuffer || !pcbBytesNeeded)
+    {
+        /* FIXME: This will be handled properly when eventlog is moved
+         * to a higher level
+         */
+        SetLastError(RPC_X_NULL_REF_POINTER);
+        return FALSE;
+    }
+
+    *pcbBytesNeeded = sizeof(EVENTLOG_FULL_INFORMATION);
+    if (cbBufSize < sizeof(EVENTLOG_FULL_INFORMATION))
+    {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+
+    /* Pretend the log is not full */
+    efi = (EVENTLOG_FULL_INFORMATION *)lpBuffer;
+    efi->dwFull = 0;
+
     return TRUE;
 }
 
@@ -152,7 +339,18 @@ BOOL WINAPI GetNumberOfEventLogRecords( HANDLE hEventLog, PDWORD NumberOfRecords
 {
     FIXME("(%p,%p) stub\n", hEventLog, NumberOfRecords);
 
-    if (!NumberOfRecords) return FALSE;
+    if (!NumberOfRecords)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (!hEventLog)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
     *NumberOfRecords = 0;
 
     return TRUE;
@@ -176,10 +374,49 @@ BOOL WINAPI GetOldestEventLogRecord( HANDLE hEventLog, PDWORD OldestRecord )
 {
     FIXME("(%p,%p) stub\n", hEventLog, OldestRecord);
 
-    if (!OldestRecord) return FALSE;
+    if (!OldestRecord)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (!hEventLog)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
     *OldestRecord = 0;
 
     return TRUE;
+}
+
+/******************************************************************************
+ * GetTraceEnableFlags [ADVAPI32.@]
+ */
+ULONG WINAPI GetTraceEnableFlags( TRACEHANDLE handle )
+{
+    FIXME("(%s) stub\n", wine_dbgstr_longlong(handle));
+    return 0;
+}
+
+/******************************************************************************
+ * GetTraceEnableLevel [ADVAPI32.@]
+ */
+UCHAR WINAPI GetTraceEnableLevel( TRACEHANDLE handle )
+{
+    FIXME("(%s) stub\n", wine_dbgstr_longlong(handle));
+    return TRACE_LEVEL_VERBOSE;
+}
+
+/******************************************************************************
+ * GetTraceLoggerHandle [ADVAPI32.@]
+ */
+TRACEHANDLE WINAPI GetTraceLoggerHandle( PVOID buf )
+{
+    FIXME("(%p) stub\n", buf);
+    SetLastError(ERROR_ACCESS_DENIED);
+    return INVALID_PROCESSTRACE_HANDLE;
 }
 
 /******************************************************************************
@@ -218,8 +455,16 @@ BOOL WINAPI NotifyChangeEventLog( HANDLE hEventLog, HANDLE hEvent )
  */
 HANDLE WINAPI OpenBackupEventLogA( LPCSTR lpUNCServerName, LPCSTR lpFileName )
 {
-	FIXME("(%s,%s) stub\n", debugstr_a(lpUNCServerName), debugstr_a(lpFileName));
-	return (HANDLE)0xcafe4242;
+    LPWSTR uncnameW, filenameW;
+    HANDLE handle;
+
+    uncnameW = SERV_dup(lpUNCServerName);
+    filenameW = SERV_dup(lpFileName);
+    handle = OpenBackupEventLogW(uncnameW, filenameW);
+    heap_free(uncnameW);
+    heap_free(filenameW);
+
+    return handle;
 }
 
 /******************************************************************************
@@ -229,8 +474,28 @@ HANDLE WINAPI OpenBackupEventLogA( LPCSTR lpUNCServerName, LPCSTR lpFileName )
  */
 HANDLE WINAPI OpenBackupEventLogW( LPCWSTR lpUNCServerName, LPCWSTR lpFileName )
 {
-	FIXME("(%s,%s) stub\n", debugstr_w(lpUNCServerName), debugstr_w(lpFileName));
-	return (HANDLE)0xcafe4242;
+    FIXME("(%s,%s) stub\n", debugstr_w(lpUNCServerName), debugstr_w(lpFileName));
+
+    if (!lpFileName)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+
+    if (lpUNCServerName && lpUNCServerName[0])
+    {
+        FIXME("Remote server not supported\n");
+        SetLastError(RPC_S_SERVER_UNAVAILABLE);
+        return NULL;
+    }
+
+    if (GetFileAttributesW(lpFileName) == INVALID_FILE_ATTRIBUTES)
+    {
+        SetLastError(ERROR_FILE_NOT_FOUND);
+        return NULL;
+    }
+
+    return (HANDLE)0xcafe4242;
 }
 
 /******************************************************************************
@@ -249,8 +514,16 @@ HANDLE WINAPI OpenBackupEventLogW( LPCWSTR lpUNCServerName, LPCWSTR lpFileName )
  */
 HANDLE WINAPI OpenEventLogA( LPCSTR uncname, LPCSTR source )
 {
-	FIXME("(%s,%s) stub\n", debugstr_a(uncname), debugstr_a(source));
-	return (HANDLE)0xcafe4242;
+    LPWSTR uncnameW, sourceW;
+    HANDLE handle;
+
+    uncnameW = SERV_dup(uncname);
+    sourceW = SERV_dup(source);
+    handle = OpenEventLogW(uncnameW, sourceW);
+    heap_free(uncnameW);
+    heap_free(sourceW);
+
+    return handle;
 }
 
 /******************************************************************************
@@ -260,8 +533,49 @@ HANDLE WINAPI OpenEventLogA( LPCSTR uncname, LPCSTR source )
  */
 HANDLE WINAPI OpenEventLogW( LPCWSTR uncname, LPCWSTR source )
 {
-	FIXME("(%s,%s) stub\n", debugstr_w(uncname), debugstr_w(source));
-	return (HANDLE)0xcafe4242;
+    FIXME("(%s,%s) stub\n", debugstr_w(uncname), debugstr_w(source));
+
+    if (!source)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+
+    if (uncname && uncname[0])
+    {
+        FIXME("Remote server not supported\n");
+        SetLastError(RPC_S_SERVER_UNAVAILABLE);
+        return NULL;
+    }
+
+    return (HANDLE)0xcafe4242;
+}
+
+/******************************************************************************
+ * QueryAllTracesW [ADVAPI32.@]
+ *
+ * Query information for started event trace sessions
+ *
+ */
+ULONG WINAPI QueryAllTracesW( PEVENT_TRACE_PROPERTIES * parray, ULONG arraycount, PULONG psessioncount )
+{
+    FIXME("(%p, %d, %p) stub\n", parray, arraycount, psessioncount);
+
+    if (psessioncount) *psessioncount = 0;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * QueryAllTracesA [ADVAPI32.@]
+ *
+ * See QueryAllTracesW.
+ */
+ULONG WINAPI QueryAllTracesA( PEVENT_TRACE_PROPERTIES * parray, ULONG arraycount, PULONG psessioncount )
+{
+    FIXME("(%p, %d, %p) stub\n", parray, arraycount, psessioncount);
+
+    if (psessioncount) *psessioncount = 0;
+    return ERROR_SUCCESS;
 }
 
 /******************************************************************************
@@ -286,8 +600,10 @@ HANDLE WINAPI OpenEventLogW( LPCWSTR uncname, LPCWSTR source )
 BOOL WINAPI ReadEventLogA( HANDLE hEventLog, DWORD dwReadFlags, DWORD dwRecordOffset,
     LPVOID lpBuffer, DWORD nNumberOfBytesToRead, DWORD *pnBytesRead, DWORD *pnMinNumberOfBytesNeeded )
 {
-    FIXME("(%p,0x%08lx,0x%08lx,%p,0x%08lx,%p,%p) stub\n", hEventLog, dwReadFlags,
+    FIXME("(%p,0x%08x,0x%08x,%p,0x%08x,%p,%p) stub\n", hEventLog, dwReadFlags,
           dwRecordOffset, lpBuffer, nNumberOfBytesToRead, pnBytesRead, pnMinNumberOfBytesNeeded);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }
 
@@ -299,8 +615,10 @@ BOOL WINAPI ReadEventLogA( HANDLE hEventLog, DWORD dwReadFlags, DWORD dwRecordOf
 BOOL WINAPI ReadEventLogW( HANDLE hEventLog, DWORD dwReadFlags, DWORD dwRecordOffset,
     LPVOID lpBuffer, DWORD nNumberOfBytesToRead, DWORD *pnBytesRead, DWORD *pnMinNumberOfBytesNeeded )
 {
-    FIXME("(%p,0x%08lx,0x%08lx,%p,0x%08lx,%p,%p) stub\n", hEventLog, dwReadFlags,
+    FIXME("(%p,0x%08x,0x%08x,%p,0x%08x,%p,%p) stub\n", hEventLog, dwReadFlags,
           dwRecordOffset, lpBuffer, nNumberOfBytesToRead, pnBytesRead, pnMinNumberOfBytesNeeded);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }
 
@@ -373,30 +691,28 @@ HANDLE WINAPI RegisterEventSourceW( LPCWSTR lpUNCServerName, LPCWSTR lpSourceNam
 BOOL WINAPI ReportEventA ( HANDLE hEventLog, WORD wType, WORD wCategory, DWORD dwEventID,
     PSID lpUserSid, WORD wNumStrings, DWORD dwDataSize, LPCSTR *lpStrings, LPVOID lpRawData)
 {
-    LPCWSTR *wideStrArray;
+    LPWSTR *wideStrArray;
     UNICODE_STRING str;
-    int i;
+    UINT i;
     BOOL ret;
 
-    FIXME("(%p,0x%04x,0x%04x,0x%08lx,%p,0x%04x,0x%08lx,%p,%p): stub\n", hEventLog,
+    FIXME("(%p,0x%04x,0x%04x,0x%08x,%p,0x%04x,0x%08x,%p,%p): stub\n", hEventLog,
           wType, wCategory, dwEventID, lpUserSid, wNumStrings, dwDataSize, lpStrings, lpRawData);
 
     if (wNumStrings == 0) return TRUE;
     if (!lpStrings) return TRUE;
 
-    wideStrArray = HeapAlloc(GetProcessHeap(), 0, sizeof(LPCWSTR) * wNumStrings);
+    wideStrArray = heap_alloc(sizeof(LPWSTR) * wNumStrings);
     for (i = 0; i < wNumStrings; i++)
     {
         RtlCreateUnicodeStringFromAsciiz(&str, lpStrings[i]);
         wideStrArray[i] = str.Buffer;
     }
     ret = ReportEventW(hEventLog, wType, wCategory, dwEventID, lpUserSid,
-                       wNumStrings, dwDataSize, wideStrArray, lpRawData);
+                       wNumStrings, dwDataSize, (LPCWSTR *)wideStrArray, lpRawData);
     for (i = 0; i < wNumStrings; i++)
-    {
-        HeapFree( GetProcessHeap(), 0, (LPSTR)wideStrArray[i] );
-    }
-    HeapFree(GetProcessHeap(), 0, wideStrArray);
+        heap_free( wideStrArray[i] );
+    heap_free(wideStrArray);
     return ret;
 }
 
@@ -408,9 +724,9 @@ BOOL WINAPI ReportEventA ( HANDLE hEventLog, WORD wType, WORD wCategory, DWORD d
 BOOL WINAPI ReportEventW( HANDLE hEventLog, WORD wType, WORD wCategory, DWORD dwEventID,
     PSID lpUserSid, WORD wNumStrings, DWORD dwDataSize, LPCWSTR *lpStrings, LPVOID lpRawData )
 {
-    int i;
+    UINT i;
 
-    FIXME("(%p,0x%04x,0x%04x,0x%08lx,%p,0x%04x,0x%08lx,%p,%p): stub\n", hEventLog,
+    FIXME("(%p,0x%04x,0x%04x,0x%08x,%p,0x%04x,0x%08x,%p,%p): stub\n", hEventLog,
           wType, wCategory, dwEventID, lpUserSid, wNumStrings, dwDataSize, lpStrings, lpRawData);
 
     /* partial stub */
@@ -440,31 +756,187 @@ BOOL WINAPI ReportEventW( HANDLE hEventLog, WORD wType, WORD wCategory, DWORD dw
 }
 
 /******************************************************************************
- * RegisterTraceGuidsW [ADVAPI32.@]
+ * StartTraceW [ADVAPI32.@]
+ *
+ * Register and start an event trace session
  *
  */
-ULONG WINAPI RegisterTraceGuidsW( WMIDPREQUEST RequestAddress,
-                PVOID RequestContext, LPCGUID ControlGuid, ULONG GuidCount,
-                PTRACE_GUID_REGISTRATION TraceGuidReg, LPCWSTR MofImagePath,
-                LPCWSTR MofResourceName, PTRACEHANDLE RegistrationHandle )
+ULONG WINAPI StartTraceW( PTRACEHANDLE pSessionHandle, LPCWSTR SessionName, PEVENT_TRACE_PROPERTIES Properties )
 {
-    FIXME("%p %p %p %lu %p %s %s %p\n", RequestAddress, RequestContext,
-          ControlGuid, GuidCount, TraceGuidReg, debugstr_w(MofImagePath),
-          debugstr_w(MofResourceName), RegistrationHandle);
+    FIXME("(%p, %s, %p) stub\n", pSessionHandle, debugstr_w(SessionName), Properties);
+    if (pSessionHandle) *pSessionHandle = 0xcafe4242;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * StartTraceA [ADVAPI32.@]
+ *
+ * See StartTraceW.
+ *
+ */
+ULONG WINAPI StartTraceA( PTRACEHANDLE pSessionHandle, LPCSTR SessionName, PEVENT_TRACE_PROPERTIES Properties )
+{
+    FIXME("(%p, %s, %p) stub\n", pSessionHandle, debugstr_a(SessionName), Properties);
+    if (pSessionHandle) *pSessionHandle = 0xcafe4242;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * StopTraceW [ADVAPI32.@]
+ *
+ * Stop an event trace session
+ *
+ */
+ULONG WINAPI StopTraceW( TRACEHANDLE session, LPCWSTR session_name, PEVENT_TRACE_PROPERTIES properties )
+{
+    FIXME("(%s, %s, %p) stub\n", wine_dbgstr_longlong(session), debugstr_w(session_name), properties);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * StopTraceA [ADVAPI32.@]
+ *
+ * See StopTraceW.
+ *
+ */
+ULONG WINAPI StopTraceA( TRACEHANDLE session, LPCSTR session_name, PEVENT_TRACE_PROPERTIES properties )
+{
+    FIXME("(%s, %s, %p) stub\n", wine_dbgstr_longlong(session), debugstr_a(session_name), properties);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * TraceEvent [ADVAPI32.@]
+ */
+ULONG WINAPI TraceEvent( TRACEHANDLE SessionHandle, PEVENT_TRACE_HEADER EventTrace )
+{
+    FIXME("%s %p\n", wine_dbgstr_longlong(SessionHandle), EventTrace);
     return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
 /******************************************************************************
- * RegisterTraceGuidsA [ADVAPI32.@]
+ * EventProviderEnabled [ADVAPI32.@]
  *
  */
-ULONG WINAPI RegisterTraceGuidsA( WMIDPREQUEST RequestAddress,
-                PVOID RequestContext, LPCGUID ControlGuid, ULONG GuidCount,
-                PTRACE_GUID_REGISTRATION TraceGuidReg, LPCSTR MofImagePath,
-                LPCSTR MofResourceName, PTRACEHANDLE RegistrationHandle )
+BOOLEAN WINAPI EventProviderEnabled( REGHANDLE handle, UCHAR level, ULONGLONG keyword )
 {
-    FIXME("%p %p %p %lu %p %s %s %p\n", RequestAddress, RequestContext,
-          ControlGuid, GuidCount, TraceGuidReg, debugstr_a(MofImagePath),
-          debugstr_a(MofResourceName), RegistrationHandle);
+    FIXME("%s, %u, %s: stub\n", wine_dbgstr_longlong(handle), level, wine_dbgstr_longlong(keyword));
+    return FALSE;
+}
+
+/******************************************************************************
+ * EventActivityIdControl [ADVAPI32.@]
+ *
+ */
+ULONG WINAPI EventActivityIdControl(ULONG code, GUID *guid)
+{
+    static int once;
+
+    if (!once++) FIXME("0x%x, %p: stub\n", code, guid);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * EventWriteTransfer [ADVAPI32.@]
+ */
+ULONG WINAPI EventWriteTransfer( REGHANDLE handle, PCEVENT_DESCRIPTOR descriptor, LPCGUID activity,
+                                 LPCGUID related, ULONG count, PEVENT_DATA_DESCRIPTOR data )
+{
+    FIXME("%s, %p, %s, %s, %u, %p: stub\n", wine_dbgstr_longlong(handle), descriptor,
+          debugstr_guid(activity), debugstr_guid(related), count, data);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * QueryTraceW [ADVAPI32.@]
+ */
+ULONG WINAPI QueryTraceW( TRACEHANDLE handle, LPCWSTR sessionname, PEVENT_TRACE_PROPERTIES properties )
+{
+    FIXME("%s %s %p: stub\n", wine_dbgstr_longlong(handle), debugstr_w(sessionname), properties);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * OpenTraceA [ADVAPI32.@]
+ */
+TRACEHANDLE WINAPI OpenTraceA( PEVENT_TRACE_LOGFILEA logfile )
+{
+    static int once;
+
+    if (!once++) FIXME("%p: stub\n", logfile);
+    SetLastError(ERROR_ACCESS_DENIED);
+    return INVALID_PROCESSTRACE_HANDLE;
+}
+
+/******************************************************************************
+ * OpenTraceW [ADVAPI32.@]
+ */
+TRACEHANDLE WINAPI OpenTraceW( PEVENT_TRACE_LOGFILEW logfile )
+{
+    static int once;
+
+    if (!once++) FIXME("%p: stub\n", logfile);
+    SetLastError(ERROR_ACCESS_DENIED);
+    return INVALID_PROCESSTRACE_HANDLE;
+}
+
+/******************************************************************************
+ * ProcessTrace [ADVAPI32.@]
+ */
+ULONG WINAPI ProcessTrace( PTRACEHANDLE HandleArray, ULONG HandleCount, LPFILETIME StartTime, LPFILETIME EndTime)
+{
+    FIXME("%p %u %p %p: stub\n", HandleArray, HandleCount, StartTime, EndTime);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * TraceMessage [ADVAPI32.@]
+ */
+ULONG WINAPIV TraceMessage( TRACEHANDLE handle, ULONG flags, LPGUID guid, USHORT number, ... )
+{
+    __ms_va_list valist;
+    ULONG ret;
+
+    __ms_va_start( valist, number );
+    ret = TraceMessageVa( handle, flags, guid, number, valist );
+    __ms_va_end( valist );
+    return ret;
+}
+
+/******************************************************************************
+ * TraceMessageVa [ADVAPI32.@]
+ */
+ULONG WINAPI TraceMessageVa( TRACEHANDLE handle, ULONG flags, LPGUID guid, USHORT number,
+                            __ms_va_list args )
+{
+    FIXME("(%s %x %s %d) : stub\n", wine_dbgstr_longlong(handle), flags, debugstr_guid(guid), number);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * CloseTrace [ADVAPI32.@]
+ */
+ULONG WINAPI CloseTrace( TRACEHANDLE handle )
+{
+    FIXME("%s: stub\n", wine_dbgstr_longlong(handle));
+    return ERROR_INVALID_HANDLE;
+}
+
+/******************************************************************************
+ * EnumerateTraceGuids [ADVAPI32.@]
+ */
+ULONG WINAPI EnumerateTraceGuids(PTRACE_GUID_PROPERTIES *propertiesarray,
+                                 ULONG arraycount, PULONG guidcount)
+{
+    FIXME("%p %d %p: stub\n", propertiesarray, arraycount, guidcount);
+    return ERROR_INVALID_PARAMETER;
+}
+
+/******************************************************************************
+ * TraceSetInformation [ADVAPI32.@]
+ */
+ULONG WINAPI TraceSetInformation(TRACEHANDLE handle, TRACE_INFO_CLASS infoclass, VOID* info, ULONG len)
+{
+    FIXME("%s %d %p %d: stub\n", wine_dbgstr_longlong(handle), infoclass, info, len);
     return ERROR_CALL_NOT_IMPLEMENTED;
 }

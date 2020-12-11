@@ -21,7 +21,7 @@
 @ stdcall RasEnumDevicesA(ptr ptr ptr)
 @ stdcall RasEnumDevicesW(ptr ptr ptr)
 @ stdcall RasEnumEntriesA(str str ptr ptr ptr)
-@ stdcall RasEnumEntriesW(str str ptr ptr ptr)
+@ stdcall RasEnumEntriesW(wstr wstr ptr ptr ptr)
 @ stub RasEnumEntriesWow
 @ stdcall RasGetAutodialAddressA(str ptr ptr ptr ptr)
 @ stdcall RasGetAutodialAddressW(wstr ptr ptr ptr ptr)
@@ -33,6 +33,7 @@
 @ stdcall RasGetConnectStatusA(ptr ptr)
 @ stdcall RasGetConnectStatusW(ptr ptr)
 @ stub RasGetConnectStatusWow
+@ stdcall RasGetConnectionStatistics(ptr ptr)
 @ stub RasGetCountryInfoA
 @ stub RasGetCountryInfoW
 @ stub RasGetCredentialsA
@@ -45,6 +46,7 @@
 @ stdcall RasGetErrorStringW(long ptr long)
 @ stub RasGetErrorStringWow
 @ stub RasGetHport
+@ stdcall RasGetLinkStatistics(ptr long ptr)
 @ stdcall RasGetProjectionInfoA(ptr ptr ptr ptr)
 @ stdcall RasGetProjectionInfoW(ptr ptr ptr ptr)
 @ stub RasGetSubEntryHandleA
@@ -64,6 +66,8 @@
 @ stdcall RasSetAutodialParamW(long ptr long)
 @ stub RasSetCredentialsA
 @ stub RasSetCredentialsW
+@ stdcall RasSetCustomAuthDataA(str str ptr long)
+@ stdcall RasSetCustomAuthDataW(wstr wstr ptr long)
 @ stdcall RasSetEntryDialParamsA(str ptr long)
 @ stdcall RasSetEntryDialParamsW(wstr ptr long)
 @ stdcall RasSetEntryPropertiesA(str str ptr long ptr long)

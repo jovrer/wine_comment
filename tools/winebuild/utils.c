@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -30,18 +30,51 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
+#ifdef HAVE_SYS_MMAN_H
+#include <sys/mman.h>
+#endif
 
 #include "build.h"
 
-#define MAX_TMP_FILES 8
-static const char *tmp_files[MAX_TMP_FILES];
-static unsigned int nb_tmp_files;
+#if defined(_WIN32) && !defined(__CYGWIN__)
+# define PATH_SEPARATOR ';'
+#else
+# define PATH_SEPARATOR ':'
+#endif
+
+static struct strarray tmp_files;
+static struct strarray empty_strarray;
+
+static const struct
+{
+    const char *name;
+    enum target_cpu cpu;
+} cpu_names[] =
+{
+    { "i386",    CPU_x86 },
+    { "i486",    CPU_x86 },
+    { "i586",    CPU_x86 },
+    { "i686",    CPU_x86 },
+    { "i786",    CPU_x86 },
+    { "amd64",   CPU_x86_64 },
+    { "x86_64",  CPU_x86_64 },
+    { "powerpc", CPU_POWERPC },
+    { "arm",     CPU_ARM },
+    { "armv5",   CPU_ARM },
+    { "armv6",   CPU_ARM },
+    { "armv7",   CPU_ARM },
+    { "arm64",   CPU_ARM64 },
+    { "aarch64", CPU_ARM64 },
+};
 
 /* atexit handler to clean tmp files */
-static void cleanup_tmp_files(void)
+void cleanup_tmp_files(void)
 {
     unsigned int i;
-    for (i = 0; i < MAX_TMP_FILES; i++) if (tmp_files[i]) unlink( tmp_files[i] );
+    for (i = 0; i < tmp_files.count; i++) if (tmp_files.str[i]) unlink( tmp_files.str[i] );
 }
 
 
@@ -92,6 +125,81 @@ int strendswith(const char* str, const char* end)
     int l = strlen(str);
     int m = strlen(end);
     return l >= m && strcmp(str + l - m, end) == 0;
+}
+
+char *strmake( const char* fmt, ... )
+{
+    int n;
+    size_t size = 100;
+    va_list ap;
+
+    for (;;)
+    {
+        char *p = xmalloc( size );
+        va_start( ap, fmt );
+	n = vsnprintf( p, size, fmt, ap );
+	va_end( ap );
+        if (n == -1) size *= 2;
+        else if ((size_t)n >= size) size = n + 1;
+        else return p;
+        free( p );
+    }
+}
+
+static struct strarray strarray_copy( struct strarray src )
+{
+    struct strarray array;
+    array.count = src.count;
+    array.max = src.max;
+    array.str = xmalloc( array.max * sizeof(*array.str) );
+    memcpy( array.str, src.str, array.count * sizeof(*array.str) );
+    return array;
+}
+
+static void strarray_add_one( struct strarray *array, const char *str )
+{
+    if (array->count == array->max)
+    {
+        array->max *= 2;
+        if (array->max < 16) array->max = 16;
+        array->str = xrealloc( array->str, array->max * sizeof(*array->str) );
+    }
+    array->str[array->count++] = str;
+}
+
+void strarray_add( struct strarray *array, ... )
+{
+    va_list valist;
+    const char *str;
+
+    va_start( valist, array );
+    while ((str = va_arg( valist, const char *))) strarray_add_one( array, str );
+    va_end( valist );
+}
+
+void strarray_addv( struct strarray *array, char * const *argv )
+{
+    while (*argv) strarray_add_one( array, *argv++ );
+}
+
+void strarray_addall( struct strarray *array, struct strarray args )
+{
+    unsigned int i;
+
+    for (i = 0; i < args.count; i++) strarray_add_one( array, args.str[i] );
+}
+
+struct strarray strarray_fromstring( const char *str, const char *delim )
+{
+    const char *tok;
+    struct strarray array = empty_strarray;
+    char *buf = xstrdup( str );
+
+    for (tok = strtok( buf, delim ); tok; tok = strtok( NULL, delim ))
+	strarray_add_one( &array, strdup( tok ));
+
+    free( buf );
+    return array;
 }
 
 void fatal_error( const char *msg, ... )
@@ -162,62 +270,417 @@ void warning( const char *msg, ... )
     va_end( valist );
 }
 
+int output( const char *format, ... )
+{
+    int ret;
+    va_list valist;
+
+    va_start( valist, format );
+    ret = vfprintf( output_file, format, valist );
+    va_end( valist );
+    if (ret < 0) fatal_perror( "Output error" );
+    return ret;
+}
+
+void spawn( struct strarray args )
+{
+    unsigned int i;
+    int status;
+
+    strarray_add_one( &args, NULL );
+    if (verbose)
+        for (i = 0; args.str[i]; i++)
+            fprintf( stderr, "%s%c", args.str[i], args.str[i+1] ? ' ' : '\n' );
+
+    if ((status = _spawnvp( _P_WAIT, args.str[0], args.str )))
+    {
+	if (status > 0) fatal_error( "%s failed with status %u\n", args.str[0], status );
+	else fatal_perror( "winebuild" );
+	exit( 1 );
+    }
+}
+
+/* find a build tool in the path, trying the various names */
+struct strarray find_tool( const char *name, const char * const *names )
+{
+    static char **dirs;
+    static unsigned int count, maxlen;
+
+    char *p, *file;
+    const char *alt_names[2];
+    unsigned int i, len;
+    struct stat st;
+
+    if (!dirs)
+    {
+        char *path;
+
+        /* split the path in directories */
+
+        if (!getenv( "PATH" )) fatal_error( "PATH not set, cannot find required tools\n" );
+        path = xstrdup( getenv( "PATH" ));
+        for (p = path, count = 2; *p; p++) if (*p == PATH_SEPARATOR) count++;
+        dirs = xmalloc( count * sizeof(*dirs) );
+        count = 0;
+        dirs[count++] = p = path;
+        while (*p)
+        {
+            while (*p && *p != PATH_SEPARATOR) p++;
+            if (!*p) break;
+            *p++ = 0;
+            dirs[count++] = p;
+        }
+        for (i = 0; i < count; i++) maxlen = max( maxlen, strlen(dirs[i])+2 );
+    }
+
+    if (!names)
+    {
+        alt_names[0] = name;
+        alt_names[1] = NULL;
+        names = alt_names;
+    }
+
+    while (*names)
+    {
+        len = strlen(*names) + sizeof(EXEEXT) + 1;
+        if (target_alias)
+            len += strlen(target_alias) + 1;
+        file = xmalloc( maxlen + len );
+
+        for (i = 0; i < count; i++)
+        {
+            strcpy( file, dirs[i] );
+            p = file + strlen(file);
+            if (p == file) *p++ = '.';
+            if (p[-1] != '/') *p++ = '/';
+            if (target_alias)
+            {
+                strcpy( p, target_alias );
+                p += strlen(p);
+                *p++ = '-';
+            }
+            strcpy( p, *names );
+            strcat( p, EXEEXT );
+
+            if (!stat( file, &st ) && S_ISREG(st.st_mode) && (st.st_mode & 0111))
+            {
+                struct strarray ret = empty_strarray;
+                strarray_add_one( &ret, file );
+                return ret;
+            }
+        }
+        free( file );
+        names++;
+    }
+    fatal_error( "cannot find the '%s' tool\n", name );
+}
+
+struct strarray get_as_command(void)
+{
+    struct strarray args;
+
+    if (cc_command.count)
+    {
+        args = strarray_copy( cc_command );
+        strarray_add( &args, "-xassembler", "-c", NULL );
+        if (force_pointer_size)
+            strarray_add_one( &args, (force_pointer_size == 8) ? "-m64" : "-m32" );
+        if (cpu_option) strarray_add_one( &args, strmake("-mcpu=%s", cpu_option) );
+        if (fpu_option) strarray_add_one( &args, strmake("-mfpu=%s", fpu_option) );
+        if (arch_option) strarray_add_one( &args, strmake("-march=%s", arch_option) );
+        return args;
+    }
+
+    if (!as_command.count)
+    {
+        static const char * const commands[] = { "gas", "as", NULL };
+        as_command = find_tool( "as", commands );
+    }
+
+    args = strarray_copy( as_command );
+
+    if (force_pointer_size)
+    {
+        switch (target_platform)
+        {
+        case PLATFORM_APPLE:
+            strarray_add( &args, "-arch", (force_pointer_size == 8) ? "x86_64" : "i386", NULL );
+            break;
+        default:
+            switch(target_cpu)
+            {
+            case CPU_POWERPC:
+                strarray_add_one( &args, (force_pointer_size == 8) ? "-a64" : "-a32" );
+                break;
+            default:
+                strarray_add_one( &args, (force_pointer_size == 8) ? "--64" : "--32" );
+                break;
+            }
+            break;
+        }
+    }
+
+    if (cpu_option) strarray_add_one( &args, strmake("-mcpu=%s", cpu_option) );
+    if (fpu_option) strarray_add_one( &args, strmake("-mfpu=%s", fpu_option) );
+    return args;
+}
+
+struct strarray get_ld_command(void)
+{
+    struct strarray args;
+
+    if (!ld_command.count)
+    {
+        static const char * const commands[] = { "ld", "gld", NULL };
+        ld_command = find_tool( "ld", commands );
+    }
+
+    args = strarray_copy( ld_command );
+
+    if (force_pointer_size)
+    {
+        switch (target_platform)
+        {
+        case PLATFORM_APPLE:
+            strarray_add( &args, "-arch", (force_pointer_size == 8) ? "x86_64" : "i386", NULL );
+            break;
+        case PLATFORM_FREEBSD:
+            strarray_add( &args, "-m", (force_pointer_size == 8) ? "elf_x86_64_fbsd" : "elf_i386_fbsd", NULL );
+            break;
+        default:
+            switch(target_cpu)
+            {
+            case CPU_POWERPC:
+                strarray_add( &args, "-m", (force_pointer_size == 8) ? "elf64ppc" : "elf32ppc", NULL );
+                break;
+            default:
+                strarray_add( &args, "-m", (force_pointer_size == 8) ? "elf_x86_64" : "elf_i386", NULL );
+                break;
+            }
+            break;
+        }
+    }
+    return args;
+}
+
+const char *get_nm_command(void)
+{
+    if (!nm_command.count)
+    {
+        static const char * const commands[] = { "nm", "gnm", NULL };
+        nm_command = find_tool( "nm", commands );
+    }
+    if (nm_command.count > 1)
+        fatal_error( "multiple arguments in nm command not supported yet\n" );
+    return nm_command.str[0];
+}
+
 /* get a name for a temp file, automatically cleaned up on exit */
 char *get_temp_file_name( const char *prefix, const char *suffix )
 {
     char *name;
-    const char *ext;
+    const char *ext, *basename;
     int fd;
-
-    assert( nb_tmp_files < MAX_TMP_FILES );
-    if (!nb_tmp_files && !save_temps) atexit( cleanup_tmp_files );
 
     if (!prefix || !prefix[0]) prefix = "winebuild";
     if (!suffix) suffix = "";
-    if (!(ext = strchr( prefix, '.' ))) ext = prefix + strlen(prefix);
+    if ((basename = strrchr( prefix, '/' ))) basename++;
+    else basename = prefix;
+    if (!(ext = strchr( basename, '.' ))) ext = prefix + strlen(prefix);
     name = xmalloc( sizeof("/tmp/") + (ext - prefix) + sizeof(".XXXXXX") + strlen(suffix) );
-    strcpy( name, "/tmp/" );
-    memcpy( name + 5, prefix, ext - prefix );
-    strcpy( name + 5 + (ext - prefix), ".XXXXXX" );
+    memcpy( name, prefix, ext - prefix );
+    strcpy( name + (ext - prefix), ".XXXXXX" );
     strcat( name, suffix );
 
-    /* first try without the /tmp/ prefix */
-    if ((fd = mkstemps( name + 5, strlen(suffix) )) != -1)
-        name += 5;
-    else if ((fd = mkstemps( name, strlen(suffix) )) == -1)
-        fatal_error( "could not generate a temp file\n" );
+    if ((fd = mkstemps( name, strlen(suffix) )) == -1)
+    {
+        strcpy( name, "/tmp/" );
+        memcpy( name + 5, basename, ext - basename );
+        strcpy( name + 5 + (ext - basename), ".XXXXXX" );
+        strcat( name, suffix );
+        if ((fd = mkstemps( name, strlen(suffix) )) == -1)
+            fatal_error( "could not generate a temp file\n" );
+    }
 
     close( fd );
-    tmp_files[nb_tmp_files++] = name;
+    strarray_add_one( &tmp_files, name );
     return name;
 }
 
+/*******************************************************************
+ *         buffer management
+ *
+ * Function for reading from/writing to a memory buffer.
+ */
+
+int byte_swapped = 0;
+const char *input_buffer_filename;
+const unsigned char *input_buffer;
+size_t input_buffer_pos;
+size_t input_buffer_size;
+unsigned char *output_buffer;
+size_t output_buffer_pos;
+size_t output_buffer_size;
+
+static void check_output_buffer_space( size_t size )
+{
+    if (output_buffer_pos + size >= output_buffer_size)
+    {
+        output_buffer_size = max( output_buffer_size * 2, output_buffer_pos + size );
+        output_buffer = xrealloc( output_buffer, output_buffer_size );
+    }
+}
+
+void init_input_buffer( const char *file )
+{
+    int fd;
+    struct stat st;
+
+    if ((fd = open( file, O_RDONLY | O_BINARY )) == -1) fatal_perror( "Cannot open %s", file );
+    if ((fstat( fd, &st ) == -1)) fatal_perror( "Cannot stat %s", file );
+    if (!st.st_size) fatal_error( "%s is an empty file\n", file );
+#ifdef	HAVE_MMAP
+    if ((input_buffer = mmap( NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0 )) == (void*)-1)
+#endif
+    {
+        unsigned char *buffer = xmalloc( st.st_size );
+        if (read( fd, buffer, st.st_size ) != st.st_size) fatal_error( "Cannot read %s\n", file );
+        input_buffer = buffer;
+    }
+    close( fd );
+    input_buffer_filename = xstrdup( file );
+    input_buffer_size = st.st_size;
+    input_buffer_pos = 0;
+    byte_swapped = 0;
+}
+
+void init_output_buffer(void)
+{
+    output_buffer_size = 1024;
+    output_buffer_pos = 0;
+    output_buffer = xmalloc( output_buffer_size );
+}
+
+void flush_output_buffer(void)
+{
+    if (fwrite( output_buffer, 1, output_buffer_pos, output_file ) != output_buffer_pos)
+        fatal_error( "Error writing to %s\n", output_file_name );
+    free( output_buffer );
+}
+
+unsigned char get_byte(void)
+{
+    if (input_buffer_pos >= input_buffer_size)
+        fatal_error( "%s is a truncated file\n", input_buffer_filename );
+    return input_buffer[input_buffer_pos++];
+}
+
+unsigned short get_word(void)
+{
+    unsigned short ret;
+
+    if (input_buffer_pos + sizeof(ret) > input_buffer_size)
+        fatal_error( "%s is a truncated file\n", input_buffer_filename );
+    memcpy( &ret, input_buffer + input_buffer_pos, sizeof(ret) );
+    if (byte_swapped) ret = (ret << 8) | (ret >> 8);
+    input_buffer_pos += sizeof(ret);
+    return ret;
+}
+
+unsigned int get_dword(void)
+{
+    unsigned int ret;
+
+    if (input_buffer_pos + sizeof(ret) > input_buffer_size)
+        fatal_error( "%s is a truncated file\n", input_buffer_filename );
+    memcpy( &ret, input_buffer + input_buffer_pos, sizeof(ret) );
+    if (byte_swapped)
+        ret = ((ret << 24) | ((ret << 8) & 0x00ff0000) | ((ret >> 8) & 0x0000ff00) | (ret >> 24));
+    input_buffer_pos += sizeof(ret);
+    return ret;
+}
+
+void put_data( const void *data, size_t size )
+{
+    check_output_buffer_space( size );
+    memcpy( output_buffer + output_buffer_pos, data, size );
+    output_buffer_pos += size;
+}
+
+void put_byte( unsigned char val )
+{
+    check_output_buffer_space( 1 );
+    output_buffer[output_buffer_pos++] = val;
+}
+
+void put_word( unsigned short val )
+{
+    if (byte_swapped) val = (val << 8) | (val >> 8);
+    put_data( &val, sizeof(val) );
+}
+
+void put_dword( unsigned int val )
+{
+    if (byte_swapped)
+        val = ((val << 24) | ((val << 8) & 0x00ff0000) | ((val >> 8) & 0x0000ff00) | (val >> 24));
+    put_data( &val, sizeof(val) );
+}
+
+void put_qword( unsigned int val )
+{
+    if (byte_swapped)
+    {
+        put_dword( 0 );
+        put_dword( val );
+    }
+    else
+    {
+        put_dword( val );
+        put_dword( 0 );
+    }
+}
+
+/* pointer-sized word */
+void put_pword( unsigned int val )
+{
+    if (get_ptr_size() == 8) put_qword( val );
+    else put_dword( val );
+}
+
+void align_output( unsigned int align )
+{
+    size_t size = align - (output_buffer_pos % align);
+
+    if (size == align) return;
+    check_output_buffer_space( size );
+    memset( output_buffer + output_buffer_pos, 0, size );
+    output_buffer_pos += size;
+}
+
 /* output a standard header for generated files */
-void output_standard_file_header( FILE *outfile )
+void output_standard_file_header(void)
 {
     if (spec_file_name)
-        fprintf( outfile, "/* File generated automatically from %s; do not edit! */\n",
-                 spec_file_name );
+        output( "/* File generated automatically from %s; do not edit! */\n", spec_file_name );
     else
-        fprintf( outfile, "/* File generated automatically; do not edit! */\n" );
-    fprintf( outfile,
-             "/* This file can be copied, modified and distributed without restriction. */\n\n" );
+        output( "/* File generated automatically; do not edit! */\n" );
+    output( "/* This file can be copied, modified and distributed without restriction. */\n\n" );
 }
 
 /* dump a byte stream into the assembly code */
-void dump_bytes( FILE *outfile, const void *buffer, unsigned int size )
+void dump_bytes( const void *buffer, unsigned int size )
 {
     unsigned int i;
     const unsigned char *ptr = buffer;
 
     if (!size) return;
-    fprintf( outfile, "\t.byte " );
+    output( "\t.byte " );
     for (i = 0; i < size - 1; i++, ptr++)
     {
-        if ((i % 16) == 15) fprintf( outfile, "0x%02x\n\t.byte ", *ptr );
-        else fprintf( outfile, "0x%02x,", *ptr );
+        if ((i % 16) == 15) output( "0x%02x\n\t.byte ", *ptr );
+        else output( "0x%02x,", *ptr );
     }
-    fprintf( outfile, "0x%02x\n", *ptr );
+    output( "0x%02x\n", *ptr );
 }
 
 
@@ -233,10 +696,7 @@ FILE *open_input_file( const char *srcdir, const char *name )
 
     if (!file && srcdir)
     {
-        fullname = xmalloc( strlen(srcdir) + strlen(name) + 2 );
-        strcpy( fullname, srcdir );
-        strcat( fullname, "/" );
-        strcat( fullname, name );
+        fullname = strmake( "%s/%s", srcdir, name );
         file = fopen( fullname, "r" );
     }
     else fullname = xstrdup( name );
@@ -272,6 +732,7 @@ int remove_stdcall_decoration( char *name )
 {
     char *p, *end = strrchr( name, '@' );
     if (!end || !end[1] || end == name) return -1;
+    if (target_cpu != CPU_x86) return -1;
     /* make sure all the rest is digits */
     for (p = end + 1; *p; p++) if (!isdigit(*p)) return -1;
     *end = 0;
@@ -286,16 +747,9 @@ int remove_stdcall_decoration( char *name )
  */
 void assemble_file( const char *src_file, const char *obj_file )
 {
-    char *cmd;
-    int err;
-
-    if (!as_command) as_command = xstrdup("as");
-    cmd = xmalloc( strlen(as_command) + strlen(obj_file) + strlen(src_file) + 6 );
-    sprintf( cmd, "%s -o %s %s", as_command, obj_file, src_file );
-    if (verbose) fprintf( stderr, "%s\n", cmd );
-    err = system( cmd );
-    if (err) fatal_error( "%s failed with status %d\n", as_command, err );
-    free( cmd );
+    struct strarray args = get_as_command();
+    strarray_add( &args, "-o", obj_file, src_file, NULL );
+    spawn( args );
 }
 
 
@@ -309,26 +763,18 @@ DLLSPEC *alloc_dll_spec(void)
     DLLSPEC *spec;
 
     spec = xmalloc( sizeof(*spec) );
-    spec->file_name          = NULL;
-    spec->dll_name           = NULL;
-    spec->init_func          = NULL;
+    memset( spec, 0, sizeof(*spec) );
     spec->type               = SPEC_WIN32;
     spec->base               = MAX_ORDINALS;
-    spec->limit              = 0;
-    spec->stack_size         = 0;
-    spec->heap_size          = 0;
-    spec->nb_entry_points    = 0;
-    spec->alloc_entry_points = 0;
-    spec->nb_names           = 0;
-    spec->nb_resources       = 0;
-    spec->characteristics    = 0;
+    spec->characteristics    = IMAGE_FILE_EXECUTABLE_IMAGE;
     spec->subsystem          = 0;
     spec->subsystem_major    = 4;
     spec->subsystem_minor    = 0;
-    spec->entry_points       = NULL;
-    spec->names              = NULL;
-    spec->ordinals           = NULL;
-    spec->resources          = NULL;
+    if (get_ptr_size() > 4)
+        spec->characteristics |= IMAGE_FILE_LARGE_ADDRESS_AWARE;
+    else
+        spec->characteristics |= IMAGE_FILE_32BIT_MACHINE;
+    spec->dll_characteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
     return spec;
 }
 
@@ -351,6 +797,7 @@ void free_dll_spec( DLLSPEC *spec )
     }
     free( spec->file_name );
     free( spec->dll_name );
+    free( spec->c_name );
     free( spec->init_func );
     free( spec->entry_points );
     free( spec->names );
@@ -365,10 +812,9 @@ void free_dll_spec( DLLSPEC *spec )
  *
  * Map a string to a valid C identifier.
  */
-const char *make_c_identifier( const char *str )
+char *make_c_identifier( const char *str )
 {
-    static char buffer[256];
-    char *p;
+    char *p, buffer[256];
 
     for (p = buffer; *str && p < buffer+sizeof(buffer)-1; p++, str++)
     {
@@ -376,7 +822,7 @@ const char *make_c_identifier( const char *str )
         else *p = '_';
     }
     *p = 0;
-    return buffer;
+    return xstrdup( buffer );
 }
 
 
@@ -387,19 +833,31 @@ const char *make_c_identifier( const char *str )
  */
 const char *get_stub_name( const ORDDEF *odp, const DLLSPEC *spec )
 {
-    static char buffer[256];
+    static char *buffer;
+
+    free( buffer );
     if (odp->name || odp->export_name)
     {
         char *p;
-        sprintf( buffer, "__wine_stub_%s", odp->name ? odp->name : odp->export_name );
+        buffer = strmake( "__wine_stub_%s", odp->name ? odp->name : odp->export_name );
         /* make sure name is a legal C identifier */
         for (p = buffer; *p; p++) if (!isalnum(*p) && *p != '_') break;
         if (!*p) return buffer;
+        free( buffer );
     }
-    sprintf( buffer, "__wine_stub_%s_%d", make_c_identifier(spec->file_name), odp->ordinal );
+    buffer = strmake( "__wine_stub_%s_%d", make_c_identifier(spec->file_name), odp->ordinal );
     return buffer;
 }
 
+/* parse a cpu name and return the corresponding value */
+int get_cpu_from_name( const char *name )
+{
+    unsigned int i;
+
+    for (i = 0; i < sizeof(cpu_names)/sizeof(cpu_names[0]); i++)
+        if (!strcmp( cpu_names[i].name, name )) return cpu_names[i].cpu;
+    return -1;
+}
 
 /*****************************************************************
  *  Function:    get_alignment
@@ -415,9 +873,9 @@ const char *get_stub_name( const ORDDEF *odp, const DLLSPEC *spec )
  * align on an 8-byte boundary you'd say
  *     .align 3
  *
- * The reason gas is written this way is that it's trying to mimick
+ * The reason gas is written this way is that it's trying to mimic
  * native assemblers for the various architectures it runs on.  gas
- * provides other directives that work consistantly across
+ * provides other directives that work consistently across
  * architectures, but of course we want to work on all arches with or
  * without gas.  Hence this function.
  *
@@ -435,13 +893,13 @@ unsigned int get_alignment(unsigned int align)
     {
     case CPU_x86:
     case CPU_x86_64:
-    case CPU_SPARC:
         if (target_platform != PLATFORM_APPLE) return align;
         /* fall through */
     case CPU_POWERPC:
-    case CPU_ALPHA:
+    case CPU_ARM:
+    case CPU_ARM64:
         n = 0;
-        while ((1 << n) != align) n++;
+        while ((1u << n) != align) n++;
         return n;
     }
     /* unreached */
@@ -454,11 +912,13 @@ unsigned int get_page_size(void)
 {
     switch(target_cpu)
     {
-    case CPU_x86:     return 4096;
-    case CPU_x86_64:  return 4096;
-    case CPU_POWERPC: return 4096;
-    case CPU_SPARC:   return 8192;
-    case CPU_ALPHA:   return 8192;
+    case CPU_x86:
+    case CPU_x86_64:
+    case CPU_POWERPC:
+    case CPU_ARM:
+        return 0x1000;
+    case CPU_ARM64:
+        return 0x10000;
     }
     /* unreached */
     assert(0);
@@ -472,10 +932,10 @@ unsigned int get_ptr_size(void)
     {
     case CPU_x86:
     case CPU_POWERPC:
-    case CPU_SPARC:
-    case CPU_ALPHA:
+    case CPU_ARM:
         return 4;
     case CPU_x86_64:
+    case CPU_ARM64:
         return 8;
     }
     /* unreached */
@@ -483,17 +943,47 @@ unsigned int get_ptr_size(void)
     return 0;
 }
 
+/* return the total size in bytes of the arguments on the stack */
+unsigned int get_args_size( const ORDDEF *odp )
+{
+    int i, size;
+
+    for (i = size = 0; i < odp->u.func.nb_args; i++)
+    {
+        switch (odp->u.func.args[i])
+        {
+        case ARG_INT64:
+        case ARG_DOUBLE:
+            size += 8;
+            break;
+        case ARG_INT128:
+            /* int128 is passed as pointer on x86_64 */
+            if (target_cpu != CPU_x86_64)
+            {
+                size += 16;
+                break;
+            }
+            /* fall through */
+        default:
+            size += get_ptr_size();
+            break;
+        }
+    }
+    return size;
+}
+
 /* return the assembly name for a C symbol */
 const char *asm_name( const char *sym )
 {
-    static char buffer[256];
+    static char *buffer;
 
     switch (target_platform)
     {
     case PLATFORM_APPLE:
     case PLATFORM_WINDOWS:
-        buffer[0] = '_';
-        strcpy( buffer + 1, sym );
+        if (sym[0] == '.' && sym[1] == 'L') return sym;
+        free( buffer );
+        buffer = strmake( "_%s", sym );
         return buffer;
     default:
         return sym;
@@ -503,24 +993,35 @@ const char *asm_name( const char *sym )
 /* return an assembly function declaration for a C function name */
 const char *func_declaration( const char *func )
 {
-    static char buffer[256];
+    static char *buffer;
 
     switch (target_platform)
     {
     case PLATFORM_APPLE:
         return "";
     case PLATFORM_WINDOWS:
-        sprintf( buffer, ".def _%s; .scl 2; .type 32; .endef", func );
+        free( buffer );
+        buffer = strmake( ".def _%s; .scl 2; .type 32; .endef", func );
         break;
     default:
-        sprintf( buffer, ".type %s,@function", func );
+        free( buffer );
+        switch(target_cpu)
+        {
+        case CPU_ARM:
+        case CPU_ARM64:
+            buffer = strmake( ".type %s,%%function", func );
+            break;
+        default:
+            buffer = strmake( ".type %s,@function", func );
+            break;
+        }
         break;
     }
     return buffer;
 }
 
 /* output a size declaration for an assembly function */
-void output_function_size( FILE *outfile, const char *name )
+void output_function_size( const char *name )
 {
     switch (target_platform)
     {
@@ -528,7 +1029,43 @@ void output_function_size( FILE *outfile, const char *name )
     case PLATFORM_WINDOWS:
         break;
     default:
-        fprintf( outfile, "\t.size %s, .-%s\n", name, name );
+        output( "\t.size %s, .-%s\n", name, name );
+        break;
+    }
+}
+
+/* output a .cfi directive */
+void output_cfi( const char *format, ... )
+{
+    va_list valist;
+
+    if (!unwind_tables) return;
+    va_start( valist, format );
+    fputc( '\t', output_file );
+    vfprintf( output_file, format, valist );
+    fputc( '\n', output_file );
+    va_end( valist );
+}
+
+/* output the GNU note for non-exec stack */
+void output_gnu_stack_note(void)
+{
+    switch (target_platform)
+    {
+    case PLATFORM_WINDOWS:
+    case PLATFORM_APPLE:
+        break;
+    default:
+        switch(target_cpu)
+        {
+        case CPU_ARM:
+        case CPU_ARM64:
+            output( "\t.section .note.GNU-stack,\"\",%%progbits\n" );
+            break;
+        default:
+            output( "\t.section .note.GNU-stack,\"\",@progbits\n" );
+            break;
+        }
         break;
     }
 }
@@ -536,20 +1073,22 @@ void output_function_size( FILE *outfile, const char *name )
 /* return a global symbol declaration for an assembly symbol */
 const char *asm_globl( const char *func )
 {
-    static char buffer[256];
+    static char *buffer;
 
+    free( buffer );
     switch (target_platform)
     {
     case PLATFORM_APPLE:
-        sprintf( buffer, "\t.globl _%s\n\t.private_extern _%s\n_%s:", func, func, func );
-        return buffer;
+        buffer = strmake( "\t.globl _%s\n\t.private_extern _%s\n_%s:", func, func, func );
+        break;
     case PLATFORM_WINDOWS:
-        sprintf( buffer, "\t.globl _%s\n_%s:", func, func );
-        return buffer;
+        buffer = strmake( "\t.globl _%s\n_%s:", func, func );
+        break;
     default:
-        sprintf( buffer, "\t.globl %s\n\t.hidden %s\n%s:", func, func, func );
-        return buffer;
+        buffer = strmake( "\t.globl %s\n\t.hidden %s\n%s:", func, func, func );
+        break;
     }
+    return buffer;
 }
 
 const char *get_asm_ptr_keyword(void)
@@ -574,11 +1113,12 @@ const char *get_asm_string_keyword(void)
     }
 }
 
-const char *get_asm_short_keyword(void)
+const char *get_asm_rodata_section(void)
 {
     switch (target_platform)
     {
-    default:            return ".short";
+    case PLATFORM_APPLE: return ".const";
+    default:             return ".section .rodata";
     }
 }
 

@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * History:
  * 24-Apr-2000 BS	Restructured the lot to fit the new scanner
@@ -59,9 +59,9 @@
 	if(cv_signed(v1) && cv_signed(v2))		\
 		r.val.si = v1.val.si OP v2.val.si;	\
 	else if(cv_signed(v1) && !cv_signed(v2))	\
-		r.val.si = v1.val.si OP v2.val.ui;	\
+		r.val.si = v1.val.si OP (signed) v2.val.ui; \
 	else if(!cv_signed(v1) && cv_signed(v2))	\
-		r.val.ui = v1.val.ui OP v2.val.si;	\
+		r.val.si = (signed) v1.val.ui OP v2.val.si; \
 	else						\
 		r.val.ui = v1.val.ui OP v2.val.ui;
 
@@ -70,9 +70,9 @@
 	if(cv_signed(v1) && cv_signed(v2))		\
 		r.val.sl = v1.val.sl OP v2.val.sl;	\
 	else if(cv_signed(v1) && !cv_signed(v2))	\
-		r.val.sl = v1.val.sl OP v2.val.ul;	\
+		r.val.sl = v1.val.sl OP (signed long) v2.val.ul; \
 	else if(!cv_signed(v1) && cv_signed(v2))	\
-		r.val.ul = v1.val.ul OP v2.val.sl;	\
+		r.val.sl = (signed long) v1.val.ul OP v2.val.sl; \
 	else						\
 		r.val.ul = v1.val.ul OP v2.val.ul;
 
@@ -81,9 +81,9 @@
 	if(cv_signed(v1) && cv_signed(v2))		\
 		r.val.sll = v1.val.sll OP v2.val.sll;	\
 	else if(cv_signed(v1) && !cv_signed(v2))	\
-		r.val.sll = v1.val.sll OP v2.val.ull;	\
+		r.val.sll = v1.val.sll OP (wrc_sll_t) v2.val.ull; \
 	else if(!cv_signed(v1) && cv_signed(v2))	\
-		r.val.ull = v1.val.ull OP v2.val.sll;	\
+		r.val.sll = (wrc_sll_t) v1.val.ull OP v2.val.sll; \
 	else						\
 		r.val.ull = v1.val.ull OP v2.val.ull;
 
@@ -223,7 +223,10 @@ preprocessor
 			break;
 		case if_elsetrue:
 		case if_elsefalse:
-			pperror("#elif cannot follow #else");
+			ppy_error("#elif cannot follow #else");
+			break;
+		case if_error:
+			break;
 		default:
 			pp_internal_error(__FILE__, __LINE__, "Invalid pp_if_state (%d) in #elif directive", s);
 		}
@@ -246,52 +249,63 @@ preprocessor
 			break;
 		case if_elsetrue:
 		case if_elsefalse:
-			pperror("#else clause already defined");
+			ppy_error("#else clause already defined");
+			break;
+		case if_error:
+			break;
 		default:
 			pp_internal_error(__FILE__, __LINE__, "Invalid pp_if_state (%d) in #else directive", s);
 		}
 		}
 	| tENDIF tNL		{
-		pp_pop_if();
-		if(pp_incl_state.ifdepth == pp_get_if_depth() && pp_incl_state.state == 1)
+		if(pp_pop_if() != if_error)
 		{
-			pp_incl_state.state = 2;
-			pp_incl_state.seen_junk = 0;
+			if(pp_incl_state.ifdepth == pp_get_if_depth() && pp_incl_state.state == 1)
+			{
+				pp_incl_state.state = 2;
+				pp_incl_state.seen_junk = 0;
+			}
+			else if(pp_incl_state.state != 1)
+			{
+				pp_incl_state.state = -1;
+			}
+			if(pp_status.debug)
+				fprintf(stderr, "tENDIF: %s:%d: include_state=%d, include_ppp='%s', include_ifdepth=%d\n",
+					pp_status.input, pp_status.line_number, pp_incl_state.state, pp_incl_state.ppp, pp_incl_state.ifdepth);
 		}
-		else if(pp_incl_state.state != 1)
-		{
-			pp_incl_state.state = -1;
-		}
-		if(pp_status.debug)
-			fprintf(stderr, "tENDIF: %s:%d: include_state=%d, include_ppp='%s', include_ifdepth=%d\n",
-                                pp_status.input, pp_status.line_number, pp_incl_state.state, pp_incl_state.ppp, pp_incl_state.ifdepth);
 		}
 	| tUNDEF tIDENT tNL	{ pp_del_define($2); free($2); }
-	| tDEFINE opt_text tNL	{ pp_add_define($1, $2); }
+	| tDEFINE opt_text tNL	{ pp_add_define($1, $2); free($1); free($2); }
 	| tMACRO res_arg allmargs tMACROEND opt_mtexts tNL	{
 		pp_add_macro($1, macro_args, nmacro_args, $5);
 		}
-	| tLINE tSINT tDQSTRING	tNL	{ fprintf(ppout, "# %d %s\n", $2 , $3); free($3); }
-	| tGCCLINE tSINT tDQSTRING tNL	{ fprintf(ppout, "# %d %s\n", $2 , $3); free($3); }
+	| tLINE tSINT tDQSTRING	tNL	{ if($3) pp_writestring("# %d %s\n", $2 , $3); free($3); }
+	| tGCCLINE tSINT tDQSTRING tNL	{ if($3) pp_writestring("# %d %s\n", $2 , $3); free($3); }
 	| tGCCLINE tSINT tDQSTRING tSINT tNL
-		{ fprintf(ppout, "# %d %s %d\n", $2, $3, $4); free($3); }
+		{ if($3) pp_writestring("# %d %s %d\n", $2, $3, $4); free($3); }
 	| tGCCLINE tSINT tDQSTRING tSINT tSINT tNL
-		{ fprintf(ppout, "# %d %s %d %d\n", $2 ,$3, $4, $5); free($3); }
+		{ if($3) pp_writestring("# %d %s %d %d\n", $2 ,$3, $4, $5); free($3); }
 	| tGCCLINE tSINT tDQSTRING tSINT tSINT tSINT  tNL
-		{ fprintf(ppout, "# %d %s %d %d %d\n", $2 ,$3 ,$4 ,$5, $6); free($3); }
+		{ if($3) pp_writestring("# %d %s %d %d %d\n", $2 ,$3 ,$4 ,$5, $6); free($3); }
 	| tGCCLINE tSINT tDQSTRING tSINT tSINT tSINT tSINT tNL
-		{ fprintf(ppout, "# %d %s %d %d %d %d\n", $2 ,$3 ,$4 ,$5, $6, $7); free($3); }
+		{ if($3) pp_writestring("# %d %s %d %d %d %d\n", $2 ,$3 ,$4 ,$5, $6, $7); free($3); }
 	| tGCCLINE tNL		/* The null-token */
-	| tERROR opt_text tNL	{ pperror("#error directive: '%s'", $2); if($2) free($2); }
-	| tWARNING opt_text tNL	{ ppwarning("#warning directive: '%s'", $2); if($2) free($2); }
-	| tPRAGMA opt_text tNL	{ fprintf(ppout, "#pragma %s\n", $2 ? $2 : ""); if ($2) free($2); }
-	| tPPIDENT opt_text tNL	{ if(pp_status.pedantic) ppwarning("#ident ignored (arg: '%s')", $2); if($2) free($2); }
+	| tERROR opt_text tNL	{ ppy_error("#error directive: '%s'", $2); free($2); }
+	| tWARNING opt_text tNL	{ ppy_warning("#warning directive: '%s'", $2); free($2); }
+	| tPRAGMA opt_text tNL	{ pp_writestring("#pragma %s\n", $2 ? $2 : ""); free($2); }
+	| tPPIDENT opt_text tNL	{ if(pp_status.pedantic) ppy_warning("#ident ignored (arg: '%s')", $2); free($2); }
         | tRCINCLUDE tRCINCLUDEPATH {
-                int nl=strlen($2) +3;
-                char *fn=pp_xmalloc(nl);
-                sprintf(fn,"\"%s\"",$2);
-		free($2);
-		pp_do_include(fn,1);
+                if($2)
+                {
+                        int nl=strlen($2) +3;
+                        char *fn=pp_xmalloc(nl);
+                        if(fn)
+                        {
+                                sprintf(fn,"\"%s\"",$2);
+                                pp_do_include(fn,1);
+                        }
+                        free($2);
+                }
 	}
 	| tRCINCLUDE tDQSTRING {
 		pp_do_include($2,1);
@@ -345,14 +359,15 @@ mtext	: tLITERAL	{ $$ = new_mtext($1, 0, exp_text); }
 	| tSTRINGIZE tIDENT	{
 		int mat = marg_index($2);
 		if(mat < 0)
-			pperror("Stringification identifier must be an argument parameter");
-		$$ = new_mtext(NULL, mat, exp_stringize);
+			ppy_error("Stringification identifier must be an argument parameter");
+		else
+			$$ = new_mtext(NULL, mat, exp_stringize);
 		}
 	| tIDENT	{
 		int mat = marg_index($1);
 		if(mat >= 0)
 			$$ = new_mtext(NULL, mat, exp_subst);
-		else
+		else if($1)
 			$$ = new_mtext($1, 0, exp_text);
 		}
 	;
@@ -361,31 +376,31 @@ pp_expr	: tSINT				{ $$.type = cv_sint;  $$.val.si = $1; }
 	| tUINT				{ $$.type = cv_uint;  $$.val.ui = $1; }
 	| tSLONG			{ $$.type = cv_slong; $$.val.sl = $1; }
 	| tULONG			{ $$.type = cv_ulong; $$.val.ul = $1; }
-	| tSLONGLONG			{ $$.type = cv_sll;   $$.val.sl = $1; }
-	| tULONGLONG			{ $$.type = cv_ull;   $$.val.ul = $1; }
+	| tSLONGLONG			{ $$.type = cv_sll;   $$.val.sll = $1; }
+	| tULONGLONG			{ $$.type = cv_ull;   $$.val.ull = $1; }
 	| tDEFINED tIDENT		{ $$.type = cv_sint;  $$.val.si = pplookup($2) != NULL; }
 	| tDEFINED '(' tIDENT ')'	{ $$.type = cv_sint;  $$.val.si = pplookup($3) != NULL; }
 	| tIDENT			{ $$.type = cv_sint;  $$.val.si = 0; }
 	| pp_expr tLOGOR pp_expr	{ $$.type = cv_sint; $$.val.si = boolean(&$1) || boolean(&$3); }
 	| pp_expr tLOGAND pp_expr	{ $$.type = cv_sint; $$.val.si = boolean(&$1) && boolean(&$3); }
-	| pp_expr tEQ pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, ==) }
-	| pp_expr tNE pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, !=) }
-	| pp_expr '<' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  <) }
-	| pp_expr '>' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  >) }
-	| pp_expr tLTE pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, <=) }
-	| pp_expr tGTE pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, >=) }
-	| pp_expr '+' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  +) }
-	| pp_expr '-' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  -) }
-	| pp_expr '^' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  ^) }
-	| pp_expr '&' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  &) }
-	| pp_expr '|' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  |) }
-	| pp_expr '*' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  *) }
-	| pp_expr '/' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  /) }
-	| pp_expr tLSHIFT pp_expr	{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, <<) }
-	| pp_expr tRSHIFT pp_expr	{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, >>) }
+	| pp_expr tEQ pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, ==); }
+	| pp_expr tNE pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, !=); }
+	| pp_expr '<' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  <); }
+	| pp_expr '>' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  >); }
+	| pp_expr tLTE pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, <=); }
+	| pp_expr tGTE pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, >=); }
+	| pp_expr '+' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  +); }
+	| pp_expr '-' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  -); }
+	| pp_expr '^' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  ^); }
+	| pp_expr '&' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  &); }
+	| pp_expr '|' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  |); }
+	| pp_expr '*' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  *); }
+	| pp_expr '/' pp_expr		{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3,  /); }
+	| pp_expr tLSHIFT pp_expr	{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, <<); }
+	| pp_expr tRSHIFT pp_expr	{ promote_equal_size(&$1, &$3); BIN_OP($$, $1, $3, >>); }
 	| '+' pp_expr			{ $$ =  $2; }
-	| '-' pp_expr			{ UNARY_OP($$, $2, -) }
-	| '~' pp_expr			{ UNARY_OP($$, $2, ~) }
+	| '-' pp_expr			{ UNARY_OP($$, $2, -); }
+	| '~' pp_expr			{ UNARY_OP($$, $2, ~); }
 	| '!' pp_expr			{ $$.type = cv_sint; $$.val.si = !boolean(&$2); }
 	| '(' pp_expr ')'		{ $$ =  $2; }
 	| pp_expr '?' pp_expr ':' pp_expr { $$ = boolean(&$1) ? $3 : $5; }
@@ -537,6 +552,8 @@ static int boolean(cval_t *v)
 static marg_t *new_marg(char *str, def_arg_t type)
 {
 	marg_t *ma = pp_xmalloc(sizeof(marg_t));
+	if(!ma)
+		return NULL;
 	ma->arg = str;
 	ma->type = type;
 	ma->nnl = 0;
@@ -545,16 +562,27 @@ static marg_t *new_marg(char *str, def_arg_t type)
 
 static marg_t *add_new_marg(char *str, def_arg_t type)
 {
-	marg_t *ma = new_marg(str, type);
+	marg_t **new_macro_args;
+	marg_t *ma;
+	if(!str)
+		return NULL;
+	new_macro_args = pp_xrealloc(macro_args, (nmacro_args+1) * sizeof(macro_args[0]));
+	if(!new_macro_args)
+		return NULL;
+	macro_args = new_macro_args;
+	ma = new_marg(str, type);
+	if(!ma)
+		return NULL;
+	macro_args[nmacro_args] = ma;
 	nmacro_args++;
-	macro_args = pp_xrealloc(macro_args, nmacro_args * sizeof(macro_args[0]));
-	macro_args[nmacro_args-1] = ma;
 	return ma;
 }
 
 static int marg_index(char *id)
 {
 	int t;
+	if(!id)
+		return -1;
 	for(t = 0; t < nmacro_args; t++)
 	{
 		if(!strcmp(id, macro_args[t]->arg))
@@ -566,6 +594,8 @@ static int marg_index(char *id)
 static mtext_t *new_mtext(char *str, int idx, def_exp_t type)
 {
 	mtext_t *mt = pp_xmalloc(sizeof(mtext_t));
+	if(!mt)
+		return NULL;
 	if(str == NULL)
 		mt->subst.argidx = idx;
 	else
@@ -585,7 +615,11 @@ static mtext_t *combine_mtext(mtext_t *tail, mtext_t *mtp)
 
 	if(tail->type == exp_text && mtp->type == exp_text)
 	{
-		tail->subst.text = pp_xrealloc(tail->subst.text, strlen(tail->subst.text)+strlen(mtp->subst.text)+1);
+		char *new_text;
+		new_text = pp_xrealloc(tail->subst.text, strlen(tail->subst.text)+strlen(mtp->subst.text)+1);
+		if(!new_text)
+			return mtp;
+		tail->subst.text = new_text;
 		strcat(tail->subst.text, mtp->subst.text);
 		free(mtp->subst.text);
 		free(mtp);
@@ -649,9 +683,22 @@ static mtext_t *combine_mtext(mtext_t *tail, mtext_t *mtp)
 
 static char *merge_text(char *s1, char *s2)
 {
-	int l1 = strlen(s1);
-	int l2 = strlen(s2);
-	s1 = pp_xrealloc(s1, l1+l2+1);
+	int l1;
+	int l2;
+	char *snew;
+	if(!s1)
+		return s2;
+	if(!s2)
+		return s1;
+	l1 = strlen(s1);
+	l2 = strlen(s2);
+	snew = pp_xrealloc(s1, l1+l2+1);
+	if(!snew)
+	{
+		free(s2);
+		return s1;
+	}
+	s1 = snew;
 	memcpy(s1+l1, s2, l2+1);
 	free(s2);
 	return s1;

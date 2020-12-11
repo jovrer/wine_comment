@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_VFW_H
@@ -41,6 +41,8 @@ typedef struct IGetFrame *PGETFRAME;
 typedef struct IAVIEditStream *PAVIEDITSTREAM;
 
 /* Installable Compressor Manager */
+
+#define ICVERSION 0x0104
 
 DECLARE_HANDLE(HIC);
 
@@ -141,6 +143,10 @@ DECLARE_HANDLE(HIC);
 #define	ICM_COMPRESS_FRAMES_INFO	(ICM_USER+70)
 #define	ICM_SET_STATUS_PROC		(ICM_USER+72)
 
+#ifndef comptypeDIB
+#define comptypeDIB  mmioFOURCC('D','I','B',' ')
+#endif
+
 /* structs */
 
 /* NOTE: Only the 16 bit structs are packed. Structs that are packed anyway
@@ -161,7 +167,7 @@ typedef struct {
 				/* 24: */
 } ICOPEN,*LPICOPEN;
 
-#define ICCOMPRESS_KEYFRAME     0x00000001L
+#define ICCOMPRESS_KEYFRAME     __MSABI_LONG(0x00000001)
 
 typedef struct {
     DWORD		dwFlags;
@@ -381,7 +387,7 @@ DWORD VFWAPIV ICDecompress(HIC hic,DWORD dwFlags,LPBITMAPINFOHEADER lpbiFormat,L
 
 LRESULT	VFWAPI	ICSendMessage(HIC hic, UINT msg, DWORD_PTR dw1, DWORD_PTR dw2);
 
-inline static LRESULT VFWAPI ICDecompressEx(HIC hic, DWORD dwFlags,
+static inline LRESULT VFWAPI ICDecompressEx(HIC hic, DWORD dwFlags,
 					    LPBITMAPINFOHEADER lpbiSrc, LPVOID lpSrc,
 					    int xSrc, int ySrc, int dxSrc, int dySrc,
 					    LPBITMAPINFOHEADER lpbiDst, LPVOID lpDst,
@@ -405,7 +411,7 @@ inline static LRESULT VFWAPI ICDecompressEx(HIC hic, DWORD dwFlags,
     return ICSendMessage(hic, ICM_DECOMPRESSEX, (DWORD_PTR)&ic, sizeof(ic));
 }
 
-inline static LRESULT VFWAPI ICDecompressExBegin(HIC hic, DWORD dwFlags,
+static inline LRESULT VFWAPI ICDecompressExBegin(HIC hic, DWORD dwFlags,
 						 LPBITMAPINFOHEADER lpbiSrc,
 						 LPVOID lpSrc,
 						 int xSrc, int ySrc, int dxSrc, int dySrc,
@@ -433,7 +439,7 @@ inline static LRESULT VFWAPI ICDecompressExBegin(HIC hic, DWORD dwFlags,
     ic.dyDst = dyDst;
     return ICSendMessage(hic, ICM_DECOMPRESSEX_BEGIN, (DWORD_PTR)&ic, sizeof(ic));
 }
-inline static LRESULT VFWAPI ICDecompressExQuery(HIC hic, DWORD dwFlags,
+static inline LRESULT VFWAPI ICDecompressExQuery(HIC hic, DWORD dwFlags,
 						 LPBITMAPINFOHEADER lpbiSrc,
 						 LPVOID lpSrc,
 						 int xSrc, int ySrc, int dxSrc, int dySrc,
@@ -465,15 +471,15 @@ inline static LRESULT VFWAPI ICDecompressExQuery(HIC hic, DWORD dwFlags,
 #define ICDecompressExEnd(hic) \
     ICSendMessage(hic, ICM_DECOMPRESSEX_END, 0, 0)
 
-#define ICDRAW_QUERY        0x00000001L   /* test for support */
-#define ICDRAW_FULLSCREEN   0x00000002L   /* draw to full screen */
-#define ICDRAW_HDC          0x00000004L   /* draw to a HDC/HWND */
-#define ICDRAW_ANIMATE	    0x00000008L	  /* expect palette animation */
-#define ICDRAW_CONTINUE	    0x00000010L	  /* draw is a continuation of previous draw */
-#define ICDRAW_MEMORYDC	    0x00000020L	  /* DC is offscreen, by the way */
-#define ICDRAW_UPDATING	    0x00000040L	  /* We're updating, as opposed to playing */
-#define ICDRAW_RENDER       0x00000080L   /* used to render data not draw it */
-#define ICDRAW_BUFFER       0x00000100L   /* buffer data offscreen, we will need to update it */
+#define ICDRAW_QUERY        __MSABI_LONG(0x00000001)    /* test for support */
+#define ICDRAW_FULLSCREEN   __MSABI_LONG(0x00000002)    /* draw to full screen */
+#define ICDRAW_HDC          __MSABI_LONG(0x00000004)    /* draw to a HDC/HWND */
+#define ICDRAW_ANIMATE      __MSABI_LONG(0x00000008)    /* expect palette animation */
+#define ICDRAW_CONTINUE     __MSABI_LONG(0x00000010)    /* draw is a continuation of previous draw */
+#define ICDRAW_MEMORYDC     __MSABI_LONG(0x00000020)    /* DC is offscreen, by the way */
+#define ICDRAW_UPDATING     __MSABI_LONG(0x00000040)    /* We're updating, as opposed to playing */
+#define ICDRAW_RENDER       __MSABI_LONG(0x00000080)    /* used to render data not draw it */
+#define ICDRAW_BUFFER       __MSABI_LONG(0x00000100)    /* buffer data offscreen, we will need to update it */
 
 #define ICDecompressOpen(fccType, fccHandler, lpbiIn, lpbiOut) \
     ICLocate(fccType, fccHandler, lpbiIn, lpbiOut, ICMODE_DECOMPRESS)
@@ -493,7 +499,11 @@ BOOL    VFWAPI  ICInstall(DWORD fccType, DWORD fccHandler, LPARAM lParam, LPSTR 
 BOOL    VFWAPI  ICRemove(DWORD fccType, DWORD fccHandler, UINT wFlags);
 LRESULT	VFWAPI	ICGetInfo(HIC hic,ICINFO *picinfo, DWORD cb);
 HIC	VFWAPI	ICOpen(DWORD fccType, DWORD fccHandler, UINT wMode);
+#ifdef WINE_STRICT_PROTOTYPES
+HIC	VFWAPI	ICOpenFunction(DWORD fccType, DWORD fccHandler, UINT wMode, DRIVERPROC lpfnHandler);
+#else
 HIC	VFWAPI	ICOpenFunction(DWORD fccType, DWORD fccHandler, UINT wMode, FARPROC lpfnHandler);
+#endif
 
 LRESULT VFWAPI	ICClose(HIC hic);
 HIC	VFWAPI	ICLocate(DWORD fccType, DWORD fccHandler, LPBITMAPINFOHEADER lpbiIn, LPBITMAPINFOHEADER lpbiOut, WORD wFlags);
@@ -513,14 +523,14 @@ HIC	VFWAPI	ICGetDisplayFormat(HIC hic, LPBITMAPINFOHEADER lpbiIn, LPBITMAPINFOHE
 #define ICGetStateSize(hic) \
     ICGetState(hic, NULL, 0)
 
-inline static DWORD ICGetDefaultQuality(HIC hic)
+static inline DWORD ICGetDefaultQuality(HIC hic)
 {
    DWORD dwICValue;
    ICSendMessage(hic, ICM_GETDEFAULTQUALITY, (DWORD_PTR)(LPVOID)&dwICValue, sizeof(DWORD));
    return dwICValue;
 }
 
-inline static DWORD ICGetDefaultKeyFrameRate(HIC hic)
+static inline DWORD ICGetDefaultKeyFrameRate(HIC hic)
 {
    DWORD dwICValue;
    ICSendMessage(hic, ICM_GETDEFAULTKEYFRAMERATE, (DWORD_PTR)(LPVOID)&dwICValue, sizeof(DWORD));
@@ -587,11 +597,11 @@ typedef struct {
 	DWORD		dwScale;
 } ICDRAWBEGIN;
 
-#define ICDRAW_HURRYUP      0x80000000L   /* don't draw just buffer (hurry up!) */
-#define ICDRAW_UPDATE       0x40000000L   /* don't draw just update screen */
-#define ICDRAW_PREROLL      0x20000000L   /* this frame is before real start */
-#define ICDRAW_NULLFRAME    0x10000000L   /* repeat last frame */
-#define ICDRAW_NOTKEYFRAME  0x08000000L   /* this frame is not a key frame */
+#define ICDRAW_HURRYUP      __MSABI_LONG(0x80000000)   /* don't draw just buffer (hurry up!) */
+#define ICDRAW_UPDATE       __MSABI_LONG(0x40000000)   /* don't draw just update screen */
+#define ICDRAW_PREROLL      __MSABI_LONG(0x20000000)   /* this frame is before real start */
+#define ICDRAW_NULLFRAME    __MSABI_LONG(0x10000000)   /* repeat last frame */
+#define ICDRAW_NOTKEYFRAME  __MSABI_LONG(0x08000000)   /* this frame is not a key frame */
 
 typedef struct {
 	DWORD	dwFlags;
@@ -603,7 +613,7 @@ typedef struct {
 
 DWORD VFWAPIV ICDraw(HIC hic,DWORD dwFlags,LPVOID lpFormat,LPVOID lpData,DWORD cbData,LONG lTime);
 
-inline static LRESULT VFWAPI ICDrawSuggestFormat(HIC hic, LPBITMAPINFOHEADER lpbiIn,
+static inline LRESULT VFWAPI ICDrawSuggestFormat(HIC hic, LPBITMAPINFOHEADER lpbiIn,
 						 LPBITMAPINFOHEADER lpbiOut,
 						 int dxSrc, int dySrc,
 						 int dxDst, int dyDst,
@@ -622,10 +632,10 @@ inline static LRESULT VFWAPI ICDrawSuggestFormat(HIC hic, LPBITMAPINFOHEADER lpb
 }
 
 #define ICDrawQuery(hic, lpbiInput) \
-    ICSendMessage(hic, ICM_DRAW_QUERY, (DWORD_PTR)(LPVOID)(lpbiInput), 0L)
+    ICSendMessage(hic, ICM_DRAW_QUERY, (DWORD_PTR)(LPVOID)(lpbiInput), 0)
 
 #define ICDrawChangePalette(hic, lpbiInput) \
-    ICSendMessage(hic, ICM_DRAW_CHANGEPALETTE, (DWORD_PTR)(LPVOID)(lpbiInput), 0L)
+    ICSendMessage(hic, ICM_DRAW_CHANGEPALETTE, (DWORD_PTR)(LPVOID)(lpbiInput), 0)
 
 #define ICGetBuffersWanted(hic, lpdwBuffers) \
     ICSendMessage(hic, ICM_GETBUFFERSWANTED, (DWORD_PTR)(LPVOID)(lpdwBuffers), 0)
@@ -660,7 +670,7 @@ inline static LRESULT VFWAPI ICDrawSuggestFormat(HIC hic, LPBITMAPINFOHEADER lpb
 #define ICDrawRenderBuffer(hic) \
     ICSendMessage(hic, ICM_DRAW_RENDERBUFFER, 0, 0)
 
-inline static LRESULT VFWAPI ICSetStatusProc(HIC hic, DWORD dwFlags, LRESULT lParam,
+static inline LRESULT VFWAPI ICSetStatusProc(HIC hic, DWORD dwFlags, LRESULT lParam,
 					     LONG (CALLBACK *fpfnStatus)(LPARAM, UINT, LONG))
 {
     ICSETSTATUSPROC ic;
@@ -740,7 +750,7 @@ typedef WORD TWOCC;
 
 #define ckidAVINEWINDEX         mmioFOURCC('i', 'd', 'x', '1')
 
-#define streamtypeANY           0UL
+#define streamtypeANY           0U
 #define streamtypeVIDEO         mmioFOURCC('v', 'i', 'd', 's')
 #define streamtypeAUDIO         mmioFOURCC('a', 'u', 'd', 's')
 #define streamtypeMIDI          mmioFOURCC('m', 'i', 'd', 's')
@@ -816,7 +826,9 @@ typedef struct {
 #define AVIIF_LIST	0x00000001	/* chunk is a 'LIST' */
 #define AVIIF_TWOCC	0x00000002
 #define AVIIF_KEYFRAME	0x00000010	/* this frame is a key frame. */
-
+#define AVIIF_FIRSTPART 0x00000020
+#define AVIIF_LASTPART  0x00000040
+#define AVIIF_MIDPART   (AVIIF_LASTPART|AVIIF_FIRSTPART)
 #define AVIIF_NOTIME	0x00000100	/* this frame doesn't take any time */
 #define AVIIF_COMPUSE	0x0FFF0000
 
@@ -952,22 +964,22 @@ typedef struct {
     DWORD	dwInterleaveEvery;	/* for non-video streams only */
 } AVICOMPRESSOPTIONS, *LPAVICOMPRESSOPTIONS,*PAVICOMPRESSOPTIONS;
 
-#define FIND_DIR        0x0000000FL     /* direction mask */
-#define FIND_NEXT       0x00000001L     /* search forward */
-#define FIND_PREV       0x00000004L     /* search backward */
-#define FIND_FROM_START 0x00000008L     /* start at the logical beginning */
+#define FIND_DIR        __MSABI_LONG(0x0000000F)     /* direction mask */
+#define FIND_NEXT       __MSABI_LONG(0x00000001)     /* search forward */
+#define FIND_PREV       __MSABI_LONG(0x00000004)     /* search backward */
+#define FIND_FROM_START __MSABI_LONG(0x00000008)     /* start at the logical beginning */
 
-#define FIND_TYPE       0x000000F0L     /* type mask */
-#define FIND_KEY        0x00000010L     /* find a key frame */
-#define FIND_ANY        0x00000020L     /* find any (non-empty) sample */
-#define FIND_FORMAT     0x00000040L     /* find a formatchange */
+#define FIND_TYPE       __MSABI_LONG(0x000000F0)     /* type mask */
+#define FIND_KEY        __MSABI_LONG(0x00000010)     /* find a key frame */
+#define FIND_ANY        __MSABI_LONG(0x00000020)     /* find any (non-empty) sample */
+#define FIND_FORMAT     __MSABI_LONG(0x00000040)     /* find a formatchange */
 
-#define FIND_RET        0x0000F000L     /* return mask */
-#define FIND_POS        0x00000000L     /* return logical position */
-#define FIND_LENGTH     0x00001000L     /* return logical size */
-#define FIND_OFFSET     0x00002000L     /* return physical position */
-#define FIND_SIZE       0x00003000L     /* return physical size */
-#define FIND_INDEX      0x00004000L     /* return physical index position */
+#define FIND_RET        __MSABI_LONG(0x0000F000)     /* return mask */
+#define FIND_POS        __MSABI_LONG(0x00000000)     /* return logical position */
+#define FIND_LENGTH     __MSABI_LONG(0x00001000)     /* return logical size */
+#define FIND_OFFSET     __MSABI_LONG(0x00002000)     /* return physical position */
+#define FIND_SIZE       __MSABI_LONG(0x00003000)     /* return physical size */
+#define FIND_INDEX      __MSABI_LONG(0x00004000)     /* return physical index position */
 
 #include <ole2.h>
 
@@ -1027,7 +1039,7 @@ DECLARE_INTERFACE_(IAVIStream,IUnknown)
 #define IAVIStream_SetInfo(p,a,b)         (p)->lpVtbl->SetInfo(p,a,b)
 #endif
 
-#define AVISTREAMREAD_CONVENIENT	  (-1L)
+#define AVISTREAMREAD_CONVENIENT          (__MSABI_LONG(-1))
 
 ULONG WINAPI AVIStreamAddRef(PAVISTREAM iface);
 ULONG WINAPI AVIStreamRelease(PAVISTREAM iface);
@@ -1035,7 +1047,7 @@ HRESULT WINAPI AVIStreamCreate(PAVISTREAM*,LONG,LONG,CLSID*);
 HRESULT WINAPI AVIStreamInfoA(PAVISTREAM iface,AVISTREAMINFOA *asi,LONG size);
 HRESULT WINAPI AVIStreamInfoW(PAVISTREAM iface,AVISTREAMINFOW *asi,LONG size);
 #define AVIStreamInfo WINELIB_NAME_AW(AVIStreamInfo)
-HRESULT WINAPI AVIStreamFindSample(PAVISTREAM pstream, LONG pos, DWORD flags);
+LONG WINAPI AVIStreamFindSample(PAVISTREAM pstream, LONG pos, LONG flags);
 HRESULT WINAPI AVIStreamReadFormat(PAVISTREAM iface,LONG pos,LPVOID format,LONG *formatsize);
 HRESULT WINAPI AVIStreamSetFormat(PAVISTREAM iface,LONG pos,LPVOID format,LONG formatsize);
 HRESULT WINAPI AVIStreamRead(PAVISTREAM iface,LONG start,LONG samples,LPVOID buffer,LONG buffersize,LONG *bytesread,LONG *samplesread);
@@ -1070,10 +1082,10 @@ BOOL WINAPI AVISaveOptions(HWND hWnd,UINT uFlags,INT nStream,
 			   PAVISTREAM *ppavi,LPAVICOMPRESSOPTIONS *ppOptions);
 HRESULT WINAPI AVISaveOptionsFree(INT nStreams,LPAVICOMPRESSOPTIONS*ppOptions);
 
-HRESULT CDECL AVISaveA(LPCSTR szFile, CLSID *pclsidHandler,
+HRESULT WINAPIV AVISaveA(LPCSTR szFile, CLSID *pclsidHandler,
              AVISAVECALLBACK lpfnCallback, int nStreams,
              PAVISTREAM pavi, LPAVICOMPRESSOPTIONS lpOptions, ...);
-HRESULT CDECL AVISaveW(LPCWSTR szFile, CLSID *pclsidHandler,
+HRESULT WINAPIV AVISaveW(LPCWSTR szFile, CLSID *pclsidHandler,
              AVISAVECALLBACK lpfnCallback, int nStreams,
              PAVISTREAM pavi, LPAVICOMPRESSOPTIONS lpOptions, ...);
 #define AVISave WINELIB_NAME_AW(AVISave)
@@ -1136,8 +1148,8 @@ DECLARE_INTERFACE_(IAVIStreaming,IUnknown)
     STDMETHOD_(ULONG,AddRef)(THIS) PURE;
     STDMETHOD_(ULONG,Release)(THIS) PURE;
     /*** IAVIStreaming methods ***/
-    STDMETHOD(Begin)(IAVIStreaming*iface,LONG lStart,LONG lEnd,LONG lRate) PURE;
-    STDMETHOD(End)(IAVIStreaming*iface) PURE;
+    STDMETHOD(Begin)(THIS_ LONG lStart,LONG lEnd,LONG lRate) PURE;
+    STDMETHOD(End)(THIS) PURE;
 };
 #undef INTERFACE
 
@@ -1162,11 +1174,11 @@ DECLARE_INTERFACE_(IAVIEditStream,IUnknown)
     STDMETHOD_(ULONG,AddRef)(THIS) PURE;
     STDMETHOD_(ULONG,Release)(THIS) PURE;
     /*** IAVIEditStream methods ***/
-    STDMETHOD(Cut)(IAVIEditStream*iface,LONG*plStart,LONG*plLength,PAVISTREAM*ppResult) PURE;
-    STDMETHOD(Copy)(IAVIEditStream*iface,LONG*plStart,LONG*plLength,PAVISTREAM*ppResult) PURE;
-    STDMETHOD(Paste)(IAVIEditStream*iface,LONG*plStart,LONG*plLength,PAVISTREAM pSource,LONG lStart,LONG lEnd) PURE;
-    STDMETHOD(Clone)(IAVIEditStream*iface,PAVISTREAM*ppResult) PURE;
-    STDMETHOD(SetInfo)(IAVIEditStream*iface,LPAVISTREAMINFOW asi, LONG size) PURE;
+    STDMETHOD(Cut)(THIS_ LONG *plStart,LONG *plLength,PAVISTREAM *ppResult) PURE;
+    STDMETHOD(Copy)(THIS_ LONG *plStart,LONG *plLength,PAVISTREAM *ppResult) PURE;
+    STDMETHOD(Paste)(THIS_ LONG *plStart,LONG *plLength,PAVISTREAM pSource,LONG lStart,LONG lEnd) PURE;
+    STDMETHOD(Clone)(THIS_ PAVISTREAM *ppResult) PURE;
+    STDMETHOD(SetInfo)(THIS_ LPAVISTREAMINFOW asi, LONG size) PURE;
 };
 #undef INTERFACE
 
@@ -1411,7 +1423,7 @@ HWND VFWAPIV MCIWndCreateW(HWND, HINSTANCE, DWORD, LPCWSTR);
 #define MCIWndGetLength(hWnd)       (LONG)MCIWndSM(hWnd,MCIWNDM_GETLENGTH,0,0)
 #define MCIWndGetEnd(hWnd)          (LONG)MCIWndSM(hWnd,MCIWNDM_GETEND,0,0)
 
-#define MCIWndStep(hWnd,n)          (LONG)MCIWndSM(hWnd,MCI_STEP,0,(LPARAM)(long)(n))
+#define MCIWndStep(hWnd,n)          (LONG)MCIWndSM(hWnd,MCI_STEP,0,(LPARAM)(LONG)(n))
 
 #define MCIWndDestroy(hWnd)         (VOID)MCIWndSM(hWnd,WM_CLOSE,0,0)
 #define MCIWndSetZoom(hWnd,iZoom)   (VOID)MCIWndSM(hWnd,MCIWNDM_SETZOOM,0,(LPARAM)(UINT)(iZoom))
@@ -1432,17 +1444,17 @@ HWND VFWAPIV MCIWndCreateW(HWND, HINSTANCE, DWORD, LPCWSTR);
 
 #define MCIWndSetActiveTimer(hWnd,active)				\
 	(VOID)MCIWndSM(hWnd,MCIWNDM_SETACTIVETIMER,			\
-	(WPARAM)(UINT)(active),0L)
+        (WPARAM)(UINT)(active),0)
 #define MCIWndSetInactiveTimer(hWnd,inactive)				\
 	(VOID)MCIWndSM(hWnd,MCIWNDM_SETINACTIVETIMER,			\
-	(WPARAM)(UINT)(inactive),0L)
+        (WPARAM)(UINT)(inactive),0)
 #define MCIWndSetTimers(hWnd,active,inactive)				\
 	    (VOID)MCIWndSM(hWnd,MCIWNDM_SETTIMERS,(WPARAM)(UINT)(active),\
 	    (LPARAM)(UINT)(inactive))
 #define MCIWndGetActiveTimer(hWnd)					\
-	(UINT)MCIWndSM(hWnd,MCIWNDM_GETACTIVETIMER,0,0L);
+        (UINT)MCIWndSM(hWnd,MCIWNDM_GETACTIVETIMER,0,0);
 #define MCIWndGetInactiveTimer(hWnd)					\
-	(UINT)MCIWndSM(hWnd,MCIWNDM_GETINACTIVETIMER,0,0L);
+        (UINT)MCIWndSM(hWnd,MCIWNDM_GETINACTIVETIMER,0,0);
 
 #define MCIWndRealize(hWnd,fBkgnd) (LONG)MCIWndSM(hWnd,MCIWNDM_REALIZE,(WPARAM)(BOOL)(fBkgnd),0)
 
@@ -1456,7 +1468,7 @@ HWND VFWAPIV MCIWndCreateW(HWND, HINSTANCE, DWORD, LPCWSTR);
 #define MCIWndGetFileName(hWnd,lp,len) (LONG)MCIWndSM(hWnd,MCIWNDM_GETFILENAME,(WPARAM)(UINT)(len),(LPARAM)(LPVOID)(lp))
 #define MCIWndGetDevice(hWnd,lp,len)   (LONG)MCIWndSM(hWnd,MCIWNDM_GETDEVICE,(WPARAM)(UINT)(len),(LPARAM)(LPVOID)(lp))
 
-#define MCIWndGetStyles(hWnd) (UINT)MCIWndSM(hWnd,MCIWNDM_GETSTYLES,0,0L)
+#define MCIWndGetStyles(hWnd) (UINT)MCIWndSM(hWnd,MCIWNDM_GETSTYLES,0,0)
 #define MCIWndChangeStyles(hWnd,mask,value) (LONG)MCIWndSM(hWnd,MCIWNDM_CHANGESTYLES,(WPARAM)(UINT)(mask),(LPARAM)(LONG)(value))
 
 #define MCIWndOpenInterface(hWnd,pUnk)  (LONG)MCIWndSM(hWnd,MCIWNDM_OPENINTERFACE,0,(LPARAM)(LPUNKNOWN)(pUnk))
@@ -1678,9 +1690,9 @@ typedef struct videohdr_tag {
     DWORD       dwBufferLength;
     DWORD       dwBytesUsed;
     DWORD       dwTimeCaptured;
-    DWORD       dwUser;
+    DWORD_PTR   dwUser;
     DWORD       dwFlags;
-    DWORD       dwReserved[4];
+    DWORD_PTR   dwReserved[4];
 } VIDEOHDR, *PVIDEOHDR, *LPVIDEOHDR;
 
 #define VHDR_DONE       0x00000001

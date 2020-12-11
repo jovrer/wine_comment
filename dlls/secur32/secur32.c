@@ -14,10 +14,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #include <assert.h>
 #include <stdarg.h>
+
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
@@ -29,9 +32,11 @@
 #include "secext.h"
 #include "ntsecapi.h"
 #include "thunks.h"
+#include "lmcons.h"
 
 #include "wine/list.h"
 #include "wine/debug.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(secur32);
 
@@ -79,11 +84,18 @@ static void SECUR32_freeProviders(void);
  */
 
 static CRITICAL_SECTION cs;
+static CRITICAL_SECTION_DEBUG cs_debug =
+{
+    0, 0, &cs,
+    { &cs_debug.ProcessLocksList, &cs_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": cs") }
+};
+static CRITICAL_SECTION cs = { &cs_debug, -1, 0, 0, 0, 0 };
 static SecurePackageTable *packageTable = NULL;
 static SecureProviderTable *providerTable = NULL;
 
 static SecurityFunctionTableA securityFunctionTableA = {
-    SECURITY_SUPPORT_PROVIDER_INTERFACE_VERSION_2,
+    SECURITY_SUPPORT_PROVIDER_INTERFACE_VERSION,
     EnumerateSecurityPackagesA,
     QueryCredentialsAttributesA,
     AcquireCredentialsHandleA,
@@ -101,8 +113,8 @@ static SecurityFunctionTableA securityFunctionTableA = {
     VerifySignature,
     FreeContextBuffer,
     QuerySecurityPackageInfoA,
-    NULL, /* Reserved3 */
-    NULL, /* Reserved4 */
+    EncryptMessage, /* Reserved3 */
+    DecryptMessage, /* Reserved4 */
     ExportSecurityContext,
     ImportSecurityContextA,
     AddCredentialsA,
@@ -114,7 +126,7 @@ static SecurityFunctionTableA securityFunctionTableA = {
 };
 
 static SecurityFunctionTableW securityFunctionTableW = {
-    SECURITY_SUPPORT_PROVIDER_INTERFACE_VERSION_2,
+    SECURITY_SUPPORT_PROVIDER_INTERFACE_VERSION,
     EnumerateSecurityPackagesW,
     QueryCredentialsAttributesW,
     AcquireCredentialsHandleW,
@@ -132,8 +144,8 @@ static SecurityFunctionTableW securityFunctionTableW = {
     VerifySignature,
     FreeContextBuffer,
     QuerySecurityPackageInfoW,
-    NULL, /* Reserved3 */
-    NULL, /* Reserved4 */
+    EncryptMessage, /* Reserved3 */
+    DecryptMessage, /* Reserved4 */
     ExportSecurityContext,
     ImportSecurityContextW,
     AddCredentialsW,
@@ -160,13 +172,13 @@ PSecurityFunctionTableW WINAPI InitSecurityInterfaceW(void)
     return &securityFunctionTableW;
 }
 
-PWSTR SECUR32_strdupW(PCWSTR str)
+static PWSTR SECUR32_strdupW(PCWSTR str)
 {
     PWSTR ret;
 
     if (str)
     {
-        ret = (PWSTR)SECUR32_ALLOC((lstrlenW(str) + 1) * sizeof(WCHAR));
+        ret = heap_alloc((lstrlenW(str) + 1) * sizeof(WCHAR));
         if (ret)
             lstrcpyW(ret, str);
     }
@@ -185,7 +197,7 @@ PWSTR SECUR32_AllocWideFromMultiByte(PCSTR str)
 
         if (charsNeeded)
         {
-            ret = (PWSTR)SECUR32_ALLOC(charsNeeded * sizeof(WCHAR));
+            ret = heap_alloc(charsNeeded * sizeof(WCHAR));
             if (ret)
                 MultiByteToWideChar(CP_ACP, 0, str, -1, ret, charsNeeded);
         }
@@ -208,7 +220,7 @@ PSTR SECUR32_AllocMultiByteFromWide(PCWSTR str)
 
         if (charsNeeded)
         {
-            ret = (PSTR)SECUR32_ALLOC(charsNeeded);
+            ret = heap_alloc(charsNeeded);
             if (ret)
                 WideCharToMultiByte(CP_ACP, 0, str, -1, ret, charsNeeded,
                  NULL, NULL);
@@ -222,8 +234,8 @@ PSTR SECUR32_AllocMultiByteFromWide(PCWSTR str)
 }
 
 static void _makeFnTableA(PSecurityFunctionTableA fnTableA,
- const PSecurityFunctionTableA inFnTableA,
- const PSecurityFunctionTableW inFnTableW)
+ const SecurityFunctionTableA *inFnTableA,
+ const SecurityFunctionTableW *inFnTableW)
 {
     if (fnTableA)
     {
@@ -235,8 +247,8 @@ static void _makeFnTableA(PSecurityFunctionTableA fnTableA,
              * implemented (yikes)
              */
             size_t tableSize = inFnTableA->dwVersion == 1 ?
-             (LPBYTE)&inFnTableA->SetContextAttributesA -
-             (LPBYTE)inFnTableA : sizeof(SecurityFunctionTableA);
+             (const BYTE *)&inFnTableA->SetContextAttributesA -
+             (const BYTE *)inFnTableA : sizeof(SecurityFunctionTableA);
 
             memcpy(fnTableA, inFnTableA, tableSize);
             /* override this, since we can do it internally anyway */
@@ -293,8 +305,8 @@ static void _makeFnTableA(PSecurityFunctionTableA fnTableA,
 }
 
 static void _makeFnTableW(PSecurityFunctionTableW fnTableW,
- const PSecurityFunctionTableA inFnTableA,
- const PSecurityFunctionTableW inFnTableW)
+ const SecurityFunctionTableA *inFnTableA,
+ const SecurityFunctionTableW *inFnTableW)
 {
     if (fnTableW)
     {
@@ -306,8 +318,8 @@ static void _makeFnTableW(PSecurityFunctionTableW fnTableW,
              * implemented (yikes)
              */
             size_t tableSize = inFnTableW->dwVersion == 1 ?
-             (LPBYTE)&inFnTableW->SetContextAttributesW -
-             (LPBYTE)inFnTableW : sizeof(SecurityFunctionTableW);
+             (const BYTE *)&inFnTableW->SetContextAttributesW -
+             (const BYTE *)inFnTableW : sizeof(SecurityFunctionTableW);
 
             memcpy(fnTableW, inFnTableW, tableSize);
             /* override this, since we can do it internally anyway */
@@ -371,7 +383,7 @@ static void _copyPackageInfo(PSecPkgInfoW info, const SecPkgInfoA *inInfoA,
         /* odd, I know, but up until Name and Comment the structures are
          * identical
          */
-        memcpy(info, inInfoW ? inInfoW : (PSecPkgInfoW)inInfoA, sizeof(*info));
+        memcpy(info, inInfoW ? inInfoW : (const SecPkgInfoW *)inInfoA, sizeof(*info));
         if (inInfoW)
         {
             info->Name = SECUR32_strdupW(inInfoW->Name);
@@ -385,8 +397,8 @@ static void _copyPackageInfo(PSecPkgInfoW info, const SecPkgInfoA *inInfoA,
     }
 }
 
-SecureProvider *SECUR32_addProvider(PSecurityFunctionTableA fnTableA,
- PSecurityFunctionTableW fnTableW, PWSTR moduleName)
+SecureProvider *SECUR32_addProvider(const SecurityFunctionTableA *fnTableA,
+ const SecurityFunctionTableW *fnTableW, PCWSTR moduleName)
 {
     SecureProvider *ret;
 
@@ -394,26 +406,32 @@ SecureProvider *SECUR32_addProvider(PSecurityFunctionTableA fnTableA,
 
     if (!providerTable)
     {
-        providerTable = HeapAlloc(GetProcessHeap(), 0, sizeof(SecureProviderTable));
+        providerTable = heap_alloc(sizeof(SecureProviderTable));
         if (!providerTable)
+        {
+            LeaveCriticalSection(&cs);
             return NULL;
+        }
 
         list_init(&providerTable->table);
     }
 
-    ret = HeapAlloc(GetProcessHeap(), 0, sizeof(SecureProvider));
+    ret = heap_alloc(sizeof(SecureProvider));
     if (!ret)
+    {
+        LeaveCriticalSection(&cs);
         return NULL;
+    }
 
     list_add_tail(&providerTable->table, &ret->entry);
     ret->lib = NULL;
 
     if (fnTableA || fnTableW)
     {
-        ret->moduleName = NULL;
+        ret->moduleName = moduleName ? SECUR32_strdupW(moduleName) : NULL;
         _makeFnTableA(&ret->fnTableA, fnTableA, fnTableW);
         _makeFnTableW(&ret->fnTableW, fnTableA, fnTableW);
-        ret->loaded = TRUE;
+        ret->loaded = !moduleName;
     }
     else
     {
@@ -437,9 +455,12 @@ void SECUR32_addPackages(SecureProvider *provider, ULONG toAdd,
 
     if (!packageTable)
     {
-        packageTable = HeapAlloc(GetProcessHeap(), 0, sizeof(SecurePackageTable));
+        packageTable = heap_alloc(sizeof(SecurePackageTable));
         if (!packageTable)
+        {
+            LeaveCriticalSection(&cs);
             return;
+        }
 
         packageTable->numPackages = 0;
         list_init(&packageTable->table);
@@ -447,7 +468,7 @@ void SECUR32_addPackages(SecureProvider *provider, ULONG toAdd,
         
     for (i = 0; i < toAdd; i++)
     {
-        SecurePackage *package = HeapAlloc(GetProcessHeap(), 0, sizeof(SecurePackage));
+        SecurePackage *package = heap_alloc(sizeof(SecurePackage));
         if (!package)
             continue;
 
@@ -493,9 +514,19 @@ static void _tryLoadProvider(PWSTR moduleName)
             if (pInitSecurityInterfaceW)
                 fnTableW = pInitSecurityInterfaceW();
             if (fnTableW && fnTableW->EnumerateSecurityPackagesW)
-                ret = fnTableW->EnumerateSecurityPackagesW(&toAdd, &infoW);
+            {
+                if (fnTableW != &securityFunctionTableW)
+                    ret = fnTableW->EnumerateSecurityPackagesW(&toAdd, &infoW);
+                else
+                    TRACE("%s has built-in providers, skip adding\n", debugstr_w(moduleName));
+            }
             else if (fnTableA && fnTableA->EnumerateSecurityPackagesA)
-                ret = fnTableA->EnumerateSecurityPackagesA(&toAdd, &infoA);
+            {
+                if (fnTableA != &securityFunctionTableA)
+                    ret = fnTableA->EnumerateSecurityPackagesA(&toAdd, &infoA);
+                else
+                    TRACE("%s has built-in providers, skip adding\n", debugstr_w(moduleName));
+            }
             if (ret == SEC_E_OK && toAdd > 0 && (infoW || infoA))
             {
                 SecureProvider *provider = SECUR32_addProvider(NULL, NULL,
@@ -527,21 +558,25 @@ static const WCHAR securityProvidersW[] = {
 static void SECUR32_initializeProviders(void)
 {
     HKEY key;
-    long apiRet;
+    LSTATUS apiRet;
 
     TRACE("\n");
-    InitializeCriticalSection(&cs);
     /* First load built-in providers */
     SECUR32_initSchannelSP();
-    SECUR32_initNegotiateSP();
     SECUR32_initNTLMSP();
+    /* Load SSP/AP packages (Kerberos and others) */
+    load_auth_packages();
+    /* Load the Negotiate provider last so apps stumble over the working NTLM
+     * provider first. Attempting to fix bug #16905 while keeping the
+     * application reported on wine-users on 2006-09-12 working. */
+    SECUR32_initNegotiateSP();
     /* Now load providers from registry */
     apiRet = RegOpenKeyExW(HKEY_LOCAL_MACHINE, securityProvidersKeyW, 0,
      KEY_READ, &key);
     if (apiRet == ERROR_SUCCESS)
     {
         WCHAR securityPkgNames[MAX_PATH]; /* arbitrary len */
-        DWORD size = sizeof(securityPkgNames) / sizeof(WCHAR), type;
+        DWORD size = sizeof(securityPkgNames), type;
 
         apiRet = RegQueryValueExW(key, securityProvidersW, NULL, &type,
          (PBYTE)securityPkgNames, &size);
@@ -549,8 +584,9 @@ static void SECUR32_initializeProviders(void)
         {
             WCHAR *ptr;
 
+            size = size / sizeof(WCHAR);
             for (ptr = securityPkgNames;
-             ptr < (PWSTR)((PBYTE)securityPkgNames + size); )
+              ptr < securityPkgNames + size; )
             {
                 WCHAR *comma;
 
@@ -558,8 +594,8 @@ static void SECUR32_initializeProviders(void)
                     ;
                 if (*comma == ',')
                     *comma = '\0';
-                for (; *ptr && isspace(*ptr) && ptr < securityPkgNames + size;
-                 ptr++)
+                for (; *ptr && isspaceW(*ptr) && ptr < securityPkgNames + size;
+                     ptr++)
                     ;
                 if (*ptr)
                     _tryLoadProvider(ptr);
@@ -570,7 +606,7 @@ static void SECUR32_initializeProviders(void)
     }
 }
 
-SecurePackage *SECUR32_findPackageW(PWSTR packageName)
+SecurePackage *SECUR32_findPackageW(PCWSTR packageName)
 {
     SecurePackage *ret = NULL;
     BOOL matched = FALSE;
@@ -605,8 +641,11 @@ SecurePackage *SECUR32_findPackageW(PWSTR packageName)
                     fnTableA = pInitSecurityInterfaceA();
                 if (pInitSecurityInterfaceW)
                     fnTableW = pInitSecurityInterfaceW();
-                _makeFnTableA(&ret->provider->fnTableA, fnTableA, fnTableW);
-                _makeFnTableW(&ret->provider->fnTableW, fnTableA, fnTableW);
+                /* don't update built-in SecurityFunctionTable */
+                if (fnTableA != &securityFunctionTableA)
+                    _makeFnTableA(&ret->provider->fnTableA, fnTableA, fnTableW);
+                if (fnTableW != &securityFunctionTableW)
+                    _makeFnTableW(&ret->provider->fnTableW, fnTableA, fnTableW);
                 ret->provider->loaded = TRUE;
             }
             else
@@ -616,7 +655,7 @@ SecurePackage *SECUR32_findPackageW(PWSTR packageName)
     return ret;
 }
 
-SecurePackage *SECUR32_findPackageA(PSTR packageName)
+SecurePackage *SECUR32_findPackageA(PCSTR packageName)
 {
     SecurePackage *ret;
 
@@ -635,35 +674,39 @@ SecurePackage *SECUR32_findPackageA(PSTR packageName)
 
 static void SECUR32_freeProviders(void)
 {
-    SecurePackage *package;
-    SecureProvider *provider;
-
     TRACE("\n");
     EnterCriticalSection(&cs);
 
+    SECUR32_deinitSchannelSP();
+
     if (packageTable)
     {
-        LIST_FOR_EACH_ENTRY(package, &packageTable->table, SecurePackage, entry)
+        SecurePackage *package, *package_next;
+        LIST_FOR_EACH_ENTRY_SAFE(package, package_next, &packageTable->table,
+                                 SecurePackage, entry)
         {
-            SECUR32_FREE(package->infoW.Name);
-            SECUR32_FREE(package->infoW.Comment);
+            heap_free(package->infoW.Name);
+            heap_free(package->infoW.Comment);
+            heap_free(package);
         }
 
-        HeapFree(GetProcessHeap(), 0, packageTable);
+        heap_free(packageTable);
         packageTable = NULL;
     }
 
     if (providerTable)
     {
-        LIST_FOR_EACH_ENTRY(provider, &providerTable->table, SecureProvider, entry)
+        SecureProvider *provider, *provider_next;
+        LIST_FOR_EACH_ENTRY_SAFE(provider, provider_next, &providerTable->table,
+                                 SecureProvider, entry)
         {
-            if (provider->moduleName)
-                SECUR32_FREE(provider->moduleName);
+            heap_free(provider->moduleName);
             if (provider->lib)
                 FreeLibrary(provider->lib);
+            heap_free(provider);
         }
 
-        HeapFree(GetProcessHeap(), 0, providerTable);
+        heap_free(providerTable);
         providerTable = NULL;
     }
 
@@ -680,19 +723,8 @@ static void SECUR32_freeProviders(void)
  */
 SECURITY_STATUS WINAPI FreeContextBuffer(PVOID pv)
 {
-    SECURITY_STATUS ret;
-
-    /* as it turns out, SECURITY_STATUSes are actually HRESULTS */
-    if (pv)
-    {
-        if (SECUR32_FREE(pv) == NULL)
-            ret = SEC_E_OK;
-        else
-            ret = HRESULT_FROM_WIN32(GetLastError());
-    }
-    else
-        ret = HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER);
-    return ret;
+    heap_free(pv);
+    return SEC_E_OK;
 }
 
 /***********************************************************************
@@ -702,6 +734,8 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesW(PULONG pcPackages,
  PSecPkgInfoW *ppPackageInfo)
 {
     SECURITY_STATUS ret = SEC_E_OK;
+
+    TRACE("(%p, %p)\n", pcPackages, ppPackageInfo);
 
     /* windows just crashes if pcPackages or ppPackageInfo is NULL, so will I */
     *pcPackages = 0;
@@ -721,7 +755,7 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesW(PULONG pcPackages,
         }
         if (bytesNeeded)
         {
-            *ppPackageInfo = (PSecPkgInfoW)SECUR32_ALLOC(bytesNeeded);
+            *ppPackageInfo = heap_alloc(bytesNeeded);
             if (*ppPackageInfo)
             {
                 ULONG i = 0;
@@ -734,9 +768,10 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesW(PULONG pcPackages,
                 {
                     PSecPkgInfoW pkgInfo = *ppPackageInfo + i++;
 
-                    memcpy(pkgInfo, &package->infoW, sizeof(SecPkgInfoW));
+                    *pkgInfo = package->infoW;
                     if (package->infoW.Name)
                     {
+                        TRACE("Name[%d] = %s\n", i - 1, debugstr_w(package->infoW.Name));
                         pkgInfo->Name = nextString;
                         lstrcpyW(nextString, package->infoW.Name);
                         nextString += lstrlenW(nextString) + 1;
@@ -745,6 +780,7 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesW(PULONG pcPackages,
                         pkgInfo->Name = NULL;
                     if (package->infoW.Comment)
                     {
+                        TRACE("Comment[%d] = %s\n", i - 1, debugstr_w(package->infoW.Comment));
                         pkgInfo->Comment = nextString;
                         lstrcpyW(nextString, package->infoW.Comment);
                         nextString += lstrlenW(nextString) + 1;
@@ -758,6 +794,7 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesW(PULONG pcPackages,
         }
     }
     LeaveCriticalSection(&cs);
+    TRACE("<-- 0x%08x\n", ret);
     return ret;
 }
 
@@ -765,7 +802,7 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesW(PULONG pcPackages,
  * structures) into an array of SecPkgInfoA structures, which it returns.
  */
 static PSecPkgInfoA thunk_PSecPkgInfoWToA(ULONG cPackages,
- const PSecPkgInfoW info)
+ const SecPkgInfoW *info)
 {
     PSecPkgInfoA ret;
 
@@ -783,7 +820,7 @@ static PSecPkgInfoA thunk_PSecPkgInfoWToA(ULONG cPackages,
                 bytesNeeded += WideCharToMultiByte(CP_ACP, 0, info[i].Comment,
                  -1, NULL, 0, NULL, NULL);
         }
-        ret = (PSecPkgInfoA)SECUR32_ALLOC(bytesNeeded);
+        ret = heap_alloc(bytesNeeded);
         if (ret)
         {
             PSTR nextString;
@@ -856,12 +893,54 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesA(PULONG pcPackages,
 
 /***********************************************************************
  *		GetComputerObjectNameA (SECUR32.@)
+ *
+ * Get the local computer's name using the format specified.
+ *
+ * PARAMS
+ *  NameFormat   [I] The format for the name.
+ *  lpNameBuffer [O] Pointer to buffer to receive the name.
+ *  nSize        [I/O] Size in characters of buffer.
+ *
+ * RETURNS
+ *  TRUE  If the name was written to lpNameBuffer.
+ *  FALSE If the name couldn't be written.
+ *
+ * NOTES
+ *  If lpNameBuffer is NULL, then the size of the buffer needed to hold the
+ *  name will be returned in *nSize.
+ *
+ *  nSize returns the number of characters written when lpNameBuffer is not
+ *  NULL or the size of the buffer needed to hold the name when the buffer
+ *  is too short or lpNameBuffer is NULL.
+ * 
+ *  It the buffer is too short, ERROR_INSUFFICIENT_BUFFER error will be set.
  */
 BOOLEAN WINAPI GetComputerObjectNameA(
   EXTENDED_NAME_FORMAT NameFormat, LPSTR lpNameBuffer, PULONG nSize)
 {
-    FIXME("%d %p %p\n", NameFormat, lpNameBuffer, nSize);
-    return FALSE;
+    BOOLEAN rc;
+    LPWSTR bufferW = NULL;
+    ULONG sizeW = *nSize;
+
+    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
+
+    if (lpNameBuffer) {
+        bufferW = heap_alloc(sizeW * sizeof(WCHAR));
+        if (bufferW == NULL) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+    }
+    rc = GetComputerObjectNameW(NameFormat, bufferW, &sizeW);
+    if (rc && bufferW) {
+        ULONG len = WideCharToMultiByte(CP_ACP, 0, bufferW, -1, NULL, 0, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, bufferW, -1, lpNameBuffer, *nSize, NULL, NULL);
+        *nSize = len;
+    }
+    else
+        *nSize = sizeW;
+    heap_free(bufferW);
+    return rc;
 }
 
 /***********************************************************************
@@ -870,45 +949,274 @@ BOOLEAN WINAPI GetComputerObjectNameA(
 BOOLEAN WINAPI GetComputerObjectNameW(
   EXTENDED_NAME_FORMAT NameFormat, LPWSTR lpNameBuffer, PULONG nSize)
 {
-    FIXME("%d %p %p\n", NameFormat, lpNameBuffer, nSize);
-    return FALSE;
+    LSA_HANDLE policyHandle;
+    LSA_OBJECT_ATTRIBUTES objectAttributes;
+    PPOLICY_DNS_DOMAIN_INFO domainInfo;
+    NTSTATUS ntStatus;
+    BOOLEAN status;
+
+    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
+
+    if (NameFormat == NameUnknown)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    ZeroMemory(&objectAttributes, sizeof(objectAttributes));
+    objectAttributes.Length = sizeof(objectAttributes);
+
+    ntStatus = LsaOpenPolicy(NULL, &objectAttributes,
+                             POLICY_VIEW_LOCAL_INFORMATION,
+                             &policyHandle);
+    if (ntStatus != STATUS_SUCCESS)
+    {
+        SetLastError(LsaNtStatusToWinError(ntStatus));
+        WARN("LsaOpenPolicy failed with NT status %u\n", GetLastError());
+        return FALSE;
+    }
+
+    ntStatus = LsaQueryInformationPolicy(policyHandle,
+                                         PolicyDnsDomainInformation,
+                                         (PVOID *)&domainInfo);
+    if (ntStatus != STATUS_SUCCESS)
+    {
+        SetLastError(LsaNtStatusToWinError(ntStatus));
+        WARN("LsaQueryInformationPolicy failed with NT status %u\n",
+             GetLastError());
+        LsaClose(policyHandle);
+        return FALSE;
+    }
+
+    if (domainInfo->Sid)
+    {
+        switch (NameFormat)
+        {
+        case NameSamCompatible:
+            {
+                WCHAR name[MAX_COMPUTERNAME_LENGTH + 1];
+                DWORD size = ARRAY_SIZE(name);
+                if (GetComputerNameW(name, &size))
+                {
+                    DWORD len = domainInfo->Name.Length + size + 3;
+                    if (lpNameBuffer && *nSize >= len)
+                    {
+                        static const WCHAR bs[] = { '\\', 0 };
+                        static const WCHAR ds[] = { '$', 0 };
+                        if (domainInfo->Name.Buffer)
+                        {
+                            lstrcpyW(lpNameBuffer, domainInfo->Name.Buffer);
+                            lstrcatW(lpNameBuffer, bs);
+                        }
+                        else
+                            *lpNameBuffer = 0;
+                        lstrcatW(lpNameBuffer, name);
+                        lstrcatW(lpNameBuffer, ds);
+                        status = TRUE;
+                    }
+                    else	/* just requesting length required */
+                    {
+                        *nSize = len;
+                        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                        status = FALSE;
+                    }
+                }
+                else
+                {
+                    SetLastError(ERROR_INTERNAL_ERROR);
+                    status = FALSE;
+                }
+            }
+            break;
+        case NameFullyQualifiedDN:
+        {
+            static const WCHAR cnW[] = { 'C','N','=',0 };
+            static const WCHAR ComputersW[] = { 'C','N','=','C','o','m','p','u','t','e','r','s',0 };
+            static const WCHAR dcW[] = { 'D','C','=',0 };
+            static const WCHAR commaW[] = { ',',0 };
+            WCHAR name[MAX_COMPUTERNAME_LENGTH + 1];
+            DWORD len, size;
+            WCHAR *suffix;
+
+            size = ARRAY_SIZE(name);
+            if (!GetComputerNameW(name, &size))
+            {
+                status = FALSE;
+                break;
+            }
+
+            len = strlenW(cnW) + size + 1 + strlenW(ComputersW) + 1 + strlenW(dcW);
+            if (domainInfo->DnsDomainName.Buffer)
+            {
+                suffix = strrchrW(domainInfo->DnsDomainName.Buffer, '.');
+                if (suffix)
+                {
+                    *suffix++ = 0;
+                    len += 1 + strlenW(dcW) + strlenW(suffix);
+                }
+                len += strlenW(domainInfo->DnsDomainName.Buffer);
+            }
+            else
+                suffix = NULL;
+
+            if (lpNameBuffer && *nSize > len)
+            {
+                lstrcpyW(lpNameBuffer, cnW);
+                lstrcatW(lpNameBuffer, name);
+                lstrcatW(lpNameBuffer, commaW);
+                lstrcatW(lpNameBuffer, ComputersW);
+                if (domainInfo->DnsDomainName.Buffer)
+                {
+                    lstrcatW(lpNameBuffer, commaW);
+                    lstrcatW(lpNameBuffer, dcW);
+                    lstrcatW(lpNameBuffer, domainInfo->DnsDomainName.Buffer);
+                    if (suffix)
+                    {
+                        lstrcatW(lpNameBuffer, commaW);
+                        lstrcatW(lpNameBuffer, dcW);
+                        lstrcatW(lpNameBuffer, suffix);
+                    }
+                }
+                status = TRUE;
+            }
+            else /* just requesting length required */
+            {
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                status = FALSE;
+            }
+            *nSize = len + 1;
+            break;
+        }
+        case NameDisplay:
+        case NameUniqueId:
+        case NameCanonical:
+        case NameUserPrincipal:
+        case NameCanonicalEx:
+        case NameServicePrincipal:
+        case NameDnsDomain:
+            FIXME("NameFormat %d not implemented\n", NameFormat);
+            SetLastError(ERROR_CANT_ACCESS_DOMAIN_INFO);
+            status = FALSE;
+            break;
+        default:
+            SetLastError(ERROR_INVALID_PARAMETER);
+            status = FALSE;
+        }
+    }
+    else
+    {
+        SetLastError(ERROR_CANT_ACCESS_DOMAIN_INFO);
+        status = FALSE;
+    }
+
+    LsaFreeMemory(domainInfo);
+    LsaClose(policyHandle);
+
+    return status;
 }
 
+SECURITY_STATUS WINAPI AddSecurityPackageA(LPSTR name, SECURITY_PACKAGE_OPTIONS *options)
+{
+    FIXME("(%s %p)\n", debugstr_a(name), options);
+    return E_NOTIMPL;
+}
+
+SECURITY_STATUS WINAPI AddSecurityPackageW(LPWSTR name, SECURITY_PACKAGE_OPTIONS *options)
+{
+    FIXME("(%s %p)\n", debugstr_w(name), options);
+    return E_NOTIMPL;
+}
+
+/***********************************************************************
+ *		GetUserNameExA (SECUR32.@)
+ */
 BOOLEAN WINAPI GetUserNameExA(
   EXTENDED_NAME_FORMAT NameFormat, LPSTR lpNameBuffer, PULONG nSize)
 {
-    FIXME("%d %p %p\n", NameFormat, lpNameBuffer, nSize);
-    return FALSE;
+    BOOLEAN rc;
+    LPWSTR bufferW = NULL;
+    ULONG sizeW = *nSize;
+    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
+    if (lpNameBuffer) {
+        bufferW = heap_alloc(sizeW * sizeof(WCHAR));
+        if (bufferW == NULL) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+    }
+    rc = GetUserNameExW(NameFormat, bufferW, &sizeW);
+    if (rc) {
+        ULONG len = WideCharToMultiByte(CP_ACP, 0, bufferW, -1, NULL, 0, NULL, NULL);
+        if (len <= *nSize)
+        {
+            WideCharToMultiByte(CP_ACP, 0, bufferW, -1, lpNameBuffer, *nSize, NULL, NULL);
+            *nSize = len - 1;
+        }
+        else
+        {
+            *nSize = len;
+            rc = FALSE;
+            SetLastError(ERROR_MORE_DATA);
+        }
+    }
+    else
+        *nSize = sizeW;
+    heap_free(bufferW);
+    return rc;
 }
 
 BOOLEAN WINAPI GetUserNameExW(
   EXTENDED_NAME_FORMAT NameFormat, LPWSTR lpNameBuffer, PULONG nSize)
 {
-    FIXME("%d %p %p\n", NameFormat, lpNameBuffer, nSize);
-    return FALSE;
-}
+    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
 
-NTSTATUS WINAPI LsaCallAuthenticationPackage(
-  HANDLE LsaHandle, ULONG AuthenticationPackage, PVOID ProtocolSubmitBuffer,
-  ULONG SubmitBufferLength, PVOID* ProtocolReturnBuffer, PULONG ReturnBufferLength,
-  PNTSTATUS ProtocolStatus)
-{
-    FIXME("%p %ld %p %ld %p %p %p\n", LsaHandle, AuthenticationPackage,
-          ProtocolSubmitBuffer, SubmitBufferLength, ProtocolReturnBuffer,
-          ReturnBufferLength, ProtocolStatus);
-    return 0;
-}
+    switch (NameFormat)
+    {
+    case NameSamCompatible:
+        {
+            WCHAR samname[UNLEN + 1 + MAX_COMPUTERNAME_LENGTH + 1];
+            LPWSTR out;
+            DWORD len;
 
-NTSTATUS WINAPI LsaConnectUntrusted(PHANDLE LsaHandle)
-{
-    FIXME("%p\n", LsaHandle);
-    return 0;
-}
+            /* This assumes the current user is always a local account */
+            len = MAX_COMPUTERNAME_LENGTH + 1;
+            if (GetComputerNameW(samname, &len))
+            {
+                out = samname + lstrlenW(samname);
+                *out++ = '\\';
+                len = UNLEN + 1;
+                if (GetUserNameW(out, &len))
+                {
+                    if (lstrlenW(samname) < *nSize)
+                    {
+                        lstrcpyW(lpNameBuffer, samname);
+                        *nSize = lstrlenW(samname);
+                        return TRUE;
+                    }
 
-NTSTATUS WINAPI LsaDeregisterLogonProcess(HANDLE LsaHandle)
-{
-    FIXME("%p\n", LsaHandle);
-    return 0;
+                    SetLastError(ERROR_MORE_DATA);
+                    *nSize = lstrlenW(samname) + 1;
+                }
+            }
+            return FALSE;
+        }
+
+    case NameUnknown:
+    case NameFullyQualifiedDN:
+    case NameDisplay:
+    case NameUniqueId:
+    case NameCanonical:
+    case NameUserPrincipal:
+    case NameCanonicalEx:
+    case NameServicePrincipal:
+    case NameDnsDomain:
+        SetLastError(ERROR_NONE_MAPPED);
+        return FALSE;
+
+    default:
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
 }
 
 BOOLEAN WINAPI TranslateNameA(
@@ -934,15 +1242,16 @@ BOOLEAN WINAPI TranslateNameW(
 /***********************************************************************
  *		DllMain (SECUR32.0)
  */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
 {
-    if (fdwReason == DLL_PROCESS_ATTACH)
+    switch (reason)
     {
+    case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hinstDLL);
         SECUR32_initializeProviders();
-    }
-    else if (fdwReason == DLL_PROCESS_DETACH)
-    {
+        break;
+    case DLL_PROCESS_DETACH:
+        if (reserved) break;
         SECUR32_freeProviders();
     }
 

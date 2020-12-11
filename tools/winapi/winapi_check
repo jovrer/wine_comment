@@ -14,7 +14,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 # Note that winapi_check are using heuristics quite heavily.
@@ -82,7 +82,7 @@ if ($options->global) {
 
 	$include2info{$file} = { name => $file };
 
-	open(IN, "< $wine_dir/$file");
+	open(IN, "< $wine_dir/$file") || die "Error: Can't open $wine_dir/$file: $!\n";
 	while(<IN>) {
 	    if(/^\s*\#\s*include\s*\"(.*?)\"/) {
 		my $header = $1;
@@ -498,6 +498,18 @@ foreach my $file (@c_files) {
 	my $type = shift;
     };
 
+    sub recursive_include {
+	my $include = shift;
+	my $includes = shift;
+
+	if(!defined($includes->{$include})) {
+	    $includes->{$include}++;
+	    foreach my $include (keys(%{$include2info{$include}{includes}})) {
+		recursive_include($include, \%$includes);
+	    }
+	}
+    };
+
     my $preprocessor = 'preprocessor'->new($found_include, $found_conditional);
     my $found_preprocessor = sub {
 	my $directive = shift;
@@ -545,10 +557,7 @@ foreach my $file (@c_files) {
 		    }
 
 		    if(defined($include)) {
-			$includes{$include}++;
-			foreach my $include (keys(%{$include2info{$include}{includes}})) {
-			    $includes{$include}++;
-			}
+			recursive_include($include, \%includes);
 		    }
 		}
 
@@ -572,8 +581,7 @@ foreach my $file (@c_files) {
 			    } elsif($macro =~ /^HAVE_(.*?)_H$/) {
 				my $name = $1;
 				if($header !~ /^alloca\.h$/ &&
-				   $file_dir !~ /tests$/ &&
-				   !$preprocessor->is_def("STATFS_DEFINED_BY_$name"))
+				   $file_dir !~ /tests$/)
 				{
 				    $output->write("$file: #$directive $argument: is a conditional include, " .
 						   "but is not protected\n");

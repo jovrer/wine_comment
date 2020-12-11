@@ -1,13 +1,5 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = vnetbios.vxd
-IMPORTS   = netapi32 kernel32
+IMPORTS   = netapi32
 
 C_SRCS = \
 	vnetbios.c
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

@@ -13,14 +13,21 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-import "wtypes.idl";
-import "ocidl.idl";
+#if 0
+#pragma makedep install
+#endif
 
 #include <idispids.h>
 #include <xmldsodid.h>
+
+#if !defined(progid) && !defined(__WIDL__)
+#define threading(model)
+#define progid(str)
+#define vi_progid(str)
+#endif
 
 interface IXMLDOMDocument;
 
@@ -49,12 +56,17 @@ interface IXMLDSOControl : IDispatch
 
 	[propget, id(DISPID_READYSTATE)] 
         HRESULT readyState([out, retval] long *state);
-};
+}
 
 [
-uuid(550dda30-0541-11d2-9ca9-0060b0ec3d39)
+    helpstring("XML Data Source Object"),
+    progid("Microsoft.XMLDSO.1.0"),
+    vi_progid("Microsoft.XMLDSO"),
+    threading(apartment),
+    version(1.0),
+    uuid(550dda30-0541-11d2-9ca9-0060b0ec3d39)
 ]
 coclass XMLDSOControl
 {
 	[default] interface IXMLDSOControl;
-};
+}

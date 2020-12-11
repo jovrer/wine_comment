@@ -1,20 +1,14 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = itss.dll
-IMPORTS   = ole32 user32 advapi32 kernel32 ntdll
-EXTRALIBS = $(LIBUNICODE) -luuid
-EXTRADEFS = -DCOM_NO_WINDOWS_H
+IMPORTS   = uuid urlmon shlwapi ole32
 
 C_SRCS = \
 	chm_lib.c \
-	lzx.c \
 	itss.c \
+	lzx.c \
 	moniker.c \
-	regsvr.c \
+	protocol.c \
 	storage.c
 
-@MAKE_DLL_RULES@
+IDL_SRCS = itss.idl
 
-### Dependencies:
+RC_SRCS = rsrc.rc

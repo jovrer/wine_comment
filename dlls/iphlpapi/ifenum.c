@@ -1,4 +1,4 @@
-/* Copyright (C) 2003 Juan Lang
+/* Copyright (C) 2003,2006,2011 Juan Lang
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -12,35 +12,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- * Implementation notes
- * Interface index fun:
- * - Windows may rely on an index being cleared in the topmost 8 bits in some
- *   APIs; see GetFriendlyIfIndex and the mention of "backward compatible"
- *   indexes.  It isn't clear which APIs might fail with non-backward-compatible
- *   indexes, but I'll keep them bits clear just in case.
- * - Even though if_nametoindex and if_indextoname seem to be pretty portable,
- *   Linux, at any rate, uses the same interface index for all virtual
- *   interfaces of a real interface as well as for the real interface itself.
- *   If I used the Linux index as my index, this would break my statement that
- *   an index is a key, and that an interface has 0 or 1 IP addresses.
- *   If that behavior were consistent across UNIXen (I don't know), it could
- *   help me implement multiple IP addresses more in the Windows way.
- * I used to assert I could not use UNIX interface indexes as my iphlpapi
- * indexes due to restrictions in netapi32 and wsock32, but I have removed
- * those restrictions, so using if_nametoindex and if_indextoname rather
- * than my current mess would probably be better.
- * FIXME:
- * - I don't support IPv6 addresses here, since SIOCGIFCONF can't return them
- *
- * There are three implemened methods for determining the MAC address of an
- * interface:
- * - a specific IOCTL (Linux)
- * - looking in the ARP cache (at least Solaris)
- * - using the sysctl interface (FreeBSD and MacOSX)
- * Solaris and some others have SIOCGENADDR, but I haven't gotten that to work
- * on the Solaris boxes at SourceForge's compile farm, whereas SIOCGARP does.
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -55,6 +27,9 @@
 #endif
 
 #include <sys/types.h>
+#ifdef HAVE_SYS_PARAM_H
+#include <sys/param.h>
+#endif
 
 #ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
@@ -100,7 +75,16 @@
 #include <net/if_types.h>
 #endif
 
+#ifdef HAVE_IFADDRS_H
+#include <ifaddrs.h>
+#endif
+
+#ifdef HAVE_LINUX_RTNETLINK_H
+#include <linux/rtnetlink.h>
+#endif
+
 #include "ifenum.h"
+#include "ws2ipdef.h"
 
 #ifdef HAVE_STRUCT_SOCKADDR_SA_LEN
 #define ifreq_len(ifr) \
@@ -113,80 +97,21 @@
 #define ETH_ALEN 6
 #endif
 
+#ifndef IF_NAMESIZE
+#define IF_NAMESIZE 16
+#endif
+
 #ifndef INADDR_NONE
 #define INADDR_NONE (~0U)
 #endif
 
 #define INITIAL_INTERFACES_ASSUMED 4
 
-#define INDEX_IS_LOOPBACK 0x00800000
-
-/* Type declarations */
-
-typedef struct _InterfaceNameMapEntry {
-  char  name[IFNAMSIZ];
-  BOOL  inUse;
-  BOOL  usedLastPass;
-} InterfaceNameMapEntry;
-
-typedef struct _InterfaceNameMap {
-  DWORD numInterfaces;
-  DWORD nextAvailable;
-  DWORD numAllocated;
-  InterfaceNameMapEntry table[1];
-} InterfaceNameMap;
-
-/* Global variables */
-
-static CRITICAL_SECTION mapCS;
-static InterfaceNameMap *gNonLoopbackInterfaceMap = NULL;
-static InterfaceNameMap *gLoopbackInterfaceMap = NULL;
-
 /* Functions */
 
-void interfaceMapInit(void)
+static BOOL isLoopbackInterface(int fd, const char *name)
 {
-    InitializeCriticalSection(&mapCS);
-}
-
-void interfaceMapFree(void)
-{
-    DeleteCriticalSection(&mapCS);
-    HeapFree(GetProcessHeap(), 0, gNonLoopbackInterfaceMap);
-    HeapFree(GetProcessHeap(), 0, gLoopbackInterfaceMap);
-}
-
-/* Sizes the passed-in map to have enough space for numInterfaces interfaces.
- * If map is NULL, allocates a new map.  If it is not, may reallocate the
- * existing map and return a map of increased size.  Returns the allocated map,
- * or NULL if it could not allocate a map of the requested size.
- */
-static InterfaceNameMap *sizeMap(InterfaceNameMap *map, DWORD numInterfaces)
-{
-  if (!map) {
-    numInterfaces = max(numInterfaces, INITIAL_INTERFACES_ASSUMED);
-    map = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-     sizeof(InterfaceNameMap) +
-     (numInterfaces - 1) * sizeof(InterfaceNameMapEntry));
-    if (map)
-      map->numAllocated = numInterfaces;
-  }
-  else {
-    if (map->numAllocated < numInterfaces) {
-      map = HeapReAlloc(GetProcessHeap(), 0, map,
-       sizeof(InterfaceNameMap) +
-       (numInterfaces - 1) * sizeof(InterfaceNameMapEntry));
-      if (map)
-        memset(&map->table[map->numAllocated], 0,
-         (numInterfaces - map->numAllocated) * sizeof(InterfaceNameMapEntry));
-    }
-  }
-  return map;
-}
-
-static int isLoopbackInterface(int fd, const char *name)
-{
-  int ret = 0;
+  BOOL ret = FALSE;
 
   if (name) {
     struct ifreq ifr;
@@ -195,298 +120,285 @@ static int isLoopbackInterface(int fd, const char *name)
     if (ioctl(fd, SIOCGIFFLAGS, &ifr) == 0)
       ret = ifr.ifr_flags & IFF_LOOPBACK;
   }
-  return ret;
+  return !!ret;
 }
 
-static void countInterfaces(int fd, caddr_t buf, size_t len)
-{
-  caddr_t ifPtr = buf;
-  DWORD numNonLoopbackInterfaces = 0, numLoopbackInterfaces = 0;
-
-  while (ifPtr && ifPtr < buf + len) {
-    struct ifreq *ifr = (struct ifreq *)ifPtr;
-
-    if (isLoopbackInterface(fd, ifr->ifr_name))
-      numLoopbackInterfaces++;
-    else
-      numNonLoopbackInterfaces++;
-    ifPtr += ifreq_len(ifr);
-  }
-  gNonLoopbackInterfaceMap = sizeMap(gNonLoopbackInterfaceMap,
-   numNonLoopbackInterfaces);
-  gLoopbackInterfaceMap = sizeMap(gLoopbackInterfaceMap,
-   numLoopbackInterfaces);
-}
-
-/* Stores the name in the given map, and increments the map's numInterfaces
- * member if stored successfully.  Will store in the same slot as previously if
- * usedLastPass is set, otherwise will store in a new slot.
- * Assumes map and name are not NULL, and the usedLastPass flag is set
- * correctly for each entry in the map, and that map->numInterfaces <
- * map->numAllocated.
- * FIXME: this is kind of expensive, doing a linear scan of the map with a
- * string comparison of each entry to find the old slot.
+/* The comments say MAX_ADAPTER_NAME is required, but really only IF_NAMESIZE
+ * bytes are necessary.
  */
-static void storeInterfaceInMap(InterfaceNameMap *map, const char *name)
+char *getInterfaceNameByIndex(IF_INDEX index, char *name)
 {
-  if (map && name) {
-    DWORD ndx;
-    BOOL stored = FALSE;
-
-    /* look for previous slot, mark in use if so */
-    for (ndx = 0; !stored && ndx < map->nextAvailable; ndx++) {
-      if (map->table[ndx].usedLastPass && !strncmp(map->table[ndx].name, name,
-       sizeof(map->table[ndx].name))) {
-        map->table[ndx].inUse = TRUE;
-        stored = TRUE;
-      }
-    }
-    /* look for new slot */
-    for (ndx = 0; !stored && ndx < map->numAllocated; ndx++) {
-      if (!map->table[ndx].inUse) {
-        lstrcpynA(map->table[ndx].name, name, IFNAMSIZ);
-        map->table[ndx].inUse = TRUE;
-        stored = TRUE;
-        if (ndx >= map->nextAvailable)
-          map->nextAvailable = ndx + 1;
-      }
-    }
-    if (stored)
-      map->numInterfaces++;
-  }
+  return if_indextoname(index, name);
 }
 
-/* Sets all used entries' usedLastPass flag to their inUse flag, clears
- * their inUse flag, and clears their numInterfaces member.
- */
-static void markOldInterfaces(InterfaceNameMap *map)
+DWORD getInterfaceIndexByName(const char *name, IF_INDEX *index)
 {
-  if (map) {
-    DWORD ndx;
-
-    map->numInterfaces = 0;
-    for (ndx = 0; ndx < map->nextAvailable; ndx++) {
-      map->table[ndx].usedLastPass = map->table[ndx].inUse;
-      map->table[ndx].inUse = FALSE;
-    }
-  }
-}
-
-static void classifyInterfaces(int fd, caddr_t buf, size_t len)
-{
-  caddr_t ifPtr = buf;
-
-  markOldInterfaces(gNonLoopbackInterfaceMap);
-  markOldInterfaces(gLoopbackInterfaceMap);
-  while (ifPtr && ifPtr < buf + len) {
-    struct ifreq *ifr = (struct ifreq *)ifPtr;
-
-    if (ifr->ifr_addr.sa_family == AF_INET) {
-      if (isLoopbackInterface(fd, ifr->ifr_name))
-        storeInterfaceInMap(gLoopbackInterfaceMap, ifr->ifr_name);
-      else
-        storeInterfaceInMap(gNonLoopbackInterfaceMap, ifr->ifr_name);
-    }
-    ifPtr += ifreq_len(ifr);
-  }
-}
-
-static void enumerateInterfaces(void)
-{
-  int fd;
-
-  fd = socket(PF_INET, SOCK_DGRAM, 0);
-  if (fd != -1) {
-    int ret, guessedNumInterfaces;
-    struct ifconf ifc;
-
-    /* try to avoid silly heap action by starting with the right size buffer */
-    guessedNumInterfaces = 0;
-    if (gNonLoopbackInterfaceMap)
-      guessedNumInterfaces += gNonLoopbackInterfaceMap->numInterfaces;
-    if (gLoopbackInterfaceMap)
-      guessedNumInterfaces += gLoopbackInterfaceMap->numInterfaces;
-
-    ret = 0;
-    memset(&ifc, 0, sizeof(ifc));
-    /* there is no way to know the interface count beforehand,
-       so we need to loop again and again upping our max each time
-       until returned < max */
-    do {
-      if (guessedNumInterfaces == 0)
-        guessedNumInterfaces = INITIAL_INTERFACES_ASSUMED;
-      else
-        guessedNumInterfaces *= 2;
-      HeapFree(GetProcessHeap(), 0, ifc.ifc_buf);
-      ifc.ifc_len = sizeof(struct ifreq) * guessedNumInterfaces;
-      ifc.ifc_buf = HeapAlloc(GetProcessHeap(), 0, ifc.ifc_len);
-      ret = ioctl(fd, SIOCGIFCONF, &ifc);
-    } while (ret == 0 &&
-     ifc.ifc_len == (sizeof(struct ifreq) * guessedNumInterfaces));
-
-    if (ret == 0) {
-      EnterCriticalSection(&mapCS);
-      countInterfaces(fd, ifc.ifc_buf, ifc.ifc_len);
-      classifyInterfaces(fd, ifc.ifc_buf, ifc.ifc_len);
-      LeaveCriticalSection(&mapCS);
-    }
-
-    HeapFree(GetProcessHeap(), 0, ifc.ifc_buf);
-    close(fd);
-  }
-}
-
-DWORD getNumNonLoopbackInterfaces(void)
-{
-  enumerateInterfaces();
-  return gNonLoopbackInterfaceMap ? gNonLoopbackInterfaceMap->numInterfaces : 0;
-}
-
-DWORD getNumInterfaces(void)
-{
-  DWORD ret = getNumNonLoopbackInterfaces();
-
-  ret += gLoopbackInterfaceMap ? gLoopbackInterfaceMap->numInterfaces : 0;
-  return ret;
-}
-
-const char *getInterfaceNameByIndex(DWORD index)
-{
-  DWORD realIndex;
-  InterfaceNameMap *map;
-  const char *ret = NULL;
-
-  EnterCriticalSection(&mapCS);
-  if (index & INDEX_IS_LOOPBACK) {
-    realIndex = index ^ INDEX_IS_LOOPBACK;
-    map = gLoopbackInterfaceMap;
-  }
-  else {
-    realIndex = index;
-    map = gNonLoopbackInterfaceMap;
-  }
-  if (map && realIndex < map->nextAvailable)
-    ret = map->table[realIndex].name;
-  LeaveCriticalSection(&mapCS);
-  return ret;
-}
-
-DWORD getInterfaceIndexByName(const char *name, PDWORD index)
-{
-  DWORD ndx, ret;
-  BOOL found = FALSE;
+  DWORD ret;
+  unsigned int idx;
 
   if (!name)
     return ERROR_INVALID_PARAMETER;
   if (!index)
     return ERROR_INVALID_PARAMETER;
-
-  EnterCriticalSection(&mapCS);
-  for (ndx = 0; !found && gNonLoopbackInterfaceMap &&
-   ndx < gNonLoopbackInterfaceMap->nextAvailable; ndx++)
-    if (!strncmp(gNonLoopbackInterfaceMap->table[ndx].name, name, IFNAMSIZ)) {
-      found = TRUE;
-      *index = ndx;
-    }
-  for (ndx = 0; !found && gLoopbackInterfaceMap &&
-   ndx < gLoopbackInterfaceMap->nextAvailable; ndx++)
-    if (!strncmp(gLoopbackInterfaceMap->table[ndx].name, name, IFNAMSIZ)) {
-      found = TRUE;
-      *index = ndx | INDEX_IS_LOOPBACK;
-    }
-  LeaveCriticalSection(&mapCS);
-  if (found)
+  idx = if_nametoindex(name);
+  if (idx) {
+    *index = idx;
     ret = NO_ERROR;
+  }
   else
     ret = ERROR_INVALID_DATA;
   return ret;
 }
 
-static void addMapEntriesToIndexTable(InterfaceIndexTable *table,
- const InterfaceNameMap *map)
+BOOL isIfIndexLoopback(ULONG idx)
 {
-  if (table && map) {
-    DWORD ndx;
+  BOOL ret = FALSE;
+  char name[IFNAMSIZ];
+  int fd;
 
-    for (ndx = 0; ndx < map->nextAvailable &&
-     table->numIndexes < table->numAllocated; ndx++)
-      if (map->table[ndx].inUse) {
-        DWORD externalNdx = ndx;
-
-        if (map == gLoopbackInterfaceMap)
-          externalNdx |= INDEX_IS_LOOPBACK;
-        table->indexes[table->numIndexes++] = externalNdx;
-      }
+  getInterfaceNameByIndex(idx, name);
+  fd = socket(PF_INET, SOCK_DGRAM, 0);
+  if (fd != -1) {
+    ret = isLoopbackInterface(fd, name);
+    close(fd);
   }
-}
-
-InterfaceIndexTable *getInterfaceIndexTable(void)
-{
-  DWORD numInterfaces;
-  InterfaceIndexTable *ret;
- 
-  EnterCriticalSection(&mapCS);
-  numInterfaces = getNumInterfaces();
-  ret = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-   sizeof(InterfaceIndexTable) + (numInterfaces - 1) * sizeof(DWORD));
-  if (ret) {
-    ret->numAllocated = numInterfaces;
-    addMapEntriesToIndexTable(ret, gNonLoopbackInterfaceMap);
-    addMapEntriesToIndexTable(ret, gLoopbackInterfaceMap);
-  }
-  LeaveCriticalSection(&mapCS);
   return ret;
 }
 
-InterfaceIndexTable *getNonLoopbackInterfaceIndexTable(void)
+#ifdef HAVE_IF_NAMEINDEX
+DWORD get_interface_indices( BOOL skip_loopback, InterfaceIndexTable **table )
 {
-  DWORD numInterfaces;
-  InterfaceIndexTable *ret;
+    DWORD count = 0, i;
+    struct if_nameindex *p, *indices = if_nameindex();
+    InterfaceIndexTable *ret;
 
-  EnterCriticalSection(&mapCS);
-  numInterfaces = getNumNonLoopbackInterfaces();
-  ret = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-   sizeof(InterfaceIndexTable) + (numInterfaces - 1) * sizeof(DWORD));
-  if (ret) {
-    ret->numAllocated = numInterfaces;
-    addMapEntriesToIndexTable(ret, gNonLoopbackInterfaceMap);
-  }
-  LeaveCriticalSection(&mapCS);
-  return ret;
-}
+    if (table) *table = NULL;
+    if (!indices) return 0;
 
-DWORD getInterfaceIPAddrByName(const char *name)
-{
-  DWORD ret = INADDR_ANY;
-
-  if (name) {
-    int fd = socket(PF_INET, SOCK_DGRAM, 0);
-
-    if (fd != -1) {
-      struct ifreq ifr;
-
-      lstrcpynA(ifr.ifr_name, name, IFNAMSIZ);
-      if (ioctl(fd, SIOCGIFADDR, &ifr) == 0)
-        memcpy(&ret, ifr.ifr_addr.sa_data + 2, sizeof(DWORD));
-      close(fd);
+    for (p = indices; p->if_name; p++)
+    {
+        if (skip_loopback && isIfIndexLoopback( p->if_index )) continue;
+        count++;
     }
-  }
-  return ret;
+
+    if (table)
+    {
+        ret = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET(InterfaceIndexTable, indexes[count]) );
+        if (!ret)
+        {
+            count = 0;
+            goto end;
+        }
+        for (p = indices, i = 0; p->if_name && i < count; p++)
+        {
+            if (skip_loopback && isIfIndexLoopback( p->if_index )) continue;
+            ret->indexes[i++] = p->if_index;
+        }
+        ret->numIndexes = count = i;
+        *table = ret;
+    }
+
+end:
+    if_freenameindex( indices );
+    return count;
 }
 
-DWORD getInterfaceIPAddrByIndex(DWORD index)
+#elif defined(HAVE_LINUX_RTNETLINK_H)
+static int open_netlink( int *pid )
 {
-  DWORD ret;
-  const char *name = getInterfaceNameByIndex(index);
+    int fd = socket( AF_NETLINK, SOCK_RAW, NETLINK_ROUTE );
+    struct sockaddr_nl addr;
+    socklen_t len;
 
-  if (name)
-    ret = getInterfaceIPAddrByName(name);
-  else
-    ret = INADDR_ANY;
-  return ret;
+    if (fd < 0) return fd;
+
+    memset( &addr, 0, sizeof(addr) );
+    addr.nl_family = AF_NETLINK;
+
+    if (bind( fd, (struct sockaddr *)&addr, sizeof(addr) ) < 0)
+        goto fail;
+
+    len = sizeof(addr);
+    if (getsockname( fd, (struct sockaddr *)&addr, &len ) < 0)
+        goto fail;
+
+    *pid = addr.nl_pid;
+    return fd;
+fail:
+    close( fd );
+    return -1;
 }
 
-DWORD getInterfaceBCastAddrByName(const char *name)
+static int send_netlink_req( int fd, int pid, int type, int *seq_no )
+{
+    static LONG seq;
+    struct request
+    {
+        struct nlmsghdr hdr;
+        struct rtgenmsg gen;
+    } req;
+    struct sockaddr_nl addr;
+
+    req.hdr.nlmsg_len = sizeof(req);
+    req.hdr.nlmsg_type = type;
+    req.hdr.nlmsg_flags = NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST;
+    req.hdr.nlmsg_pid = pid;
+    req.hdr.nlmsg_seq = InterlockedIncrement( &seq );
+    req.gen.rtgen_family = AF_UNSPEC;
+
+    memset( &addr, 0, sizeof(addr) );
+    addr.nl_family = AF_NETLINK;
+    if (sendto( fd, &req, sizeof(req), 0, (struct sockaddr *)&addr, sizeof(addr) ) != sizeof(req))
+        return -1;
+    *seq_no = req.hdr.nlmsg_seq;
+    return 0;
+}
+
+struct netlink_reply
+{
+    struct netlink_reply *next;
+    int size;
+    struct nlmsghdr *hdr;
+};
+
+static void free_netlink_reply( struct netlink_reply *data )
+{
+    struct netlink_reply *ptr;
+    while( data )
+    {
+        ptr = data->next;
+        HeapFree( GetProcessHeap(), 0, data );
+        data = ptr;
+    }
+}
+
+static int recv_netlink_reply( int fd, int pid, int seq, struct netlink_reply **data )
+{
+    int bufsize = getpagesize();
+    int left, read;
+    BOOL done = FALSE;
+    socklen_t sa_len;
+    struct sockaddr_nl addr;
+    struct netlink_reply *cur, *last = NULL;
+    struct nlmsghdr *hdr;
+    char *buf;
+
+    *data = NULL;
+    buf = HeapAlloc( GetProcessHeap(), 0, bufsize );
+    if (!buf) return -1;
+
+    do
+    {
+        left = read = recvfrom( fd, buf, bufsize, 0, (struct sockaddr *)&addr, &sa_len );
+        if (read < 0) goto fail;
+        if (addr.nl_pid != 0) continue; /* not from kernel */
+
+        for (hdr = (struct nlmsghdr *)buf; NLMSG_OK(hdr, left); hdr = NLMSG_NEXT(hdr, left))
+        {
+            if (hdr->nlmsg_pid != pid || hdr->nlmsg_seq != seq) continue;
+            if (hdr->nlmsg_type == NLMSG_DONE)
+            {
+                done = TRUE;
+                break;
+            }
+        }
+
+        cur = HeapAlloc( GetProcessHeap(), 0, sizeof(*cur) + read );
+        if (!cur) goto fail;
+        cur->next = NULL;
+        cur->size = read;
+        cur->hdr = (struct nlmsghdr *)(cur + 1);
+        memcpy( cur->hdr, buf, read );
+        if (last) last->next = cur;
+        else *data = cur;
+        last = cur;
+    } while (!done);
+
+    HeapFree( GetProcessHeap(), 0, buf );
+    return 0;
+
+fail:
+    free_netlink_reply( *data );
+    HeapFree( GetProcessHeap(), 0, buf );
+    return -1;
+}
+
+
+static DWORD get_indices_from_reply( struct netlink_reply *reply, int pid, int seq,
+                                     BOOL skip_loopback, InterfaceIndexTable *table )
+{
+    struct nlmsghdr *hdr;
+    struct netlink_reply *r;
+    int count = 0;
+
+    for (r = reply; r; r = r->next)
+    {
+        int size = r->size;
+        for (hdr = r->hdr; NLMSG_OK(hdr, size); hdr = NLMSG_NEXT(hdr, size))
+        {
+            if (hdr->nlmsg_pid != pid || hdr->nlmsg_seq != seq) continue;
+            if (hdr->nlmsg_type == NLMSG_DONE) break;
+
+            if (hdr->nlmsg_type == RTM_NEWLINK)
+            {
+                struct ifinfomsg *info = NLMSG_DATA(hdr);
+
+                if (skip_loopback && (info->ifi_flags & IFF_LOOPBACK)) continue;
+                if (table) table->indexes[count] = info->ifi_index;
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+DWORD get_interface_indices( BOOL skip_loopback, InterfaceIndexTable **table )
+{
+    int fd, pid, seq;
+    struct netlink_reply *reply = NULL;
+    DWORD count = 0;
+
+    if (table) *table = NULL;
+    fd = open_netlink( &pid );
+    if (fd < 0) return 0;
+
+    if (send_netlink_req( fd, pid, RTM_GETLINK, &seq ) < 0)
+        goto end;
+
+    if (recv_netlink_reply( fd, pid, seq, &reply ) < 0)
+        goto end;
+
+    count = get_indices_from_reply( reply, pid, seq, skip_loopback, NULL );
+
+    if (table)
+    {
+        InterfaceIndexTable *ret = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET(InterfaceIndexTable, indexes[count]) );
+        if (!ret)
+        {
+            count = 0;
+            goto end;
+        }
+
+        ret->numIndexes = count;
+        get_indices_from_reply( reply, pid, seq, skip_loopback, ret );
+        *table = ret;
+    }
+
+end:
+    free_netlink_reply( reply );
+    close( fd );
+    return count;
+}
+
+#else
+DWORD get_interface_indices( BOOL skip_loopback, InterfaceIndexTable **table )
+{
+    if (table) *table = NULL;
+    return 0;
+}
+#endif
+
+static DWORD getInterfaceBCastAddrByName(const char *name)
 {
   DWORD ret = INADDR_ANY;
 
@@ -505,19 +417,7 @@ DWORD getInterfaceBCastAddrByName(const char *name)
   return ret;
 }
 
-DWORD getInterfaceBCastAddrByIndex(DWORD index)
-{
-  DWORD ret;
-  const char *name = getInterfaceNameByIndex(index);
-
-  if (name)
-    ret = getInterfaceBCastAddrByName(name);
-  else
-    ret = INADDR_ANY;
-  return ret;
-}
-
-DWORD getInterfaceMaskByName(const char *name)
+static DWORD getInterfaceMaskByName(const char *name)
 {
   DWORD ret = INADDR_NONE;
 
@@ -536,20 +436,8 @@ DWORD getInterfaceMaskByName(const char *name)
   return ret;
 }
 
-DWORD getInterfaceMaskByIndex(DWORD index)
-{
-  DWORD ret;
-  const char *name = getInterfaceNameByIndex(index);
-
-  if (name)
-    ret = getInterfaceMaskByName(name);
-  else
-    ret = INADDR_NONE;
-  return ret;
-}
-
-#if defined (SIOCGIFHWADDR)
-DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
+#if defined (SIOCGIFHWADDR) && defined (HAVE_STRUCT_IFREQ_IFR_HWADDR)
+static DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
  PDWORD type)
 {
   DWORD ret;
@@ -637,7 +525,7 @@ DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
   return ret;
 }
 #elif defined (SIOCGARP)
-DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
+static DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
  PDWORD type)
 {
   DWORD ret;
@@ -657,12 +545,16 @@ DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
     else {
       struct arpreq arp;
       struct sockaddr_in *saddr;
+      struct ifreq ifr;
 
+      /* get IP addr */
+      lstrcpynA(ifr.ifr_name, name, IFNAMSIZ);
+      ioctl(fd, SIOCGIFADDR, &ifr);
       memset(&arp, 0, sizeof(struct arpreq));
       arp.arp_pa.sa_family = AF_INET;
       saddr = (struct sockaddr_in *)&arp; /* proto addr is first member */
       saddr->sin_family = AF_INET;
-      saddr->sin_addr.s_addr = getInterfaceIPAddrByName(name);
+      memcpy(&saddr->sin_addr.s_addr, ifr.ifr_addr.sa_data + 2, sizeof(DWORD));
       if ((ioctl(fd, SIOCGARP, &arp)))
         ret = ERROR_INVALID_DATA;
       else {
@@ -692,7 +584,7 @@ DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
   return ret;
 }
 #elif defined (HAVE_SYS_SYSCTL_H) && defined (HAVE_NET_IF_DL_H)
-DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
+static DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
  PDWORD type)
 {
   DWORD ret;
@@ -701,7 +593,7 @@ DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
   u_char *p, *buf;
   size_t mibLen;
   int mib[] = { CTL_NET, AF_ROUTE, 0, AF_LINK, NET_RT_IFLIST, 0 };
-  int addrLen;
+  unsigned addrLen;
   BOOL found = FALSE;
 
   if (!name || !len || !addr || !type)
@@ -782,10 +674,11 @@ DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
 }
 #endif
 
-DWORD getInterfacePhysicalByIndex(DWORD index, PDWORD len, PBYTE addr,
+DWORD getInterfacePhysicalByIndex(IF_INDEX index, PDWORD len, PBYTE addr,
  PDWORD type)
 {
-  const char *name = getInterfaceNameByIndex(index);
+  char nameBuf[IF_NAMESIZE];
+  char *name = getInterfaceNameByIndex(index, nameBuf);
 
   if (name)
     return getInterfacePhysicalByName(name, len, addr, type);
@@ -818,23 +711,14 @@ DWORD getInterfaceMtuByName(const char *name, PDWORD mtu)
 #endif
       ret = NO_ERROR;
     }
+    close(fd);
   }
   else
     ret = ERROR_NO_MORE_FILES;
   return ret;
 }
 
-DWORD getInterfaceMtuByIndex(DWORD index, PDWORD mtu)
-{
-  const char *name = getInterfaceNameByIndex(index);
-
-  if (name)
-    return getInterfaceMtuByName(name, mtu);
-  else
-    return ERROR_INVALID_DATA;
-}
-
-DWORD getInterfaceStatusByName(const char *name, PDWORD status)
+DWORD getInterfaceStatusByName(const char *name, INTERNAL_IF_OPER_STATUS *status)
 {
   DWORD ret;
   int fd;
@@ -858,20 +742,11 @@ DWORD getInterfaceStatusByName(const char *name, PDWORD status)
         *status = MIB_IF_OPER_STATUS_NON_OPERATIONAL;
       ret = NO_ERROR;
     }
+    close(fd);
   }
   else
     ret = ERROR_NO_MORE_FILES;
   return ret;
-}
-
-DWORD getInterfaceStatusByIndex(DWORD index, PDWORD status)
-{
-  const char *name = getInterfaceNameByIndex(index);
-
-  if (name)
-    return getInterfaceStatusByName(name, status);
-  else
-    return ERROR_INVALID_DATA;
 }
 
 DWORD getInterfaceEntryByName(const char *name, PMIB_IFROW entry)
@@ -915,15 +790,322 @@ DWORD getInterfaceEntryByName(const char *name, PMIB_IFROW entry)
   return ret;
 }
 
-DWORD getInterfaceEntryByIndex(DWORD index, PMIB_IFROW entry)
+static DWORD getIPAddrRowByName(PMIB_IPADDRROW ipAddrRow, const char *ifName,
+ const struct sockaddr *sa)
 {
-  const char *name = getInterfaceNameByIndex(index);
+  DWORD ret, bcast;
 
-  if (name)
-    return getInterfaceEntryByName(name, entry);
-  else
-    return ERROR_INVALID_DATA;
+  ret = getInterfaceIndexByName(ifName, &ipAddrRow->dwIndex);
+  memcpy(&ipAddrRow->dwAddr, sa->sa_data + 2, sizeof(DWORD));
+  ipAddrRow->dwMask = getInterfaceMaskByName(ifName);
+  /* the dwBCastAddr member isn't the broadcast address, it indicates whether
+   * the interface uses the 1's broadcast address (1) or the 0's broadcast
+   * address (0).
+   */
+  bcast = getInterfaceBCastAddrByName(ifName);
+  ipAddrRow->dwBCastAddr = (bcast & ipAddrRow->dwMask) ? 1 : 0;
+  /* FIXME: hardcoded reasm size, not sure where to get it */
+  ipAddrRow->dwReasmSize = 65535;
+  ipAddrRow->unused1 = 0;
+  /* wType is a bit field composed of MIB_IPADDR_* flags. Windows <= XP seems
+   * to like returning undocumented values 0x20 + 0x02 but for our current
+   * needs returning MIB_IPADDR_PRIMARY is enough.
+   */
+  ipAddrRow->wType = MIB_IPADDR_PRIMARY;
+  return ret;
 }
+
+#if defined(HAVE_IFADDRS_H) && defined(HAVE_GETIFADDRS)
+
+/* Counts the IPv4 addresses in the system using the return value from
+ * getifaddrs, returning the count.
+ */
+static DWORD countIPv4Addresses(struct ifaddrs *ifa)
+{
+  DWORD numAddresses = 0;
+
+  for (; ifa; ifa = ifa->ifa_next)
+    if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET)
+      numAddresses++;
+  return numAddresses;
+}
+
+DWORD getNumIPAddresses(void)
+{
+  DWORD numAddresses = 0;
+  struct ifaddrs *ifa;
+
+  if (!getifaddrs(&ifa))
+  {
+    numAddresses = countIPv4Addresses(ifa);
+    freeifaddrs(ifa);
+  }
+  return numAddresses;
+}
+
+DWORD getIPAddrTable(PMIB_IPADDRTABLE *ppIpAddrTable, HANDLE heap, DWORD flags)
+{
+  DWORD ret;
+
+  if (!ppIpAddrTable)
+    ret = ERROR_INVALID_PARAMETER;
+  else
+  {
+    struct ifaddrs *ifa;
+
+    if (!getifaddrs(&ifa))
+    {
+      DWORD size = sizeof(MIB_IPADDRTABLE);
+      DWORD numAddresses = countIPv4Addresses(ifa);
+
+      if (numAddresses > 1)
+        size += (numAddresses - 1) * sizeof(MIB_IPADDRROW);
+      *ppIpAddrTable = HeapAlloc(heap, flags, size);
+      if (*ppIpAddrTable)
+      {
+        DWORD i = 0;
+        struct ifaddrs *ifp;
+
+        ret = NO_ERROR;
+        (*ppIpAddrTable)->dwNumEntries = numAddresses;
+        for (ifp = ifa; !ret && ifp; ifp = ifp->ifa_next)
+        {
+          if (!ifp->ifa_addr || ifp->ifa_addr->sa_family != AF_INET)
+            continue;
+
+          ret = getIPAddrRowByName(&(*ppIpAddrTable)->table[i], ifp->ifa_name,
+           ifp->ifa_addr);
+          i++;
+        }
+        if (ret)
+          HeapFree(GetProcessHeap(), 0, *ppIpAddrTable);
+      }
+      else
+        ret = ERROR_OUTOFMEMORY;
+      freeifaddrs(ifa);
+    }
+    else
+      ret = ERROR_INVALID_PARAMETER;
+  }
+  return ret;
+}
+
+ULONG v6addressesFromIndex(IF_INDEX index, SOCKET_ADDRESS **addrs, ULONG *num_addrs, SOCKET_ADDRESS **masks)
+{
+  struct ifaddrs *ifa;
+  ULONG ret;
+
+  if (!getifaddrs(&ifa))
+  {
+    struct ifaddrs *p;
+    ULONG n;
+    char name[IFNAMSIZ];
+
+    getInterfaceNameByIndex(index, name);
+    for (p = ifa, n = 0; p; p = p->ifa_next)
+      if (p->ifa_addr && p->ifa_addr->sa_family == AF_INET6 &&
+          !strcmp(name, p->ifa_name))
+        n++;
+    if (n)
+    {
+      *addrs = HeapAlloc(GetProcessHeap(), 0, n * (sizeof(SOCKET_ADDRESS) +
+                         sizeof(struct WS_sockaddr_in6)));
+      *masks = HeapAlloc(GetProcessHeap(), 0, n * (sizeof(SOCKET_ADDRESS) +
+                         sizeof(struct WS_sockaddr_in6)));
+      if (*addrs && *masks)
+      {
+        struct WS_sockaddr_in6 *next_addr = (struct WS_sockaddr_in6 *)(
+            (BYTE *)*addrs + n * sizeof(SOCKET_ADDRESS));
+        struct WS_sockaddr_in6 *mask_addr = (struct WS_sockaddr_in6 *)(
+            (BYTE *)*masks + n * sizeof(SOCKET_ADDRESS));
+
+        for (p = ifa, n = 0; p; p = p->ifa_next)
+        {
+          if (p->ifa_addr && p->ifa_addr->sa_family == AF_INET6 &&
+              !strcmp(name, p->ifa_name))
+          {
+            struct sockaddr_in6 *addr = (struct sockaddr_in6 *)p->ifa_addr;
+            struct sockaddr_in6 *mask = (struct sockaddr_in6 *)p->ifa_netmask;
+
+            next_addr->sin6_family = WS_AF_INET6;
+            next_addr->sin6_port = addr->sin6_port;
+            next_addr->sin6_flowinfo = addr->sin6_flowinfo;
+            memcpy(&next_addr->sin6_addr, &addr->sin6_addr,
+             sizeof(next_addr->sin6_addr));
+            next_addr->sin6_scope_id = addr->sin6_scope_id;
+            (*addrs)[n].lpSockaddr = (LPSOCKADDR)next_addr;
+            (*addrs)[n].iSockaddrLength = sizeof(struct WS_sockaddr_in6);
+            next_addr++;
+
+            mask_addr->sin6_family = WS_AF_INET6;
+            mask_addr->sin6_port = mask->sin6_port;
+            mask_addr->sin6_flowinfo = mask->sin6_flowinfo;
+            memcpy(&mask_addr->sin6_addr, &mask->sin6_addr,
+             sizeof(mask_addr->sin6_addr));
+            mask_addr->sin6_scope_id = mask->sin6_scope_id;
+            (*masks)[n].lpSockaddr = (LPSOCKADDR)mask_addr;
+            (*masks)[n].iSockaddrLength = sizeof(struct WS_sockaddr_in6);
+            mask_addr++;
+            n++;
+          }
+        }
+        *num_addrs = n;
+        ret = ERROR_SUCCESS;
+      }
+      else
+      {
+        HeapFree(GetProcessHeap(), 0, *addrs);
+        HeapFree(GetProcessHeap(), 0, *masks);
+        ret = ERROR_OUTOFMEMORY;
+      }
+    }
+    else
+    {
+      *addrs = NULL;
+      *num_addrs = 0;
+      *masks = NULL;
+      ret = ERROR_SUCCESS;
+    }
+    freeifaddrs(ifa);
+  }
+  else
+    ret = ERROR_NO_DATA;
+  return ret;
+}
+
+#else
+
+/* Enumerates the IP addresses in the system using SIOCGIFCONF, returning
+ * the count to you in *pcAddresses.  It also returns to you the struct ifconf
+ * used by the call to ioctl, so that you may process the addresses further.
+ * Free ifc->ifc_buf using HeapFree.
+ * Returns NO_ERROR on success, something else on failure.
+ */
+static DWORD enumIPAddresses(PDWORD pcAddresses, struct ifconf *ifc)
+{
+  DWORD ret;
+  int fd;
+
+  fd = socket(PF_INET, SOCK_DGRAM, 0);
+  if (fd != -1) {
+    int ioctlRet = 0;
+    DWORD guessedNumAddresses = 0, numAddresses = 0;
+    caddr_t ifPtr;
+    int lastlen;
+
+    ret = NO_ERROR;
+    ifc->ifc_len = 0;
+    ifc->ifc_buf = NULL;
+    /* there is no way to know the interface count beforehand,
+       so we need to loop again and again upping our max each time
+       until returned is constant across 2 calls */
+    do {
+      lastlen = ifc->ifc_len;
+      HeapFree(GetProcessHeap(), 0, ifc->ifc_buf);
+      if (guessedNumAddresses == 0)
+        guessedNumAddresses = INITIAL_INTERFACES_ASSUMED;
+      else
+        guessedNumAddresses *= 2;
+      ifc->ifc_len = sizeof(struct ifreq) * guessedNumAddresses;
+      ifc->ifc_buf = HeapAlloc(GetProcessHeap(), 0, ifc->ifc_len);
+      ioctlRet = ioctl(fd, SIOCGIFCONF, ifc);
+    } while ((ioctlRet == 0) && (ifc->ifc_len != lastlen));
+
+    if (ioctlRet == 0) {
+      ifPtr = ifc->ifc_buf;
+      while (ifPtr && (char *)ifPtr < ifc->ifc_buf + ifc->ifc_len) {
+        struct ifreq *ifr = (struct ifreq *)ifPtr;
+
+        if (ifr->ifr_addr.sa_family == AF_INET)
+          numAddresses++;
+
+        ifPtr = (char *)ifPtr + ifreq_len((struct ifreq *)ifPtr);
+      }
+    }
+    else
+      ret = ERROR_INVALID_PARAMETER; /* FIXME: map from errno to Win32 */
+    if (!ret)
+      *pcAddresses = numAddresses;
+    else
+    {
+      HeapFree(GetProcessHeap(), 0, ifc->ifc_buf);
+      ifc->ifc_buf = NULL;
+    }
+    close(fd);
+  }
+  else
+    ret = ERROR_NO_SYSTEM_RESOURCES;
+  return ret;
+}
+
+DWORD getNumIPAddresses(void)
+{
+  DWORD numAddresses = 0;
+  struct ifconf ifc;
+
+  if (!enumIPAddresses(&numAddresses, &ifc))
+    HeapFree(GetProcessHeap(), 0, ifc.ifc_buf);
+  return numAddresses;
+}
+
+DWORD getIPAddrTable(PMIB_IPADDRTABLE *ppIpAddrTable, HANDLE heap, DWORD flags)
+{
+  DWORD ret;
+
+  if (!ppIpAddrTable)
+    ret = ERROR_INVALID_PARAMETER;
+  else
+  {
+    DWORD numAddresses = 0;
+    struct ifconf ifc;
+
+    ret = enumIPAddresses(&numAddresses, &ifc);
+    if (!ret)
+    {
+      DWORD size = sizeof(MIB_IPADDRTABLE);
+
+      if (numAddresses > 1)
+        size += (numAddresses - 1) * sizeof(MIB_IPADDRROW);
+      *ppIpAddrTable = HeapAlloc(heap, flags, size);
+      if (*ppIpAddrTable) {
+        DWORD i = 0;
+        caddr_t ifPtr;
+
+        ret = NO_ERROR;
+        (*ppIpAddrTable)->dwNumEntries = numAddresses;
+        ifPtr = ifc.ifc_buf;
+        while (!ret && ifPtr && (char *)ifPtr < ifc.ifc_buf + ifc.ifc_len) {
+          struct ifreq *ifr = (struct ifreq *)ifPtr;
+
+          ifPtr = (char *)ifPtr + ifreq_len(ifr);
+
+          if (ifr->ifr_addr.sa_family != AF_INET)
+             continue;
+
+          ret = getIPAddrRowByName(&(*ppIpAddrTable)->table[i], ifr->ifr_name,
+           &ifr->ifr_addr);
+          i++;
+        }
+        if (ret)
+          HeapFree(GetProcessHeap(), 0, *ppIpAddrTable);
+      }
+      else
+        ret = ERROR_OUTOFMEMORY;
+      HeapFree(GetProcessHeap(), 0, ifc.ifc_buf);
+    }
+  }
+  return ret;
+}
+
+ULONG v6addressesFromIndex(IF_INDEX index, SOCKET_ADDRESS **addrs, ULONG *num_addrs, SOCKET_ADDRESS **masks)
+{
+  *addrs = NULL;
+  *num_addrs = 0;
+  *masks = NULL;
+  return ERROR_SUCCESS;
+}
+
+#endif
 
 char *toIPAddressString(unsigned int addr, char string[16])
 {

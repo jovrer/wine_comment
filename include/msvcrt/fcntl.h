@@ -7,9 +7,8 @@
  */
 #ifndef __WINE_FCNTL_H
 #define __WINE_FCNTL_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
 
 #define _O_RDONLY      0
 #define _O_WRONLY      1
@@ -28,6 +27,9 @@
 #define _O_BINARY      0x8000
 #define _O_RAW         _O_BINARY
 
+#define _O_WTEXT       0x10000
+#define _O_U16TEXT     0x20000
+#define _O_U8TEXT      0x40000
 
 #define O_RDONLY    _O_RDONLY
 #define O_WRONLY    _O_WRONLY

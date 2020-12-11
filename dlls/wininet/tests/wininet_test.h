@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /* The Windows headers don't define A/W types for any of the following
@@ -24,7 +24,7 @@
  * between the A and W versions, we just define a set of macros so the
  * generated tests work anyway.
  */
-#ifndef GOPHER_ABSTRACT_ATTRIBUTE_TYPE
+#ifndef __WINESRC__
 #define GOPHER_ABSTRACT_ATTRIBUTE_TYPEA GOPHER_ABSTRACT_ATTRIBUTE_TYPE
 #define GOPHER_ABSTRACT_ATTRIBUTE_TYPEW GOPHER_ABSTRACT_ATTRIBUTE_TYPE
 

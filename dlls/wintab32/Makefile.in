@@ -1,21 +1,8 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = wintab32.dll
-IMPORTLIB = libwintab32.$(IMPLIBEXT)
-IMPORTS   = user32 kernel32
+IMPORTLIB = wintab32
+IMPORTS   = user32 advapi32
 
 C_SRCS = \
 	context.c \
 	manager.c \
 	wintab32.c
-
-C_SRCS16 = \
-	wintab16.c
-
-SPEC_SRCS16 = wintab.spec
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

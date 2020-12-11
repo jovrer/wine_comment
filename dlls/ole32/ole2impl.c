@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -23,7 +23,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -32,16 +31,13 @@
 #include "wine/debug.h"
 #include "ole2.h"
 #include "olestd.h"
-#include "winreg.h"
+#include "compobj_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
-
-#define MAX_CLIPFORMAT_NAME   80
 
 /******************************************************************************
  *		OleQueryCreateFromData [OLE32.@]
  *
- * Author   : Abey George
  * Checks whether an object can become an embedded object.
  * the clipboard or OLE drag and drop.
  * Returns  : S_OK - Format that supports Embedded object creation are present.
@@ -49,153 +45,368 @@ WINE_DEFAULT_DEBUG_CHANNEL(ole);
  *            S_FALSE - No acceptable format is available.
  */
 
-HRESULT WINAPI OleQueryCreateFromData(LPDATAOBJECT pSrcDataObject)
+HRESULT WINAPI OleQueryCreateFromData(IDataObject *data)
 {
-  IEnumFORMATETC *pfmt;
-  FORMATETC fmt;
-  CHAR szFmtName[MAX_CLIPFORMAT_NAME];
-  BOOL bFoundStatic = FALSE;
+    IEnumFORMATETC *enum_fmt;
+    FORMATETC fmt;
+    BOOL found_static = FALSE;
+    HRESULT hr;
 
-  HRESULT hr = IDataObject_EnumFormatEtc(pSrcDataObject, DATADIR_GET, &pfmt);
+    hr = IDataObject_EnumFormatEtc(data, DATADIR_GET, &enum_fmt);
 
-  if (hr == S_OK)
-    hr = IEnumFORMATETC_Next(pfmt, 1, &fmt, NULL);
+    if(FAILED(hr)) return hr;
 
-  while (hr == S_OK)
-  {
-    GetClipboardFormatNameA(fmt.cfFormat, szFmtName, MAX_CLIPFORMAT_NAME-1);
+    do
+    {
+        hr = IEnumFORMATETC_Next(enum_fmt, 1, &fmt, NULL);
+        if(hr == S_OK)
+        {
+            if(fmt.cfFormat == embedded_object_clipboard_format ||
+               fmt.cfFormat == embed_source_clipboard_format ||
+               fmt.cfFormat == filename_clipboard_format)
+            {
+                IEnumFORMATETC_Release(enum_fmt);
+                return S_OK;
+            }
 
-    /* first, Check for Embedded Object, Embed Source or Filename */
+            if(fmt.cfFormat == CF_METAFILEPICT ||
+               fmt.cfFormat == CF_BITMAP ||
+               fmt.cfFormat == CF_DIB)
+                found_static = TRUE;
+        }
+    } while (hr == S_OK);
 
-    if (!strcmp(szFmtName, CF_EMBEDDEDOBJECT) || !strcmp(szFmtName, CF_EMBEDSOURCE) || !strcmp(szFmtName, CF_FILENAME))
-      return S_OK;
+    IEnumFORMATETC_Release(enum_fmt);
 
-    /* Check for Metafile, Bitmap or DIB */
+    return found_static ? OLE_S_STATIC : S_FALSE;
+}
 
-    if (fmt.cfFormat == CF_METAFILEPICT || fmt.cfFormat == CF_BITMAP || fmt.cfFormat == CF_DIB)
-      bFoundStatic = TRUE;
+static inline void init_fmtetc(FORMATETC *fmt, CLIPFORMAT cf, TYMED tymed)
+{
+    fmt->cfFormat = cf;
+    fmt->ptd = NULL;
+    fmt->dwAspect = DVASPECT_CONTENT;
+    fmt->lindex = -1;
+    fmt->tymed = tymed;
+}
 
-    hr = IEnumFORMATETC_Next(pfmt, 1, &fmt, NULL);
-  }
+/***************************************************************************
+ *         get_storage
+ *
+ * Retrieve an object's storage from a variety of sources.
+ *
+ * FIXME: CF_FILENAME.
+ */
+static HRESULT get_storage(IDataObject *data, IStorage *stg, UINT *src_cf, BOOL other_fmts)
+{
+    static const UINT fmt_id[] = { CF_METAFILEPICT, CF_BITMAP, CF_DIB };
+    UINT i;
+    HRESULT hr;
+    FORMATETC fmt;
+    STGMEDIUM med;
+    IPersistStorage *persist;
+    CLSID clsid;
 
-  /* Found a static format, but no embed format */
+    if (src_cf) *src_cf = 0;
 
-  if (bFoundStatic)
-    return OLE_S_STATIC;
+    /* CF_EMBEDEDOBJECT */
+    init_fmtetc(&fmt, embedded_object_clipboard_format, TYMED_ISTORAGE);
+    med.tymed = TYMED_ISTORAGE;
+    med.u.pstg = stg;
+    med.pUnkForRelease = NULL;
+    hr = IDataObject_GetDataHere(data, &fmt, &med);
+    if(SUCCEEDED(hr))
+    {
+        if (src_cf) *src_cf = embedded_object_clipboard_format;
+        return hr;
+    }
 
-  return S_FALSE;
+    /* CF_EMBEDSOURCE */
+    init_fmtetc(&fmt, embed_source_clipboard_format, TYMED_ISTORAGE);
+    med.tymed = TYMED_ISTORAGE;
+    med.u.pstg = stg;
+    med.pUnkForRelease = NULL;
+    hr = IDataObject_GetDataHere(data, &fmt, &med);
+    if(SUCCEEDED(hr))
+    {
+        if (src_cf) *src_cf = embed_source_clipboard_format;
+        return hr;
+    }
+
+    if (other_fmts)
+    {
+        for (i = 0; i < ARRAY_SIZE(fmt_id); i++)
+        {
+            init_fmtetc(&fmt, fmt_id[i], TYMED_ISTORAGE);
+            hr = IDataObject_QueryGetData(data, &fmt);
+            if (SUCCEEDED(hr))
+            {
+                if (src_cf) *src_cf = fmt_id[i];
+                return hr;
+            }
+        }
+    }
+
+    /* IPersistStorage */
+    hr = IDataObject_QueryInterface(data, &IID_IPersistStorage, (void**)&persist);
+    if(FAILED(hr)) return hr;
+
+    hr = IPersistStorage_GetClassID(persist, &clsid);
+    if(FAILED(hr)) goto end;
+
+    hr = IStorage_SetClass(stg, &clsid);
+    if(FAILED(hr)) goto end;
+
+    hr = IPersistStorage_Save(persist, stg, FALSE);
+    if(FAILED(hr)) goto end;
+
+    hr = IPersistStorage_SaveCompleted(persist, NULL);
+
+end:
+    IPersistStorage_Release(persist);
+
+    return hr;
+}
+
+/******************************************************************************
+ *		OleCreateFromDataEx        [OLE32.@]
+ *
+ * Creates an embedded object from data transfer object retrieved from
+ * the clipboard or OLE drag and drop.
+ */
+HRESULT WINAPI OleCreateFromDataEx(IDataObject *data, REFIID iid, DWORD flags,
+                                   DWORD renderopt, ULONG num_cache_fmts, DWORD *adv_flags, FORMATETC *cache_fmts,
+                                   IAdviseSink *sink, DWORD *conns,
+                                   IOleClientSite *client_site, IStorage *stg, void **obj)
+{
+    HRESULT hr;
+    UINT src_cf;
+
+    FIXME("(%p, %s, %08x, %08x, %d, %p, %p, %p, %p, %p, %p, %p): stub\n",
+          data, debugstr_guid(iid), flags, renderopt, num_cache_fmts, adv_flags, cache_fmts,
+          sink, conns, client_site, stg, obj);
+
+    hr = get_storage(data, stg, &src_cf, TRUE);
+    if(FAILED(hr)) return hr;
+
+    hr = OleLoad(stg, iid, client_site, obj);
+    if(FAILED(hr)) return hr;
+
+    /* FIXME: Init cache */
+
+    return hr;
 }
 
 /******************************************************************************
  *		OleCreateFromData        [OLE32.@]
- *
- * Author   : Abey George
- * Creates an embedded object from data transfer object retrieved from
- * the clipboard or OLE drag and drop.
- * Returns  : S_OK - Embedded object was created successfully.
- *            OLE_E_STATIC - OLE can create only a static object
- *            DV_E_FORMATETC - No acceptable format is available (only error return code)
- * TODO : CF_FILENAME, CF_EMBEDEDOBJECT formats. Parameter renderopt is currently ignored.
  */
-
-HRESULT WINAPI OleCreateFromData(LPDATAOBJECT pSrcDataObject, REFIID riid,
-                DWORD renderopt, LPFORMATETC pFormatEtc,
-                LPOLECLIENTSITE pClientSite, LPSTORAGE pStg,
-                LPVOID* ppvObj)
+HRESULT WINAPI OleCreateFromData(LPDATAOBJECT data, REFIID iid,
+                                 DWORD renderopt, LPFORMATETC fmt,
+                                 LPOLECLIENTSITE client_site, LPSTORAGE stg,
+                                 LPVOID* obj)
 {
-  IEnumFORMATETC *pfmt;
-  FORMATETC fmt;
-  CHAR szFmtName[MAX_CLIPFORMAT_NAME];
-  STGMEDIUM std;
-  HRESULT hr;
-  HRESULT hr1;
+    DWORD advf = ADVF_PRIMEFIRST;
 
-  hr = IDataObject_EnumFormatEtc(pSrcDataObject, DATADIR_GET, &pfmt);
-
-  if (hr == S_OK)
-  {
-    memset(&std, 0, sizeof(STGMEDIUM));
-
-    hr = IEnumFORMATETC_Next(pfmt, 1, &fmt, NULL);
-    while (hr == S_OK)
-    {
-      GetClipboardFormatNameA(fmt.cfFormat, szFmtName, MAX_CLIPFORMAT_NAME-1);
-
-      /* first, Check for Embedded Object, Embed Source or Filename */
-      /* TODO: Currently checks only for Embed Source. */
-
-      if (!strcmp(szFmtName, CF_EMBEDSOURCE))
-      {
-        std.tymed = TYMED_HGLOBAL;
-
-        if ((hr1 = IDataObject_GetData(pSrcDataObject, &fmt, &std)) == S_OK)
-        {
-          ILockBytes *ptrILockBytes = 0;
-          IStorage *pStorage = 0;
-          IOleObject *pOleObject = 0;
-          IPersistStorage *pPersistStorage = 0;
-          CLSID clsID;
-
-          /* Create ILock bytes */
-
-          hr1 = CreateILockBytesOnHGlobal(std.u.hGlobal, FALSE, &ptrILockBytes);
-
-          /* Open storage on the ILock bytes */
-
-          if (hr1 == S_OK)
-            hr1 = StgOpenStorageOnILockBytes(ptrILockBytes, NULL, STGM_SHARE_EXCLUSIVE, NULL, 0, &pStorage);
-
-          /* Get Class ID from the opened storage */
-
-          if (hr1 == S_OK)
-            hr1 = ReadClassStg(pStorage, &clsID);
-
-          /* Create default handler for Persist storage */
-
-          if (hr1 == S_OK)
-            hr1 = OleCreateDefaultHandler(&clsID, NULL, &IID_IPersistStorage, (LPVOID*)&pPersistStorage);
-
-          /* Load the storage to Persist storage */
-
-          if (hr1 == S_OK)
-            hr1 = IPersistStorage_Load(pPersistStorage, pStorage);
-
-          /* Query for IOleObject */
-
-          if (hr1 == S_OK)
-            hr1 = IPersistStorage_QueryInterface(pPersistStorage, &IID_IOleObject, (LPVOID*)&pOleObject);
-
-          /* Set client site with the IOleObject */
-
-          if (hr1 == S_OK)
-            hr1 = IOleObject_SetClientSite(pOleObject, pClientSite);
-
-          IPersistStorage_Release(pPersistStorage);
-          /* Query for the requested interface */
-
-          if (hr1 == S_OK)
-            hr1 = IPersistStorage_QueryInterface(pPersistStorage, riid, ppvObj);
-
-          IPersistStorage_Release(pPersistStorage);
-
-          IStorage_Release(pStorage);
-
-          if (hr1 == S_OK)
-            return S_OK;
-        }
-
-        /* Return error */
-
-        return DV_E_FORMATETC;
-      }
-
-      hr = IEnumFORMATETC_Next(pfmt, 1, &fmt, NULL);
-    }
-  }
-
-  return DV_E_FORMATETC;
+    return OleCreateFromDataEx(data, iid, 0, renderopt, fmt ? 1 : 0, fmt ? &advf : NULL,
+                               fmt, NULL, NULL, client_site, stg, obj);
 }
 
+/******************************************************************************
+ *              OleCreateLinkFromData        [OLE32.@]
+ */
+HRESULT WINAPI OleCreateLinkFromData(IDataObject *data, REFIID iid,
+                                     DWORD renderopt, FORMATETC *fmt,
+                                     IOleClientSite *client_site, IStorage *stg,
+                                     void **obj)
+{
+    FIXME("%p,%s,%08x,%p,%p,%p,%p: semi-stub\n",
+          data, debugstr_guid(iid), renderopt, fmt, client_site, stg, obj);
+    return OleCreateFromData(data, iid, renderopt, fmt, client_site, stg, obj);
+}
+
+/******************************************************************************
+ *              OleCreateStaticFromData        [OLE32.@]
+ */
+HRESULT WINAPI OleCreateStaticFromData(IDataObject *data, REFIID iid,
+                                       DWORD renderopt, FORMATETC *fmt,
+                                       IOleClientSite *client_site, IStorage *stg,
+                                       void **obj)
+{
+    HRESULT hr;
+    CLSID clsid;
+    IOleObject * ole_object = NULL;
+    IOleCache2 *ole_cache = NULL;
+    IPersistStorage *persist = NULL;
+    DWORD connection;
+    STGMEDIUM stgmedium;
+    LPOLESTR ole_typename;
+
+    TRACE("(%p, %s, 0x%08x, %p, %p, %p, %p)\n",
+          data, debugstr_guid(iid), renderopt, fmt, client_site, stg, obj);
+
+    if (!obj || !stg)
+        return E_INVALIDARG;
+
+    if (renderopt != OLERENDER_FORMAT)
+    {
+        FIXME("semi-stub\n");
+        return OleCreateFromData(data, iid, renderopt, fmt, client_site, stg, obj);
+    }
+
+    if (!fmt)
+        return E_INVALIDARG;
+
+    hr = IDataObject_GetData(data, fmt, &stgmedium);
+    if (FAILED(hr)) return hr;
+
+    switch (fmt->cfFormat)
+    {
+        case CF_BITMAP:
+        case CF_DIB:
+            clsid = CLSID_Picture_Dib;
+            break;
+        case CF_ENHMETAFILE:
+            clsid = CLSID_Picture_EnhMetafile;
+            break;
+        case CF_METAFILEPICT:
+            clsid = CLSID_Picture_Metafile;
+            break;
+        default:
+            ReleaseStgMedium(&stgmedium);
+            return DV_E_CLIPFORMAT;
+    }
+    hr = OleCreateDefaultHandler(&clsid, NULL, &IID_IOleObject, (void **)&ole_object);
+    if (FAILED(hr)) goto end;
+
+    if (client_site)
+    {
+        hr = IOleObject_SetClientSite(ole_object, client_site);
+        if (FAILED(hr)) goto end;
+    }
+
+    hr = IOleObject_QueryInterface(ole_object, &IID_IOleCache2, (void **)&ole_cache);
+    if (FAILED(hr)) goto end;
+
+    hr = IOleObject_QueryInterface(ole_object, &IID_IPersistStorage, (void **)&persist);
+    if (FAILED(hr)) goto end;
+
+    hr = WriteClassStg(stg, &clsid);
+    if (FAILED(hr)) goto end;
+
+    hr = IPersistStorage_InitNew(persist, stg);
+    if (FAILED(hr)) goto end;
+
+    hr = IOleCache2_Cache(ole_cache, fmt, ADVF_PRIMEFIRST, &connection);
+    if (FAILED(hr)) goto end;
+
+    hr = IOleCache2_SetData(ole_cache, fmt, &stgmedium, TRUE);
+    if (FAILED(hr)) goto end;
+    stgmedium.tymed = TYMED_NULL;
+
+    hr = IOleObject_GetUserType(ole_object, USERCLASSTYPE_FULL, &ole_typename);
+    if(FAILED(hr))
+        ole_typename = NULL;
+    hr = WriteFmtUserTypeStg(stg, fmt->cfFormat, ole_typename);
+    CoTaskMemFree(ole_typename);
+    if (FAILED(hr)) goto end;
+
+    hr = IPersistStorage_Save(persist, stg, TRUE);
+    if (FAILED(hr)) goto end;
+
+    hr = IPersistStorage_SaveCompleted(persist, NULL);
+    if (FAILED(hr)) goto end;
+
+    hr = IOleObject_QueryInterface(ole_object, iid, obj);
+
+end:
+    if (stgmedium.tymed == TYMED_NULL)
+        ReleaseStgMedium(&stgmedium);
+    if (persist)
+        IPersistStorage_Release(persist);
+    if (ole_cache)
+        IOleCache2_Release(ole_cache);
+    if (ole_object)
+        IOleObject_Release(ole_object);
+    return hr;
+}
+
+/******************************************************************************
+ *              OleCreateFromFileEx        [OLE32.@]
+ */
+HRESULT WINAPI OleCreateFromFileEx(REFCLSID clsid, const OLECHAR *filename, REFIID iid, DWORD flags,
+                                   DWORD renderopt, ULONG num_fmts, DWORD *adv_flags, FORMATETC *fmts, IAdviseSink *sink,
+                                   DWORD *conns, IOleClientSite *client_site, IStorage *stg, void **obj)
+{
+    HRESULT hr;
+    IMoniker *mon;
+    IDataObject *data;
+    IUnknown *unk = NULL;
+    IOleCache *cache = NULL;
+    ULONG i;
+
+    TRACE("cls %s, %s, iid %s, flags %d, render opts %d, num fmts %d, adv flags %p, fmts %p\n", debugstr_guid(clsid),
+          debugstr_w(filename), debugstr_guid(iid), flags, renderopt, num_fmts, adv_flags, fmts);
+    TRACE("sink %p, conns %p, client site %p, storage %p, obj %p\n", sink, conns, client_site, stg, obj);
+    for (i = 0; i < num_fmts; i++)
+        TRACE("\t%d: fmt %s adv flags %d\n", i, debugstr_formatetc(fmts + i), adv_flags[i]);
+
+    hr = CreateFileMoniker( filename, &mon );
+    if (FAILED(hr)) return hr;
+
+    hr = BindMoniker( mon, 0, &IID_IDataObject, (void**)&data );
+    IMoniker_Release( mon );
+    if (FAILED(hr)) return hr;
+
+    hr = get_storage( data, stg, NULL, FALSE );
+    if (FAILED(hr)) goto end;
+
+    hr = OleLoad( stg, &IID_IUnknown, client_site, (void**)&unk );
+    if (FAILED(hr)) goto end;
+
+    if (renderopt == OLERENDER_FORMAT)
+    {
+        hr = IUnknown_QueryInterface( unk, &IID_IOleCache, (void**)&cache );
+        if (FAILED(hr)) goto end;
+
+        for (i = 0; i < num_fmts; i++)
+        {
+            STGMEDIUM med;
+            DWORD dummy_conn;
+
+            memset( &med, 0, sizeof(med) );
+            hr = IDataObject_GetData( data, fmts + i, &med );
+            if (FAILED(hr)) goto end;
+            hr = IOleCache_Cache( cache, fmts + i, adv_flags[i], &dummy_conn );
+            if (SUCCEEDED(hr))
+                hr = IOleCache_SetData( cache, fmts + i, &med, TRUE );
+            if (FAILED(hr))
+            {
+                ReleaseStgMedium( &med );
+                goto end;
+            }
+        }
+    }
+
+    hr = IUnknown_QueryInterface( unk, iid, obj );
+
+end:
+    if (cache) IOleCache_Release( cache );
+    if (unk) IUnknown_Release( unk );
+    IDataObject_Release( data );
+    return hr;
+}
+
+/******************************************************************************
+ *              OleCreateFromFile        [OLE32.@]
+ */
+HRESULT WINAPI OleCreateFromFile(REFCLSID clsid, const OLECHAR *filename, REFIID iid, DWORD renderopt,
+                                 FORMATETC *fmt, IOleClientSite *client_site, IStorage *storage, void **obj)
+{
+    DWORD advf = ADVF_PRIMEFIRST;
+
+    return OleCreateFromFileEx(clsid, filename, iid, 0, renderopt, fmt ? 1 : 0, fmt ? &advf : NULL, fmt,
+                               NULL, NULL, client_site, storage, obj);
+}
 
 /******************************************************************************
  *              OleDuplicateData        [OLE32.@]

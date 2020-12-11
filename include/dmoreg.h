@@ -13,11 +13,17 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __DMOREG_H__
 #define __DMOREG_H__
+
+#include "mediaobj.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct _DMO_PARTIAL_MEDIATYPE
 {
@@ -40,9 +46,9 @@ HRESULT WINAPI DMORegister(LPCWSTR,REFCLSID,REFGUID,DWORD,DWORD,const DMO_PARTIA
 HRESULT WINAPI DMOUnregister(REFCLSID,REFGUID);
 HRESULT WINAPI DMOEnum(REFGUID,DWORD,DWORD,const DMO_PARTIAL_MEDIATYPE*,DWORD,
                        const DMO_PARTIAL_MEDIATYPE*,IEnumDMO**);
-HRESULT WINAPI DMOGetTypes(REFCLSID,unsigned long,unsigned long*,DMO_PARTIAL_MEDIATYPE*,
-                           unsigned long,unsigned long*,DMO_PARTIAL_MEDIATYPE*);
-HRESULT WINAPI DMOGetName(REFCLSID,WCHAR*);
+HRESULT WINAPI DMOGetTypes(REFCLSID,ULONG,ULONG*,DMO_PARTIAL_MEDIATYPE*,
+                           ULONG,ULONG*,DMO_PARTIAL_MEDIATYPE*);
+HRESULT WINAPI DMOGetName(REFCLSID,WCHAR[80]);
 
 DEFINE_GUID(DMOCATEGORY_AUDIO_DECODER,
             0x57f2db8b,0xe6bb,0x4513,0x9d,0x43,0xdc,0xd2,0xa6,0x59,0x31,0x25);
@@ -64,5 +70,9 @@ DEFINE_GUID(DMOCATEGORY_AUDIO_NOISE_SUPPRESS,
             0xe07f903f,0x62fd,0x4e60,0x8c,0xdd,0xde,0xa7,0x23,0x66,0x65,0xb5);
 DEFINE_GUID(DMOCATEGORY_AGC,
             0xe88c9ba0,0xc557,0x11d0,0x8a,0x2b,0x00,0xa0,0xc9,0x25,0x5a,0xc1);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __DMOREG_H__ */

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -26,11 +26,11 @@
 #include "winbase.h"
 #include "winuser.h"
 #include "wingdi.h"
+#include "vfwmsgs.h"
 #include "uxtheme.h"
 #include "tmschema.h"
 
 #include "msstyles.h"
-#include "uxthemedll.h"
 
 #include "wine/debug.h"
 
@@ -87,7 +87,7 @@ HRESULT WINAPI GetThemeEnumValue(HTHEME hTheme, int iPartId, int iStateId,
     if(!(tp = MSSTYLES_FindProperty(hTheme, iPartId, iStateId, TMT_ENUM, iPropId)))
         return E_PROP_ID_UNSUPPORTED;
 
-    hr = MSSTYLES_GetPropertyString(tp, val, sizeof(val)/sizeof(val[0]));
+    hr = MSSTYLES_GetPropertyString(tp, val, ARRAY_SIZE(val));
     if(FAILED(hr))
         return hr;
     if(!MSSTYLES_LookupEnum(val, iPropId, piVal))
@@ -210,7 +210,7 @@ HRESULT WINAPI GetThemeString(HTHEME hTheme, int iPartId, int iStateId,
     if(!hTheme)
         return E_HANDLE;
 
-    if(!(tp = MSSTYLES_FindProperty(hTheme, iPartId, iStateId, TMT_FILENAME, iPropId)))
+    if(!(tp = MSSTYLES_FindProperty(hTheme, iPartId, iStateId, TMT_STRING, iPropId)))
         return E_PROP_ID_UNSUPPORTED;
     return MSSTYLES_GetPropertyString(tp, pszBuff, cchMaxBuffChars);
 }
@@ -262,7 +262,7 @@ HRESULT WINAPI GetThemeMetric(HTHEME hTheme, HDC hdc, int iPartId,
         case TMT_COLOR:
             return MSSTYLES_GetPropertyColor(tp, (COLORREF*)piVal);
         case TMT_ENUM:
-            hr = MSSTYLES_GetPropertyString(tp, val, sizeof(val)/sizeof(val[0]));
+            hr = MSSTYLES_GetPropertyString(tp, val, ARRAY_SIZE(val));
             if(FAILED(hr))
                 return hr;
             if(!MSSTYLES_LookupEnum(val, iPropId, piVal))

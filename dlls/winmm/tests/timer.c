@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -68,7 +68,8 @@ static void test_timeGetDevCaps(void)
 static DWORD count = 0;
 static DWORD times[NUM_SAMPLES];
 
-static void CALLBACK testTimeProc(UINT uID, UINT uMsg, DWORD dwUser, DWORD dw1, DWORD dw2)
+static void CALLBACK testTimeProc(UINT uID, UINT uMsg, DWORD_PTR dwUser,
+                                  DWORD_PTR dw1, DWORD_PTR dw2)
 {
     if (count < NUM_SAMPLES)
         times[count++] = timeGetTime();
@@ -118,14 +119,14 @@ static void test_timer(UINT period, UINT resolution)
         if (i == 0)
         {
             if (winetest_debug > 1)
-                trace("time[%d] = %lu\n", i, times[i]);
+                trace("time[%d] = %u\n", i, times[i]);
         }
         else
         {
             delta = times[i] - times[i - 1];
 
             if (winetest_debug > 1)
-                trace("time[%d] = %lu delta = %d\n", i, times[i], delta);
+                trace("time[%d] = %u delta = %d\n", i, times[i], delta);
 
             sum += delta;
             deviation += ((delta - period) * (delta - period));
@@ -138,7 +139,7 @@ static void test_timer(UINT period, UINT resolution)
         }
     }
 
-    trace("min = %lu, max = %lu, average = %f, standard deviation = %f\n",
+    trace("min = %u, max = %u, average = %f, standard deviation = %f\n",
           dwMin, dwMax, sum / (count - 1), sqrt(deviation / (count - 2)));
 }
 
@@ -162,10 +163,11 @@ static const char * get_priority(int priority)
 static int priority = 0;
 static BOOL fired = FALSE;
 
-static void CALLBACK priorityTimeProc(UINT uID, UINT uMsg, DWORD dwUser, DWORD dw1, DWORD dw2)
+static void CALLBACK priorityTimeProc(UINT uID, UINT uMsg, DWORD_PTR dwUser,
+                                      DWORD_PTR dw1, DWORD_PTR dw2)
 {
     priority = GetThreadPriority(GetCurrentThread());
-    ok(priority!=THREAD_PRIORITY_ERROR_RETURN, "GetThreadPriority() failed, GetLastError() = %08lx\n", GetLastError());
+    ok(priority!=THREAD_PRIORITY_ERROR_RETURN, "GetThreadPriority() failed, GetLastError() = %u\n", GetLastError());
     fired = TRUE;
 }
 
@@ -188,6 +190,7 @@ static void test_priority(void)
            "thread priority is %s, should be THREAD_PRIORITY_TIME_CRITICAL\n",
            get_priority(priority));
     }
+    timeKillEvent(id);
 }
 
 START_TEST(timer)

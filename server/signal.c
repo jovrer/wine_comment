@@ -15,18 +15,22 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
 
 #include <signal.h>
 #include <stdio.h>
+#include <sys/time.h>
 #ifdef HAVE_POLL_H
 #include <poll.h>
 #endif
 #ifdef HAVE_SYS_POLL_H
 #include <sys/poll.h>
+#endif
+#ifdef HAVE_SYS_RESOURCE_H
+#include <sys/resource.h>
 #endif
 #include <unistd.h>
 
@@ -34,6 +38,7 @@
 #include "object.h"
 #include "process.h"
 #include "thread.h"
+#include "request.h"
 
 #if defined(linux) && defined(__SIGRTMIN)
 /* the signal used by linuxthreads as exit signal for clone() threads */
@@ -58,12 +63,20 @@ static const struct object_ops handler_ops =
 {
     sizeof(struct handler),   /* size */
     handler_dump,             /* dump */
+    no_get_type,              /* get_type */
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
+    no_map_access,            /* map_access */
+    default_get_sd,           /* get_sd */
+    default_set_sd,           /* set_sd */
+    no_lookup_name,           /* lookup_name */
+    no_link_name,             /* link_name */
+    NULL,                     /* unlink_name */
+    no_open_file,             /* open_file */
     no_close_handle,          /* close_handle */
     handler_destroy           /* destroy */
 };
@@ -74,10 +87,11 @@ static const struct fd_ops handler_fd_ops =
 {
     NULL,                     /* get_poll_events */
     handler_poll_event,       /* poll_event */
-    no_flush,                 /* flush */
-    no_get_file_info,         /* get_file_info */
-    no_queue_async,           /* queue_async */
-    no_cancel_async           /* cancel_async */
+    NULL,                     /* flush */
+    NULL,                     /* get_fd_type */
+    NULL,                     /* ioctl */
+    NULL,                     /* queue_async */
+    NULL                      /* reselect_async */
 };
 
 static struct handler *handler_sighup;
@@ -85,8 +99,6 @@ static struct handler *handler_sigterm;
 static struct handler *handler_sigint;
 static struct handler *handler_sigchld;
 static struct handler *handler_sigio;
-
-static sigset_t blocked_sigset;
 
 static int watchdog;
 
@@ -107,12 +119,13 @@ static struct handler *create_handler( signal_callback callback )
     handler->pending    = 0;
     handler->callback   = callback;
 
-    if (!(handler->fd = create_anonymous_fd( &handler_fd_ops, fd[0], &handler->obj )))
+    if (!(handler->fd = create_anonymous_fd( &handler_fd_ops, fd[0], &handler->obj, 0 )))
     {
         release_object( handler );
         return NULL;
     }
     set_fd_events( handler->fd, POLLIN );
+    make_object_static( &handler->obj );
     return handler;
 }
 
@@ -178,9 +191,7 @@ static void sigterm_callback(void)
 /* SIGINT callback */
 static void sigint_callback(void)
 {
-    kill_all_processes( NULL, 1 );
-    flush_registry();
-    exit(1);
+    shutdown_master_socket();
 }
 
 /* SIGHUP handler */
@@ -213,6 +224,13 @@ static void do_sigchld( int signum )
     do_signal( handler_sigchld );
 }
 
+/* SIGSEGV handler */
+static void do_sigsegv( int signum )
+{
+    fprintf( stderr, "wineserver crashed, please enable coredumps (ulimit -c unlimited) and restart.\n");
+    abort();
+}
+
 /* SIGIO handler */
 #ifdef HAVE_SIGINFO_T_SI_FD
 static void do_sigio( int signum, siginfo_t *si, void *x )
@@ -239,9 +257,21 @@ int watchdog_triggered(void)
     return watchdog != 0;
 }
 
+static int core_dump_disabled( void )
+{
+    int r = 0;
+#ifdef RLIMIT_CORE
+    struct rlimit lim;
+
+    r = !getrlimit(RLIMIT_CORE, &lim) && (lim.rlim_cur == 0);
+#endif
+    return r;
+}
+
 void init_signals(void)
 {
     struct sigaction action;
+    sigset_t blocked_sigset;
 
     if (!(handler_sighup  = create_handler( sighup_callback ))) goto error;
     if (!(handler_sigterm = create_handler( sigterm_callback ))) goto error;
@@ -277,6 +307,11 @@ void init_signals(void)
     action.sa_handler = do_sigterm;
     sigaction( SIGQUIT, &action, NULL );
     sigaction( SIGTERM, &action, NULL );
+    if (core_dump_disabled())
+    {
+        action.sa_handler = do_sigsegv;
+        sigaction( SIGSEGV, &action, NULL );
+    }
     action.sa_handler = SIG_IGN;
     sigaction( SIGXFSZ, &action, NULL );
 #ifdef HAVE_SIGINFO_T_SI_FD
@@ -289,14 +324,4 @@ void init_signals(void)
 error:
     fprintf( stderr, "failed to initialize signal handlers\n" );
     exit(1);
-}
-
-void close_signals(void)
-{
-    sigprocmask( SIG_BLOCK, &blocked_sigset, NULL );
-    release_object( handler_sighup );
-    release_object( handler_sigterm );
-    release_object( handler_sigint );
-    release_object( handler_sigchld );
-    release_object( handler_sigio );
 }

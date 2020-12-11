@@ -1,20 +1,13 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = dmband.dll
-IMPORTS   = ole32 user32 advapi32 kernel32
-EXTRALIBS = -ldxguid -luuid
+IMPORTS   = dxguid uuid ole32 advapi32
 
 C_SRCS = \
 	band.c \
 	bandtrack.c \
-	dmutils.c \
 	dmband_main.c \
-	regsvr.c
+	dmobject.c \
+	dmutils.c
+
+IDL_SRCS = dmband.idl
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

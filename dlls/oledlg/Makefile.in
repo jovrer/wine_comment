@@ -1,17 +1,10 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = oledlg.dll
-IMPORTLIB = liboledlg.$(IMPLIBEXT)
-IMPORTS   = ole32 comdlg32 user32 advapi32 kernel32 ntdll
+IMPORTLIB = oledlg
+IMPORTS   = ole32 comdlg32 user32 advapi32
 
 C_SRCS = \
 	insobjdlg.c \
-	oledlg_main.c
+	oledlg_main.c \
+	pastespl.c
 
-RC_SRCS = rsrc.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = oledlg.rc

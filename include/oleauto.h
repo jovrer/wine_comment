@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_OLEAUTO_H
@@ -105,11 +105,15 @@ HRESULT WINAPI GetRecordInfoFromGuids(REFGUID,ULONG,ULONG,LCID,REFGUID,IRecordIn
 
 /* Macros for accessing the fields of the VARIANT type */
 #if (__STDC__ && !defined(_FORCENAMELESSUNION)) || defined(NONAMELESSUNION)
-#define V_UNION(A,B) ((A)->n1.n2.n3.B)
-#define V_VT(A)      ((A)->n1.n2.vt)
+#define V_VT(A)         ((A)->n1.n2.vt)
+#define V_UNION(A,B)    ((A)->n1.n2.n3.B)
+#define V_RECORD(A)     (V_UNION(A,brecVal).pvRecord)
+#define V_RECORDINFO(A) (V_UNION(A,brecVal).pRecInfo)
 #else
-#define V_UNION(A,B) ((A)->B)
-#define V_VT(A)      ((A)->vt)
+#define V_VT(A)         ((A)->vt)
+#define V_UNION(A,B)    ((A)->B)
+#define V_RECORD(A)     ((A)->pvRecord)
+#define V_RECORDINFO(A) ((A)->pRecInfo)
 #endif
 
 #define V_ISBYREF(A)  (V_VT(A) & VT_BYREF)
@@ -316,7 +320,7 @@ HRESULT WINAPI VarR8FromUI4(ULONG,double*);
 HRESULT WINAPI VarR8FromUI8(ULONG64,double*);
 HRESULT WINAPI VarR8FromStr(OLECHAR*,LCID,ULONG,double*);
 HRESULT WINAPI VarR8FromCy(CY,double*);
-HRESULT WINAPI VarR8FromDec(DECIMAL*,double*);
+HRESULT WINAPI VarR8FromDec(const DECIMAL*,double*);
 HRESULT WINAPI VarR8FromDisp(IDispatch*,LCID,double*);
 
 HRESULT WINAPI VarDateFromUI1(BYTE,DATE*);
@@ -557,18 +561,18 @@ HRESULT WINAPI VarDecNeg(const DECIMAL*,DECIMAL*);
 HRESULT WINAPI VarDecRound(const DECIMAL*,int,DECIMAL*);
 HRESULT WINAPI VarDecSub(const DECIMAL*,const DECIMAL*,DECIMAL*);
 
-HRESULT WINAPI VarCyAbs(const CY,CY*);
-HRESULT WINAPI VarCyAdd(const CY,const CY,CY*);
-HRESULT WINAPI VarCyCmp(const CY,const CY);
-HRESULT WINAPI VarCyCmpR8(const CY,DOUBLE);
-HRESULT WINAPI VarCyFix(const CY,CY*);
-HRESULT WINAPI VarCyInt(const CY,CY*);
-HRESULT WINAPI VarCyMul(const CY,CY,CY*);
-HRESULT WINAPI VarCyMulI4(const CY,LONG,CY*);
-HRESULT WINAPI VarCyMulI8(const CY,LONG64,CY*);
-HRESULT WINAPI VarCyNeg(const CY,CY*);
-HRESULT WINAPI VarCyRound(const CY,INT,CY*);
-HRESULT WINAPI VarCySub(const CY,const CY,CY*);
+HRESULT WINAPI VarCyAbs(CY,CY*);
+HRESULT WINAPI VarCyAdd(CY,CY,CY*);
+HRESULT WINAPI VarCyCmp(CY,CY);
+HRESULT WINAPI VarCyCmpR8(CY,DOUBLE);
+HRESULT WINAPI VarCyFix(CY,CY*);
+HRESULT WINAPI VarCyInt(CY,CY*);
+HRESULT WINAPI VarCyMul(CY,CY,CY*);
+HRESULT WINAPI VarCyMulI4(CY,LONG,CY*);
+HRESULT WINAPI VarCyMulI8(CY,LONG64,CY*);
+HRESULT WINAPI VarCyNeg(CY,CY*);
+HRESULT WINAPI VarCyRound(CY,INT,CY*);
+HRESULT WINAPI VarCySub(CY,CY,CY*);
 
 HRESULT WINAPI VarAdd(LPVARIANT,LPVARIANT,LPVARIANT);
 HRESULT WINAPI VarAnd(LPVARIANT,LPVARIANT,LPVARIANT);
@@ -715,7 +719,7 @@ HRESULT WINAPI DispInvoke(void*,ITypeInfo*,DISPID,WORD,DISPPARAMS*,VARIANT*,
                           EXCEPINFO*,UINT*);
 HRESULT WINAPI CreateDispTypeInfo(INTERFACEDATA*,LCID,ITypeInfo**);
 HRESULT WINAPI CreateStdDispatch(IUnknown*,void*,ITypeInfo*,IUnknown**);
-HRESULT WINAPI DispCallFunc(void*,ULONG,CALLCONV,VARTYPE,UINT,VARTYPE*,
+HRESULT WINAPI DispCallFunc(void*,ULONG_PTR,CALLCONV,VARTYPE,UINT,VARTYPE*,
                             VARIANTARG**,VARIANT*);
 
 
@@ -750,6 +754,8 @@ HRESULT WINAPI LoadTypeLibEx(LPCOLESTR,REGKIND,ITypeLib**);
 HRESULT WINAPI QueryPathOfRegTypeLib(REFGUID,WORD,WORD,LCID,LPBSTR);
 HRESULT WINAPI RegisterTypeLib(ITypeLib*,OLECHAR*,OLECHAR*);
 HRESULT WINAPI UnRegisterTypeLib(REFGUID,WORD,WORD,LCID,SYSKIND);
+HRESULT WINAPI RegisterTypeLibForUser(ITypeLib*,OLECHAR*,OLECHAR*);
+HRESULT WINAPI UnRegisterTypeLibForUser(REFGUID,WORD,WORD,LCID,SYSKIND);
 
 VOID WINAPI ClearCustData(LPCUSTDATA);
 

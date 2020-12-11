@@ -15,11 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "wine/debug.h"
@@ -45,7 +47,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
  */
 void WINAPI RtlInitializeHandleTable(ULONG MaxHandleCount, ULONG HandleSize, RTL_HANDLE_TABLE * HandleTable)
 {
-    TRACE("(%lu, %lu, %p)\n", MaxHandleCount, HandleSize, HandleTable);
+    TRACE("(%u, %u, %p)\n", MaxHandleCount, HandleSize, HandleTable);
 
     memset(HandleTable, 0, sizeof(*HandleTable));
     HandleTable->MaxHandleCount = MaxHandleCount;
@@ -184,6 +186,16 @@ static NTSTATUS RtlpAllocateSomeHandles(RTL_HANDLE_TABLE * HandleTable)
  *  Success: Pointer to allocated handle.
  *  Failure: NULL.
  *
+ * NOTES
+ *  A valid handle must have the bit set as indicated in the code below 
+ *  otherwise subsequent RtlIsValidHandle() calls will fail.
+ *
+ *  static inline void RtlpMakeHandleAllocated(RTL_HANDLE * Handle)
+ *  {
+ *    ULONG_PTR *AllocatedBit = (ULONG_PTR *)(&Handle->Next);
+ *    *AllocatedBit = *AllocatedBit | 1;
+ *  }
+ *
  * SEE
  *  RtlFreeHandle().
  */
@@ -195,8 +207,8 @@ RTL_HANDLE * WINAPI RtlAllocateHandle(RTL_HANDLE_TABLE * HandleTable, ULONG * Ha
 
     if (!HandleTable->NextFree && RtlpAllocateSomeHandles(HandleTable) != STATUS_SUCCESS)
         return NULL;
-    
-    ret = (RTL_HANDLE *)HandleTable->NextFree;
+
+    ret = HandleTable->NextFree;
     HandleTable->NextFree = ret->Next;
 
     if (HandleIndex)
@@ -229,7 +241,7 @@ BOOLEAN WINAPI RtlFreeHandle(RTL_HANDLE_TABLE * HandleTable, RTL_HANDLE * Handle
      * effect of setting Handle->Next to the previously next free handle in
      * the handle table */
     memset(Handle, 0, HandleTable->HandleSize);
-    Handle->Next = (RTL_HANDLE *)HandleTable->NextFree;
+    Handle->Next = HandleTable->NextFree;
     HandleTable->NextFree = Handle;
     return TRUE;
 }
@@ -280,7 +292,7 @@ BOOLEAN WINAPI RtlIsValidIndexHandle(const RTL_HANDLE_TABLE * HandleTable, ULONG
 {
     RTL_HANDLE * Handle;
 
-    TRACE("(%p, %lu, %p)\n", HandleTable, Index, ValidHandle);
+    TRACE("(%p, %u, %p)\n", HandleTable, Index, ValidHandle);
     Handle = (RTL_HANDLE *)
         ((char *)HandleTable->FirstHandle + Index * HandleTable->HandleSize);
 

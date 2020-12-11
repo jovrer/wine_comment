@@ -13,9 +13,9 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
- * You should have receuved a copy of the GNU Lesser General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -58,53 +58,71 @@ static UINT UPDATE_fetch_int( struct tagMSIVIEW *view, UINT row, UINT col, UINT 
 static UINT UPDATE_execute( struct tagMSIVIEW *view, MSIRECORD *record )
 {
     MSIUPDATEVIEW *uv = (MSIUPDATEVIEW*)view;
-    UINT n, type, val, r, row, col_count = 0, row_count = 0;
+    UINT i, r, col_count = 0, row_count = 0;
+    MSIRECORD *values = NULL;
+    MSIRECORD *where = NULL;
     MSIVIEW *wv;
+    UINT cols_count, where_count;
+    column_info *col = uv->vals;
 
     TRACE("%p %p\n", uv, record );
 
-    if( !record )
-        return ERROR_FUNCTION_FAILED;
-
-    wv = uv->wv;
-    if( !wv )
-        return ERROR_FUNCTION_FAILED;
-
-    r = wv->ops->execute( wv, 0 );
-    TRACE("tv execute returned %x\n", r);
-    if( r )
-        return r;
-
-    r = wv->ops->get_dimensions( wv, &row_count, &col_count );
-    if( r )
-        goto err;
-
-    for( row = 0; row < row_count; row++ )
+    /* extract the where markers from the record */
+    if (record)
     {
-        for( n = 1; n <= col_count; n++ )
-        {
-            r = wv->ops->get_column_info( wv, n, NULL, &type );
-            if( r )
-                break;
+        r = MSI_RecordGetFieldCount(record);
 
-            if( type & MSITYPE_STRING )
-            {
-                const WCHAR *str = MSI_RecordGetString( record, n );
-                val = msi_addstringW( uv->db->strings, 0, str, -1, 1 );
-            }
-            else
-            {
-                val = MSI_RecordGetInteger( record, n );
-                val |= 0x8000;
-            }
-            r = wv->ops->set_int( wv, row, n, val );
-            if( r )
-                break;
+        for (i = 0; col; col = col->next)
+            i++;
+
+        cols_count = i;
+        where_count = r - i;
+
+        if (where_count > 0)
+        {
+            where = MSI_CreateRecord(where_count);
+
+            if (where)
+                for (i = 1; i <= where_count; i++)
+                    MSI_RecordCopyField(record, cols_count + i, where, i);
         }
     }
 
-err:
-    return ERROR_SUCCESS;
+    wv = uv->wv;
+    if( !wv )
+    {
+        r = ERROR_FUNCTION_FAILED;
+        goto done;
+    }
+
+    r = wv->ops->execute( wv, where );
+    TRACE("tv execute returned %x\n", r);
+    if( r )
+        goto done;
+
+    r = wv->ops->get_dimensions( wv, &row_count, &col_count );
+    if( r )
+        goto done;
+
+    values = msi_query_merge_record( col_count, uv->vals, record );
+    if (!values)
+    {
+        r = ERROR_FUNCTION_FAILED;
+        goto done;
+    }
+
+    for ( i=0; i<row_count; i++ )
+    {
+        r = wv->ops->set_row( wv, i, values, (1 << col_count) - 1 );
+        if (r != ERROR_SUCCESS)
+            break;
+    }
+
+done:
+    if ( where ) msiobj_release( &where->hdr );
+    if ( values ) msiobj_release( &values->hdr );
+
+    return r;
 }
 
 
@@ -136,23 +154,23 @@ static UINT UPDATE_get_dimensions( struct tagMSIVIEW *view, UINT *rows, UINT *co
     return wv->ops->get_dimensions( wv, rows, cols );
 }
 
-static UINT UPDATE_get_column_info( struct tagMSIVIEW *view,
-                UINT n, LPWSTR *name, UINT *type )
+static UINT UPDATE_get_column_info( struct tagMSIVIEW *view, UINT n, LPCWSTR *name,
+                                    UINT *type, BOOL *temporary, LPCWSTR *table_name )
 {
     MSIUPDATEVIEW *uv = (MSIUPDATEVIEW*)view;
     MSIVIEW *wv;
 
-    TRACE("%p %d %p %p\n", uv, n, name, type );
+    TRACE("%p %d %p %p %p %p\n", uv, n, name, type, temporary, table_name );
 
     wv = uv->wv;
     if( !wv )
         return ERROR_FUNCTION_FAILED;
 
-    return wv->ops->get_column_info( wv, n, name, type );
+    return wv->ops->get_column_info( wv, n, name, type, temporary, table_name );
 }
 
 static UINT UPDATE_modify( struct tagMSIVIEW *view, MSIMODIFY eModifyMode,
-                MSIRECORD *rec )
+                           MSIRECORD *rec, UINT row )
 {
     MSIUPDATEVIEW *uv = (MSIUPDATEVIEW*)view;
 
@@ -177,10 +195,19 @@ static UINT UPDATE_delete( struct tagMSIVIEW *view )
     return ERROR_SUCCESS;
 }
 
+static UINT UPDATE_find_matching_rows( struct tagMSIVIEW *view, UINT col, UINT val, UINT *row, MSIITERHANDLE *handle )
+{
+    TRACE("%p %d %d %p\n", view, col, val, *handle );
 
-static MSIVIEWOPS update_ops =
+    return ERROR_FUNCTION_FAILED;
+}
+
+
+static const MSIVIEWOPS update_ops =
 {
     UPDATE_fetch_int,
+    NULL,
+    NULL,
     NULL,
     NULL,
     NULL,
@@ -189,7 +216,13 @@ static MSIVIEWOPS update_ops =
     UPDATE_get_dimensions,
     UPDATE_get_column_info,
     UPDATE_modify,
-    UPDATE_delete
+    UPDATE_delete,
+    UPDATE_find_matching_rows,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
 };
 
 UINT UPDATE_CreateView( MSIDATABASE *db, MSIVIEW **view, LPWSTR table,
@@ -197,22 +230,18 @@ UINT UPDATE_CreateView( MSIDATABASE *db, MSIVIEW **view, LPWSTR table,
 {
     MSIUPDATEVIEW *uv = NULL;
     UINT r;
-    MSIVIEW *tv = NULL, *sv = NULL, *wv = NULL;
+    MSIVIEW *sv = NULL, *wv = NULL;
 
     TRACE("%p\n", uv );
 
-    r = TABLE_CreateView( db, table, &tv );
+    if (expr)
+        r = WHERE_CreateView( db, &wv, table, expr );
+    else
+        r = TABLE_CreateView( db, table, &wv );
+
     if( r != ERROR_SUCCESS )
         return r;
 
-    /* add conditions first */
-    r = WHERE_CreateView( db, &wv, tv, expr );
-    if( r != ERROR_SUCCESS )
-    {
-        tv->ops->delete( tv );
-        return r;
-    }
-    
     /* then select the columns we want */
     r = SELECT_CreateView( db, &sv, wv, columns );
     if( r != ERROR_SUCCESS )
@@ -223,7 +252,10 @@ UINT UPDATE_CreateView( MSIDATABASE *db, MSIVIEW **view, LPWSTR table,
 
     uv = msi_alloc_zero( sizeof *uv );
     if( !uv )
+    {
+        wv->ops->delete( wv );
         return ERROR_FUNCTION_FAILED;
+    }
 
     /* fill the structure */
     uv->view.ops = &update_ops;

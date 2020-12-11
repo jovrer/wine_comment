@@ -1,7 +1,7 @@
 /*
  * IDL Compiler
  *
- * Copyright 2005 Eric Kohl
+ * Copyright 2005-2006 Eric Kohl
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -27,269 +27,257 @@
 # include <unistd.h>
 #endif
 #include <string.h>
-#include <assert.h>
 #include <ctype.h>
-#include <signal.h>
 
 #include "widl.h"
 #include "utils.h"
 #include "parser.h"
 #include "header.h"
-#include "windef.h"
 
-#include "widl.h"
-#include "typelib.h"
-#include "typelib_struct.h"
-
-#define END_OF_LIST(list)       \
-  do {                          \
-    if (list) {                 \
-      while (NEXT_LINK(list))   \
-        list = NEXT_LINK(list); \
-    }                           \
-  } while(0)
+#include "typegen.h"
 
 static FILE* server;
 static int indent = 0;
 
 
-static int print_server(const char *format, ...)
+static void print_server(const char *format, ...) __attribute__((format (printf, 1, 2)));
+static void print_server(const char *format, ...)
 {
     va_list va;
-    int i, r;
-
     va_start(va, format);
-    for (i = 0; i < indent; i++)
-        fprintf(server, "    ");
-    r = vfprintf(server, format, va);
+    print(server, indent, format, va);
     va_end(va);
-    return r;
 }
 
-
-static void write_procformatstring(type_t *iface)
+static void write_function_stub(const type_t *iface, const var_t *func, unsigned int proc_offset)
 {
-    func_t *cur = iface->funcs;
+    const var_t *var;
+    unsigned char explicit_fc, implicit_fc;
+    int has_full_pointer = is_full_pointer_function(func);
+    const var_t *handle_var = get_func_handle_var( iface, func, &explicit_fc, &implicit_fc );
 
-    print_server("static const MIDL_PROC_FORMAT_STRING __MIDL_ProcFormatString =\n");
-    print_server("{\n");
-    indent++;
-    print_server("0,\n");
-    print_server("{\n");
-    indent++;
+    if (is_interpreted_func( iface, func )) return;
 
-    while (NEXT_LINK(cur)) cur = NEXT_LINK(cur);
-    while (cur)
+    print_server("struct __frame_%s_%s\n{\n", iface->name, get_name(func));
+    indent++;
+    print_server("__DECL_EXCEPTION_FRAME\n");
+    print_server("MIDL_STUB_MESSAGE _StubMsg;\n");
+
+    /* Declare arguments */
+    declare_stub_args(server, indent, func);
+
+    indent--;
+    print_server("};\n\n");
+
+    print_server("static void __finally_%s_%s(", iface->name, get_name(func));
+    fprintf(server," struct __frame_%s_%s *__frame )\n{\n", iface->name, get_name(func));
+
+    indent++;
+    write_remoting_arguments(server, indent, func, "__frame->", PASS_OUT, PHASE_FREE);
+
+    if (!is_void(type_function_get_rettype(func->type)))
+        write_remoting_arguments(server, indent, func, "__frame->", PASS_RETURN, PHASE_FREE);
+
+    if (has_full_pointer)
+        write_full_pointer_free(server, indent, func);
+
+    indent--;
+    print_server("}\n\n");
+
+    print_server("void __RPC_STUB %s_%s( PRPC_MESSAGE _pRpcMessage )\n", iface->name, get_name(func));
+
+    /* write the functions body */
+    fprintf(server, "{\n");
+    indent++;
+    print_server("struct __frame_%s_%s __f, * const __frame = &__f;\n", iface->name, get_name(func));
+    if (has_out_arg_or_return(func)) print_server("RPC_STATUS _Status;\n");
+    fprintf(server, "\n");
+
+    print_server("NdrServerInitializeNew(\n");
+    indent++;
+    print_server("_pRpcMessage,\n");
+    print_server("&__frame->_StubMsg,\n");
+    print_server("&%s_StubDesc);\n", iface->name);
+    indent--;
+    fprintf(server, "\n");
+    print_server( "RpcExceptionInit( __server_filter, __finally_%s_%s );\n", iface->name, get_name(func));
+
+    write_parameters_init(server, indent, func, "__frame->");
+
+    if (explicit_fc == FC_BIND_PRIMITIVE)
     {
-        var_t *def = cur->def;
-
-        if (is_void(def->type, NULL))
-        {
-            print_server("0x5b,    /* FC_END */\n");
-            print_server("0x5c,    /* FC_PAD */\n");
-        }
-        else
-        {
-            print_server("0x53,    /* FC_RETURN_PARAM_BASETYPE */\n");
-            print_server("0x%02x,    /* <type> */\n", def->type->type);
-        }
-
-        cur = PREV_LINK(cur);
+        print_server("__frame->%s = _pRpcMessage->Handle;\n", handle_var->name);
+        fprintf(server, "\n");
     }
 
-    print_server("0x0\n");
+    print_server("RpcTryFinally\n");
+    print_server("{\n");
+    indent++;
+    print_server("RpcTryExcept\n");
+    print_server("{\n");
+    indent++;
+
+    if (has_full_pointer)
+        write_full_pointer_init(server, indent, func, TRUE);
+
+    if (type_get_function_args(func->type))
+    {
+        print_server("if ((_pRpcMessage->DataRepresentation & 0x0000FFFFUL) != NDR_LOCAL_DATA_REPRESENTATION)\n");
+        indent++;
+        print_server("NdrConvert(&__frame->_StubMsg, (PFORMAT_STRING)&__MIDL_ProcFormatString.Format[%u]);\n",
+                     proc_offset);
+        indent--;
+        fprintf(server, "\n");
+
+        /* unmarshall arguments */
+        write_remoting_arguments(server, indent, func, "__frame->", PASS_IN, PHASE_UNMARSHAL);
+    }
+
+    print_server("if (__frame->_StubMsg.Buffer > __frame->_StubMsg.BufferEnd)\n");
+    print_server("{\n");
+    indent++;
+    print_server("RpcRaiseException(RPC_X_BAD_STUB_DATA);\n");
     indent--;
     print_server("}\n");
     indent--;
-    print_server("};\n");
-    print_server("\n");
-}
-
-
-static void write_typeformatstring(void)
-{
-    print_server("static const MIDL_TYPE_FORMAT_STRING __MIDL_TypeFormatString =\n");
+    print_server("}\n");
+    print_server("RpcExcept(RPC_BAD_STUB_DATA_EXCEPTION_FILTER)\n");
     print_server("{\n");
     indent++;
-    print_server("0,\n");
-    print_server("{\n");
-    indent++;
-    print_server("NdrFcShort(0x0),\n");
-    print_server("0x0\n");
+    print_server("RpcRaiseException(RPC_X_BAD_STUB_DATA);\n");
     indent--;
     print_server("}\n");
-    indent--;
-    print_server("};\n");
-    print_server("\n");
-}
+    print_server("RpcEndExcept\n");
+    fprintf(server, "\n");
 
+    /* Assign 'out' arguments */
+    assign_stub_out_args(server, indent, func, "__frame->");
 
-static unsigned int get_required_stack_size(type_t *type)
-{
-    switch(type->type)
+    /* Call the real server function */
+    print_server("%s%s%s",
+                 is_void(type_function_get_rettype(func->type)) ? "" : "__frame->_RetVal = ",
+                 prefix_server, get_name(func));
+
+    if (type_get_function_args(func->type))
     {
-        case RPC_FC_BYTE:
-        case RPC_FC_CHAR:
-        case RPC_FC_WCHAR:
-        case RPC_FC_USHORT:
-        case RPC_FC_SHORT:
-        case RPC_FC_ULONG:
-        case RPC_FC_LONG:
-            return 4;
+        int first_arg = 1;
 
-      case RPC_FC_HYPER:
-            return 8;
-
-        default:
-            error("Unknown/unsupported type: %s\n", type->name);
-            return 0;
-    }
-}
-
-
-static void write_function_stubs(type_t *iface)
-{
-    func_t *cur = iface->funcs;
-    while (NEXT_LINK(cur)) cur = NEXT_LINK(cur);
-    while (cur)
-    {
-        var_t *def = cur->def;
-
-        write_type(server, def->type, def, def->tname);
-        fprintf(server, " __RPC_STUB\n");
-        fprintf(server, "%s_", iface->name);
-        write_name(server, def);
         fprintf(server, "(\n");
         indent++;
-        print_server("PRPC_MESSAGE _pRpcMessage)\n");
-        indent--;
-
-        /* write the functions body */
-        fprintf(server, "{\n");
-        indent++;
-
-        /* declare return value '_RetVal' */
-        if (!is_void(def->type, NULL))
+        LIST_FOR_EACH_ENTRY( var, type_get_function_args(func->type), const var_t, entry )
         {
-            print_server("");
-            write_type(server, def->type, def, def->tname);
-            fprintf(server, " _RetVal;\n");
+            if (first_arg)
+                first_arg = 0;
+            else
+                fprintf(server, ",\n");
+            if (is_context_handle(var->type))
+            {
+                /* if the context_handle attribute appears in the chain of types
+                 * without pointers being followed, then the context handle must
+                 * be direct, otherwise it is a pointer */
+                const char *ch_ptr = is_aliaschain_attr(var->type, ATTR_CONTEXTHANDLE) ? "*" : "";
+                print_server("(");
+                write_type_decl_left(server, var->type);
+                fprintf(server, ")%sNDRSContextValue(__frame->%s)", ch_ptr, var->name);
+            }
+            else
+            {
+                print_server("%s__frame->%s", is_array(var->type) && !type_array_is_decl_as_ptr(var->type) ? "*" : "", var->name);
+            }
         }
-
-        print_server("MIDL_STUB_MESSAGE _StubMsg;\n");
-        print_server("RPC_STATUS _Status;\n");
-        fprintf(server, "\n");
-        print_server("((void)(_Status));\n");
-        print_server("NdrServerInitializeNew(\n");
-        indent++;
-        print_server("_pRpcMessage,\n");
-        print_server("&_StubMsg,\n");
-        print_server("&%s_StubDesc);\n", iface->name);
+        fprintf(server, ");\n");
         indent--;
-        fprintf(server, "\n");
-
-        print_server("RpcTryFinally\n");
-        print_server("{\n");
-        indent++;
-        print_server("RpcTryExcept\n");
-        print_server("{\n");
-        indent++;
-        print_server("if (_StubMsg.Buffer > _StubMsg.BufferEnd)\n");
-        print_server("{\n");
-        indent++;
-        print_server("RpcRaiseException(RPC_X_BAD_STUB_DATA);\n");
-        indent--;
-        print_server("}\n");
-        indent--;
-        print_server("}\n");
-        print_server("RpcExcept(RPC_BAD_STUB_DATA_EXCEPTION_FILTER)\n");
-        print_server("{\n");
-        indent++;
-        print_server("RpcRaiseException(RPC_X_BAD_STUB_DATA);\n");
-        indent--;
-        print_server("}\n");
-        print_server("RpcEndExcept\n");
-        fprintf(server, "\n");
-
-
-        /* Call the real server function */
-        if (!is_void(def->type, NULL))
-            print_server("_RetVal = ");
-        else
-            print_server("");
-        write_name(server, def);
-
-        /* FIXME: handle argument list */
+    }
+    else
+    {
         fprintf(server, "();\n");
+    }
 
-        /* FIXME: Marshall the return value */
-        if (!is_void(def->type, NULL))
-        {
-            fprintf(server, "\n");
-            print_server("_StubMsg.BufferLength = %uU;\n", get_required_stack_size(def->type));
-            print_server("_pRpcMessage->BufferLength = _StubMsg.BufferLength;\n");
-            fprintf(server, "\n");
-            print_server("_Status = I_RpcGetBuffer(_pRpcMessage);\n");
-            print_server("if (_Status)\n");
-            indent++;
-            print_server("RpcRaiseException(_Status);\n");
-            indent--;
-            fprintf(server, "\n");
-            print_server("_StubMsg.Buffer = (unsigned char __RPC_FAR *)_pRpcMessage->Buffer;\n");
-            fprintf(server, "\n");
+    if (has_out_arg_or_return(func))
+    {
+        write_remoting_arguments(server, indent, func, "__frame->", PASS_OUT, PHASE_BUFFERSIZE);
 
-            print_server("*((");
-            write_type(server, def->type, def, def->tname);
-            fprintf(server, " __RPC_FAR *)_StubMsg.Buffer)++ = _RetVal;\n");
-        }
+        if (!is_void(type_function_get_rettype(func->type)))
+            write_remoting_arguments(server, indent, func, "__frame->", PASS_RETURN, PHASE_BUFFERSIZE);
 
-        indent--;
-        print_server("}\n");
-        print_server("RpcFinally\n");
-        print_server("{\n");
-        print_server("}\n");
-        print_server("RpcEndFinally\n");
-
-        /* calculate buffer length */
+        print_server("_pRpcMessage->BufferLength = __frame->_StubMsg.BufferLength;\n");
         fprintf(server, "\n");
-        print_server("_pRpcMessage->BufferLength =\n");
+        print_server("_Status = I_RpcGetBuffer(_pRpcMessage);\n");
+        print_server("if (_Status)\n");
         indent++;
-        print_server("(unsigned int)((long)_StubMsg.Buffer - (long)_pRpcMessage->Buffer);\n");
+        print_server("RpcRaiseException(_Status);\n");
         indent--;
-        indent--;
-        fprintf(server, "}\n");
         fprintf(server, "\n");
+        print_server("__frame->_StubMsg.Buffer = _pRpcMessage->Buffer;\n");
+        fprintf(server, "\n");
+    }
 
-        cur = PREV_LINK(cur);
+    /* marshall arguments */
+    write_remoting_arguments(server, indent, func, "__frame->", PASS_OUT, PHASE_MARSHAL);
+
+    /* marshall the return value */
+    if (!is_void(type_function_get_rettype(func->type)))
+        write_remoting_arguments(server, indent, func, "__frame->", PASS_RETURN, PHASE_MARSHAL);
+
+    indent--;
+    print_server("}\n");
+    print_server("RpcFinally\n");
+    print_server("{\n");
+    indent++;
+    print_server("__finally_%s_%s( __frame );\n", iface->name, get_name(func));
+    indent--;
+    print_server("}\n");
+    print_server("RpcEndFinally\n");
+
+    /* calculate buffer length */
+    fprintf(server, "\n");
+    print_server("_pRpcMessage->BufferLength = __frame->_StubMsg.Buffer - (unsigned char *)_pRpcMessage->Buffer;\n");
+    indent--;
+    fprintf(server, "}\n");
+    fprintf(server, "\n");
+}
+
+
+static void write_function_stubs(type_t *iface, unsigned int *proc_offset)
+{
+    const statement_t *stmt;
+
+    STATEMENTS_FOR_EACH_FUNC( stmt, type_iface_get_stmts(iface) )
+    {
+        var_t *func = stmt->u.var;
+
+        write_function_stub( iface, func, *proc_offset );
+
+        /* update proc_offset */
+        func->procstring_offset = *proc_offset;
+        *proc_offset += get_size_procformatstring_func( iface, func );
     }
 }
 
 
 static void write_dispatchtable(type_t *iface)
 {
-    unsigned long ver = get_attrv(iface->attrs, ATTR_VERSION);
-    unsigned long method_count = 0;
-    func_t *cur = iface->funcs;
+    unsigned int ver = get_attrv(iface->attrs, ATTR_VERSION);
+    unsigned int method_count = 0;
+    const statement_t *stmt;
 
     print_server("static RPC_DISPATCH_FUNCTION %s_table[] =\n", iface->name);
     print_server("{\n");
     indent++;
-    while (NEXT_LINK(cur)) cur = NEXT_LINK(cur);
-    while (cur)
+
+    STATEMENTS_FOR_EACH_FUNC( stmt, type_iface_get_stmts(iface) )
     {
-        var_t *def = cur->def;
-
-        print_server("%s_", iface->name);
-        write_name(server, def);
-        fprintf(server, ",\n");
-
+        var_t *func = stmt->u.var;
+        if (is_interpreted_func( iface, func ))
+            print_server("%s,\n", get_stub_mode() == MODE_Oif ? "NdrServerCall2" : "NdrServerCall");
+        else
+            print_server("%s_%s,\n", iface->name, get_name(func));
         method_count++;
-        cur = PREV_LINK(cur);
     }
     print_server("0\n");
     indent--;
     print_server("};\n");
-    print_server("RPC_DISPATCH_TABLE %s_v%d_%d_DispatchTable =\n", iface->name, LOWORD(ver), HIWORD(ver));
+    print_server("static RPC_DISPATCH_TABLE %s_v%d_%d_DispatchTable =\n", iface->name, MAJORVERSION(ver), MINORVERSION(ver));
     print_server("{\n");
     indent++;
     print_server("%u,\n", method_count);
@@ -300,33 +288,99 @@ static void write_dispatchtable(type_t *iface)
 }
 
 
+static void write_routinetable(type_t *iface)
+{
+    const statement_t *stmt;
+
+    print_server( "static const SERVER_ROUTINE %s_ServerRoutineTable[] =\n", iface->name );
+    print_server( "{\n" );
+    indent++;
+    STATEMENTS_FOR_EACH_FUNC( stmt, type_iface_get_stmts(iface) )
+    {
+        var_t *func = stmt->u.var;
+        if (is_local( func->attrs )) continue;
+        print_server( "(SERVER_ROUTINE)%s%s,\n", prefix_server, get_name(func));
+    }
+    indent--;
+    print_server( "};\n\n" );
+}
+
+
+static void write_rundown_routines(void)
+{
+    context_handle_t *ch;
+    int count = list_count( &context_handle_list );
+
+    if (!count) return;
+    print_server( "static const NDR_RUNDOWN RundownRoutines[] =\n" );
+    print_server( "{\n" );
+    indent++;
+    LIST_FOR_EACH_ENTRY( ch, &context_handle_list, context_handle_t, entry )
+    {
+        print_server( "%s_rundown", ch->name );
+        if (--count) fputc( ',', server );
+        fputc( '\n', server );
+    }
+    indent--;
+    print_server( "};\n\n" );
+}
+
+
+static void write_serverinfo(type_t *iface)
+{
+    print_server( "static const MIDL_SERVER_INFO %s_ServerInfo =\n", iface->name );
+    print_server( "{\n" );
+    indent++;
+    print_server( "&%s_StubDesc,\n", iface->name );
+    print_server( "%s_ServerRoutineTable,\n", iface->name );
+    print_server( "__MIDL_ProcFormatString.Format,\n" );
+    print_server( "%s_FormatStringOffsetTable,\n", iface->name );
+    print_server( "0,\n" );
+    print_server( "0,\n" );
+    print_server( "0,\n" );
+    print_server( "0\n" );
+    indent--;
+    print_server( "};\n\n" );
+}
+
+
 static void write_stubdescdecl(type_t *iface)
 {
-    print_server("extern const MIDL_STUB_DESC %s_StubDesc;\n", iface->name);
+    print_server("static const MIDL_STUB_DESC %s_StubDesc;\n", iface->name);
     fprintf(server, "\n");
 }
 
 
-static void write_stubdescriptor(type_t *iface)
+static void write_stubdescriptor(type_t *iface, int expr_eval_routines)
 {
     print_server("static const MIDL_STUB_DESC %s_StubDesc =\n", iface->name);
     print_server("{\n");
     indent++;
-    print_server("(void __RPC_FAR *)& %s___RpcServerInterface,\n", iface->name);
+    print_server("(void *)& %s___RpcServerInterface,\n", iface->name);
     print_server("MIDL_user_allocate,\n");
     print_server("MIDL_user_free,\n");
+    print_server("{\n");
+    indent++;
     print_server("0,\n");
+    indent--;
+    print_server("},\n");
+    if (!list_empty( &context_handle_list ))
+        print_server("RundownRoutines,\n");
+    else
+        print_server("0,\n");
     print_server("0,\n");
-    print_server("0,\n");
-    print_server("0,\n");
+    if (expr_eval_routines)
+        print_server("ExprEvalRoutines,\n");
+    else
+        print_server("0,\n");
     print_server("0,\n");
     print_server("__MIDL_TypeFormatString.Format,\n");
     print_server("1, /* -error bounds_check flag */\n");
-    print_server("0x10001, /* Ndr library version */\n");
+    print_server("0x%x, /* Ndr library version */\n", get_stub_mode() == MODE_Oif ? 0x50002 : 0x10001);
     print_server("0,\n");
     print_server("0x50100a4, /* MIDL Version 5.1.164 */\n");
     print_server("0,\n");
-    print_server("0,\n");
+    print_server("%s,\n", list_empty(&user_type_list) ? "0" : "UserMarshalRoutines");
     print_server("0,  /* notify & notify_flag routine table */\n");
     print_server("1,  /* Flags */\n");
     print_server("0,  /* Reserved3 */\n");
@@ -340,70 +394,47 @@ static void write_stubdescriptor(type_t *iface)
 
 static void write_serverinterfacedecl(type_t *iface)
 {
-    unsigned long ver = get_attrv(iface->attrs, ATTR_VERSION);
+    unsigned int ver = get_attrv(iface->attrs, ATTR_VERSION);
     UUID *uuid = get_attrp(iface->attrs, ATTR_UUID);
+    const str_list_t *endpoints = get_attrp(iface->attrs, ATTR_ENDPOINT);
 
-    print_server("extern RPC_DISPATCH_TABLE %s_v%d_%d_DispatchTable;\n", iface->name, LOWORD(ver), HIWORD(ver));
+    if (endpoints) write_endpoints( server, iface->name, endpoints );
+
+    print_server("static RPC_DISPATCH_TABLE %s_v%d_%d_DispatchTable;\n", iface->name, MAJORVERSION(ver), MINORVERSION(ver));
+    print_server( "static const MIDL_SERVER_INFO %s_ServerInfo;\n", iface->name );
     fprintf(server, "\n");
     print_server("static const RPC_SERVER_INTERFACE %s___RpcServerInterface =\n", iface->name );
     print_server("{\n");
     indent++;
     print_server("sizeof(RPC_SERVER_INTERFACE),\n");
-    print_server("{{0x%08lx,0x%04x,0x%04x,{0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x}},{%d,%d}},\n",
+    print_server("{{0x%08x,0x%04x,0x%04x,{0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x}},{%d,%d}},\n",
                  uuid->Data1, uuid->Data2, uuid->Data3, uuid->Data4[0], uuid->Data4[1],
                  uuid->Data4[2], uuid->Data4[3], uuid->Data4[4], uuid->Data4[5], uuid->Data4[6],
-                 uuid->Data4[7], LOWORD(ver), HIWORD(ver));
+                 uuid->Data4[7], MAJORVERSION(ver), MINORVERSION(ver));
     print_server("{{0x8a885d04,0x1ceb,0x11c9,{0x9f,0xe8,0x08,0x00,0x2b,0x10,0x48,0x60}},{2,0}},\n"); /* FIXME */
-    print_server("&%s_v%d_%d_DispatchTable,\n", iface->name, LOWORD(ver), HIWORD(ver));
+    print_server("&%s_v%d_%d_DispatchTable,\n", iface->name, MAJORVERSION(ver), MINORVERSION(ver));
+    if (endpoints)
+    {
+        print_server("%u,\n", list_count(endpoints));
+        print_server("(PRPC_PROTSEQ_ENDPOINT)%s__RpcProtseqEndpoint,\n", iface->name);
+    }
+    else
+    {
+        print_server("0,\n");
+        print_server("0,\n");
+    }
     print_server("0,\n");
-    print_server("0,\n");
-    print_server("0,\n");
-    print_server("0,\n");
+    print_server("&%s_ServerInfo,\n", iface->name);
     print_server("0,\n");
     indent--;
     print_server("};\n");
-    print_server("RPC_IF_HANDLE %s_v%d_%d_s_ifspec = (RPC_IF_HANDLE)& %s___RpcServerInterface;\n",
-                 iface->name, LOWORD(ver), HIWORD(ver), iface->name);
+    if (old_names)
+        print_server("RPC_IF_HANDLE %s_ServerIfHandle DECLSPEC_HIDDEN = (RPC_IF_HANDLE)& %s___RpcServerInterface;\n",
+                     iface->name, iface->name);
+    else
+        print_server("RPC_IF_HANDLE %s%s_v%d_%d_s_ifspec DECLSPEC_HIDDEN = (RPC_IF_HANDLE)& %s___RpcServerInterface;\n",
+                     prefix_server, iface->name, MAJORVERSION(ver), MINORVERSION(ver), iface->name);
     fprintf(server, "\n");
-}
-
-static void write_formatdesc( const char *str )
-{
-    print_server("typedef struct _MIDL_%s_FORMAT_STRING\n", str );
-    print_server("{\n");
-    indent++;
-    print_server("short Pad;\n");
-    print_server("unsigned char Format[%s_FORMAT_STRING_SIZE];\n", str);
-    indent--;
-    print_server("} MIDL_%s_FORMAT_STRING;\n", str);
-    print_server("\n");
-}
-
-
-static void write_formatstringsdecl(type_t *iface)
-{
-    func_t *cur;
-    int byte_count = 1;
-
-    print_server("#define TYPE_FORMAT_STRING_SIZE %d\n", 3); /* FIXME */
-
-    /* determine the proc format string size */
-    cur = iface->funcs;
-    while (NEXT_LINK(cur)) cur = NEXT_LINK(cur);
-    while (cur)
-    {
-        byte_count += 2; /* FIXME: determine real size */
-        cur = PREV_LINK(cur);
-    }
-    print_server("#define PROC_FORMAT_STRING_SIZE %d\n", byte_count);
-
-    fprintf(server, "\n");
-    write_formatdesc("TYPE");
-    write_formatdesc("PROC");
-    fprintf(server, "\n");
-    print_server("extern const MIDL_TYPE_FORMAT_STRING __MIDL_TypeFormatString;\n");
-    print_server("extern const MIDL_PROC_FORMAT_STRING __MIDL_ProcFormatString;\n");
-    print_server("\n");
 }
 
 
@@ -414,46 +445,105 @@ static void init_server(void)
     if (!(server = fopen(server_name, "w")))
         error("Could not open %s for output\n", server_name);
 
-    print_server("/*** Autogenerated by WIDL %s from %s - Do not edit ***/\n", WIDL_FULLVERSION, input_name);
+    print_server("/*** Autogenerated by WIDL %s from %s - Do not edit ***/\n", PACKAGE_VERSION, input_name);
     print_server("#include <string.h>\n");
     fprintf(server, "\n");
     print_server("#include \"%s\"\n", header_name);
-    fprintf(server, "\n");
+    print_server("\n");
+    print_server( "#ifndef DECLSPEC_HIDDEN\n");
+    print_server( "#define DECLSPEC_HIDDEN\n");
+    print_server( "#endif\n");
+    print_server( "\n");
 }
 
 
-void write_server(ifref_t *ifaces)
+static void write_server_stmts(const statement_list_t *stmts, int expr_eval_routines, unsigned int *proc_offset)
 {
-    ifref_t *lcur = ifaces;
+    const statement_t *stmt;
+    if (stmts) LIST_FOR_EACH_ENTRY( stmt, stmts, const statement_t, entry )
+    {
+        if (stmt->type == STMT_TYPE && type_get_type(stmt->u.type) == TYPE_INTERFACE)
+        {
+            type_t *iface = stmt->u.type;
+            if (!need_stub(iface))
+                continue;
 
+            fprintf(server, "/*****************************************************************************\n");
+            fprintf(server, " * %s interface\n", iface->name);
+            fprintf(server, " */\n");
+            fprintf(server, "\n");
+
+            if (statements_has_func(type_iface_get_stmts(iface)))
+            {
+                write_serverinterfacedecl(iface);
+                write_stubdescdecl(iface);
+
+                write_function_stubs(iface, proc_offset);
+
+                print_server("#if !defined(__RPC_WIN%u__)\n", pointer_size == 8 ? 64 : 32);
+                print_server("#error  Invalid build platform for this stub.\n");
+                print_server("#endif\n");
+
+                fprintf(server, "\n");
+                write_procformatstring_offsets( server, iface );
+                write_stubdescriptor(iface, expr_eval_routines);
+                write_dispatchtable(iface);
+                write_routinetable(iface);
+                write_serverinfo(iface);
+            }
+        }
+    }
+}
+
+static void write_server_routines(const statement_list_t *stmts)
+{
+    unsigned int proc_offset = 0;
+    int expr_eval_routines;
+
+    if (need_inline_stubs_file( stmts ))
+    {
+        write_exceptions( server );
+        print_server("\n");
+        print_server("struct __server_frame\n");
+        print_server("{\n");
+        print_server("    __DECL_EXCEPTION_FRAME\n");
+        print_server("    MIDL_STUB_MESSAGE _StubMsg;\n");
+        print_server("};\n");
+        print_server("\n");
+        print_server("static int __server_filter( struct __server_frame *__frame )\n");
+        print_server( "{\n");
+        print_server( "    return (__frame->code == STATUS_ACCESS_VIOLATION) ||\n");
+        print_server( "           (__frame->code == STATUS_DATATYPE_MISALIGNMENT) ||\n");
+        print_server( "           (__frame->code == RPC_X_BAD_STUB_DATA) ||\n");
+        print_server( "           (__frame->code == RPC_S_INVALID_BOUND);\n");
+        print_server( "}\n");
+        print_server( "\n");
+    }
+
+    write_formatstringsdecl(server, indent, stmts, need_stub);
+    expr_eval_routines = write_expr_eval_routines(server, server_token);
+    if (expr_eval_routines)
+        write_expr_eval_routine_list(server, server_token);
+    write_user_quad_list(server);
+    write_rundown_routines();
+
+    write_server_stmts(stmts, expr_eval_routines, &proc_offset);
+
+    write_procformatstring(server, stmts, need_stub);
+    write_typeformatstring(server, stmts, need_stub);
+}
+
+void write_server(const statement_list_t *stmts)
+{
     if (!do_server)
         return;
-    if (!lcur)
+    if (do_everything && !need_stub_files(stmts))
         return;
-    END_OF_LIST(lcur);
 
     init_server();
     if (!server)
         return;
 
-    write_formatstringsdecl(lcur->iface);
-    write_serverinterfacedecl(lcur->iface);
-    write_stubdescdecl(lcur->iface);
-
-    write_function_stubs(lcur->iface);
-
-    write_stubdescriptor(lcur->iface);
-    write_dispatchtable(lcur->iface);
-
-    print_server("#if !defined(__RPC_WIN32__)\n");
-    print_server("#error  Invalid build platform for this stub.\n");
-    print_server("#endif\n");
-    fprintf(server, "\n");
-
-    write_procformatstring(lcur->iface);
-    write_typeformatstring();
-
-    fprintf(server, "\n");
-
+    write_server_routines( stmts );
     fclose(server);
 }

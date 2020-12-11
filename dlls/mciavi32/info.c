@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <string.h>
@@ -28,7 +28,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(mciavi);
 /**************************************************************************
  * 				MCIAVI_ConvertFrameToTimeFormat	[internal]
  */
-DWORD 	MCIAVI_ConvertFrameToTimeFormat(WINE_MCIAVI* wma, DWORD val, LPDWORD lpRet)
+static DWORD MCIAVI_ConvertFrameToTimeFormat(WINE_MCIAVI* wma, DWORD val, LPDWORD lpRet)
 {
     DWORD	   ret = 0;
 
@@ -40,9 +40,9 @@ DWORD 	MCIAVI_ConvertFrameToTimeFormat(WINE_MCIAVI* wma, DWORD val, LPDWORD lpRe
 	ret = val;
 	break;
     default:
-	WARN("Bad time format %lu!\n", wma->dwMciTimeFormat);
+	WARN("Bad time format %u!\n", wma->dwMciTimeFormat);
     }
-    TRACE("val=%lu=0x%08lx [tf=%lu] => ret=%lu\n", val, val, wma->dwMciTimeFormat, ret);
+    TRACE("val=%u=0x%08x [tf=%u] => ret=%u\n", val, val, wma->dwMciTimeFormat, ret);
     *lpRet = 0;
     return ret;
 }
@@ -62,9 +62,9 @@ DWORD 	MCIAVI_ConvertTimeFormatToFrame(WINE_MCIAVI* wma, DWORD val)
 	ret = val;
 	break;
     default:
-	WARN("Bad time format %lu!\n", wma->dwMciTimeFormat);
+	WARN("Bad time format %u!\n", wma->dwMciTimeFormat);
     }
-    TRACE("val=%lu=0x%08lx [tf=%lu] => ret=%lu\n", val, val, wma->dwMciTimeFormat, ret);
+    TRACE("val=%u=0x%08x [tf=%u] => ret=%u\n", val, val, wma->dwMciTimeFormat, ret);
     return ret;
 }
 
@@ -74,12 +74,14 @@ DWORD 	MCIAVI_ConvertTimeFormatToFrame(WINE_MCIAVI* wma, DWORD val)
 DWORD	MCIAVI_mciGetDevCaps(UINT wDevID, DWORD dwFlags,  LPMCI_GETDEVCAPS_PARMS lpParms)
 {
     WINE_MCIAVI*	wma = MCIAVI_mciGetOpenDev(wDevID);
-    DWORD		ret;
+    DWORD		ret = MCIERR_UNSUPPORTED_FUNCTION;
 
-    TRACE("(%04x, %08lX, %p)\n", wDevID, dwFlags, lpParms);
+    TRACE("(%04x, %08X, %p)\n", wDevID, dwFlags, lpParms);
 
     if (lpParms == NULL) 	return MCIERR_NULL_PARAMETER_BLOCK;
     if (wma == NULL)		return MCIERR_INVALID_DEVICE_ID;
+    if (!(dwFlags & MCI_GETDEVCAPS_ITEM)) return MCIERR_MISSING_PARAMETER;
+    if (dwFlags & MCI_TEST)	return 0;
 
     EnterCriticalSection(&wma->cs);
 
@@ -130,14 +132,51 @@ DWORD	MCIAVI_mciGetDevCaps(UINT wDevID, DWORD dwFlags,  LPMCI_GETDEVCAPS_PARMS l
 	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE);
 	    ret = MCI_RESOURCE_RETURNED;
 	    break;
+	case MCI_DGV_GETDEVCAPS_CAN_REVERSE:
+	    TRACE("MCI_DGV_GETDEVCAPS_CAN_REVERSE !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE); /* FIXME */
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	case MCI_DGV_GETDEVCAPS_CAN_STRETCH:
+	    TRACE("MCI_DGV_GETDEVCAPS_CAN_STRETCH !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE); /* FIXME */
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	case MCI_DGV_GETDEVCAPS_CAN_LOCK:
+	    TRACE("MCI_DGV_GETDEVCAPS_CAN_LOCK !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	case MCI_DGV_GETDEVCAPS_CAN_FREEZE:
+	    TRACE("MCI_DGV_GETDEVCAPS_CAN_FREEZE !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	case MCI_DGV_GETDEVCAPS_CAN_STR_IN:
+	    TRACE("MCI_DGV_GETDEVCAPS_CAN_STRETCH_INPUT !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	case MCI_DGV_GETDEVCAPS_HAS_STILL:
+	    TRACE("MCI_DGV_GETDEVCAPS_HAS_STILL !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	case MCI_DGV_GETDEVCAPS_CAN_TEST:
+	    TRACE("MCI_DGV_GETDEVCAPS_CAN_TEST !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(TRUE, MCI_TRUE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	case MCI_DGV_GETDEVCAPS_PALETTES:
+	    TRACE("MCI_DGV_GETDEVCAPS_PALETTES !\n");
+	    lpParms->dwReturn = MAKEMCIRESOURCE(FALSE, MCI_FALSE); /* FIXME */
+	    ret = MCI_RESOURCE_RETURNED;
+	    break;
+	/* w2k does not know MAX_WINDOWS or MAX/MINIMUM_RATE */
 	default:
-	    FIXME("Unknown capability (%08lx) !\n", lpParms->dwItem);
-           ret = MCIERR_UNRECOGNIZED_COMMAND;
+            FIXME("Unknown capability (%08x) !\n", lpParms->dwItem);
             break;
 	}
-    } else {
-	WARN("No GetDevCaps-Item !\n");
-       ret = MCIERR_UNRECOGNIZED_COMMAND;
     }
 
     LeaveCriticalSection(&wma->cs);
@@ -153,33 +192,32 @@ DWORD	MCIAVI_mciInfo(UINT wDevID, DWORD dwFlags, LPMCI_DGV_INFO_PARMSW lpParms)
     WINE_MCIAVI*	wma = MCIAVI_mciGetOpenDev(wDevID);
     DWORD		ret = 0;
     static const WCHAR wszAviPlayer[] = {'W','i','n','e','\'','s',' ','A','V','I',' ','p','l','a','y','e','r',0};
+    static const WCHAR wszVersion[] = {'1','.','1',0};
 
     if (lpParms == NULL || lpParms->lpstrReturn == NULL)
 	return MCIERR_NULL_PARAMETER_BLOCK;
     if (wma == NULL) return MCIERR_INVALID_DEVICE_ID;
+    if (dwFlags & MCI_TEST)	return 0;
 
-    TRACE("buf=%p, len=%lu\n", lpParms->lpstrReturn, lpParms->dwRetSize);
+    TRACE("buf=%p, len=%u\n", lpParms->lpstrReturn, lpParms->dwRetSize);
 
     EnterCriticalSection(&wma->cs);
 
     if (dwFlags & MCI_INFO_PRODUCT)
 	str = wszAviPlayer;
+    else if (dwFlags & MCI_INFO_VERSION)
+	str = wszVersion;
     else if (dwFlags & MCI_INFO_FILE)
 	str = wma->lpFileName;
     else {
-	WARN("Don't know this info command (%lu)\n", dwFlags);
+	WARN("Don't know this info command (%u)\n", dwFlags);
 	ret = MCIERR_UNRECOGNIZED_COMMAND;
     }
-    if (str) {
-	if (strlenW(str) + 1 > lpParms->dwRetSize) {
-	    ret = MCIERR_PARAM_OVERFLOW;
-	} else {
-	    lstrcpynW(lpParms->lpstrReturn, str, lpParms->dwRetSize);
-	}
-    } else {
-	lpParms->lpstrReturn[0] = 0;
+    if (!ret) {
+	WCHAR zero = 0;
+	/* Only mciwave, mciseq and mcicda set dwRetSize (since NT). */
+	lstrcpynW(lpParms->lpstrReturn, str ? str : &zero, lpParms->dwRetSize);
     }
-
     LeaveCriticalSection(&wma->cs);
     return ret;
 }
@@ -193,6 +231,7 @@ DWORD	MCIAVI_mciSet(UINT wDevID, DWORD dwFlags, LPMCI_DGV_SET_PARMS lpParms)
 
     if (lpParms == NULL)	return MCIERR_NULL_PARAMETER_BLOCK;
     if (wma == NULL)		return MCIERR_INVALID_DEVICE_ID;
+    if (dwFlags & MCI_TEST)	return 0;
 
     EnterCriticalSection(&wma->cs);
 
@@ -207,7 +246,7 @@ DWORD	MCIAVI_mciSet(UINT wDevID, DWORD dwFlags, LPMCI_DGV_SET_PARMS lpParms)
 	    wma->dwMciTimeFormat = MCI_FORMAT_FRAMES;
 	    break;
 	default:
-	    WARN("Bad time format %lu!\n", lpParms->dwTimeFormat);
+            WARN("Bad time format %u!\n", lpParms->dwTimeFormat);
             LeaveCriticalSection(&wma->cs);
 	    return MCIERR_BAD_TIME_FORMAT;
 	}
@@ -225,72 +264,73 @@ DWORD	MCIAVI_mciSet(UINT wDevID, DWORD dwFlags, LPMCI_DGV_SET_PARMS lpParms)
     }
 
     if (dwFlags & MCI_SET_ON) {
-	char	buffer[256];
-
-	strcpy(buffer, "MCI_SET_ON:");
+	const char *szVideo="";
+	const char *szAudio="";
+	const char *szSeek="";
 
 	if (dwFlags & MCI_SET_VIDEO) {
-	    strncat(buffer, " video", sizeof(buffer));
+	    szVideo = " video";
 	    wma->dwSet |= 4;
 	}
 	if (dwFlags & MCI_SET_AUDIO) {
-	    strncat(buffer, " audio", sizeof(buffer));
 	    switch (lpParms->dwAudio) {
 	    case MCI_SET_AUDIO_ALL:
-		strncat(buffer, " all", sizeof(buffer));
+		szAudio = " audio all";
 		wma->dwSet |= 3;
 		break;
 	    case MCI_SET_AUDIO_LEFT:
-		strncat(buffer, " left", sizeof(buffer));
+		szAudio = " audio left";
 		wma->dwSet |= 1;
 		break;
 	    case MCI_SET_AUDIO_RIGHT:
-		strncat(buffer, " right", sizeof(buffer));
+		szAudio = " audio right";
 		wma->dwSet |= 2;
 		break;
 	    default:
-		WARN("Unknown audio chanel %lu\n", lpParms->dwAudio);
+		szAudio = " audio unknown";
+		WARN("Unknown audio channel %u\n", lpParms->dwAudio);
 		break;
 	    }
 	}
 	if (dwFlags & MCI_DGV_SET_SEEK_EXACTLY) {
-	    strncat(buffer, " seek_exactly", sizeof(buffer));
+	    szSeek = " seek_exactly";
 	}
-	FIXME("%s\n", buffer);
+	FIXME("MCI_SET_ON:%s%s%s\n", szVideo, szAudio, szSeek);
     }
 
     if (dwFlags & MCI_SET_OFF) {
-	char	buffer[256];
+	const char *szVideo="";
+	const char *szAudio="";
+	const char *szSeek="";
 
-	strcpy(buffer, "MCI_SET_OFF:");
 	if (dwFlags & MCI_SET_VIDEO) {
-	    strncat(buffer, " video", sizeof(buffer));
+	    szVideo = " video";
 	    wma->dwSet &= ~4;
 	}
 	if (dwFlags & MCI_SET_AUDIO) {
-	    strncat(buffer, " audio", sizeof(buffer));
 	    switch (lpParms->dwAudio) {
 	    case MCI_SET_AUDIO_ALL:
-		strncat(buffer, " all", sizeof(buffer));
+		szAudio = " audio all";
 		wma->dwSet &= ~3;
 		break;
 	    case MCI_SET_AUDIO_LEFT:
-		strncat(buffer, " left", sizeof(buffer));
+		szAudio = " audio left";
 		wma->dwSet &= ~2;
 		break;
 	    case MCI_SET_AUDIO_RIGHT:
-		strncat(buffer, " right", sizeof(buffer));
+		szAudio = " audio right";
 		wma->dwSet &= ~2;
 		break;
 	    default:
-		WARN("Unknown audio chanel %lu\n", lpParms->dwAudio);
+		szAudio = " audio unknown";
+		WARN("Unknown audio channel %u\n", lpParms->dwAudio);
 		break;
 	    }
 	}
 	if (dwFlags & MCI_DGV_SET_SEEK_EXACTLY) {
-	    strncat(buffer, " seek_exactly", sizeof(buffer));
+	    szSeek = " seek_exactly";
 	}
-	FIXME("%s\n", buffer);
+	FIXME("MCI_SET_OFF:%s%s%s\n", szVideo, szAudio, szSeek);
     }
     if (dwFlags & MCI_DGV_SET_FILEFORMAT) {
 	LPCSTR	str = "save";
@@ -306,12 +346,12 @@ DWORD	MCIAVI_mciSet(UINT wDevID, DWORD dwFlags, LPMCI_DGV_SET_PARMS lpParms)
 	case MCI_DGV_FF_MPEG: 	FIXME("Setting file format (%s) to 'MPEG'\n", str); 	break;
 	case MCI_DGV_FF_RDIB:	FIXME("Setting file format (%s) to 'RLE DIB'\n", str);	break;
 	case MCI_DGV_FF_RJPEG: 	FIXME("Setting file format (%s) to 'RJPEG'\n", str);	break;
-	default:		FIXME("Setting unknown file format (%s): %ld\n", str, lpParms->dwFileFormat);
+	default:		FIXME("Setting unknown file format (%s): %d\n", str, lpParms->dwFileFormat);
 	}
     }
 
     if (dwFlags & MCI_DGV_SET_SPEED) {
-	FIXME("Setting speed to %ld\n", lpParms->dwSpeed);
+	FIXME("Setting speed to %d\n", lpParms->dwSpeed);
     }
 
     LeaveCriticalSection(&wma->cs);
@@ -328,6 +368,8 @@ DWORD	MCIAVI_mciStatus(UINT wDevID, DWORD dwFlags, LPMCI_DGV_STATUS_PARMSW lpPar
 
     if (lpParms == NULL)	return MCIERR_NULL_PARAMETER_BLOCK;
     if (wma == NULL)		return MCIERR_INVALID_DEVICE_ID;
+    if (!(dwFlags & MCI_STATUS_ITEM))	return MCIERR_MISSING_PARAMETER;
+    if (dwFlags & MCI_TEST)	return 0;
 
     EnterCriticalSection(&wma->cs);
 
@@ -386,22 +428,28 @@ DWORD	MCIAVI_mciStatus(UINT wDevID, DWORD dwFlags, LPMCI_DGV_STATUS_PARMSW lpPar
 	    TRACE("MCI_STATUS_TIME_FORMAT => %u\n", LOWORD(lpParms->dwReturn));
 	    ret = MCI_RESOURCE_RETURNED;
 	    break;
+	case MCI_DGV_STATUS_AUDIO:
+	    lpParms->dwReturn = (wma->dwSet & 3) ?
+		MAKEMCIRESOURCE(MCI_ON, MCI_ON_S) : MAKEMCIRESOURCE(MCI_OFF, MCI_OFF_S);
+	    ret = MCI_RESOURCE_RETURNED|MCI_RESOURCE_DRIVER;
+	    TRACE("MCI_STATUS_AUDIO = %u\n", LOWORD(lpParms->dwReturn));
+	    break;
+	case MCI_DGV_STATUS_VIDEO:
+	    lpParms->dwReturn = (wma->dwSet & 4) ?
+		MAKEMCIRESOURCE(MCI_ON, MCI_ON_S) : MAKEMCIRESOURCE(MCI_OFF, MCI_OFF_S);
+	    ret = MCI_RESOURCE_RETURNED|MCI_RESOURCE_DRIVER;
+	    TRACE("MCI_STATUS_VIDEO = %u\n", LOWORD(lpParms->dwReturn));
+	    break;
+
 #if 0
 	case MCI_AVI_STATUS_AUDIO_BREAKS:
 	case MCI_AVI_STATUS_FRAMES_SKIPPED:
 	case MCI_AVI_STATUS_LAST_PLAY_SPEED:
-	case MCI_DGV_STATUS_AUDIO:
 	case MCI_DGV_STATUS_AUDIO_INPUT:
 	case MCI_DGV_STATUS_AUDIO_RECORD:
 	case MCI_DGV_STATUS_AUDIO_SOURCE:
-	case MCI_DGV_SETAUDIO_AVERAGE:
-	case MCI_DGV_SETAUDIO_LEFT:
-	case MCI_DGV_SETAUDIO_RIGHT:
-	case MCI_DGV_SETAUDIO_STEREO:
-	case MCI_DGV_STATUS_AUDIO_STREAM:
 	case MCI_DGV_STATUS_AVGBYTESPERSEC:
 	case MCI_DGV_STATUS_BASS:
-	case MCI_DGV_STATUS_BITSPERPEL:
 	case MCI_DGV_STATUS_BITSPERSAMPLE:
 	case MCI_DGV_STATUS_BLOCKALIGN:
 	case MCI_DGV_STATUS_BRIGHTNESS:
@@ -410,10 +458,12 @@ DWORD	MCIAVI_mciStatus(UINT wDevID, DWORD dwFlags, LPMCI_DGV_STATUS_PARMSW lpPar
 	case MCI_DGV_STATUS_FILEFORMAT:
 	case MCI_DGV_STATUS_FILE_MODE:
 	case MCI_DGV_STATUS_FILE_COMPLETION:
-	case MCI_DGV_STATUS_FORWARD:
-	case MCI_DGV_STATUS_FRAME_RATE:
 	case MCI_DGV_STATUS_GAMMA:
 #endif
+	case MCI_DGV_STATUS_BITSPERPEL:
+	    lpParms->dwReturn = wma->inbih->biBitCount;
+	    TRACE("MCI_DGV_STATUS_BITSPERPEL => %lu\n", lpParms->dwReturn);
+	    break;
 	case MCI_DGV_STATUS_HPAL:
 	    lpParms->dwReturn = 0;
 	    TRACE("MCI_DGV_STATUS_HPAL => %lx\n", lpParms->dwReturn);
@@ -421,7 +471,52 @@ DWORD	MCIAVI_mciStatus(UINT wDevID, DWORD dwFlags, LPMCI_DGV_STATUS_PARMSW lpPar
 	case MCI_DGV_STATUS_HWND:
            lpParms->dwReturn = (DWORD_PTR)wma->hWndPaint;
            TRACE("MCI_DGV_STATUS_HWND => %p\n", wma->hWndPaint);
+	   break;
+	case MCI_DGV_STATUS_WINDOW_VISIBLE:
+	    lpParms->dwReturn = IsWindowVisible(wma->hWndPaint) ?
+		MAKEMCIRESOURCE(TRUE, MCI_TRUE) : MAKEMCIRESOURCE(FALSE, MCI_FALSE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    TRACE("MCI_STATUS_WINDOW_VISIBLE = %u\n", LOWORD(lpParms->dwReturn));
 	    break;
+	case MCI_DGV_STATUS_WINDOW_MINIMIZED:
+	    lpParms->dwReturn = IsIconic(wma->hWndPaint) ?
+		MAKEMCIRESOURCE(TRUE, MCI_TRUE) : MAKEMCIRESOURCE(FALSE, MCI_FALSE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    TRACE("MCI_STATUS_WINDOW_MINIMIZED = %u\n", LOWORD(lpParms->dwReturn));
+	    break;
+	case MCI_DGV_STATUS_WINDOW_MAXIMIZED:
+	    lpParms->dwReturn = IsZoomed(wma->hWndPaint) ?
+		MAKEMCIRESOURCE(TRUE, MCI_TRUE) : MAKEMCIRESOURCE(FALSE, MCI_FALSE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    TRACE("MCI_STATUS_WINDOW_MMAXIMIZED = %u\n", LOWORD(lpParms->dwReturn));
+	    break;
+	case MCI_DGV_STATUS_SPEED:
+	    lpParms->dwReturn = 1000;
+	    TRACE("MCI_DGV_STATUS_SPEED = %lu\n", lpParms->dwReturn);
+	    break;
+	case MCI_DGV_STATUS_FRAME_RATE:
+	    /* FIXME: 1000 is a settable speed multiplier */
+	    lpParms->dwReturn = MulDiv(1000000,1000,wma->mah.dwMicroSecPerFrame);
+	    TRACE("MCI_DGV_STATUS_FRAME_RATE = %lu\n", lpParms->dwReturn);
+	    break;
+	case MCI_DGV_STATUS_FORWARD:
+	    lpParms->dwReturn = MAKEMCIRESOURCE(TRUE, MCI_TRUE);
+	    ret = MCI_RESOURCE_RETURNED;
+	    TRACE("MCI_DGV_STATUS_FORWARD = %u\n", LOWORD(lpParms->dwReturn));
+	    break;
+	case MCI_DGV_STATUS_PAUSE_MODE:
+	    if (wma->dwStatus != MCI_MODE_PAUSE) {
+		LeaveCriticalSection(&wma->cs);
+		return MCIERR_NONAPPLICABLE_FUNCTION;
+	    }
+	    lpParms->dwReturn = MAKEMCIRESOURCE(MCI_MODE_PLAY, MCI_MODE_PLAY);
+	    ret = MCI_RESOURCE_RETURNED;
+	    TRACE("MCI_STATUS_MODE => 0x%04x\n", LOWORD(lpParms->dwReturn));
+	    break;
+	case MCI_DGV_STATUS_AUDIO_STREAM:
+	   lpParms->dwReturn = wma->audio_stream_n;
+	   TRACE("MCI_DGV_STATUS_AUDIO_STREAM => %lu\n", lpParms->dwReturn);
+	   break;
 #if 0
 	case MCI_DGV_STATUS_KEY_COLOR:
 	case MCI_DGV_STATUS_KEY_INDEX:
@@ -429,38 +524,27 @@ DWORD	MCIAVI_mciStatus(UINT wDevID, DWORD dwFlags, LPMCI_DGV_STATUS_PARMSW lpPar
 	case MCI_DGV_MONITOR_FILE:
 	case MCI_DGV_MONITOR_INPUT:
 	case MCI_DGV_STATUS_MONITOR_METHOD:
-	case MCI_DGV_STATUS_PAUSE_MODE:
 	case MCI_DGV_STATUS_SAMPLESPERSECOND:
 	case MCI_DGV_STATUS_SEEK_EXACTLY:
 	case MCI_DGV_STATUS_SHARPNESS:
 	case MCI_DGV_STATUS_SIZE:
 	case MCI_DGV_STATUS_SMPTE:
-	case MCI_DGV_STATUS_SPEED:
 	case MCI_DGV_STATUS_STILL_FILEFORMAT:
 	case MCI_DGV_STATUS_TINT:
 	case MCI_DGV_STATUS_TREBLE:
 	case MCI_DGV_STATUS_UNSAVED:
-	case MCI_DGV_STATUS_VIDEO:
 	case MCI_DGV_STATUS_VIDEO_RECORD:
 	case MCI_DGV_STATUS_VIDEO_SOURCE:
 	case MCI_DGV_STATUS_VIDEO_SRC_NUM:
 	case MCI_DGV_STATUS_VIDEO_STREAM:
 	case MCI_DGV_STATUS_VOLUME:
-	case MCI_DGV_STATUS_WINDOW_VISIBLE:
-	case MCI_DGV_STATUS_WINDOW_MINIMIZED:
-	case MCI_DGV_STATUS_WINDOW_MAXIMIZED:
-	case MCI_STATUS_MEDIA_PRESENT:
 #endif
 	default:
-	    FIXME("Unknowm command %08lX !\n", lpParms->dwItem);
-	    TRACE("(%04x, %08lX, %p)\n", wDevID, dwFlags, lpParms);
+            FIXME("Unknown command %08X !\n", lpParms->dwItem);
+            TRACE("(%04x, %08X, %p)\n", wDevID, dwFlags, lpParms);
             LeaveCriticalSection(&wma->cs);
-    	    return MCIERR_UNRECOGNIZED_COMMAND;
+	    return MCIERR_UNSUPPORTED_FUNCTION;
 	}
-    } else {
-	WARN("No Status-Item!\n");
-        LeaveCriticalSection(&wma->cs);
-	return MCIERR_UNRECOGNIZED_COMMAND;
     }
 
     if (dwFlags & MCI_NOTIFY) {

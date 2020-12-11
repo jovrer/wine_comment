@@ -1,16 +1,7 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = mapi32.dll
-IMPORTS   = kernel32
-EXTRALIBS = -luuid
+IMPORTS   = advapi32
 
-CTESTS = \
+C_SRCS = \
 	imalloc.c \
 	prop.c \
 	util.c
-
-@MAKE_TEST_RULES@
-
-### Dependencies:

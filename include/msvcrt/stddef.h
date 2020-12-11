@@ -1,6 +1,4 @@
 /*
- * Time definitions
- *
  * Copyright 2000 Francois Gouget.
  *
  * This library is free software; you can redistribute it and/or
@@ -15,56 +13,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_STDDEF_H
 #define __WINE_STDDEF_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
 
-#ifndef _WCHAR_T_DEFINED
-#define _WCHAR_T_DEFINED
-#ifndef __cplusplus
-typedef unsigned short wchar_t;
-#endif
-#endif
-
-#ifndef _INTPTR_T_DEFINED
-#ifdef  _WIN64
-typedef __int64 intptr_t;
-#else
-typedef int intptr_t;
-#endif
-#define _INTPTR_T_DEFINED
-#endif
-
-#ifndef _UINTPTR_T_DEFINED
-#ifdef  _WIN64
-typedef unsigned __int64 uintptr_t;
-#else
-typedef unsigned int uintptr_t;
-#endif
-#define _UINTPTR_T_DEFINED
-#endif
-
-#ifndef _PTRDIFF_T_DEFINED
-#ifdef _WIN64
-typedef __int64 ptrdiff_t;
-#else
-typedef int ptrdiff_t;
-#endif
-#define _PTRDIFF_T_DEFINED
-#endif
-
-#ifndef _SIZE_T_DEFINED
-#ifdef _WIN64
-typedef unsigned __int64 size_t;
-#else
-typedef unsigned int size_t;
-#endif
-#define _SIZE_T_DEFINED
-#endif
+#include <crtdefs.h>
 
 #ifndef NULL
 #ifdef __cplusplus
@@ -85,9 +39,9 @@ typedef unsigned int size_t;
 extern "C" {
 #endif
 
-unsigned long               __threadid(void);
-unsigned long               __threadhandle(void);
-#define _threadid          (__threadid())
+__msvcrt_ulong __cdecl __threadid(void);
+__msvcrt_ulong __cdecl __threadhandle(void);
+#define _threadid    (__threadid())
 
 #ifdef __cplusplus
 }

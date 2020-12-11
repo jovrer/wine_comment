@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -27,9 +27,6 @@
 
 #include "windef.h"
 #include "winbase.h"
-#include "winreg.h"
-#include "winnls.h"
-#include "ntstatus.h"
 #include "winternl.h"
 #include "wine/debug.h"
 
@@ -107,7 +104,7 @@ static const char * const VMM_Service_Name[N_VMM_SERVICE] =
 #define PC_FIXED      0x00000008 /* pages are permanently locked */
 #define PC_LOCKED     0x00000080 /* pages are made present and locked */
 #define PC_LOCKEDIFDP 0x00000100 /* pages are locked if swap via DOS */
-#define PC_WRITEABLE  0x00020000 /* make the pages writeable */
+#define PC_WRITABLE   0x00020000 /* make the pages writable */
 #define PC_USER       0x00040000 /* make the pages ring 3 accessible */
 #define PC_INCR       0x40000000 /* increment "pagerdata" each page */
 #define PC_PRESENT    0x80000000 /* make pages initially present */
@@ -122,8 +119,10 @@ static const char * const VMM_Service_Name[N_VMM_SERVICE] =
 #define PCC_NOLIN     0x10000000 /* don't map to any linear address */
 
 
+static const DWORD page_size = 0x1000;  /* we only care about x86 */
+
 /* Pop a DWORD from the 32-bit stack */
-static inline DWORD stack32_pop( CONTEXT86 *context )
+static inline DWORD stack32_pop( CONTEXT *context )
 {
     DWORD ret = *(DWORD *)context->Esp;
     context->Esp += sizeof(DWORD);
@@ -134,7 +133,7 @@ static inline DWORD stack32_pop( CONTEXT86 *context )
 /***********************************************************************
  *           VxDCall   (VMM.VXD.@)
  */
-DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
+DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT *context )
 {
     static int warned;
 
@@ -144,12 +143,11 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
     {
         LPVOID address;
         LPVOID ret;
-        DWORD psize = getpagesize();
-        ULONG page   = (ULONG) stack32_pop( context );
-        ULONG npages = (ULONG) stack32_pop( context );
-        ULONG flags  = (ULONG) stack32_pop( context );
+        ULONG page   = stack32_pop( context );
+        ULONG npages = stack32_pop( context );
+        ULONG flags  = stack32_pop( context );
 
-        TRACE("PageReserve: page: %08lx, npages: %08lx, flags: %08lx partial stub!\n",
+        TRACE("PageReserve: page: %08x, npages: %08x, flags: %08x partial stub!\n",
               page, npages, flags );
 
         if ( page == PR_SYSTEM ) {
@@ -160,8 +158,8 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
            address-spaces we now have */
         if ( page == PR_PRIVATE || page == PR_SHARED ) page = 0;
         /* FIXME: Handle flags in some way */
-        address = (LPVOID )(page * psize);
-        ret = VirtualAlloc ( address, ( npages * psize ), MEM_RESERVE, 0 );
+        address = (LPVOID )(page * page_size);
+        ret = VirtualAlloc ( address, npages * page_size, MEM_RESERVE, PAGE_EXECUTE_READWRITE );
         TRACE("PageReserve: returning: %p\n", ret );
         if ( ret == NULL )
           return -1;
@@ -174,27 +172,26 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
         LPVOID address;
         LPVOID ret;
         DWORD virt_perm;
-        DWORD psize = getpagesize();
-        ULONG page   = (ULONG) stack32_pop( context );
-        ULONG npages = (ULONG) stack32_pop( context );
-        ULONG hpd  = (ULONG) stack32_pop( context );
-        ULONG pagerdata   = (ULONG) stack32_pop( context );
-        ULONG flags  = (ULONG) stack32_pop( context );
+        ULONG page   = stack32_pop( context );
+        ULONG npages = stack32_pop( context );
+        ULONG hpd  = stack32_pop( context );
+        ULONG pagerdata   = stack32_pop( context );
+        ULONG flags  = stack32_pop( context );
 
-        TRACE("PageCommit: page: %08lx, npages: %08lx, hpd: %08lx pagerdata: "
-              "%08lx, flags: %08lx partial stub\n",
+        TRACE("PageCommit: page: %08x, npages: %08x, hpd: %08x pagerdata: "
+              "%08x, flags: %08x partial stub\n",
               page, npages, hpd, pagerdata, flags );
 
         if ( flags & PC_USER )
-          if ( flags & PC_WRITEABLE )
+          if ( flags & PC_WRITABLE )
             virt_perm = PAGE_EXECUTE_READWRITE;
           else
             virt_perm = PAGE_EXECUTE_READ;
         else
           virt_perm = PAGE_NOACCESS;
 
-        address = (LPVOID )(page * psize);
-        ret = VirtualAlloc ( address, ( npages * psize ), MEM_COMMIT, virt_perm );
+        address = (LPVOID )(page * page_size);
+        ret = VirtualAlloc ( address, npages * page_size, MEM_COMMIT, virt_perm );
         TRACE("PageCommit: Returning: %p\n", ret );
         return (DWORD )ret;
 
@@ -204,15 +201,14 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
     {
         LPVOID address;
         BOOL ret;
-        DWORD psize = getpagesize();
-        ULONG page = (ULONG) stack32_pop( context );
-        ULONG npages = (ULONG) stack32_pop( context );
-        ULONG flags = (ULONG) stack32_pop( context );
+        ULONG page = stack32_pop( context );
+        ULONG npages = stack32_pop( context );
+        ULONG flags = stack32_pop( context );
 
-        TRACE("PageDecommit: page: %08lx, npages: %08lx, flags: %08lx partial stub\n",
+        TRACE("PageDecommit: page: %08x, npages: %08x, flags: %08x partial stub\n",
               page, npages, flags );
-        address = (LPVOID )( page * psize );
-        ret = VirtualFree ( address, ( npages * psize ), MEM_DECOMMIT );
+        address = (LPVOID )( page * page_size );
+        ret = VirtualFree ( address, npages * page_size, MEM_DECOMMIT );
         TRACE("PageDecommit: Returning: %s\n", ret ? "TRUE" : "FALSE" );
         return ret;
     }
@@ -225,15 +221,14 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
         DWORD virt_new_perm;
         MEMORY_BASIC_INFORMATION mbi;
         LPVOID address;
-        DWORD psize = getpagesize();
         ULONG page = stack32_pop ( context );
         ULONG npages = stack32_pop ( context );
         ULONG permand = stack32_pop ( context );
         ULONG permor = stack32_pop ( context );
 
-        TRACE("PageModifyPermissions %08lx %08lx %08lx %08lx partial stub\n",
+        TRACE("PageModifyPermissions %08x %08x %08x %08x partial stub\n",
               page, npages, permand, permor );
-        address = (LPVOID )( page * psize );
+        address = (LPVOID )( page * page_size );
 
         VirtualQuery ( address, &mbi, sizeof ( MEMORY_BASIC_INFORMATION ));
         virt_old_perm = mbi.Protect;
@@ -248,7 +243,7 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
         case PAGE_WRITECOPY:
         case PAGE_EXECUTE_READWRITE:
         case PAGE_EXECUTE_WRITECOPY:
-          pg_old_perm = PC_USER | PC_WRITEABLE;
+          pg_old_perm = PC_USER | PC_WRITABLE;
           break;
         case PAGE_NOACCESS:
         default:
@@ -262,17 +257,17 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
         virt_new_perm = ( virt_old_perm )  & ~0xff;
         if ( pg_new_perm & PC_USER )
         {
-          if ( pg_new_perm & PC_WRITEABLE )
+          if ( pg_new_perm & PC_WRITABLE )
             virt_new_perm |= PAGE_EXECUTE_READWRITE;
           else
             virt_new_perm |= PAGE_EXECUTE_READ;
         }
 
-        if ( ! VirtualProtect ( address, ( npages * psize ), virt_new_perm, &virt_old_perm ) ) {
+        if ( ! VirtualProtect ( address, npages * page_size, virt_new_perm, &virt_old_perm ) ) {
           ERR("Can't change page permissions for %p\n", address );
           return 0xffffffff;
         }
-        TRACE("Returning: %08lx\n", pg_old_perm );
+        TRACE("Returning: %08x\n", pg_old_perm );
         return pg_old_perm;
     }
 
@@ -280,9 +275,9 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
     {
         BOOL ret;
         LPVOID hmem = (LPVOID) stack32_pop( context );
-        DWORD flags = (DWORD ) stack32_pop( context );
+        DWORD flags = stack32_pop( context );
 
-        TRACE("PageFree: hmem: %p, flags: %08lx partial stub\n",
+        TRACE("PageFree: hmem: %p, flags: %08x partial stub\n",
               hmem, flags );
 
         ret = VirtualFree ( hmem, 0, MEM_RELEASE );
@@ -410,8 +405,8 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
 
     case 0x001e: /* GetDemandPageInfo */
     {
-         DWORD dinfo = (DWORD)stack32_pop( context );
-         DWORD flags = (DWORD)stack32_pop( context );
+         DWORD dinfo = stack32_pop( context );
+         DWORD flags = stack32_pop( context );
 
          /* GetDemandPageInfo is supposed to fill out the struct at
           * "dinfo" with various low-level memory management information.
@@ -421,7 +416,7 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
           * implementation of this.
           */
 
-         FIXME("GetDemandPageInfo(%08lx %08lx): stub!\n", dinfo, flags);
+         FIXME("GetDemandPageInfo(%08x %08x): stub!\n", dinfo, flags);
 
          return 0;
     }
@@ -470,10 +465,10 @@ DWORD WINAPI VMM_VxDCall( DWORD service, CONTEXT86 *context )
 
     default:
         if (LOWORD(service) < N_VMM_SERVICE)
-            FIXME( "Unimplemented service %s (%08lx)\n",
+            FIXME( "Unimplemented service %s (%08x)\n",
                    VMM_Service_Name[LOWORD(service)], service);
         else
-            FIXME( "Unknown service %08lx\n", service);
+            FIXME( "Unknown service %08x\n", service);
         return 0xffffffff;  /* FIXME */
     }
 }

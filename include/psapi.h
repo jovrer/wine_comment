@@ -15,11 +15,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_PSAPI_H
 #define __WINE_PSAPI_H
+
+#ifndef PSAPI_VERSION
+#define PSAPI_VERSION 2
+#endif
 
 typedef struct _MODULEINFO {
   LPVOID lpBaseOfDll;
@@ -28,16 +32,16 @@ typedef struct _MODULEINFO {
 } MODULEINFO, *LPMODULEINFO;
 
 typedef struct _PROCESS_MEMORY_COUNTERS {
-  DWORD cb;
-  DWORD PageFaultCount;
-  DWORD PeakWorkingSetSize;
-  DWORD WorkingSetSize;
-  DWORD QuotaPeakPagedPoolUsage;
-  DWORD QuotaPagedPoolUsage;
-  DWORD QuotaPeakNonPagedPoolUsage;
-  DWORD QuotaNonPagedPoolUsage;
-  DWORD PagefileUsage;
-  DWORD PeakPagefileUsage;
+  DWORD  cb;
+  DWORD  PageFaultCount;
+  SIZE_T PeakWorkingSetSize;
+  SIZE_T WorkingSetSize;
+  SIZE_T QuotaPeakPagedPoolUsage;
+  SIZE_T QuotaPagedPoolUsage;
+  SIZE_T QuotaPeakNonPagedPoolUsage;
+  SIZE_T QuotaNonPagedPoolUsage;
+  SIZE_T PagefileUsage;
+  SIZE_T PeakPagefileUsage;
 } PROCESS_MEMORY_COUNTERS;
 typedef PROCESS_MEMORY_COUNTERS *PPROCESS_MEMORY_COUNTERS;
 
@@ -79,14 +83,45 @@ typedef BOOL (*PENUM_PAGE_FILE_CALLBACKW) (LPVOID, PENUM_PAGE_FILE_INFORMATION, 
 extern "C" {
 #endif
 
+#if PSAPI_VERSION > 1
+#define EnumProcesses               K32EnumProcesses
+#define EnumProcessModules          K32EnumProcessModules
+#define EnumProcessModulesEx        K32EnumProcessModulesEx
+#define GetModuleBaseNameA          K32GetModuleBaseNameA
+#define GetModuleBaseNameW          K32GetModuleBaseNameW
+#define GetModuleFileNameExA        K32GetModuleFileNameExA
+#define GetModuleFileNameExW        K32GetModuleFileNameExW
+#define GetModuleInformation        K32GetModuleInformation
+#define EmptyWorkingSet             K32EmptyWorkingSet
+#define QueryWorkingSet             K32QueryWorkingSet
+#define QueryWorkingSetEx           K32QueryWorkingSetEx
+#define InitializeProcessForWsWatch K32InitializeProcessForWsWatch
+#define GetWsChanges                K32GetWsChanges
+#define GetWsChangesEx              K32GetWsChangesEx
+#define GetMappedFileNameW          K32GetMappedFileNameW
+#define GetMappedFileNameA          K32GetMappedFileNameA
+#define EnumDeviceDrivers           K32EnumDeviceDrivers
+#define GetDeviceDriverBaseNameA    K32GetDeviceDriverBaseNameA
+#define GetDeviceDriverBaseNameW    K32GetDeviceDriverBaseNameW
+#define GetDeviceDriverFileNameA    K32GetDeviceDriverFileNameA
+#define GetDeviceDriverFileNameW    K32GetDeviceDriverFileNameW
+#define GetProcessMemoryInfo        K32GetProcessMemoryInfo
+#define GetPerformanceInfo          K32GetPerformanceInfo
+#define EnumPageFilesW              K32EnumPageFilesW
+#define EnumPageFilesA              K32EnumPageFilesA
+#define GetProcessImageFileNameA    K32GetProcessImageFileNameA
+#define GetProcessImageFileNameW    K32GetProcessImageFileNameW
+#endif
+
 BOOL  WINAPI EnumProcesses(DWORD*, DWORD, DWORD*);
 BOOL  WINAPI EnumProcessModules(HANDLE, HMODULE*, DWORD, LPDWORD);
+BOOL  WINAPI EnumProcessModulesEx(HANDLE, HMODULE*, DWORD, LPDWORD, DWORD);
 DWORD WINAPI GetModuleBaseNameA(HANDLE, HMODULE, LPSTR, DWORD);
 DWORD WINAPI GetModuleBaseNameW(HANDLE, HMODULE, LPWSTR, DWORD);
 #define      GetModuleBaseName WINELIB_NAME_AW(GetModuleBaseName)
 DWORD WINAPI GetModuleFileNameExA(HANDLE, HMODULE, LPSTR, DWORD);
 DWORD WINAPI GetModuleFileNameExW(HANDLE, HMODULE, LPWSTR, DWORD);
-#define      GetModuleFileName WINELIB_NAME_AW(GetModuleFileName)
+#define      GetModuleFileNameEx WINELIB_NAME_AW(GetModuleFileNameEx)
 BOOL  WINAPI GetModuleInformation(HANDLE, HMODULE, LPMODULEINFO, DWORD);
 BOOL  WINAPI EmptyWorkingSet(HANDLE);
 BOOL  WINAPI QueryWorkingSet(HANDLE, PVOID, DWORD);

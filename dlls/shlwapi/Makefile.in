@@ -1,13 +1,8 @@
 EXTRADEFS = -D_SHLWAPI_
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = shlwapi.dll
-IMPORTLIB = libshlwapi.$(IMPLIBEXT)
-IMPORTS   = ole32 user32 gdi32 advapi32 kernel32 ntdll
-DELAYIMPORTS = oleaut32
-EXTRALIBS = -luuid $(LIBUNICODE)
+IMPORTLIB = shlwapi
+IMPORTS   = uuid user32 gdi32 advapi32
+DELAYIMPORTS = userenv oleaut32 ole32 comctl32 comdlg32 mpr mlang urlmon shell32 winmm version
 
 C_SRCS = \
 	assoc.c \
@@ -25,11 +20,4 @@ C_SRCS = \
 	url.c \
 	wsprintf.c
 
-RC_SRCS = \
-	shlwapi.rc
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = shlwapi.rc

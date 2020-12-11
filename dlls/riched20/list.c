@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 
@@ -40,6 +40,72 @@ void ME_Remove(ME_DisplayItem *diWhere)
   assert(diPrev);
   diPrev->next = diNext;
   diNext->prev = diPrev;
+}
+
+static BOOL ME_DITypesEqual(ME_DIType type, ME_DIType nTypeOrClass)
+{
+  switch (nTypeOrClass)
+  {
+    case diRunOrParagraph:
+      return type == diRun || type == diParagraph;
+    case diRunOrStartRow:
+      return type == diRun || type == diStartRow;
+    case diParagraphOrEnd:
+      return type == diTextEnd || type == diParagraph;
+    case diStartRowOrParagraph:
+      return type == diStartRow || type == diParagraph;
+    case diStartRowOrParagraphOrEnd:
+      return type == diStartRow || type == diParagraph || type == diTextEnd;
+    case diRunOrParagraphOrEnd:
+      return type == diRun || type == diParagraph || type == diTextEnd;
+    default:
+      return type == nTypeOrClass;
+  }
+}
+
+/* Modifies run pointer to point to the next run.
+ * If all_para is FALSE constrain the search to the current para,
+ * otherwise modify the paragraph pointer if moving into the next paragraph.
+ *
+ * Returns TRUE if next run is found, otherwise returns FALSE. */
+BOOL ME_NextRun(ME_DisplayItem **para, ME_DisplayItem **run, BOOL all_para)
+{
+  ME_DisplayItem *p = (*run)->next;
+  while (p->type != diTextEnd)
+  {
+    if (p->type == diParagraph) {
+      if (!all_para) return FALSE;
+      *para = p;
+    } else if (p->type == diRun) {
+      *run = p;
+      return TRUE;
+    }
+    p = p->next;
+  }
+  return FALSE;
+}
+
+/* Modifies run pointer to point to the previous run.
+ * If all_para is FALSE constrain the search to the current para,
+ * otherwise modify the paragraph pointer if moving into the previous paragraph.
+ *
+ * Returns TRUE if previous run is found, otherwise returns FALSE. */
+BOOL ME_PrevRun(ME_DisplayItem **para, ME_DisplayItem **run, BOOL all_para)
+{
+  ME_DisplayItem *p = (*run)->prev;
+  while (p->type != diTextStart)
+  {
+    if (p->type == diParagraph) {
+      if (!all_para) return FALSE;
+      if (para && p->member.para.prev_para->type == diParagraph)
+        *para = p->member.para.prev_para;
+    } else if (p->type == diRun) {
+      *run = p;
+      return TRUE;
+    }
+    p = p->prev;
+  }
+  return FALSE;
 }
 
 ME_DisplayItem *ME_FindItemBack(ME_DisplayItem *di, ME_DIType nTypeOrClass)
@@ -77,86 +143,45 @@ ME_DisplayItem *ME_FindItemFwd(ME_DisplayItem *di, ME_DIType nTypeOrClass)
   return NULL;
 }
 
-ME_DisplayItem *ME_FindItemFwdOrHere(ME_DisplayItem *di, ME_DIType nTypeOrClass)
-{
-  while(di!=NULL) {
-    if (ME_DITypesEqual(di->type, nTypeOrClass))
-      return di;
-    di = di->next;
-  }
-  return NULL;
-}
-
-BOOL ME_DITypesEqual(ME_DIType type, ME_DIType nTypeOrClass)
-{
-  if (type==nTypeOrClass)
-    return TRUE;
-  if (nTypeOrClass==diRunOrParagraph && (type==diRun || type==diParagraph))
-    return TRUE;
-  if (nTypeOrClass==diRunOrStartRow && (type==diRun || type==diStartRow))
-    return TRUE;
-  if (nTypeOrClass==diParagraphOrEnd && (type==diTextEnd || type==diParagraph))
-    return TRUE;
-  if (nTypeOrClass==diStartRowOrParagraph && (type==diStartRow || type==diParagraph))
-    return TRUE;
-  if (nTypeOrClass==diStartRowOrParagraphOrEnd 
-    && (type==diStartRow || type==diParagraph || type==diTextEnd))
-    return TRUE;
-  if (nTypeOrClass==diRunOrParagraphOrEnd 
-    && (type==diRun || type==diParagraph || type==diTextEnd))
-    return TRUE;
-  return FALSE;
-}
-
-void ME_DestroyDisplayItem(ME_DisplayItem *item) {
-/*  TRACE("type=%s\n", ME_GetDITypeName(item->type)); */
-  if (item->type==diParagraph || item->type == diUndoSetParagraphFormat) {
-    FREE_OBJ(item->member.para.pFmt);
-  }
-  if (item->type==diRun || item->type == diUndoInsertRun) {
-    ME_ReleaseStyle(item->member.run.style);
-    ME_DestroyString(item->member.run.strText);
-  }
-  if (item->type==diUndoSetCharFormat || item->type==diUndoSetDefaultCharFormat) {
-    ME_ReleaseStyle(item->member.ustyle);
-  }
-  FREE_OBJ(item);
-}
-
-ME_DisplayItem *ME_MakeDI(ME_DIType type) {
-  ME_DisplayItem *item = ALLOC_OBJ(ME_DisplayItem);
-  ZeroMemory(item, sizeof(ME_DisplayItem));
-  item->type = type;
-  item->prev = item->next = NULL;
-  if (type == diParagraph || type == diUndoSplitParagraph) {
-    item->member.para.pFmt = ALLOC_OBJ(PARAFORMAT2);
-    item->member.para.pFmt->cbSize = sizeof(PARAFORMAT2);
-    item->member.para.pFmt->dwMask = 0;
-    item->member.para.nFlags = MEPF_REWRAP;
-  }
-    
-  return item;
-}
-
-const char *ME_GetDITypeName(ME_DIType type)
+static const char *ME_GetDITypeName(ME_DIType type)
 {
   switch(type)
   {
     case diParagraph: return "diParagraph";
     case diRun: return "diRun";
+    case diCell: return "diCell";
     case diTextStart: return "diTextStart";
     case diTextEnd: return "diTextEnd";
     case diStartRow: return "diStartRow";
-    case diUndoEndTransaction: return "diUndoEndTransaction";
-    case diUndoSetParagraphFormat: return "diUndoSetParagraphFormat";
-    case diUndoSetCharFormat: return "diUndoSetCharFormat";
-    case diUndoInsertRun: return "diUndoInsertRun";
-    case diUndoDeleteRun: return "diUndoDeleteRun";
-    case diUndoJoinParagraphs: return "diJoinParagraphs";
-    case diUndoSplitParagraph: return "diSplitParagraph";
-    case diUndoSetDefaultCharFormat: return "diUndoSetDefaultCharFormat";
     default: return "?";
   }
+}
+
+void ME_DestroyDisplayItem(ME_DisplayItem *item)
+{
+  if (0)
+    TRACE("type=%s\n", ME_GetDITypeName(item->type));
+  if (item->type==diRun)
+  {
+    if (item->member.run.reobj)
+    {
+      list_remove(&item->member.run.reobj->entry);
+      ME_DeleteReObject(item->member.run.reobj);
+    }
+    heap_free( item->member.run.glyphs );
+    heap_free( item->member.run.clusters );
+    ME_ReleaseStyle(item->member.run.style);
+  }
+  heap_free(item);
+}
+
+ME_DisplayItem *ME_MakeDI(ME_DIType type)
+{
+  ME_DisplayItem *item = heap_alloc_zero(sizeof(*item));
+
+  item->type = type;
+  item->prev = item->next = NULL;
+  return item;
 }
 
 void ME_DumpDocument(ME_TextBuffer *buffer)
@@ -168,20 +193,29 @@ void ME_DumpDocument(ME_TextBuffer *buffer)
     switch(pItem->type)
     {
       case diTextStart:
-        TRACE("Start");
+        TRACE("Start\n");
+        break;
+      case diCell:
+        TRACE("Cell(level=%d%s)\n", pItem->member.cell.nNestingLevel,
+              !pItem->member.cell.next_cell ? ", END" :
+                (!pItem->member.cell.prev_cell ? ", START" :""));
         break;
       case diParagraph:
-        TRACE("\nParagraph(ofs=%d)", pItem->member.para.nCharOfs);
+        TRACE("Paragraph(ofs=%d)\n", pItem->member.para.nCharOfs);
+        if (pItem->member.para.nFlags & MEPF_ROWSTART)
+          TRACE(" - (Table Row Start)\n");
+        if (pItem->member.para.nFlags & MEPF_ROWEND)
+          TRACE(" - (Table Row End)\n");
         break;
       case diStartRow:
-        TRACE(" - StartRow");
+        TRACE(" - StartRow\n");
         break;
       case diRun:
-        TRACE(" - Run(\"%s\", %d)", debugstr_w(pItem->member.run.strText->szData), 
-          pItem->member.run.nCharOfs);
+        TRACE(" - Run(%s, %d, flags=%x)\n", debugstr_run( &pItem->member.run ),
+          pItem->member.run.nCharOfs, pItem->member.run.nFlags);
         break;
       case diTextEnd:
-        TRACE("\nEnd(ofs=%d)\n", pItem->member.para.nCharOfs);
+        TRACE("End(ofs=%d)\n", pItem->member.para.nCharOfs);
         break;
       default:
         break;

@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _WINE_WSIPX_
@@ -36,9 +36,15 @@ typedef struct WS_sockaddr_ipx
 /*
  * constants
  */
+#ifndef USE_WS_PREFIX
 #define NSPROTO_IPX                 1000
 #define NSPROTO_SPX                 1256
 #define NSPROTO_SPXII               1257
+#else
+#define WS_NSPROTO_IPX              1000
+#define WS_NSPROTO_SPX              1256
+#define WS_NSPROTO_SPXII            1257
+#endif
 
 #undef WS
 #endif /* _WINE_WSIPX_ */

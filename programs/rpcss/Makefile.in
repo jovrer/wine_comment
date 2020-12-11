@@ -1,16 +1,12 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = rpcss.exe
-APPMODE   = -mconsole
-IMPORTS   = kernel32
+APPMODE   = -mconsole -municode
+IMPORTS   = rpcrt4 advapi32
 
 C_SRCS = \
-       epmap_server.c \
-       np_server.c \
-       rpcss_main.c
+	epmp.c \
+	irotp.c \
+	rpcss_main.c
 
-@MAKE_PROG_RULES@
-
-### Dependencies:
+IDL_SRCS = \
+	epm.idl \
+	irot.idl

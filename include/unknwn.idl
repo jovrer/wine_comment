@@ -13,12 +13,21 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef DO_NO_IMPORTS
 import "wtypes.idl";
+#endif
 
-/* Interfaces */
+cpp_quote("#ifdef __WINESRC__")
+cpp_quote("#define WIDL_C_INLINE_WRAPPERS")
+cpp_quote("#endif")
+
+cpp_quote("#ifdef WIDL_C_INLINE_WRAPPERS")
+cpp_quote("#define SAVE_WIDL_C_INLINE_WRAPPERS")
+cpp_quote("#undef WIDL_C_INLINE_WRAPPERS")
+cpp_quote("#endif")
 
 [
   local,
@@ -36,6 +45,20 @@ interface IUnknown
   ULONG AddRef();
   ULONG Release();
 }
+
+cpp_quote("HRESULT STDMETHODCALLTYPE IUnknown_QueryInterface_Proxy(IUnknown* This, REFIID riid, void **ppvObject);")
+cpp_quote("void __RPC_STUB IUnknown_QueryInterface_Stub(IRpcStubBuffer* This, IRpcChannelBuffer* pRpcChannelBuffer,")
+cpp_quote("     PRPC_MESSAGE pRpcMessage, DWORD* pdwStubPhase);")
+cpp_quote("ULONG STDMETHODCALLTYPE IUnknown_AddRef_Proxy(IUnknown* This);")
+cpp_quote("void __RPC_STUB IUnknown_AddRef_Stub(IRpcStubBuffer* This, IRpcChannelBuffer* pRpcChannelBuffer,")
+cpp_quote("     PRPC_MESSAGE pRpcMessage, DWORD* pdwStubPhase);")
+cpp_quote("ULONG STDMETHODCALLTYPE IUnknown_Release_Proxy(IUnknown* This);")
+cpp_quote("void __RPC_STUB IUnknown_Release_Stub(IRpcStubBuffer* This, IRpcChannelBuffer* pRpcChannelBuffer,")
+cpp_quote("     PRPC_MESSAGE pRpcMessage, DWORD* pdwStubPhase);")
+
+cpp_quote("#ifdef SAVE_WIDL_C_INLINE_WRAPPERS")
+cpp_quote("#define WIDL_C_INLINE_WRAPPERS")
+cpp_quote("#endif")
 
 [
   object,

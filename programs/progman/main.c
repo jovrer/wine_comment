@@ -16,14 +16,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdio.h>
 #include <string.h>
+
+#define OEMRESOURCE
+
 #include "windows.h"
-#include "windowsx.h"
-#include "license.h"
+#include "shellapi.h"
 #include "progman.h"
 
 GLOBALS Globals;
@@ -55,19 +57,19 @@ int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show
 
   /* Read Options from `progman.ini' */
   Globals.bAutoArrange =
-    GetPrivateProfileInt("Settings", "AutoArrange", 0, Globals.lpszIniFile);
+    GetPrivateProfileIntA("Settings", "AutoArrange", 0, Globals.lpszIniFile);
   Globals.bMinOnRun =
-    GetPrivateProfileInt("Settings", "MinOnRun", 0, Globals.lpszIniFile);
+    GetPrivateProfileIntA("Settings", "MinOnRun", 0, Globals.lpszIniFile);
   Globals.bSaveSettings =
-    GetPrivateProfileInt("Settings", "SaveSettings", 0, Globals.lpszIniFile);
+    GetPrivateProfileIntA("Settings", "SaveSettings", 0, Globals.lpszIniFile);
 
   /* Load default icons */
-  Globals.hMainIcon    = ExtractIcon(Globals.hInstance, Globals.lpszIcoFile, 0);
-  Globals.hGroupIcon   = ExtractIcon(Globals.hInstance, Globals.lpszIcoFile, 0);
-  Globals.hDefaultIcon = ExtractIcon(Globals.hInstance, Globals.lpszIcoFile, 0);
-  if (!Globals.hMainIcon)    Globals.hMainIcon = LoadIcon(0, MAKEINTRESOURCE(DEFAULTICON));
-  if (!Globals.hGroupIcon)   Globals.hGroupIcon = LoadIcon(0, MAKEINTRESOURCE(DEFAULTICON));
-  if (!Globals.hDefaultIcon) Globals.hDefaultIcon = LoadIcon(0, MAKEINTRESOURCE(DEFAULTICON));
+  Globals.hMainIcon    = ExtractIconA(Globals.hInstance, Globals.lpszIcoFile, 0);
+  Globals.hGroupIcon   = ExtractIconA(Globals.hInstance, Globals.lpszIcoFile, 0);
+  Globals.hDefaultIcon = ExtractIconA(Globals.hInstance, Globals.lpszIcoFile, 0);
+  if (!Globals.hMainIcon)    Globals.hMainIcon = LoadIconW(0, (LPWSTR)DEFAULTICON);
+  if (!Globals.hGroupIcon)   Globals.hGroupIcon = LoadIconW(0, (LPWSTR)DEFAULTICON);
+  if (!Globals.hDefaultIcon) Globals.hDefaultIcon = LoadIconW(0, (LPWSTR)DEFAULTICON);
 
   /* Register classes */
   if (!prev)
@@ -79,7 +81,7 @@ int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show
 
   /* Create main window */
   MAIN_CreateMainWindow();
-  Globals.hAccel = LoadAccelerators(Globals.hInstance, STRING_ACCEL);
+  Globals.hAccel = LoadAcceleratorsW(Globals.hInstance, MAKEINTRESOURCEW(IDA_ACCEL));
 
   /* Setup menu, stringtable and resourcenames */
   STRING_LoadMenus();
@@ -93,11 +95,11 @@ int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show
   MAIN_AutoStart();
 
   /* Message loop */
-  while (GetMessage (&msg, 0, 0, 0))
-    if (!TranslateAccelerator(Globals.hMainWnd, Globals.hAccel, &msg))
+  while (GetMessageW (&msg, 0, 0, 0))
+    if (!TranslateAcceleratorW(Globals.hMainWnd, Globals.hAccel, &msg))
       {
 	TranslateMessage (&msg);
-	DispatchMessage (&msg);
+	DispatchMessageW (&msg);
       }
   return 0;
 }
@@ -107,14 +109,14 @@ int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show
  *           MAIN_CreateGroups
  */
 
-static VOID MAIN_CreateGroups()
+static VOID MAIN_CreateGroups(void)
 {
   CHAR buffer[BUFFER_SIZE];
   CHAR szPath[MAX_PATHNAME_LEN];
   CHAR key[20], *ptr;
 
   /* Initialize groups according the `Order' entry of `progman.ini' */
-  GetPrivateProfileString("Settings", "Order", "", buffer, sizeof(buffer), Globals.lpszIniFile);
+  GetPrivateProfileStringA("Settings", "Order", "", buffer, sizeof(buffer), Globals.lpszIniFile);
   ptr = buffer;
   while (ptr < buffer + sizeof(buffer))
     {
@@ -125,7 +127,7 @@ static VOID MAIN_CreateGroups()
       if (ret != 1) break;
 
       sprintf(key, "Group%d", num);
-      GetPrivateProfileString("Groups", key, "", szPath,
+      GetPrivateProfileStringA("Groups", key, "", szPath,
 			      sizeof(szPath), Globals.lpszIniFile);
       if (!szPath[0]) continue;
 
@@ -141,16 +143,16 @@ static VOID MAIN_CreateGroups()
  *           MAIN_AutoStart
  */
 
-VOID MAIN_AutoStart()
+VOID MAIN_AutoStart(void)
 {
   CHAR buffer[BUFFER_SIZE];
   HLOCAL hGroup, hProgram;
 
-  GetPrivateProfileString("Settings", "AutoStart", "Autostart", buffer,
+  GetPrivateProfileStringA("Settings", "AutoStart", "Autostart", buffer,
 			  sizeof(buffer), Globals.lpszIniFile);
 
   for (hGroup = GROUP_FirstGroup(); hGroup; hGroup = GROUP_NextGroup(hGroup))
-    if (!lstrcmp(buffer, GROUP_GroupName(hGroup)))
+    if (!lstrcmpA(buffer, GROUP_GroupName(hGroup)))
       for (hProgram = PROGRAM_FirstProgram(hGroup); hProgram;
 	   hProgram = PROGRAM_NextProgram(hProgram))
 	PROGRAM_ExecuteProgram(hProgram);
@@ -164,9 +166,6 @@ VOID MAIN_AutoStart()
 static LRESULT CALLBACK MAIN_MainWndProc(HWND hWnd, UINT msg,
 				 WPARAM wParam, LPARAM lParam)
 {
-#if 0
-  printf("M %4.4x %4.4x\n", msg, wParam);
-#endif
   switch (msg)
     {
     case WM_INITMENU:
@@ -179,8 +178,8 @@ static LRESULT CALLBACK MAIN_MainWndProc(HWND hWnd, UINT msg,
       break;
 
     case WM_COMMAND:
-      if (wParam < PM_FIRST_CHILD){
-	MAIN_MenuCommand(hWnd, wParam, lParam);
+      if (LOWORD(wParam) < PM_FIRST_CHILD){
+	MAIN_MenuCommand(hWnd, LOWORD(wParam), lParam);
       }
       break;
 
@@ -188,7 +187,7 @@ static LRESULT CALLBACK MAIN_MainWndProc(HWND hWnd, UINT msg,
       PostQuitMessage (0);
       break;
     }
-  return(DefFrameProc(hWnd, Globals.hMDIWnd, msg, wParam, lParam));
+  return DefFrameProcW(hWnd, Globals.hMDIWnd, msg, wParam, lParam);
 }
 
 /***********************************************************************
@@ -266,10 +265,10 @@ static VOID MAIN_MenuCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
       CheckMenuItem(Globals.hOptionMenu, PM_AUTO_ARRANGE,
 		    MF_BYCOMMAND | (Globals.bAutoArrange ?
 				    MF_CHECKED : MF_UNCHECKED));
-      WritePrivateProfileString("Settings", "AutoArrange",
+      WritePrivateProfileStringA("Settings", "AutoArrange",
 				Globals.bAutoArrange ? "1" : "0",
 				Globals.lpszIniFile);
-      WritePrivateProfileString(NULL,NULL,NULL,Globals.lpszIniFile); /* flush it */
+      WritePrivateProfileStringA(NULL,NULL,NULL,Globals.lpszIniFile); /* flush it */
       break;
 
     case PM_MIN_ON_RUN:
@@ -277,10 +276,10 @@ static VOID MAIN_MenuCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
       CheckMenuItem(Globals.hOptionMenu, PM_MIN_ON_RUN,
 		    MF_BYCOMMAND | (Globals.bMinOnRun ?
 				    MF_CHECKED : MF_UNCHECKED));
-      WritePrivateProfileString("Settings", "MinOnRun",
+      WritePrivateProfileStringA("Settings", "MinOnRun",
 				Globals.bMinOnRun ? "1" : "0",
 				Globals.lpszIniFile);
-      WritePrivateProfileString(NULL,NULL,NULL,Globals.lpszIniFile); /* flush it */
+      WritePrivateProfileStringA(NULL,NULL,NULL,Globals.lpszIniFile); /* flush it */
       break;
 
     case PM_SAVE_SETTINGS:
@@ -288,46 +287,37 @@ static VOID MAIN_MenuCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
       CheckMenuItem(Globals.hOptionMenu, PM_SAVE_SETTINGS,
 		    MF_BYCOMMAND | (Globals.bSaveSettings ?
 				    MF_CHECKED : MF_UNCHECKED));
-      WritePrivateProfileString("Settings", "SaveSettings",
+      WritePrivateProfileStringA("Settings", "SaveSettings",
 				Globals.bSaveSettings ? "1" : "0",
 				Globals.lpszIniFile);
-      WritePrivateProfileString(NULL,NULL,NULL,Globals.lpszIniFile); /* flush it */
+      WritePrivateProfileStringA(NULL,NULL,NULL,Globals.lpszIniFile); /* flush it */
       break;
 
       /* Menu Windows */
+    case PM_OVERLAP:
+      SendMessageW(Globals.hMDIWnd, WM_MDICASCADE, 0, 0);
+      break;
+
+    case PM_SIDE_BY_SIDE:
+      SendMessageW(Globals.hMDIWnd, WM_MDITILE, MDITILE_VERTICAL, 0);
+      break;
+
     case PM_ARRANGE:
 
       if (hActiveGroupWnd && !IsIconic(hActiveGroupWnd))
 	ArrangeIconicWindows(hActiveGroupWnd);
       else
-	SendMessage(Globals.hMDIWnd, WM_MDIICONARRANGE, 0, 0);
+	SendMessageW(Globals.hMDIWnd, WM_MDIICONARRANGE, 0, 0);
       break;
 
       /* Menu Help */
     case PM_CONTENTS:
-      if (!WinHelp(Globals.hMainWnd, "progman.hlp", HELP_CONTENTS, 0))
+      if (!WinHelpA(Globals.hMainWnd, "progman.hlp", HELP_CONTENTS, 0))
 	MAIN_MessageBoxIDS(IDS_WINHELP_ERROR, IDS_ERROR, MB_OK);
-      break;
-
-    case PM_HELPONHELP:
-      if (!WinHelp(Globals.hMainWnd, "progman.hlp", HELP_HELPONHELP, 0))
-	MAIN_MessageBoxIDS(IDS_WINHELP_ERROR, IDS_ERROR, MB_OK);
-      break;
-
-    case PM_TUTORIAL:
-      WinExec("wintutor.exe", SW_SHOWNORMAL);
-      break;
-
-    case PM_LICENSE:
-      WineLicense(Globals.hMainWnd);
-      break;
-
-    case PM_NO_WARRANTY:
-      WineWarranty(Globals.hMainWnd);
       break;
 
     case PM_ABOUT_WINE:
-      ShellAbout(hWnd, "WINE", "Program Manager", 0);
+      ShellAboutA(hWnd, "WINE", "Program Manager", 0);
       break;
 
     default:
@@ -341,9 +331,9 @@ static VOID MAIN_MenuCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
  *           MAIN_RegisterMainWinClass
  */
 
-static ATOM MAIN_RegisterMainWinClass()
+static ATOM MAIN_RegisterMainWinClass(void)
 {
-  WNDCLASS class;
+  WNDCLASSW class;
 
   class.style         = CS_HREDRAW | CS_VREDRAW;
   class.lpfnWndProc   = MAIN_MainWndProc;
@@ -351,12 +341,12 @@ static ATOM MAIN_RegisterMainWinClass()
   class.cbWndExtra    = 0;
   class.hInstance     = Globals.hInstance;
   class.hIcon         = Globals.hMainIcon;
-  class.hCursor       = LoadCursor (0, IDC_ARROW);
+  class.hCursor       = LoadCursorW (0, (LPWSTR)IDC_ARROW);
   class.hbrBackground = GetStockObject (NULL_BRUSH);
   class.lpszMenuName  = 0;
   class.lpszClassName = STRING_MAIN_WIN_CLASS_NAME;
 
-  return RegisterClass(&class);
+  return RegisterClassW(&class);
 }
 
 /***********************************************************************
@@ -364,7 +354,7 @@ static ATOM MAIN_RegisterMainWinClass()
  *           MAIN_CreateMainWindow
  */
 
-static VOID MAIN_CreateMainWindow()
+static VOID MAIN_CreateMainWindow(void)
 {
   INT  left , top, right, bottom, width, height, show;
   CHAR buffer[100];
@@ -373,8 +363,7 @@ static VOID MAIN_CreateMainWindow()
   Globals.hMainMenu = 0;
 
   /* Get the geometry of the main window */
-  GetPrivateProfileString("Settings", "Window", "",
-			  buffer, sizeof(buffer), Globals.lpszIniFile);
+  GetPrivateProfileStringA("Settings", "Window", "", buffer, sizeof(buffer), Globals.lpszIniFile);
   if (5 == sscanf(buffer, "%d %d %d %d %d", &left, &top, &right, &bottom, &show))
   {
     width  = right - left;
@@ -388,7 +377,7 @@ static VOID MAIN_CreateMainWindow()
 
   /* Create main Window */
   Globals.hMainWnd =
-    CreateWindow (STRING_MAIN_WIN_CLASS_NAME, "",
+    CreateWindowW(STRING_MAIN_WIN_CLASS_NAME, NULL,
 		  WS_OVERLAPPEDWINDOW, left, top, width, height,
 		  0, 0, Globals.hInstance, 0);
 
@@ -401,7 +390,7 @@ static VOID MAIN_CreateMainWindow()
  *           MAIN_CreateMDIWindow
  */
 
-static VOID MAIN_CreateMDIWindow()
+static VOID MAIN_CreateMDIWindow(void)
 {
   CLIENTCREATESTRUCT ccs;
   RECT rect;
@@ -414,7 +403,7 @@ static VOID MAIN_CreateMDIWindow()
 
   /* Create MDI Window */
   Globals.hMDIWnd =
-    CreateWindow (STRING_MDI_WIN_CLASS_NAME, "",
+    CreateWindowW(STRING_MDI_WIN_CLASS_NAME, NULL,
 		  WS_CHILD, rect.left, rect.top,
 		  rect.right - rect.left, rect.bottom - rect.top,
 		  Globals.hMainWnd, 0,
@@ -434,10 +423,10 @@ INT MAIN_MessageBoxIDS(UINT ids_text, UINT ids_title, WORD type)
   CHAR text[MAX_STRING_LEN];
   CHAR title[MAX_STRING_LEN];
 
-  LoadString(Globals.hInstance, ids_text, text, sizeof(text));
-  LoadString(Globals.hInstance, ids_title, title, sizeof(title));
+  LoadStringA(Globals.hInstance, ids_text, text, sizeof(text));
+  LoadStringA(Globals.hInstance, ids_title, title, sizeof(title));
 
-  return(MessageBox(Globals.hMainWnd, text, title, type));
+  return(MessageBoxA(Globals.hMainWnd, text, title, type));
 }
 
 /***********************************************************************
@@ -450,11 +439,11 @@ INT MAIN_MessageBoxIDS_s(UINT ids_text, LPCSTR str, UINT ids_title, WORD type)
   CHAR title[MAX_STRING_LEN];
   CHAR newtext[MAX_STRING_LEN + MAX_PATHNAME_LEN];
 
-  LoadString(Globals.hInstance, ids_text, text, sizeof(text));
-  LoadString(Globals.hInstance, ids_title, title, sizeof(title));
-  wsprintf(newtext, text, str);
+  LoadStringA(Globals.hInstance, ids_text, text, sizeof(text));
+  LoadStringA(Globals.hInstance, ids_title, title, sizeof(title));
+  wsprintfA(newtext, text, str);
 
-  return(MessageBox(Globals.hMainWnd, newtext, title, type));
+  return(MessageBoxA(Globals.hMainWnd, newtext, title, type));
 }
 
 /***********************************************************************
@@ -468,13 +457,9 @@ VOID MAIN_ReplaceString(HLOCAL *handle, LPSTR replace)
   if (newhandle)
     {
       LPSTR  newstring = LocalLock(newhandle);
-      lstrcpy(newstring, replace);
+      strcpy(newstring, replace);
       LocalFree(*handle);
       *handle = newhandle;
     }
   else MAIN_MessageBoxIDS(IDS_OUT_OF_MEMORY, IDS_ERROR, MB_OK);
 }
-
-/* Local Variables:    */
-/* c-file-style: "GNU" */
-/* End:                */

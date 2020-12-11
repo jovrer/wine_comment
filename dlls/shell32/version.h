@@ -15,14 +15,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WINE_FILEVERSION_MAJOR         5
+/* please keep in sync with shell32.rc values */
+#define WINE_FILEVERSION_MAJOR         6
 #define WINE_FILEVERSION_MINOR         0
-#define WINE_FILEVERSION_BUILD      3900
-#define WINE_FILEVERSION_PLATFORMID 6975
-
-/* FIXME: when libs/wpp gets fixed to support concatenation we can remove
- * this and define it in version.rc */
-#define WINE_FILEVERSION "5.0.3900.6975"
+#define WINE_FILEVERSION_BUILD      2900
+#define WINE_FILEVERSION_PLATFORMID 6242

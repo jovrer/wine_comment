@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef WAVE_FORMAT_48M08
@@ -43,6 +43,9 @@ static const unsigned int win_formats[][4] = {
     {WAVE_FORMAT_1S08,  11025,  8, 2},
     {WAVE_FORMAT_1M16,  11025, 16, 1},
     {WAVE_FORMAT_1S16,  11025, 16, 2},
+    {0,                 12000,  8, 1},
+    {0,                 12000,  8, 2},
+    {0,                 12000, 16, 1},
     {0,                 12000, 16, 2},
     {0,                 16000,  8, 1},
     {0,                 16000,  8, 2},
@@ -65,7 +68,6 @@ static const unsigned int win_formats[][4] = {
     {WAVE_FORMAT_96M16, 96000, 16, 1},
     {WAVE_FORMAT_96S16, 96000, 16, 2}
 };
-#define NB_WIN_FORMATS (sizeof(win_formats)/sizeof(*win_formats))
 
 extern const char* dev_name(int);
 extern const char* wave_open_flags(DWORD);

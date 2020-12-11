@@ -17,55 +17,26 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-    
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <malloc.h>
-#include <memory.h>
-#include <tchar.h>
-#include <stdio.h>
-    
+#include <shellapi.h>
+
 #include "taskmgr.h"
 
-INT_PTR CALLBACK AboutDialogWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 
 void OnAbout(void)
 {
-    DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hMainWnd, AboutDialogWndProc);
-}
-
-INT_PTR CALLBACK
-AboutDialogWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    HWND    hLicenseEditWnd;
-    TCHAR    strLicense[0x1000];
-
-    switch (message)
-    {
-    case WM_INITDIALOG:
-
-        hLicenseEditWnd = GetDlgItem(hDlg, IDC_LICENSE_EDIT);
-
-        LoadString(hInst, IDS_LICENSE, strLicense, 0x1000);
-
-        SetWindowText(hLicenseEditWnd, strLicense);
-
-        return TRUE;
-
-    case WM_COMMAND:
-
-        if ((LOWORD(wParam) == IDOK) || (LOWORD(wParam) == IDCANCEL))
-        {
-            EndDialog(hDlg, LOWORD(wParam));
-            return TRUE;
-        }
-
-        break;
-    }
-
-    return 0;
+            WCHAR appname[256];
+            WCHAR copy[] = {'B','r','i','a','n',' ',
+                            'P','a','l','m','e','r',' ',
+                            '<','b','r','i','a','n','p','@','r','e','a','c','t','o','s','.','o','r','g','>',0};
+            LoadStringW( hInst, IDC_TASKMGR, appname, ARRAY_SIZE( appname ));
+            ShellAboutW( hMainWnd, appname, copy,
+                         LoadImageA( hInst, (LPSTR)IDI_TASKMANAGER, IMAGE_ICON, 48, 48, LR_SHARED ));
 }

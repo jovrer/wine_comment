@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -99,7 +99,7 @@ HCTX WINAPI WTMgrDefContext(HMGR hMgr, BOOL fSystem)
  */
 HCTX WINAPI WTMgrDefContextEx(HMGR hMgr, UINT wDevice, BOOL fSystem)
 {
-    FIXME("(%p, %hu, %hu): stub\n", hMgr, wDevice, fSystem);
+    FIXME("(%p, %u, %u): stub\n", hMgr, wDevice, fSystem);
 
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 
@@ -192,7 +192,7 @@ BOOL WINAPI WTMgrPacketUnhook(HWTHOOK hHook)
 LRESULT WINAPI WTMgrPacketHookNext(HWTHOOK hHook, int nCode,
 				   WPARAM wParam, LPARAM lParam)
 {
-    FIXME("(%p, %d, %u, %lu): stub\n", hHook, nCode, wParam, lParam);
+    FIXME("(%p, %d, %lu, %lu): stub\n", hHook, nCode, wParam, lParam);
 
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 
@@ -245,7 +245,7 @@ BOOL WINAPI WTMgrCsrButtonMap(HMGR hMgr, UINT wCursor,
 BOOL WINAPI WTMgrCsrPressureBtnMarks(HMGR hMgr, UINT wCsr,
 				     DWORD dwNMarks, DWORD dwTMarks)
 {
-    FIXME("(%p, %u, %lu, %lu): stub\n", hMgr, wCsr, dwNMarks, dwTMarks);
+    FIXME("(%p, %u, %u, %u): stub\n", hMgr, wCsr, dwNMarks, dwTMarks);
 
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 

@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <string.h>
@@ -41,16 +41,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(handle);
  * Initializes the HANDLETABLE structure pointed to by lpTable
  *
  * PARAMS
- *  lpTable [I] Pointer to the HANDLETABLE structure, which is to be initalized.
+ *  lpTable [I] Pointer to the HANDLETABLE structure, which is to be initialized.
  *
  * NOTES
- *  Note that alloc_handle_table calls init_handle_table on it's own, which 
- *  means that you only have to call init_handle_table, if you use a global
- *  variable of type HANDLETABLE for your handle table. However, in this
- *  case you have to call destroy_handle_table when you don't need the table
+ *  You have to call destroy_handle_table when you don't need the table
  *  any more.
  */
-void init_handle_table(HANDLETABLE *lpTable)
+void init_handle_table(struct handle_table *lpTable)
 {
     TRACE("(lpTable=%p)\n", lpTable);
         
@@ -58,6 +55,7 @@ void init_handle_table(HANDLETABLE *lpTable)
     lpTable->iEntries = 0;
     lpTable->iFirstFree = 0;
     InitializeCriticalSection(&lpTable->mutex);
+    lpTable->mutex.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": HANDLETABLE.mutex");
 }
 
 /******************************************************************************
@@ -67,15 +65,13 @@ void init_handle_table(HANDLETABLE *lpTable)
  * 
  * PARAMS
  *  lpTable [I] Pointer to the handle table, which is to be destroyed.
- *
- * NOTES
- *  Note that release_handle_table takes care of this.
  */
-void destroy_handle_table(HANDLETABLE *lpTable)
+void destroy_handle_table(struct handle_table *lpTable)
 {
     TRACE("(lpTable=%p)\n", lpTable);
         
     HeapFree(GetProcessHeap(), 0, lpTable->paEntries);
+    lpTable->mutex.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&lpTable->mutex);
 }
 
@@ -91,15 +87,15 @@ void destroy_handle_table(HANDLETABLE *lpTable)
  *  dwType  [I] A magic value that identifies the referenced object's type.
  *
  * RETURNS
- *  non zero,  if handle is valid.
- *  zero,      if handle is not valid.
+ *  TRUE,      if handle is valid.
+ *  FALSE,     if handle is not valid.
  */
-int is_valid_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType)
+BOOL is_valid_handle(struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType)
 {
     unsigned int index = HANDLE2INDEX(handle);
-    int ret = 0;
+    BOOL ret = FALSE;
 
-    TRACE("(lpTable=%p, handle=%d)\n", lpTable, handle);
+    TRACE("(lpTable=%p, handle=%ld)\n", lpTable, handle);
     
     EnterCriticalSection(&lpTable->mutex);
         
@@ -114,65 +110,11 @@ int is_valid_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType)
     
     /* Check if this handle references an object of the correct type. */
     if (lpTable->paEntries[index].pObject->dwType != dwType) goto exit;
-    
-    ret = 1;
+
+    ret = TRUE;
 exit:
     LeaveCriticalSection(&lpTable->mutex);
     return ret;
-}
-
-/******************************************************************************
- *  alloc_handle_table
- *
- * Allocates a new handle table
- * 
- * PARAMS
- *  lplpTable [O] Pointer to the variable, to which the pointer to the newly
- *                allocated handle table is written.
- * RETURNS
- *  non zero,  if successful
- *  zero,      if not successful (out of process heap memory)
- *
- * NOTES
- *  If all you need is a single handle table, you may as well declare a global 
- *  variable of type HANDLETABLE and call init_handle_table on your own. 
- */
-int alloc_handle_table(HANDLETABLE **lplpTable)
-{
-    TRACE("(lplpTable=%p)\n", lplpTable);
-        
-    *lplpTable = HeapAlloc(GetProcessHeap(), 0, sizeof(HANDLETABLE));
-    if (*lplpTable) 
-    {
-        init_handle_table(*lplpTable);
-        return 1;
-    }
-    else
-        return 0;
-}
-
-/******************************************************************************
- *  release_handle_table
- *
- * Releases a handle table and frees the resources it used.
- *
- * PARAMS
- *  lpTable [I] Pointer to the handle table, which is to be released.
- *
- * RETURNS
- *  non zero,  if successful
- *  zero,      if not successful
- *
- * NOTES
- *   All valid handles still in the table are released also.
- */
-int release_handle_table(HANDLETABLE *lpTable) 
-{
-    TRACE("(lpTable=%p)\n", lpTable);
-        
-    release_all_handles(lpTable);
-    destroy_handle_table(lpTable);
-    return (int)HeapFree(GetProcessHeap(), 0, lpTable);
 }
 
 /******************************************************************************
@@ -184,26 +126,26 @@ int release_handle_table(HANDLETABLE *lpTable)
  *  lpTable [I] Pointer to the table, which is to be grown
  *
  * RETURNS
- *  non zero,  if successful
- *  zero,      if not successful (out of memory on process heap)
+ *  TRUE,      if successful
+ *  FALSE,     if not successful (out of memory on process heap)
  *
  * NOTES
  *  This is a support function for alloc_handle. Do not call!
  */
-static int grow_handle_table(HANDLETABLE *lpTable) 
+static BOOL grow_handle_table(struct handle_table *lpTable)
 {
-    HANDLETABLEENTRY *newEntries;
+    struct handle_table_entry *newEntries;
     unsigned int i, newIEntries;
 
     newIEntries = lpTable->iEntries + TABLE_SIZE_INCREMENT;
 
-    newEntries = HeapAlloc(GetProcessHeap(), 0, sizeof(HANDLETABLEENTRY)*newIEntries);
-    if (!newEntries) 
-        return 0;
+    newEntries = HeapAlloc(GetProcessHeap(), 0, sizeof(struct handle_table_entry)*newIEntries);
+    if (!newEntries)
+        return FALSE;
 
     if (lpTable->paEntries)
     {
-        memcpy(newEntries, lpTable->paEntries, sizeof(HANDLETABLEENTRY)*lpTable->iEntries);
+        memcpy(newEntries, lpTable->paEntries, sizeof(struct handle_table_entry)*lpTable->iEntries);
         HeapFree(GetProcessHeap(), 0, lpTable->paEntries);
     }
 
@@ -216,7 +158,7 @@ static int grow_handle_table(HANDLETABLE *lpTable)
     lpTable->paEntries = newEntries;
     lpTable->iEntries = newIEntries;
 
-    return 1;
+    return TRUE;
 }
 
 /******************************************************************************
@@ -232,20 +174,20 @@ static int grow_handle_table(HANDLETABLE *lpTable)
  *               be stored. If not successful, this will be 
  *               INVALID_HANDLE_VALUE
  * RETURNS
- *  non zero,  if successful
- *  zero,      if not successful (no free handle)
+ *  TRUE,      if successful
+ *  FALSE,     if not successful (no free handle)
  */
-int alloc_handle(HANDLETABLE *lpTable, OBJECTHDR *lpObject, unsigned int *lpHandle)
+static BOOL alloc_handle(struct handle_table *lpTable, OBJECTHDR *lpObject, HCRYPTKEY *lpHandle)
 {
-    int ret = 0;
-        
+    BOOL ret = FALSE;
+
     TRACE("(lpTable=%p, lpObject=%p, lpHandle=%p)\n", lpTable, lpObject, lpHandle);
         
     EnterCriticalSection(&lpTable->mutex);
     if (lpTable->iFirstFree >= lpTable->iEntries) 
         if (!grow_handle_table(lpTable))
         {
-            *lpHandle = (unsigned int)INVALID_HANDLE_VALUE;
+            *lpHandle = (HCRYPTKEY)INVALID_HANDLE_VALUE;
             goto exit;
         }
 
@@ -253,9 +195,9 @@ int alloc_handle(HANDLETABLE *lpTable, OBJECTHDR *lpObject, unsigned int *lpHand
     
     lpTable->paEntries[lpTable->iFirstFree].pObject = lpObject;
     lpTable->iFirstFree = lpTable->paEntries[lpTable->iFirstFree].iNextFree;
-    lpObject->refcount++;
+    InterlockedIncrement(&lpObject->refcount);
 
-    ret = 1;
+    ret = TRUE;
 exit:
     LeaveCriticalSection(&lpTable->mutex);
     return ret;
@@ -279,16 +221,16 @@ exit:
  *              to be released.
  *
  * RETURNS
- *  non zero,  if successful
- *  zero,      if not successful (invalid handle)
+ *  TRUE,      if successful
+ *  FALSE,     if not successful (invalid handle)
  */
-int release_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType)
+BOOL release_handle(struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType)
 {
     unsigned int index = HANDLE2INDEX(handle);
     OBJECTHDR *pObject;
-    int ret = 0;
+    BOOL ret = FALSE;
 
-    TRACE("(lpTable=%p, hande=%d)\n", lpTable, handle);
+    TRACE("(lpTable=%p, handle=%ld)\n", lpTable, handle);
     
     EnterCriticalSection(&lpTable->mutex);
     
@@ -296,41 +238,21 @@ int release_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType)
         goto exit;
 
     pObject = lpTable->paEntries[index].pObject;
-    pObject->refcount--;
-    if (pObject->refcount == 0)
+    if (InterlockedDecrement(&pObject->refcount) == 0)
+    {
+        TRACE("destroying handle %ld\n", handle);
         if (pObject->destructor)
             pObject->destructor(pObject);
+    }
 
     lpTable->paEntries[index].pObject = NULL;
     lpTable->paEntries[index].iNextFree = lpTable->iFirstFree;
     lpTable->iFirstFree = index;
-   
-    ret = 1;
+
+    ret = TRUE;
 exit:
     LeaveCriticalSection(&lpTable->mutex);
     return ret;
-}
-
-/******************************************************************************
- *  release_all_handles
- *
- * Releases all valid handles in the given handle table and shrinks the table 
- * to zero size.
- *
- * PARAMS
- *  lpTable [I] The table of which all valid handles shall be released.
- */
-void release_all_handles(HANDLETABLE *lpTable) 
-{
-    unsigned int i;
-
-    TRACE("(lpTable=%p)\n", lpTable);
-        
-    EnterCriticalSection(&lpTable->mutex);
-    for (i=0; i<lpTable->iEntries; i++) 
-        if (lpTable->paEntries[i].pObject)
-            release_handle(lpTable, lpTable->paEntries[i].pObject->dwType, INDEX2HANDLE(i));
-    LeaveCriticalSection(&lpTable->mutex);
 }
 
 /******************************************************************************
@@ -341,17 +263,17 @@ void release_all_handles(HANDLETABLE *lpTable)
  * PARAMS
  *  lpTable    [I] Pointer to the handle table, in which the handle is looked up.
  *  handle     [I] The handle, which is to be looked up
- *    lplpObject [O] Pointer to the variable, into which the pointer to the 
- *                   object looked up is copied.
+ *  lplpObject [O] Pointer to the variable, into which the pointer to the
+ *                 object looked up is copied.
  * RETURNS
- *  non zero,  if successful
- *  zero,      if not successful (invalid handle)
+ *  TRUE,      if successful
+ *  FALSE,     if not successful (invalid handle)
  */
-int lookup_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType, OBJECTHDR **lplpObject)
+BOOL lookup_handle(struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType, OBJECTHDR **lplpObject)
 {
-    int ret = 0;
-    
-    TRACE("(lpTable=%p, handle=%d, lplpObject=%p)\n", lpTable, handle, lplpObject);
+    BOOL ret = FALSE;
+
+    TRACE("(lpTable=%p, handle=%ld, lplpObject=%p)\n", lpTable, handle, lplpObject);
     
     EnterCriticalSection(&lpTable->mutex);
     if (!is_valid_handle(lpTable, handle, dwType)) 
@@ -361,7 +283,7 @@ int lookup_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType, OBJEC
     }
     *lplpObject = lpTable->paEntries[HANDLE2INDEX(handle)].pObject;
 
-    ret = 1;
+    ret = TRUE;
 exit:
     LeaveCriticalSection(&lpTable->mutex);
     return ret;
@@ -379,22 +301,22 @@ exit:
  *  copy    [O] Pointer to a handle variable, where the copied handle is put.
  *
  * RETURNS
- *  non zero,  if successful
- *  zero,      if not successful (invalid handle or out of memory)
+ *  TRUE,      if successful
+ *  FALSE,     if not successful (invalid handle or out of memory)
  */
-int copy_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType, unsigned int *copy)
+BOOL copy_handle(struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType, HCRYPTKEY *copy)
 {
     OBJECTHDR *pObject;
-    int ret;
-        
-    TRACE("(lpTable=%p, handle=%d, copy=%p)\n", lpTable, handle, copy);
+    BOOL ret;
+
+    TRACE("(lpTable=%p, handle=%ld, copy=%p)\n", lpTable, handle, copy);
 
     EnterCriticalSection(&lpTable->mutex);
     if (!lookup_handle(lpTable, handle, dwType, &pObject)) 
     {
-        *copy = (unsigned int)INVALID_HANDLE_VALUE;
+        *copy = (HCRYPTKEY)INVALID_HANDLE_VALUE;
         LeaveCriticalSection(&lpTable->mutex);
-        return 0;
+        return FALSE;
     }
 
     ret = alloc_handle(lpTable, pObject, copy);
@@ -425,18 +347,18 @@ int copy_handle(HANDLETABLE *lpTable, unsigned int handle, DWORD dwType, unsigne
  *  INVALID_HANDLE_VALUE,        if something went wrong.
  *  a handle to the new object,  if successful. 
  */
-unsigned int new_object(HANDLETABLE *lpTable, size_t cbSize, DWORD dwType, DESTRUCTOR destructor, 
+HCRYPTKEY new_object(struct handle_table *lpTable, size_t cbSize, DWORD dwType, DESTRUCTOR destructor,
                         OBJECTHDR **ppObject)
 {
     OBJECTHDR *pObject;
-    unsigned int hObject;
+    HCRYPTKEY hObject;
 
     if (ppObject)
         *ppObject = NULL;
 
     pObject = HeapAlloc(GetProcessHeap(), 0, cbSize);
     if (!pObject)
-        return (unsigned int)INVALID_HANDLE_VALUE;
+        return (HCRYPTKEY)INVALID_HANDLE_VALUE;
 
     pObject->dwType = dwType;
     pObject->refcount = 0;

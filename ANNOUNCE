@@ -1,38 +1,222 @@
-This is release 0.9.1 of Wine, a free implementation of Windows on Unix.
+The Wine maintenance release 4.0.1 is now available.
 
-What's new in this release:
-  - Support for Find function in regedit.
-  - Winelib app to eject a CD.
-  - Many MSI improvements.
-  - Better support for running text-mode apps without X.
-  - Improved support for various code obfuscation tools.
-  - Lots of bug fixes.
+What's new in this release (see below for details):
+  - Various bug fixes
+  - Sinhala and Tamil translation updates
 
-Because of lags created by using mirrors, this message may reach you
-before the release is available at the public sites. The sources will
-be available from the following locations:
+The source is available from the following locations:
 
-  http://ibiblio.org/pub/linux/system/emulators/wine/wine-0.9.1.tar.bz2
-  http://prdownloads.sourceforge.net/wine/wine-0.9.1.tar.bz2
+  https://dl.winehq.org/wine/source/4.0/wine-4.0.1.tar.xz
+  http://mirrors.ibiblio.org/wine/source/4.0/wine-4.0.1.tar.xz
 
 Binary packages for various distributions will be available from:
 
-  http://www.winehq.org/site/download
+  https://www.winehq.org/download
 
-You will find documentation on
+You will find documentation on https://www.winehq.org/documentation
 
-  http://www.winehq.org/site/documentation
-
-You can also get the current source directly from the CVS tree. Check
-http://www.winehq.org/cvs for details.
-
-Patches should be submitted to "wine-patches@winehq.org".  Please
-don't forget to include a ChangeLog entry. If you submitted a patch,
-please check to make sure it has been included in the new release.
+You can also get the current source directly from the git
+repository. Check https://www.winehq.org/git for details.
 
 Wine is available thanks to the work of many people. See the file
 AUTHORS in the distribution for the complete list.
 
+----------------------------------------------------------------
+
+Bugs fixed in 4.0.1 (total 44):
+
+   8226  DlgDirListComboBox does not fail properly on bad path spec argument
+  23863  The Bard's Tale (2005): unplayable due to almost completely black screen
+  26653  Multiple VB6 applications need oleaut32 VarRound to support VT_DECIMAL
+  28140  Theatre of War 3: Korea demo 1.2.0 crashes on startup (hook engine can't cope with GOT/PIC register load code at API entry, needs DECLSPEC_HOTPATCH for kernel32.SizeofResource and kernel32.FindClose)
+  31954  Second Sight hangs with a black screen after the intro videos
+  33456  D3DXMatrixTransformation: Broken calculation when scalingrotation and scaling is used
+  35516  Microworlds EX hangs when clicking toolbar button
+  37705  Heroes of Might and Magic VI Shades of Darkness Textures Fail to Display in Most Campaign Maps
+  38138  Avencast: Rise of the Mage: invisible doors
+  38558  cmd.exe bundled with Windows XP messed up when using FOR /F
+  39663  GOG Galaxy client 1.x hangs or reports 'Something went wrong during DeelevateStrategy'  error in Win7 mode (GOG Galaxy service needs wtsapi32.WTSQueryUserToken implementation)
+  39890  Orcish Inn fails to start with exception System.NotImplementedException
+  40441  Chicken tournament crashes when loading texture
+  44300  Windows Media Player 7.1 fails to play media due to unimplemented function wmvcore.dll.WMCheckURLExtension
+  44469  Multiple apps using Windows 10 v1507+ UCRT crash due to multiple missing api-ms-win-crt-private-l1-1-0.dll._o__xxx stubs/forwards (Win10 DISM pkgmgr.exe, MS DirectX Shader Compiler)
+  45326  Multiple 64-bit kernel drivers crash on unimplemented function ntoskrnl.exe.__C_specific_handler (NoxPlayer 6.x, MTA:SA 1.5.x)
+  45473  Rogue Squadron 3D crashes on startup
+  45631  League of Legends client crashes when joining a lobby with other players
+  45632  Garena client v2.0.x crashes on startup ('ntdll.NtQueryVirtualMemory' needs to validate 'MemoryInformationLength' before writing to buffer)
+  46127  aria2 1.34 fails to connect, reports 'WinTLS: Channel setup failed. Schannel provider did not fulfill requested flags. Excepted: 33180 Actual: 33052'
+  46298  Middle-earth: Shadow of War (steam appid 356190) crashes on launch
+  46300  Yousician: unimplemented function mfplat.dll.MFGetSystemTime
+  46303  Warcraft 3: Reign of Chaos (Czech language) can't be installed from CD
+  46318  vbscript doesn't parse if identifier is also keyword token
+  46319  32-bit IL-only executable launched as 32-bit subprocess on Wine and 64-bit subprocess on Windows
+  46387  ReactOS/Windows XP TASKMGR: Column headers don't scroll when scrolling horizontally (multiple listview or header control)
+  46442  FormatCurrency(9) returns .9.00 (period in front)
+  46465  Visual Studio 2015 crashes on unimplemented function msvcp140.dll._Equivalent
+  46481  strftime has a buffer overflow
+  46482  Gas Guzzlers Combat Carnage crashes when changing screen resolution
+  46485  PBM_STEPIT crashes with division by zero when MinVal == MaxVal == 0
+  46493  Functions ilogb* are not implemented
+  46494  64bit WinMerge crash after clicking "About WinMerge"
+  46499  Multiple games crash in GetRawInputData when exiting(House Party, Murderous Pursuits, ICEY)
+  46520  Kindred Spirits on the Roof crashes
+  46536  Empire Earth (GOG version) main menu rendering is broken
+  46569  ToDoList 7.1 : fails to launch after WINE upgrade to 4.0 version
+  46581  HeidiSQL generates OLE error when executing custom queries against MSSQL server.
+  46583  LINE latest version doesn't work
+  46678  Width of latin characters is wrong with some fonts.
+  46691  comctl32/tests/propsheet.c shows uninitalized memory use
+  46708  Photoline crashed right after start, no problem with wine 3.0.4
+  46729  Wine directx not detecting Intel HD Graphics 620 (Rev 02) chipset
+  46907  msi crashes in RemoveFiles action for a broken msi
+
+----------------------------------------------------------------
+
+Changes since 4.0:
+
+Alexandre Julliard (2):
+      server: Report a 64-bit CPU for IL-only binaries.
+      dinput: Add error check to silence a compiler warning.
+
+Alistair Leslie-Hughes (4):
+      dsound: IDirectSoundNotify is only available when DSBCAPS_CTRLPOSITIONNOTIFY is specified.
+      mfplat: Implement MFGetSystemTime.
+      oleaut32: Correctly get the Currency separator in VarFormatCurrency.
+      oleaut32: Support VT_DECIMAL in VarRound.
+
+Andrew Eikum (1):
+      winhttp: Don't crash setting up secure proxy.
+
+Brendan McGrath (2):
+      vbscript: Allow more keywords to be used as identifiers.
+      vbscript: Allow most keywords to be used as 'dot' identifiers.
+
+David Adam (2):
+      ddraw/tests: Add tests for the "dwMipMapCount" field of texture sub-levels.
+      ddraw: Fix the "dwMipMapCount" field of texture sub-levels.
+
+Dmitry Timoshkov (2):
+      windowscodecs: Implement IWICPalette::InitializeFromBitmap.
+      wpcap: Fix compilation with recent pcap/pcap.h versions.
+
+Fabian Maurer (2):
+      api-ms-win-crt-private-l1-1-0: Update to 10.0.17134.12 (WinBuild.160101.0800).
+      ucrtbase: Forward a few functions for dxil.dll and pkgmgr.exe.
+
+Gabriel Ivăncescu (1):
+      libport: Handle partially overlapping buffers.
+
+Gijs Vermeulen (3):
+      msvcp140: Export _Equivalent and port tests.
+      ntdll: Validate len in NtQueryVirtualMemory.
+      kernel32: Add DECLSPEC_HOTPATCH to SizeofResource().
+
+Hans Leidekker (3):
+      secur32: Return ISC_RET_USED_SUPPLIED_CREDS for schannel contexts if the feature was requested.
+      mscms: Add a partial implementation of WcsOpenColorProfileA/W.
+      msi: Avoid a crash in RemoveFiles if the component directory is invalid.
+
+Isira Seneviratne (10):
+      po: Update Sinhala translation.
+      po: Update Sinhala translation.
+      po: Update Sinhala translation.
+      po: Add Tamil translation.
+      po: Update Tamil translation.
+      po: Update Tamil translation.
+      kernel32: Add the Sinhala NLS file.
+      kernel32: Fix LOCALE_SSCRIPTS value for Sinhala.
+      kernel32/nls: Fix some values in Sinhala NLS file.
+      kernel32/nls: Change Sinhala sublang identifier to SUBLANG_SINHALESE_SRI_LANKA.
+
+Jacek Caban (1):
+      ntoskrnl.exe: Add __C_specific_handler entry.
+
+Józef Kucia (3):
+      ddraw: Pass correct box when mapping system memory vertex buffers.
+      d3d9: Validate surface parameter in d3d9_device_ColorFill().
+      wined3d: Add GPU information for Intel HD Graphics 620.
+
+Ken Thomases (1):
+      loader: On Mac, move the top-down allocations area down to avoid regions reserved by the system.
+
+Mark Jansen (1):
+      msi: Do not leak rootkey.
+
+Matteo Bruni (3):
+      d3dx9: Improve D3DXMatrixTransformation() implementation.
+      d3dx9: Improve D3DXMatrixTransformation2D().
+      d3dx9/tests: Avoid some 64-bit test failures.
+
+Michael Stefaniuc (1):
+      tools: Get the ANNOUNCE bug list from the stable-notes git notes.
+
+Nikolay Sivov (9):
+      api-ms-win-core-libraryloader-l1-2-1: Add missing FindResourceW() forward.
+      comctl32/progress: Handle min == max case in PBM_STEPIT.
+      user32/dialog: Fix setting negative dialog item ids.
+      d3d11: Implement d3d11_device_GetImmediateContext1().
+      comctl32/listview: Take care of scrolling offset when repositioning header.
+      comctl32/propsheet: Avoid posting uninitialized data (Valgrind).
+      comctl32/toolbar: Send BN_CLICKED for button that was pressed, not released.
+      usp10: Use single path for all fonts in ScriptGetCMap().
+      ucrtbase: Add ilogb* functions.
+
+Paul Gofman (8):
+      wined3d: Use lower 8 bits only from _ALPHAREF state.
+      wined3d: Return 1e10f for MaxVertexW from wined3d_get_device_caps().
+      wined3d: Only use the LSB of the _SAMP_SRGB_TEXTURE state value.
+      kernel32/tests: Add test for overlapped file read.
+      ntdll/tests: Add more tests for overlapped file read.
+      ntdll: Return STATUS_PENDING from NtReadFile() for async read in case of no buffering.
+      kernel32: Add DECLSPEC_HOTPATCH to FindClose().
+      user32: Select more appropriate stretch mode for colored images interpolation.
+
+Piotr Caban (4):
+      msvcrt: Optimize tolower function when locale was never changed.
+      msvcrt: Optimize toupper function when locale was never changed.
+      msvcp140: Don't forward __ExceptionPtrCreate to msvcr120.
+      msvcrt: Fix buffer overflow in _get_tzname.
+
+Sebastian Lackner (1):
+      wtsapi32: Improve WTSQueryUserToken stub.
+
+Sveinar Søpler (1):
+      wined3d: Add GPU information for the NVIDIA RTX series.
+
+Sven Baars (14):
+      windowscodecs: Fix a memory leak (Valgrind).
+      gdiplus: Fix a memory leak on error path (Valgrind).
+      wsdapi: Fix some memory leaks (Valgrind).
+      strmbase: Fix some memory leaks (Valgrind).
+      ole32: Fix some memory leaks (Valgrind).
+      mstask: Fix some memory leaks on error path (Valgrind).
+      mstask: Move memory allocation to avoid a memory leak (Valgrind).
+      taskschd: Fix some memory leaks (Valgrind).
+      dinput: Free the device after a callback (Valgrind).
+      riched20: Fix IRichEditOle COM aggregation (Valgrind).
+      ws2_32: Use heap_realloc instead of HeapReAlloc to avoid an invalid realloc (Valgrind).
+      windowscodecs: Add missing source_bpp initialization (Valgrind).
+      setupapi: Add a missing return statement (Coverity).
+      dsound: Add missing SetEventHandle error handling (Coverity).
+
+Vijay Kiran Kamuju (2):
+      user32: Add DlgDirList wildcard checks.
+      wmvcore: Add stub for WMCheckURlExtension.
+
+Zebediah Figura (5):
+      comsvcs/tests: Add tests for implicit MTA creation in RegisterDispenser().
+      comsvcs: Create an implicit MTA thread in RegisterDispenser().
+      msvcr120: Add nexttoward implementation.
+      hid: Handle overlapped file handles.
+      ntdll: Avoid crashing while tracing parameters to NtCreateNamedPipeFile().
+
+Zhiyi Zhang (5):
+      msacm32: Reference count local drivers.
+      user32: Check for null handle in GetRawInputData().
+      kernel32: Add DECLSPEC_HOTPATCH to VirtualAllocEx().
+      d3d8: Fix building on Mac.
+      user32: Fix a memory leak.
+
 --
-Alexandre Julliard
-julliard@winehq.org
+Michael Stefaniuc
+mstefani@winehq.org

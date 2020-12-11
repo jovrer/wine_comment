@@ -1,3 +1,23 @@
+@ stdcall DavGetHTTPFromUNCPath(wstr ptr ptr)
+@ stdcall DavGetUNCFromHTTPPath(wstr ptr ptr)
+@ stub DsAddressToSiteNames
+@ stub DsAddressToSiteNamesEx
+@ stub DsDeregisterDnsHostRecords
+@ stdcall DsEnumerateDomainTrustsA(str long ptr ptr)
+@ stdcall DsEnumerateDomainTrustsW(wstr long ptr ptr)
+@ stub DsGetDcClose
+@ stdcall DsGetDcNameA(str str ptr str long ptr)
+@ stdcall DsGetDcNameW(wstr wstr ptr wstr long ptr)
+@ stub DsGetDcNext
+@ stub DsGetDcOpen
+@ stub DsGetDcSiteCoverage
+@ stub DsGetForestTrustInformationW
+@ stdcall DsGetSiteNameA(str ptr)
+@ stdcall DsGetSiteNameW(wstr ptr)
+@ stub DsMergeForestTrustInformationW
+@ stdcall DsRoleFreeMemory(ptr)
+@ stdcall DsRoleGetPrimaryDomainInformation(wstr long ptr)
+@ stub DsValidateSubnetName
 @ stub I_BrowserDebugCall
 @ stub I_BrowserDebugTrace
 @ stdcall I_BrowserQueryEmulatedDomains(wstr ptr ptr)
@@ -71,32 +91,32 @@
 @ stub NetErrorLogRead
 @ stub NetErrorLogWrite
 @ stub NetFileClose
-@ stub NetFileEnum
+@ stdcall NetFileEnum(wstr wstr wstr long ptr long ptr ptr ptr)
 @ stub NetFileGetInfo
-@ stub NetGetAnyDCName
+@ stdcall NetGetAnyDCName(wstr wstr ptr)
 @ stdcall NetGetDCName(wstr wstr ptr)
 @ stub NetGetDisplayInformationIndex
 @ stdcall NetGetJoinInformation(wstr ptr ptr)
 @ stub NetGroupAdd
-@ stub NetGroupAddUser
+@ stdcall NetGroupAddUser(wstr wstr wstr)
 @ stub NetGroupDel
 @ stub NetGroupDelUser
-@ stub NetGroupEnum
-@ stub NetGroupGetInfo
+@ stdcall NetGroupEnum(wstr long ptr long ptr ptr ptr)
+@ stdcall NetGroupGetInfo(wstr wstr long ptr)
 @ stub NetGroupGetUsers
 @ stub NetGroupSetInfo
 @ stub NetGroupSetUsers
 @ stdcall NetLocalGroupAdd(wstr long ptr ptr)
-@ stub NetLocalGroupAddMember
-@ stub NetLocalGroupAddMembers
-@ stub NetLocalGroupDel
-@ stub NetLocalGroupDelMember
-@ stub NetLocalGroupDelMembers
-@ stub NetLocalGroupEnum
-@ stub NetLocalGroupGetInfo
-@ stub NetLocalGroupGetMembers
-@ stub NetLocalGroupSetInfo
-@ stdcall NetLocalGroupSetMembers(wstr wstr long ptr ptr)
+@ stdcall NetLocalGroupAddMember(wstr wstr ptr)
+@ stdcall NetLocalGroupAddMembers(wstr wstr long ptr long)
+@ stdcall NetLocalGroupDel(wstr wstr)
+@ stdcall NetLocalGroupDelMember(wstr wstr ptr)
+@ stdcall NetLocalGroupDelMembers(wstr wstr long ptr long)
+@ stdcall NetLocalGroupEnum(wstr long ptr long ptr ptr ptr)
+@ stdcall NetLocalGroupGetInfo(wstr wstr long ptr)
+@ stdcall NetLocalGroupGetMembers(wstr wstr long ptr long ptr ptr ptr)
+@ stdcall NetLocalGroupSetInfo(wstr wstr long ptr ptr)
+@ stdcall NetLocalGroupSetMembers(wstr wstr long ptr long)
 @ stub NetMessageBufferSend
 @ stub NetMessageNameAdd
 @ stub NetMessageNameDel
@@ -149,15 +169,15 @@
 @ stub NetRplWkstaEnum
 @ stub NetRplWkstaGetInfo
 @ stub NetRplWkstaSetInfo
-@ stub NetScheduleJobAdd
-@ stub NetScheduleJobDel
-@ stub NetScheduleJobEnum
-@ stub NetScheduleJobGetInfo
+@ stdcall NetScheduleJobAdd(wstr ptr ptr)
+@ stdcall NetScheduleJobDel(wstr long long)
+@ stdcall NetScheduleJobEnum(wstr ptr long ptr ptr ptr)
+@ stdcall NetScheduleJobGetInfo(wstr long ptr)
 @ stub NetServerComputerNameAdd
 @ stub NetServerComputerNameDel
-@ stub NetServerDiskEnum
+@ stdcall NetServerDiskEnum(wstr long ptr long ptr ptr ptr)
 @ stdcall NetServerEnum(wstr long ptr long ptr ptr long wstr ptr)
-@ stub NetServerEnumEx
+@ stdcall NetServerEnumEx(wstr long ptr long ptr ptr long wstr wstr)
 @ stdcall NetServerGetInfo(wstr long ptr)
 @ stub NetServerSetInfo
 @ stub NetServerTransportAdd
@@ -169,28 +189,28 @@
 @ stub NetServiceGetInfo
 @ stub NetServiceInstall
 @ stub NetSessionDel
-@ stub NetSessionEnum
+@ stdcall NetSessionEnum(wstr wstr wstr long ptr long ptr ptr ptr)
 @ stub NetSessionGetInfo
-@ stub NetShareAdd
+@ stdcall NetShareAdd(wstr long ptr ptr)
 @ stub NetShareCheck
-@ stub NetShareDel
+@ stdcall NetShareDel(wstr wstr long)
 @ stub NetShareDelSticky
 @ stdcall NetShareEnum(wstr long ptr long ptr ptr ptr)
 @ stub NetShareEnumSticky
-@ stub NetShareGetInfo
+@ stdcall NetShareGetInfo(wstr wstr long ptr)
 @ stub NetShareSetInfo
 @ stdcall NetStatisticsGet(wstr wstr long long ptr)
-@ stub NetUseAdd
-@ stub NetUseDel
-@ stub NetUseEnum
-@ stub NetUseGetInfo
+@ stdcall NetUseAdd(wstr long ptr ptr)
+@ stdcall NetUseDel(wstr wstr long)
+@ stdcall NetUseEnum(wstr long ptr long ptr ptr ptr)
+@ stdcall NetUseGetInfo(ptr ptr long ptr)
 @ stdcall NetUserAdd(wstr long ptr ptr)
-@ stub NetUserChangePassword
+@ stdcall NetUserChangePassword(wstr wstr wstr wstr)
 @ stdcall NetUserDel(wstr wstr)
 @ stdcall NetUserEnum(wstr long long ptr long ptr ptr ptr)
-@ stub NetUserGetGroups
+@ stdcall NetUserGetGroups(wstr wstr long ptr long ptr ptr)
 @ stdcall NetUserGetInfo(wstr wstr long ptr)
-@ stub NetUserGetLocalGroups
+@ stdcall NetUserGetLocalGroups(wstr wstr long long ptr long ptr ptr)
 @ stdcall NetUserModalsGet(wstr long ptr)
 @ stub NetUserModalsSet
 @ stub NetUserSetGroups
@@ -200,7 +220,7 @@
 @ stub NetWkstaTransportAdd
 @ stub NetWkstaTransportDel
 @ stdcall NetWkstaTransportEnum (wstr long ptr long ptr ptr ptr)
-@ stub NetWkstaUserEnum
+@ stdcall NetWkstaUserEnum(wstr long ptr long ptr ptr ptr)
 @ stdcall NetWkstaUserGetInfo(wstr long ptr)
 @ stub NetWkstaUserSetInfo
 @ stdcall NetapipBufferAllocate(long ptr) NetApiBufferAllocate

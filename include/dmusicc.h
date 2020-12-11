@@ -2,28 +2,27 @@
  *
  * Copyright (C) 2003-2004 Rok Mandeljc
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Library General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DMUSIC_CORE_H
 #define __WINE_DMUSIC_CORE_H
 
-#ifndef __WINESRC__
 #include <windows.h>
-#endif /* __WINESRC__ */
 
+#define COM_NO_WINDOWS_H
 #include <objbase.h>
 #include <mmsystem.h>
 
@@ -329,7 +328,7 @@ struct _DMUS_SYNTHSTATS {
 	DWORD dwCPUPerVoice;
 	DWORD dwLostNotes;
 	DWORD dwFreeMemory;
-	long  lPeakVolume;
+	LONG  lPeakVolume;
 };
 
 struct _DMUS_SYNTHSTATS8 {
@@ -340,7 +339,7 @@ struct _DMUS_SYNTHSTATS8 {
 	DWORD dwCPUPerVoice;
 	DWORD dwLostNotes;
 	DWORD dwFreeMemory;
-	long  lPeakVolume;
+	LONG  lPeakVolume;
 	DWORD dwSynthMemUse;
 };
 
@@ -379,7 +378,7 @@ DECLARE_INTERFACE_(IDirectMusic,IUnknown)
     STDMETHOD_(ULONG,Release)(THIS) PURE;
     /*** IDirectMusic methods ***/
     STDMETHOD(EnumPort)(THIS_ DWORD dwIndex, LPDMUS_PORTCAPS pPortCaps) PURE;
-    STDMETHOD(CreateMusicBuffer)(THIS_ LPDMUS_BUFFERDESC pBufferDesc, LPDIRECTMUSICBUFFER **ppBuffer, LPUNKNOWN pUnkOuter) PURE;
+    STDMETHOD(CreateMusicBuffer)(THIS_ LPDMUS_BUFFERDESC pBufferDesc, LPDIRECTMUSICBUFFER *ppBuffer, LPUNKNOWN pUnkOuter) PURE;
     STDMETHOD(CreatePort)(THIS_ REFCLSID rclsidPort, LPDMUS_PORTPARAMS pPortParams, LPDIRECTMUSICPORT *ppPort, LPUNKNOWN pUnkOuter) PURE;
     STDMETHOD(EnumMasterClock)(THIS_ DWORD dwIndex, LPDMUS_CLOCKINFO lpClockInfo) PURE;
     STDMETHOD(GetMasterClock)(THIS_ LPGUID pguidClock, struct IReferenceClock **ppReferenceClock) PURE;
@@ -420,7 +419,7 @@ DECLARE_INTERFACE_(IDirectMusic8,IDirectMusic)
     STDMETHOD_(ULONG,Release)(THIS) PURE;
     /*** IDirectMusic methods ***/
     STDMETHOD(EnumPort)(THIS_ DWORD dwIndex, LPDMUS_PORTCAPS pPortCaps) PURE;
-    STDMETHOD(CreateMusicBuffer)(THIS_ LPDMUS_BUFFERDESC pBufferDesc, LPDIRECTMUSICBUFFER **ppBuffer, LPUNKNOWN pUnkOuter) PURE;
+    STDMETHOD(CreateMusicBuffer)(THIS_ LPDMUS_BUFFERDESC pBufferDesc, LPDIRECTMUSICBUFFER *ppBuffer, LPUNKNOWN pUnkOuter) PURE;
     STDMETHOD(CreatePort)(THIS_ REFCLSID rclsidPort, LPDMUS_PORTPARAMS pPortParams, LPDIRECTMUSICPORT *ppPort, LPUNKNOWN pUnkOuter) PURE;
     STDMETHOD(EnumMasterClock)(THIS_ DWORD dwIndex, LPDMUS_CLOCKINFO lpClockInfo) PURE;
     STDMETHOD(GetMasterClock)(THIS_ LPGUID pguidClock, struct IReferenceClock **ppReferenceClock) PURE;

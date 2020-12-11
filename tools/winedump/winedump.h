@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  *  References:
  *  DLL symbol extraction based on file format from alib (anthonyw.cjb.net).
@@ -24,11 +24,6 @@
  *
  *  All the cool functionality (prototyping, call tracing, forwarding)
  *  relies on Patrik Stridvall's 'function_grep.pl' script to work.
- *
- *  http://msdn.microsoft.com/library/periodic/period96/msj/S330.htm
- *  This article provides both a description and freely downloadable
- *  implementation, in source code form, of how to extract symbols
- *  from Win32 PE executables/DLLs.
  *
  *  http://www.kegel.com/mangle.html
  *  Gives information on the name mangling scheme used by MS compilers,
@@ -46,6 +41,9 @@
 #include <errno.h>
 #include <assert.h>
 #include <stdarg.h>
+
+#include "windef.h"
+#include "winbase.h"
 
 /* Argument type constants */
 #define MAX_FUNCTION_ARGS   32
@@ -72,7 +70,7 @@
 #define SYM_THISCALL        0x4
 #define SYM_DATA            0x8 /* Data, not a function */
 
-typedef enum {NONE, DMGL, SPEC, DUMP, EMF, LNK} Mode;
+typedef enum {NONE, DMGL, SPEC, DUMP} Mode;
 
 /* Structure holding a parsed symbol */
 typedef struct __parsed_symbol
@@ -89,15 +87,13 @@ typedef struct __parsed_symbol
   char  arg_flag [MAX_FUNCTION_ARGS];
   char *arg_text [MAX_FUNCTION_ARGS];
   char *arg_name [MAX_FUNCTION_ARGS];
-  unsigned int n_u_refs;
-  char *u_ref    [MAX_FUNCTION_ARGS];
 } parsed_symbol;
 
 /* FIXME: Replace with some hash such as GHashTable */
 typedef struct __search_symbol
 {
   struct __search_symbol *next;
-  int found;
+  BOOL found;
   char symbolname[1];    /* static string, be ANSI C compliant by [1] */
 } search_symbol;
 
@@ -107,22 +103,25 @@ typedef struct __globals
   Mode  mode;		   /* SPEC, DEMANGLE or DUMP */
 
   /* Options: generic */
-  int   do_quiet;          /* -q */
-  int   do_verbose;        /* -v */
+  BOOL  do_quiet;          /* -q */
+  BOOL  do_verbose;        /* -v */
 
   /* Option arguments: generic */
   const char *input_name;  /* */
   const char *input_module; /* input module name generated after input_name according mode */
 
   /* Options: spec mode */
-  int   do_code;           /* -c, -t, -f */
-  int   do_trace;          /* -t, -f */
-  int   do_cdecl;          /* -C */
-  int   do_documentation;  /* -D */
+  BOOL  do_code;           /* -c, -t, -f */
+  BOOL  do_trace;          /* -t, -f */
+  BOOL  do_cdecl;          /* -C */
+  BOOL  do_documentation;  /* -D */
 
   /* Options: dump mode */
-  int   do_demangle;        /* -d */
-  int   do_dumpheader;      /* -f */
+  BOOL  do_demangle;        /* -d */
+  BOOL  do_dumpheader;      /* -f */
+  BOOL  do_dump_rawdata;    /* -x */
+  BOOL  do_debug;           /* -G == 1, -g == 2 */
+  BOOL  do_symbol_table;    /* -t */
 
   /* Option arguments: spec mode */
   int   start_ordinal;     /* -s */
@@ -135,9 +134,6 @@ typedef struct __globals
 
   /* Option arguments: dump mode */
   const char *dumpsect;    /* -j */
-
-  /* internal options */
-  int   do_ordinals;
 } _globals;
 
 extern _globals globals;
@@ -155,36 +151,30 @@ extern _globals globals;
 /* Default calling convention */
 #define CALLING_CONVENTION (globals.do_cdecl ? SYM_CDECL : SYM_STDCALL)
 
-/* EMF functions */
-int   dump_emf (const char *emf);
-
-/* LNK functions */
-int   dump_lnk (const char *lnk);
-
 /* Image functions */
 void	dump_file(const char* name);
 
 /* DLL functions */
-int   dll_open (const char *dll_name);
+BOOL  dll_open (const char *dll_name);
 
-int   dll_next_symbol (parsed_symbol * sym);
+BOOL  dll_next_symbol (parsed_symbol * sym);
 
 /* Symbol functions */
-int   symbol_init(parsed_symbol* symbol, const char* name);
+void  symbol_init(parsed_symbol* symbol, const char* name);
 
-int   symbol_demangle (parsed_symbol *symbol);
+BOOL  symbol_demangle (parsed_symbol *symbol);
 
-int   symbol_search (parsed_symbol *symbol);
+BOOL  symbol_search (parsed_symbol *symbol);
 
 void  symbol_clear(parsed_symbol *sym);
 
-int   symbol_is_valid_c(const parsed_symbol *sym);
+BOOL  symbol_is_valid_c(const parsed_symbol *sym);
 
 const char *symbol_get_call_convention(const parsed_symbol *sym);
 
 const char *symbol_get_spec_type (const parsed_symbol *sym, size_t arg);
 
-void  symbol_clean_string (const char *string);
+void  symbol_clean_string (char *string);
 
 int   symbol_get_type (const char *string);
 
@@ -205,8 +195,6 @@ void  output_prototype (FILE *file, const parsed_symbol *sym);
 
 void  output_makefile (void);
 
-void  output_install_script (void);
-
 /* Misc functions */
 char *str_create (size_t num_str, ...);
 
@@ -216,37 +204,77 @@ char *str_substring(const char *start, const char *end);
 
 char *str_replace (char *str, const char *oldstr, const char *newstr);
 
-const char *str_match (const char *str, const char *match, int *found);
+const char *str_match (const char *str, const char *match, BOOL *found);
 
 const char *str_find_set (const char *str, const char *findset);
 
 char *str_toupper (char *str);
 
+const char *get_machine_str(int mach);
+
 /* file dumping functions */
-enum FileSig {SIG_UNKNOWN, SIG_DOS, SIG_PE, SIG_DBG, SIG_NE, SIG_LE, SIG_MDMP};
+enum FileSig {SIG_UNKNOWN, SIG_DOS, SIG_PE, SIG_DBG, SIG_PDB, SIG_NE, SIG_LE, SIG_MDMP, SIG_COFFLIB, SIG_LNK,
+              SIG_EMF, SIG_FNT, SIG_TLB};
 
-void*		PRD(unsigned long prd, unsigned long len);
-unsigned long	Offset(void* ptr);
+const void*	PRD(unsigned long prd, unsigned long len);
+unsigned long	Offset(const void* ptr);
 
-typedef void (*file_dumper)(enum FileSig, void*);
-int             dump_analysis(const char*, file_dumper, enum FileSig);
+typedef void (*file_dumper)(void);
+BOOL            dump_analysis(const char*, file_dumper, enum FileSig);
 
 void            dump_data( const unsigned char *ptr, unsigned int size, const char *prefix );
 const char*	get_time_str( unsigned long );
 unsigned int    strlenW( const unsigned short *str );
 void            dump_unicode_str( const unsigned short *str, int len );
+const char*     get_guid_str(const GUID* guid);
+const char*     get_symbol_str(const char* symname);
+void            dump_file_header(const IMAGE_FILE_HEADER *);
+void            dump_optional_header(const IMAGE_OPTIONAL_HEADER32 *, UINT);
+void            dump_section(const IMAGE_SECTION_HEADER *, const char* strtable);
 
-void            ne_dump( const void *exe, size_t exe_size );
-void            le_dump( const void *exe, size_t exe_size );
+enum FileSig    get_kind_exec(void);
+void            dos_dump( void );
+void            pe_dump( void );
+void            ne_dump( void );
+void            le_dump( void );
+enum FileSig    get_kind_mdmp(void);
 void            mdmp_dump( void );
+enum FileSig    get_kind_lib(void);
+void            lib_dump( void );
+enum FileSig    get_kind_dbg(void);
+void	        dbg_dump( void );
+enum FileSig    get_kind_lnk(void);
+void	        lnk_dump( void );
+enum FileSig    get_kind_emf(void);
+void            emf_dump( void );
+enum FileSig    get_kind_pdb(void);
+void            pdb_dump(void);
+enum FileSig    get_kind_fnt(void);
+void            fnt_dump( void );
+enum FileSig    get_kind_tlb(void);
+void            tlb_dump(void);
+
+BOOL            codeview_dump_symbols(const void* root, unsigned long size);
+BOOL            codeview_dump_types_from_offsets(const void* table, const DWORD* offsets, unsigned num_types);
+BOOL            codeview_dump_types_from_block(const void* table, unsigned long len);
+void            codeview_dump_linetab(const char* linetab, BOOL pascal_str, const char* pfx);
+void            codeview_dump_linetab2(const char* linetab, DWORD size, const char* strimage, DWORD strsize, const char* pfx);
+
+void            dump_stabs(const void* pv_stabs, unsigned szstabs, const char* stabstr, unsigned szstr);
+void		dump_codeview(unsigned long ptr, unsigned long len);
+void		dump_coff(unsigned long coffbase, unsigned long len,
+                          const IMAGE_SECTION_HEADER *sectHead);
+void            dump_coff_symbol_table(const IMAGE_SYMBOL *coff_symbols, unsigned num_sym,
+                                       const IMAGE_SECTION_HEADER *sectHead);
+void		dump_frame_pointer_omission(unsigned long base, unsigned long len);
 
 FILE *open_file (const char *name, const char *ext, const char *mode);
 
 #ifdef __GNUC__
-void  do_usage (void) __attribute__ ((noreturn));
+void  do_usage (const char *arg) __attribute__ ((noreturn));
 void  fatal (const char *message)  __attribute__ ((noreturn));
 #else
-void  do_usage (void);
+void  do_usage (const char *arg);
 void  fatal (const char *message);
 #endif
 

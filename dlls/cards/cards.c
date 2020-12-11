@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -94,7 +94,7 @@ BOOL WINAPI cdtDrawExt(HDC hdc, int x, int y, int dx, int dy, int card, int mode
 	BOOL eraseFlag = FALSE;
 	BOOL drawFlag = TRUE;
 
-	TRACE("(%p, %d, %d, %d, %d, %d, %d, %ld)\n", hdc, x, y, dx, dy, card, mode, color);
+	TRACE("(%p, %d, %d, %d, %d, %d, %d, %d)\n", hdc, x, y, dx, dy, card, mode, color);
 
 	roundCornersFlag = !(mode & MODEFLAG_DONT_ROUND_CORNERS) &&
 			   (dx == cardWidth) && (dy == cardHeight);
@@ -151,10 +151,7 @@ BOOL WINAPI cdtDrawExt(HDC hdc, int x, int y, int dx, int dy, int card, int mode
 		HBRUSH hBrush;
 		RECT rect;
 		hBrush = CreateSolidBrush(color);
-		rect.left = x;
-		rect.top = y;
-		rect.right = x + cardWidth - 1;
-		rect.bottom = y + cardHeight - 1;
+                SetRect(&rect, x, y, x + cardWidth - 1, y + cardHeight - 1);
 		FillRect(hdc, &rect, hBrush);
 	}
 
@@ -175,35 +172,34 @@ BOOL WINAPI cdtDrawExt(HDC hdc, int x, int y, int dx, int dy, int card, int mode
 
 		if(roundCornersFlag)
 		{
-			COLORREF savedPixels[12];
+                    /* NOTE: native uses Get/SetPixel for corners, but that really
+                     * hurts on X11 since it needs a server round-trip for each pixel.
+                     * So we use a clip region instead. */
+                    HRGN saved = CreateRectRgn( 0, 0, 0, 0 );
+                    HRGN line = CreateRectRgn( x + 2, y, x + dx - 2, y + 1 );
+                    HRGN clip = CreateRectRgn( x, y + 2, x + dx, y + dy - 2 );
 
-			savedPixels[0] = GetPixel(hdc, x, y);
-			savedPixels[1] = GetPixel(hdc, x + 1, y);
-			savedPixels[2] = GetPixel(hdc, x, y + 1);
-			savedPixels[3] = GetPixel(hdc, x + dx - 1, y);
-			savedPixels[4] = GetPixel(hdc, x + dx - 2, y);
-			savedPixels[5] = GetPixel(hdc, x + dx - 1, y + 1);
-			savedPixels[6] = GetPixel(hdc, x, y + dy - 1);
-			savedPixels[7] = GetPixel(hdc, x + 1, y + dy - 1);
-			savedPixels[8] = GetPixel(hdc, x, y + dy - 2);
-			savedPixels[9] = GetPixel(hdc, x + dx - 1, y + dy - 1);
-			savedPixels[10] = GetPixel(hdc, x + dx - 2, y + dy - 1);
-			savedPixels[11] = GetPixel(hdc, x + dx - 1, y + dy - 2);
+                    CombineRgn( clip, clip, line, RGN_OR );
+                    SetRectRgn( line, x + 1, y + 1, x + dx - 1, y + 2 );
+                    CombineRgn( clip, clip, line, RGN_OR );
+                    SetRectRgn( line, x + 1, y + dy - 2, x + dx - 1, y + dy - 1 );
+                    CombineRgn( clip, clip, line, RGN_OR );
+                    SetRectRgn( line, x + 2, y + dy - 1, x + dx - 2, y + dy );
+                    CombineRgn( clip, clip, line, RGN_OR );
+                    DeleteObject( line );
 
-			do_blt(hdc, x, y, dx, dy, hMemoryDC, rasterOp);
+                    if (!GetClipRgn( hdc, saved ))
+                    {
+                        DeleteObject( saved );
+                        saved = 0;
+                    }
+                    ExtSelectClipRgn( hdc, clip, RGN_AND );
+                    DeleteObject( clip );
 
-			SetPixel(hdc, x, y, savedPixels[0]);
-			SetPixel(hdc, x + 1, y, savedPixels[1]);
-			SetPixel(hdc, x, y + 1, savedPixels[2]);
-			SetPixel(hdc, x + dx - 1, y, savedPixels[3]);
-			SetPixel(hdc, x + dx - 2, y, savedPixels[4]);
-			SetPixel(hdc, x + dx - 1, y + 1, savedPixels[5]);
-			SetPixel(hdc, x, y + dy - 1, savedPixels[6]);
-			SetPixel(hdc, x + 1, y + dy - 1, savedPixels[7]);
-			SetPixel(hdc, x, y + dy - 2, savedPixels[8]);
-			SetPixel(hdc, x + dx - 1, y + dy - 1, savedPixels[9]);
-			SetPixel(hdc, x + dx - 2, y + dy - 1, savedPixels[10]);
-			SetPixel(hdc, x + dx - 1, y + dy - 2, savedPixels[11]);
+                    do_blt(hdc, x, y, dx, dy, hMemoryDC, rasterOp);
+
+                    SelectClipRgn( hdc, saved );
+                    if (saved) DeleteObject( saved );
 		}
 		else
 			do_blt(hdc, x, y, dx, dy, hMemoryDC, rasterOp);
@@ -244,7 +240,7 @@ BOOL WINAPI cdtDrawExt(HDC hdc, int x, int y, int dx, int dy, int card, int mode
  */
 BOOL WINAPI cdtDraw(HDC hdc, int x, int y, int card, int mode, DWORD color)
 {
-	TRACE("(%p, %d, %d, %d, %d, %ld)\n", hdc, x, y, card, mode, color);
+	TRACE("(%p, %d, %d, %d, %d, %d)\n", hdc, x, y, card, mode, color);
 
 	return cdtDrawExt(hdc, x, y, cardWidth, cardHeight, card, mode, color);
 }
@@ -268,9 +264,9 @@ BOOL WINAPI cdtAnimate(HDC hdc, int cardback, int x, int y, int frame)
 
 
 /***********************************************************************
- * Frees resources reserved by cdtInitialize.
+ * Frees resources reserved by cdtInit.
  */
-void WINAPI cdtTerm()
+void WINAPI cdtTerm(void)
 {
 	int i;
 
@@ -295,8 +291,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
     case DLL_PROCESS_ATTACH:
         hInst = inst;
         DisableThreadLibraryCalls( inst );
-        break;
-    case DLL_PROCESS_DETACH:
         break;
     }
     return TRUE;

@@ -1,61 +1,31 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
-MODULE    = wine
-
-C_SRCS = \
-	glibc.c \
-	kthread.c \
+SOURCES = \
+	l_intl.nls \
 	main.c \
 	preloader.c \
-	pthread.c
+	preloader_mac.c \
+	wine.de.UTF-8.man.in \
+	wine.desktop \
+	wine.fr.UTF-8.man.in \
+	wine.inf.in \
+	wine.man.in \
+	wine.pl.UTF-8.man.in \
+	wine_info.plist.in
 
-KTHREAD_OBJS = kthread.o main.o
-PTHREAD_OBJS = pthread.o main.o
+PROGRAMS = $(WINELOADER_PROGRAMS)
+INSTALL_LIB = $(WINELOADER_PROGRAMS)
 
-WINE_BINARIES = @WINE_BINARIES@
-MAIN_BINARY   = @MAIN_BINARY@
+preloader_EXTRADEFS = $(MSVCRTFLAGS)
 
-MANPAGES = wine.man
+wine_OBJS = main.o
+wine_DEPS = $(WINELOADER_DEPENDS)
+wine_LDFLAGS = $(WINELOADER_LDFLAGS) $(LDEXECFLAGS) -lwine $(PTHREAD_LIBS)
 
-all: $(WINE_BINARIES) $(MODULE) $(MANPAGES)
+wine64_OBJS = main.o
+wine64_DEPS = $(WINELOADER_DEPENDS)
+wine64_LDFLAGS = $(WINELOADER_LDFLAGS) $(LDEXECFLAGS) -lwine $(PTHREAD_LIBS)
 
-@MAKE_RULES@
+wine_preloader_OBJS = preloader.o preloader_mac.o
+wine_preloader_LDFLAGS = $(WINEPRELOADER_LDFLAGS)
 
-LIBPTHREAD  = @LIBPTHREAD@
-LDEXECFLAGS = @LDEXECFLAGS@
-
-wine-glibc: glibc.o Makefile.in
-	$(CC) -o $@ glibc.o $(LIBWINE) $(LIBPORT) $(LIBPTHREAD) $(EXTRALIBS) $(LDFLAGS)
-
-wine-preloader: preloader.o Makefile.in
-	$(CC) -o $@ -static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7c000000 preloader.o $(LIBPORT) $(LDFLAGS)
-
-wine-kthread: $(KTHREAD_OBJS) Makefile.in
-	$(CC) -o $@ $(LDEXECFLAGS) $(KTHREAD_OBJS) $(LIBWINE) $(LIBPORT) $(EXTRALIBS) $(LDFLAGS)
-
-wine-pthread: $(PTHREAD_OBJS) Makefile.in
-	$(CC) -o $@ $(LDEXECFLAGS) $(PTHREAD_OBJS) $(LIBWINE) $(LIBPORT) $(LIBPTHREAD) $(EXTRALIBS) $(LDFLAGS)
-
-$(MODULE): $(MAIN_BINARY)
-	$(RM) $(MODULE) && $(LN_S) $(MAIN_BINARY) $(MODULE)
-
-install:: $(WINE_BINARIES) $(MANPAGES)
-	$(MKINSTALLDIRS) $(bindir) $(mandir)/man$(prog_manext)
-	for f in $(WINE_BINARIES); do \
-	  if [ "$(MAIN_BINARY)" = "$$f" ]; \
-	  then $(INSTALL_PROGRAM) $$f $(bindir)/$(MODULE); \
-	  else $(INSTALL_PROGRAM) $$f $(bindir)/$$f; \
-	  fi; \
-	done
-	$(INSTALL_DATA) wine.man $(mandir)/man$(prog_manext)/wine.$(prog_manext)
-
-uninstall::
-	-cd $(bindir) && $(RM) $(WINE_BINARIES) $(MODULE)
-	$(RM) $(mandir)/man$(prog_manext)/wine.$(prog_manext)
-
-clean::
-	$(RM) $(WINE_BINARIES) $(MODULE)
-
-### Dependencies:
+wine64_preloader_OBJS = preloader.o preloader_mac.o
+wine64_preloader_LDFLAGS = $(WINEPRELOADER_LDFLAGS)

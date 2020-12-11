@@ -15,13 +15,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
 
 #include "windef.h"
 #include "winbase.h"
+#include "objbase.h"
 #include "winnetwk.h"
 #include "wine/debug.h"
 #include "wnetpriv.h"
@@ -73,15 +74,6 @@ BOOL WINAPI _MPR_25( LPBYTE lpMem, INT len )
 }
 
 /*****************************************************************
- *  DllCanUnloadNow  [MPR.@]
- */
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    FIXME("Stub\n");
-    return S_OK;
-}
-
-/*****************************************************************
  *  DllMain  [MPR.init]
  */
 BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
@@ -93,6 +85,7 @@ BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             break;
 
         case DLL_PROCESS_DETACH:
+            if (lpvReserved) break;
             wnetFree();
             break;
     }

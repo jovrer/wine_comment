@@ -1,12 +1,7 @@
 EXTRADEFS = -D_WINMM_
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = winmm.dll
-IMPORTLIB = libwinmm.$(IMPLIBEXT)
-IMPORTS   = user32 advapi32 kernel32 ntdll
-EXTRALIBS = $(LIBUNICODE)
+IMPORTLIB = winmm
+IMPORTS   = uuid user32 advapi32 ole32 msacm32
 
 C_SRCS = \
 	driver.c \
@@ -16,21 +11,9 @@ C_SRCS = \
 	mmio.c \
 	playsound.c \
 	time.c \
+	waveform.c \
 	winmm.c
 
-C_SRCS16 = \
-	message16.c \
-	mmsystem.c \
-	sound16.c
-
-SPEC_SRCS16 = \
-	mmsystem.spec \
-	sound.drv.spec
-
-RC_SRCS = winmm_res.rc
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = \
+	winmm.rc \
+	winmm_res.rc

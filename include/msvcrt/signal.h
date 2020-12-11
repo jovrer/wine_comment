@@ -15,13 +15,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef _WINE_SIGNAL_H
 #define _WINE_SIGNAL_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
 
 #define SIGINT   2
 #define SIGILL   4
@@ -33,13 +32,22 @@
 
 #define NSIG     (SIGABRT + 1)
 
-typedef void (*__sighandler_t)(int);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef void (__cdecl *__sighandler_t)(int);
 
 #define SIG_DFL ((__sighandler_t)0)
 #define SIG_IGN ((__sighandler_t)1)
 #define SIG_ERR ((__sighandler_t)-1)
 
-__sighandler_t signal(int sig, __sighandler_t func);
-int raise(int sig);
+void** __cdecl __pxcptinfoptrs(void);
+__sighandler_t __cdecl signal(int sig, __sighandler_t func);
+int __cdecl raise(int sig);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _WINE_SIGNAL_H */

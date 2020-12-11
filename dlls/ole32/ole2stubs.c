@@ -16,11 +16,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+#include "config.h"
+
 #include <stdarg.h>
 
 #include "windef.h"
@@ -39,17 +39,8 @@ HRESULT WINAPI  OleCreateLinkToFile(LPCOLESTR lpszFileName, REFIID riid,
 	  		DWORD renderopt, LPFORMATETC lpFormatEtc,
 			LPOLECLIENTSITE pClientSite, LPSTORAGE pStg, LPVOID* ppvObj)
 {
-    FIXME("(%p,%p,%li,%p,%p,%p,%p), stub!\n",lpszFileName, riid, renderopt, lpFormatEtc, pClientSite, pStg, ppvObj);
+    FIXME("(%p,%p,%i,%p,%p,%p,%p), stub!\n",lpszFileName, riid, renderopt, lpFormatEtc, pClientSite, pStg, ppvObj);
     return E_NOTIMPL;
-}
-
-/******************************************************************************
- *              SetConvertStg        [OLE32.@]
- */
-HRESULT WINAPI SetConvertStg(LPSTORAGE pStg, BOOL fConvert)
-{
-  FIXME("(%p,%x), stub!\n", pStg, fConvert);
-  return E_NOTIMPL;
 }
 
 /******************************************************************************
@@ -63,17 +54,6 @@ HRESULT WINAPI OleCreateLink(LPMONIKER pmkLinkSrc, REFIID riid, DWORD renderopt,
 }
 
 /******************************************************************************
- *              OleCreateFromFile        [OLE32.@]
- */
-HRESULT WINAPI OleCreateFromFile(REFCLSID rclsid, LPCOLESTR lpszFileName, REFIID riid,
-            DWORD renderopt, LPFORMATETC lpFormatEtc, LPOLECLIENTSITE pClientSite, LPSTORAGE pStg, LPVOID* ppvObj)
-{
-  FIXME("(not shown), stub!\n");
-  return E_NOTIMPL;
-}
-
-
-/******************************************************************************
  *              OleGetIconOfClass        [OLE32.@]
  */
 HGLOBAL WINAPI OleGetIconOfClass(REFCLSID rclsid, LPOLESTR lpszLabel, BOOL fUseTypeAsLabel)
@@ -82,40 +62,33 @@ HGLOBAL WINAPI OleGetIconOfClass(REFCLSID rclsid, LPOLESTR lpszLabel, BOOL fUseT
   return NULL;
 }
 
-
-/******************************************************************************
- *              OleCreateStaticFromData        [OLE32.@]
+/***********************************************************************
+ *              OleGetIconOfFile        [OLE32.@]
  */
-HRESULT     WINAPI OleCreateStaticFromData(LPDATAOBJECT pSrcDataObj, REFIID iid,
-                DWORD renderopt, LPFORMATETC pFormatEtc, LPOLECLIENTSITE pClientSite,
-                LPSTORAGE pStg, LPVOID* ppvObj)
+HGLOBAL WINAPI OleGetIconOfFile(LPOLESTR path, BOOL use_file_as_label)
 {
-  FIXME("(not shown), stub!\n");
-  return E_NOTIMPL;
-}
-
-/******************************************************************************
- *              OleCreateLinkFromData        [OLE32.@]
- */
-
-HRESULT WINAPI  OleCreateLinkFromData(LPDATAOBJECT pSrcDataObj, REFIID riid,
-                DWORD renderopt, LPFORMATETC pFormatEtc,
-                LPOLECLIENTSITE pClientSite, LPSTORAGE pStg,
-                LPVOID* ppvObj)
-{
-  FIXME("(not shown), stub!\n");
-  return E_NOTIMPL;
+    FIXME("(%s, %d), stub!\n", debugstr_w(path), use_file_as_label);
+    return NULL;
 }
 
 /***********************************************************************
  *           OleRegEnumFormatEtc    [OLE32.@]
  */
-HRESULT     WINAPI OleRegEnumFormatEtc (
+HRESULT WINAPI DECLSPEC_HOTPATCH OleRegEnumFormatEtc (
   REFCLSID clsid,
   DWORD    dwDirection,
   LPENUMFORMATETC* ppenumFormatetc)
 {
-    FIXME("(%p, %ld, %p), stub!\n", clsid, dwDirection, ppenumFormatetc);
+    FIXME("(%p, %d, %p), stub!\n", clsid, dwDirection, ppenumFormatetc);
 
     return E_NOTIMPL;
+}
+
+/***********************************************************************
+ *              CoGetCallerTID        [OLE32.@]
+ */
+HRESULT WINAPI CoGetCallerTID(LPDWORD lpdwTID)
+{
+  FIXME("stub!\n");
+  return E_NOTIMPL;
 }

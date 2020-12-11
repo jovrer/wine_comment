@@ -15,8 +15,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include <windef.h>
+#include <winuser.h>
+#include <commctrl.h>
 
 /* strings */
 #define IDS_EDIT		0x100
@@ -37,8 +41,18 @@
 #define IDS_DLG_ERR_SBWINSIZE   0x130
 
 #define IDS_FNT_DISPLAY		0x200
-#define IDS_FNT_PREVIEW_1	0x201
-#define IDS_FNT_PREVIEW_2	0x202
+#define IDS_FNT_PREVIEW         0x201
+
+#define IDS_CMD_INVALID_EVENT_ID   0x300
+#define IDS_CMD_INVALID_BACKEND    0x301
+#define IDS_CMD_INVALID_OPTION     0x302
+#define IDS_CMD_ABOUT              0x303
+#define IDS_CMD_LAUNCH_FAILED      0x304
+
+#define IDS_USAGE_HEADER           0x310
+#define IDS_USAGE_BACKEND          0x311
+#define IDS_USAGE_COMMAND          0x312
+#define IDS_USAGE_FOOTER           0x313
 
 /* dialog boxes */
 #define IDD_OPTION		0x0100
@@ -56,6 +70,7 @@
 #define IDC_OPT_CONF_CTRL       0x0107
 #define IDC_OPT_CONF_SHIFT      0x0108
 #define IDC_OPT_QUICK_EDIT      0x0109
+#define IDC_OPT_INSERT_MODE     0x0110
 
 #define IDC_FNT_LIST_FONT	0x0201
 #define IDC_FNT_LIST_SIZE	0x0202

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -30,7 +30,6 @@
 
 #include "windef.h"
 #include "winbase.h"
-#include "wine/winbase16.h"
 #include "winedump.h"
 
 struct ne_segtable_entry
@@ -50,6 +49,23 @@ struct relocation_entry
     WORD target2;         /* Target specification */
 };
 
+typedef struct
+{
+    WORD  offset;
+    WORD  length;
+    WORD  flags;
+    WORD  id;
+    WORD  handle;
+    WORD  usage;
+} NE_NAMEINFO;
+
+typedef struct
+{
+    WORD  type_id;
+    WORD  count;
+    DWORD resloader;
+} NE_TYPEINFO;
+
 #define NE_RADDR_LOWBYTE      0
 #define NE_RADDR_SELECTOR     2
 #define NE_RADDR_POINTER32    3
@@ -63,6 +79,34 @@ struct relocation_entry
 #define NE_RELTYPE_OSFIXUP   3
 #define NE_RELFLAG_ADDITIVE  4
 
+#define NE_SEGFLAGS_DATA        0x0001
+#define NE_SEGFLAGS_ALLOCATED   0x0002
+#define NE_SEGFLAGS_LOADED      0x0004
+#define NE_SEGFLAGS_ITERATED    0x0008
+#define NE_SEGFLAGS_MOVEABLE    0x0010
+#define NE_SEGFLAGS_SHAREABLE   0x0020
+#define NE_SEGFLAGS_PRELOAD     0x0040
+#define NE_SEGFLAGS_EXECUTEONLY 0x0080
+#define NE_SEGFLAGS_READONLY    0x0080
+#define NE_SEGFLAGS_RELOC_DATA  0x0100
+#define NE_SEGFLAGS_SELFLOAD    0x0800
+#define NE_SEGFLAGS_DISCARDABLE 0x1000
+#define NE_SEGFLAGS_32BIT       0x2000
+
+#define NE_RSCTYPE_CURSOR             0x8001
+#define NE_RSCTYPE_BITMAP             0x8002
+#define NE_RSCTYPE_ICON               0x8003
+#define NE_RSCTYPE_MENU               0x8004
+#define NE_RSCTYPE_DIALOG             0x8005
+#define NE_RSCTYPE_STRING             0x8006
+#define NE_RSCTYPE_FONTDIR            0x8007
+#define NE_RSCTYPE_FONT               0x8008
+#define NE_RSCTYPE_ACCELERATOR        0x8009
+#define NE_RSCTYPE_RCDATA             0x800a
+#define NE_RSCTYPE_GROUP_CURSOR       0x800c
+#define NE_RSCTYPE_GROUP_ICON         0x800e
+#define NE_RSCTYPE_SCALABLE_FONTPATH  0x80cc
+
 static inline WORD get_word( const BYTE *ptr )
 {
     return ptr[0] | (ptr[1] << 8);
@@ -73,13 +117,13 @@ static void dump_ne_header( const IMAGE_OS2_HEADER *ne )
     printf( "File header:\n" );
     printf( "Linker version:      %d.%d\n", ne->ne_ver, ne->ne_rev );
     printf( "Entry table:         %x len %d\n", ne->ne_enttab, ne->ne_cbenttab );
-    printf( "Checksum:            %08lx\n", ne->ne_crc );
+    printf( "Checksum:            %08x\n", ne->ne_crc );
     printf( "Flags:               %04x\n", ne->ne_flags );
     printf( "Auto data segment:   %x\n", ne->ne_autodata );
     printf( "Heap size:           %d bytes\n", ne->ne_heap );
     printf( "Stack size:          %d bytes\n", ne->ne_stack );
-    printf( "Stack pointer:       %x:%04x\n", SELECTOROF(ne->ne_sssp), OFFSETOF(ne->ne_sssp) );
-    printf( "Entry point:         %x:%04x\n", SELECTOROF(ne->ne_csip), OFFSETOF(ne->ne_csip) );
+    printf( "Stack pointer:       %x:%04x\n", HIWORD(ne->ne_sssp), LOWORD(ne->ne_sssp) );
+    printf( "Entry point:         %x:%04x\n", HIWORD(ne->ne_csip), LOWORD(ne->ne_csip) );
     printf( "Number of segments:  %d\n", ne->ne_cseg );
     printf( "Number of modrefs:   %d\n", ne->ne_cmod );
     printf( "Segment table:       %x\n", ne->ne_segtab );
@@ -87,7 +131,7 @@ static void dump_ne_header( const IMAGE_OS2_HEADER *ne )
     printf( "Resident name table: %x\n", ne->ne_restab );
     printf( "Module table:        %x\n", ne->ne_modtab );
     printf( "Import table:        %x\n", ne->ne_imptab );
-    printf( "Non-resident table:  %lx\n", ne->ne_nrestab );
+    printf( "Non-resident table:  %x\n", ne->ne_nrestab );
     printf( "Exe type:            %x\n", ne->ne_exetyp );
     printf( "Other flags:         %x\n", ne->ne_flagsothers );
     printf( "Fast load area:      %x-%x\n", ne->ne_pretthunks << ne->ne_align,
@@ -95,7 +139,7 @@ static void dump_ne_header( const IMAGE_OS2_HEADER *ne )
     printf( "Expected version:    %d.%d\n", HIBYTE(ne->ne_expver), LOBYTE(ne->ne_expver) );
 }
 
-static void dump_ne_names( const void *base, const IMAGE_OS2_HEADER *ne )
+static void dump_ne_names( const IMAGE_OS2_HEADER *ne )
 {
     const unsigned char *pstr = (const unsigned char *)ne + ne->ne_restab;
 
@@ -107,12 +151,12 @@ static void dump_ne_names( const void *base, const IMAGE_OS2_HEADER *ne )
     }
     if (ne->ne_cbnrestab)
     {
+        unsigned int pos = ne->ne_nrestab;
         printf( "\nNon-resident name table:\n" );
-        pstr = (unsigned char *)base + ne->ne_nrestab;
-        while (*pstr)
+        while ((pstr = PRD(pos, 0)) && *pstr)
         {
             printf( " %4d: %*.*s\n", get_word(pstr + *pstr + 1), *pstr, *pstr, pstr + 1 );
-            pstr += *pstr + 1 + sizeof(WORD);
+            pos += *pstr + 1 + sizeof(WORD);
         }
     }
 }
@@ -140,7 +184,7 @@ static const char *get_resource_type( WORD id )
     }
 }
 
-static void dump_ne_resources( const void *base, const IMAGE_OS2_HEADER *ne )
+static void dump_ne_resources( const IMAGE_OS2_HEADER *ne )
 {
     const NE_NAMEINFO *name;
     const void *res_ptr = (const char *)ne + ne->ne_rsrctab;
@@ -161,17 +205,17 @@ static void dump_ne_resources( const void *base, const IMAGE_OS2_HEADER *ne )
             else printf( " %.*s", *((const unsigned char *)res_ptr + info->type_id),
                          (const char *)res_ptr + info->type_id + 1 );
             printf(" flags %04x length %04x\n", name->flags, name->length << size_shift);
-            dump_data( (const unsigned char *)base + (name->offset << size_shift),
+            dump_data( PRD(name->offset << size_shift, name->length << size_shift),
                        name->length << size_shift, "    " );
         }
         info = (const NE_TYPEINFO *)name;
     }
 }
 
-static const char *get_export_name( const void *base, const IMAGE_OS2_HEADER *ne, int ordinal )
+static const char *get_export_name( const IMAGE_OS2_HEADER *ne, int ordinal )
 {
     static char name[256];
-    BYTE *pstr;
+    const BYTE *pstr;
     int pass = 0;
 
     /* search the resident names */
@@ -180,13 +224,13 @@ static const char *get_export_name( const void *base, const IMAGE_OS2_HEADER *ne
     {
         if (pass == 0)  /* resident names */
         {
-            pstr = (BYTE *)ne + ne->ne_restab;
+            pstr = (const BYTE *)ne + ne->ne_restab;
             if (*pstr) pstr += *pstr + 1 + sizeof(WORD);  /* skip first entry (module name) */
         }
         else  /* non-resident names */
         {
             if (!ne->ne_cbnrestab) break;
-            pstr = (BYTE *)base + ne->ne_nrestab;
+            pstr = PRD(ne->ne_nrestab, 0);
         }
         while (*pstr)
         {
@@ -205,10 +249,10 @@ static const char *get_export_name( const void *base, const IMAGE_OS2_HEADER *ne
     return name;
 }
 
-static void dump_ne_exports( const void *base, const IMAGE_OS2_HEADER *ne )
+static void dump_ne_exports( const IMAGE_OS2_HEADER *ne )
 {
-    BYTE *ptr = (BYTE *)ne + ne->ne_enttab;
-    BYTE *end = ptr + ne->ne_cbenttab;
+    const BYTE *ptr = (const BYTE *)ne + ne->ne_enttab;
+    const BYTE *end = ptr + ne->ne_cbenttab;
     int i, ordinal = 1;
 
     if (!ne->ne_cbenttab || !*ptr) return;
@@ -229,7 +273,7 @@ static void dump_ne_exports( const void *base, const IMAGE_OS2_HEADER *ne )
             {
                 printf( " %4d MOVABLE %d:%04x %s\n",
                         ordinal + i, ptr[3], get_word(ptr + 4),
-                        get_export_name( base, ne, ordinal + i ) );
+                        get_export_name( ne, ordinal + i ) );
                 ptr += 6;
             }
             ordinal += count;
@@ -239,7 +283,7 @@ static void dump_ne_exports( const void *base, const IMAGE_OS2_HEADER *ne )
             {
                 printf( " %4d CONST     %04x %s\n",
                         ordinal + i, get_word(ptr + 1),
-                        get_export_name( base, ne, ordinal + i ) );
+                        get_export_name( ne, ordinal + i ) );
                 ptr += 3;
             }
             ordinal += count;
@@ -249,7 +293,7 @@ static void dump_ne_exports( const void *base, const IMAGE_OS2_HEADER *ne )
             {
                 printf( " %4d FIXED   %d:%04x %s\n",
                         ordinal + i, type, get_word(ptr + 1),
-                        get_export_name( base, ne, ordinal + i ) );
+                        get_export_name( ne, ordinal + i ) );
                 ptr += 3;
             }
             ordinal += count;
@@ -300,7 +344,7 @@ static const char *get_seg_flags( WORD flags )
     return buffer;
 }
 
-static void dump_relocations( const void *base, const IMAGE_OS2_HEADER *ne, WORD count,
+static void dump_relocations( const IMAGE_OS2_HEADER *ne, WORD count,
                               const struct relocation_entry *rep )
 {
     const WORD *modref = (const WORD *)((const BYTE *)ne + ne->ne_modtab);
@@ -354,7 +398,7 @@ static void dump_relocations( const void *base, const IMAGE_OS2_HEADER *ne, WORD
     }
 }
 
-static void dump_ne_segment( const void *base, const IMAGE_OS2_HEADER *ne, int segnum )
+static void dump_ne_segment( const IMAGE_OS2_HEADER *ne, int segnum )
 {
     const struct ne_segtable_entry *table = (const struct ne_segtable_entry *)((const BYTE *)ne + ne->ne_segtab);
     const struct ne_segtable_entry *seg = table + segnum - 1;
@@ -366,23 +410,37 @@ static void dump_ne_segment( const void *base, const IMAGE_OS2_HEADER *ne, int s
     printf( "  Alloc size:  %08x\n", seg->min_alloc );
     if (seg->seg_flags & NE_SEGFLAGS_RELOC_DATA)
     {
-        const BYTE *ptr = (const BYTE *)base + (seg->seg_data_offset << ne->ne_align) + seg->seg_data_length;
+        const BYTE *ptr = PRD((seg->seg_data_offset << ne->ne_align) + seg->seg_data_length, 0);
         WORD count = get_word(ptr);
         ptr += sizeof(WORD);
         printf( "  Relocations:\n" );
-        dump_relocations( base, ne, count, (const struct relocation_entry *)ptr );
+        dump_relocations( ne, count, (const struct relocation_entry *)ptr );
     }
 }
 
-void ne_dump( const void *exe, size_t exe_size )
+void ne_dump( void )
 {
     unsigned int i;
-    const IMAGE_DOS_HEADER *dos = exe;
-    const IMAGE_OS2_HEADER *ne = (const IMAGE_OS2_HEADER *)((const char *)dos + dos->e_lfanew);
+    const IMAGE_DOS_HEADER *dos;
+    const IMAGE_OS2_HEADER *ne;
 
-    dump_ne_header( ne );
-    dump_ne_names( exe, ne );
-    dump_ne_resources( exe, ne );
-    dump_ne_exports( exe, ne );
-    for (i = 1; i <= ne->ne_cseg; i++) dump_ne_segment( exe, ne, i );
+    dos = PRD(0, sizeof(*dos));
+    if (!dos) return;
+    ne = PRD(dos->e_lfanew, sizeof(*ne));
+
+    if (globals.do_dumpheader || !globals.dumpsect)
+        dump_ne_header( ne );
+    if (globals.do_dumpheader)
+        dump_ne_names( ne );
+    if (globals.dumpsect)
+    {
+        BOOL	all = strcmp(globals.dumpsect, "ALL") == 0;
+
+        if (all || !strcmp(globals.dumpsect, "resource"))
+            dump_ne_resources( ne );
+        if (all || !strcmp(globals.dumpsect, "export"))
+            dump_ne_exports( ne );
+    }
+    if (globals.do_dumpheader)
+        for (i = 1; i <= ne->ne_cseg; i++) dump_ne_segment( ne, i );
 }

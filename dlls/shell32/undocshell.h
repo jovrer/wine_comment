@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_UNDOCSHELL_H
@@ -52,15 +52,10 @@ BOOL WINAPI ILGetDisplayNameEx(
 LPITEMIDLIST WINAPI ILGlobalClone(LPCITEMIDLIST pidl);
 void WINAPI ILGlobalFree(LPITEMIDLIST pidl);
 
-LPITEMIDLIST WINAPI SHSimpleIDListFromPathA (LPCSTR lpszPath);
-LPITEMIDLIST WINAPI SHSimpleIDListFromPathW (LPCWSTR lpszPath);
+LPITEMIDLIST SHSimpleIDListFromPathA (LPCSTR lpszPath);
+LPITEMIDLIST SHSimpleIDListFromPathW (LPCWSTR lpszPath);
 
-HRESULT WINAPI SHILCreateFromPathA (
-	LPCSTR path,
-	LPITEMIDLIST * ppidl,
-	DWORD *attributes);
-
-HRESULT WINAPI SHILCreateFromPathW (
+HRESULT SHILCreateFromPathW (
 	LPCWSTR path,
 	LPITEMIDLIST * ppidl,
 	DWORD *attributes);
@@ -83,12 +78,6 @@ BOOL WINAPI StrRetToStrNW(LPWSTR,DWORD,LPSTRRET,const ITEMIDLIST*);
 /****************************************************************************
  * Shell Common Dialogs
  */
-
-BOOL WINAPI PickIconDlg(
-	HWND hwndOwner,
-	LPSTR lpstrFile,
-	DWORD nMaxFile,
-	LPDWORD lpdwIconIndex);
 
 /* RunFileDlg flags */
 #define RFF_NOBROWSE       0x01
@@ -195,10 +184,6 @@ int WINAPI Shell_GetCachedImageIndex(
 	LPCSTR lpszFileName,
 	UINT nIconIndex,
 	BOOL bSimulateDoc);
-
-BOOL WINAPI Shell_GetImageLists(
-	HIMAGELIST *lphimlLarge,
-	HIMAGELIST *lphimlSmall);
 
 HICON WINAPI SHGetFileIcon(
 	DWORD dwReserved,
@@ -411,34 +396,12 @@ BOOL WINAPI PathMakeUniqueNameAW(
 	LPCVOID lpszLongName,
 	LPCVOID lpszPathName);
 
-BOOL WINAPI PathYetAnotherMakeUniqueName(
-	LPWSTR lpszBuffer,
-	LPCWSTR lpszPathName,
-	LPCWSTR lpszShortName,
-	LPCWSTR lpszLongName);
 
-BOOL WINAPI PathQualifyA(LPCSTR path);
-BOOL WINAPI PathQualifyW(LPCWSTR path);
-#define PathQualify WINELIB_NAME_AW(PathQualify)
 BOOL  WINAPI PathQualifyAW(LPCVOID path);
-
-
-/* PathResolve flags */
-#define PRF_CHECKEXISTANCE  0x01
-#define PRF_EXECUTABLE      0x02
-#define PRF_QUALIFYONPATH   0x04
-#define PRF_WINDOWS31       0x08
 
 BOOL WINAPI PathResolveAW(LPVOID lpszPath, LPCVOID *alpszPaths, DWORD dwFlags);
 
 VOID WINAPI PathSetDlgItemPathAW(HWND hDlg, int nIDDlgItem, LPCVOID lpszPath);
-
-/* PathProcessCommand flags */
-#define PPCF_QUOTEPATH        0x01 /* implies PPCF_INCLUDEARGS */
-#define PPCF_INCLUDEARGS      0x02
-#define PPCF_NODIRECTORIES    0x10
-#define PPCF_DONTRESOLVE      0x20
-#define PPCF_PATHISRELATIVE   0x40
 
 HRESULT WINAPI PathProcessCommandAW(LPCVOID lpszPath, LPVOID lpszBuff,
 				DWORD dwBuffSize, DWORD dwFlags);
@@ -455,7 +418,7 @@ int WINAPI PathParseIconLocationAW(LPVOID lpszPath);
 
 BOOL WINAPI PathIsSameRootAW(LPCVOID lpszPath1, LPCVOID lpszPath2);
 
-BOOL WINAPI PathFindOnPathAW(LPVOID sFile, LPCVOID sOtherDirs);
+BOOL WINAPI PathFindOnPathAW(LPVOID sFile, LPCVOID *sOtherDirs);
 
 /****************************************************************************
  * Shell Namespace Routines
@@ -517,12 +480,8 @@ BOOL WINAPI SHWaitForFileToOpen(
 	DWORD dwFlags,
 	DWORD dwTimeout);
 
-WORD WINAPI ArrangeWindows(
-	HWND hwndParent,
-	DWORD dwReserved,
-	LPCRECT lpRect,
-	WORD cKids,
-	CONST HWND * lpKids);
+WORD WINAPI ArrangeWindows(HWND hwndParent, DWORD dwReserved, const RECT *lpRect,
+        WORD cKids, const HWND *lpKids);
 
 /* RegisterShellHook types */
 #define RSH_DEREGISTER        0

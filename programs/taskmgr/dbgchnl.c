@@ -4,6 +4,7 @@
  *  dbgchnl.c
  *
  *  Copyright (C) 2003 - 2004 Eric Pouech
+ *  Copyright (C) 2008  Vladimir Pankratov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,21 +18,18 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-    
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
-#include <windows.h>
+
 #include <ctype.h>
-#include <commctrl.h>
-#include <stdlib.h>
-#include <malloc.h>
-#include <memory.h>
-#include <tchar.h>
 #include <stdio.h>
+#include <stdlib.h>
+
+#include <windows.h>
+#include <commctrl.h>
 #include <winnt.h>
 #include <dbghelp.h>
-    
+
 #include "taskmgr.h"
 #include "perfdata.h"
 #include "column.h"
@@ -53,17 +51,19 @@
 
 static DWORD (WINAPI *pSymSetOptions)(DWORD);
 static BOOL  (WINAPI *pSymInitialize)(HANDLE, PSTR, BOOL);
-static DWORD (WINAPI *pSymLoadModule)(HANDLE, HANDLE, PSTR, PSTR, DWORD, DWORD);
+static DWORD (WINAPI *pSymLoadModule)(HANDLE, HANDLE, PCSTR, PCSTR, DWORD, DWORD);
 static BOOL  (WINAPI *pSymCleanup)(HANDLE);
-static BOOL  (WINAPI *pSymFromName)(HANDLE, LPSTR, PSYMBOL_INFO);
+static BOOL  (WINAPI *pSymFromName)(HANDLE, PCSTR, PSYMBOL_INFO);
 
 BOOL AreDebugChannelsSupported(void)
 {
     static HANDLE   hDbgHelp /* = NULL */;
 
+    static const WCHAR    wszDbgHelp[] = {'D','B','G','H','E','L','P','.','D','L','L',0};
+
     if (hDbgHelp) return TRUE;
 
-    if (!(hDbgHelp = LoadLibrary("dbghelp.dll"))) return FALSE;
+    if (!(hDbgHelp = LoadLibraryW(wszDbgHelp))) return FALSE;
     pSymSetOptions = (void*)GetProcAddress(hDbgHelp, "SymSetOptions");
     pSymInitialize = (void*)GetProcAddress(hDbgHelp, "SymInitialize");
     pSymLoadModule = (void*)GetProcAddress(hDbgHelp, "SymLoadModule");
@@ -80,27 +80,27 @@ BOOL AreDebugChannelsSupported(void)
 
 static DWORD    get_selected_pid(void)
 {
-    LVITEM      lvitem;
-    ULONG       Index;
+    LVITEMW     lvitem;
+    ULONG       Index, Count;
     DWORD       dwProcessId;
 
-    for (Index = 0; Index < (ULONG)ListView_GetItemCount(hProcessPageListCtrl); Index++)
+    Count = SendMessageW(hProcessPageListCtrl, LVM_GETITEMCOUNT, 0, 0);
+    for (Index = 0; Index < Count; Index++)
     {
-        memset(&lvitem, 0, sizeof(LVITEM));
-
         lvitem.mask = LVIF_STATE;
         lvitem.stateMask = LVIS_SELECTED;
         lvitem.iItem = Index;
+        lvitem.iSubItem = 0;
 
-        ListView_GetItem(hProcessPageListCtrl, &lvitem);
+        SendMessageW(hProcessPageListCtrl, LVM_GETITEMW, 0, (LPARAM) &lvitem);
 
         if (lvitem.state & LVIS_SELECTED)
             break;
     }
 
+    Count = SendMessageW(hProcessPageListCtrl, LVM_GETSELECTEDCOUNT, 0, 0);
     dwProcessId = PerfDataGetProcessId(Index);
-
-    if ((ListView_GetSelectedCount(hProcessPageListCtrl) != 1) || (dwProcessId == 0))
+    if ((Count != 1) || (dwProcessId == 0))
         return 0;
     return dwProcessId;
 }
@@ -108,24 +108,26 @@ static DWORD    get_selected_pid(void)
 static int     list_channel_CB(HANDLE hProcess, void* addr, struct __wine_debug_channel* channel, void* user)
 {
     int         j;
-    char        val[2];
-    LVITEMA     lvi;
+    WCHAR       nameW[sizeof(channel->name)], val[2];
+    LVITEMW     lvitem;
     int         index;
-    HWND        hChannelLV = (HWND)user;
+    HWND        hChannelLV = user;
 
-    memset(&lvi, 0, sizeof(lvi));
+    MultiByteToWideChar(CP_ACP, 0, channel->name, sizeof(channel->name), nameW, ARRAY_SIZE(nameW));
 
-    lvi.mask = LVIF_TEXT;
-    lvi.pszText = channel->name;
+    lvitem.mask = LVIF_TEXT;
+    lvitem.pszText = nameW;
+    lvitem.iItem = 0;
+    lvitem.iSubItem = 0;
 
-    index = ListView_InsertItem(hChannelLV, &lvi);
+    index = ListView_InsertItemW(hChannelLV, &lvitem);
     if (index == -1) return 0;
 
     val[1] = '\0';
     for (j = 0; j < 4; j++)
     {
         val[0] = (channel->flags & (1 << j)) ? 'x' : ' ';
-        ListView_SetItemText(hChannelLV, index, j + 1, val);
+        ListView_SetItemTextW(hChannelLV, index, j + 1, val);
     }
     return 1;
 }
@@ -158,35 +160,27 @@ static int change_channel_CB(HANDLE hProcess, void* addr, struct __wine_debug_ch
     return 1;
 }
 
-static void* get_symbol(HANDLE hProcess, char* name, char* lib)
+static void* get_symbol(HANDLE hProcess, const char* name)
 {
     char                buffer[sizeof(IMAGEHLP_SYMBOL) + 256];
     SYMBOL_INFO*        si = (SYMBOL_INFO*)buffer;
     void*               ret = NULL;
 
-    pSymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_PUBLICS_ONLY);
-    /* FIXME: the TRUE option is due to the face that dbghelp requires it
+    /* also ask for wine extensions (loading symbols from ELF files) */
+    pSymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_PUBLICS_ONLY | 0x40000000);
+    /* FIXME: the TRUE option is due to the fact that dbghelp requires it
      * when loading an ELF module
      */
     if (pSymInitialize(hProcess, NULL, TRUE))
     {
         si->SizeOfStruct = sizeof(*si);
         si->MaxNameLen = sizeof(buffer) - sizeof(IMAGEHLP_SYMBOL);
-        if (pSymLoadModule(hProcess, NULL, lib, NULL, 0, 0) &&
-            pSymFromName(hProcess, name, si))
+        if (pSymFromName(hProcess, name, si))
             ret = (void*)(ULONG_PTR)si->Address;
         pSymCleanup(hProcess);
     }
     return ret;
 }
-
-struct dll_option_layout
-{
-    void*               next;
-    void*               prev;
-    char* const*        channels;
-    int                 nb_channels;
-};
 
 typedef int (*EnumChannelCB)(HANDLE, void*, struct __wine_debug_channel*, void*);
 
@@ -196,32 +190,19 @@ typedef int (*EnumChannelCB)(HANDLE, void*, struct __wine_debug_channel*, void*)
  * Enumerates all known channels on process hProcess through callback
  * ce.
  */
-static int enum_channel(HANDLE hProcess, EnumChannelCB ce, void* user, unsigned unique)
+static int enum_channel(HANDLE hProcess, EnumChannelCB ce, void* user)
 {
     struct __wine_debug_channel channel;
     int                         ret = 1;
-    unsigned int                j;
     void*                       addr;
-    const char**                cache = NULL;
-    unsigned                    num_cache, used_cache;
 
-    if (!(addr = get_symbol(hProcess, "debug_options", "libwine.so"))) return -1;
-    if (unique)
-        cache = HeapAlloc(GetProcessHeap(), 0, (num_cache = 32) * sizeof(char*));
-    else
-        num_cache = 0;
-    used_cache = 0;
+    if (!(addr = get_symbol(hProcess, "libwine.so.1!debug_options"))) return -1;
 
     while (ret && addr && ReadProcessMemory(hProcess, addr, &channel, sizeof(channel), NULL))
     {
         if (!channel.name[0]) break;
         ret = ce(hProcess, addr, &channel, user);
         addr = (struct __wine_debug_channel *)addr + 1;
-    }
-    if (unique)
-    {
-        for (j = 0; j < used_cache; j++) HeapFree(GetProcessHeap(), 0, (char*)cache[j]);
-        HeapFree(GetProcessHeap(), 0, cache);
     }
     return 0;
 }
@@ -230,50 +211,57 @@ static void DebugChannels_FillList(HWND hChannelLV)
 {
     HANDLE      hProcess;
 
-    ListView_DeleteAllItems(hChannelLV);
+    SendMessageW(hChannelLV, LVM_DELETEALLITEMS, 0, 0);
 
-    hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ, FALSE, get_selected_pid());
+    hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ, FALSE, get_selected_pid());
     if (!hProcess) return; /* FIXME messagebox */
-    SendMessage(hChannelLV, WM_SETREDRAW, FALSE, 0);
-    enum_channel(hProcess, list_channel_CB, (void*)hChannelLV, TRUE);
-    SendMessage(hChannelLV, WM_SETREDRAW, TRUE, 0);
+    SendMessageW(hChannelLV, WM_SETREDRAW, FALSE, 0);
+    enum_channel(hProcess, list_channel_CB, (void*)hChannelLV);
+    SendMessageW(hChannelLV, WM_SETREDRAW, TRUE, 0);
     CloseHandle(hProcess);
 }
 
 static void DebugChannels_OnCreate(HWND hwndDlg)
 {
+    static WCHAR fixmeW[] = {'F','i','x','m','e','\0'};
+    static WCHAR errW[]   = {'E','r','r','\0'};
+    static WCHAR warnW[]  = {'W','a','r','n','\0'};
+    static WCHAR traceW[] = {'T','r','a','c','e','\0'};
     HWND        hLV = GetDlgItem(hwndDlg, IDC_DEBUG_CHANNELS_LIST);
-    LVCOLUMN    lvc;
+    LVCOLUMNW   lvc;
+    WCHAR debug_channelW[255];
+
+    LoadStringW(hInst, IDS_DEBUG_CHANNEL, debug_channelW, ARRAY_SIZE(debug_channelW));
 
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
     lvc.fmt = LVCFMT_LEFT;
-    lvc.pszText = _T("Debug Channel");
+    lvc.pszText = debug_channelW;
     lvc.cx = 100;
-    ListView_InsertColumn(hLV, 0, &lvc);
+    SendMessageW(hLV, LVM_INSERTCOLUMNW, 0, (LPARAM) &lvc);
 
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
     lvc.fmt = LVCFMT_CENTER;
-    lvc.pszText = _T("Fixme");
+    lvc.pszText = fixmeW;
     lvc.cx = 55;
-    ListView_InsertColumn(hLV, 1, &lvc);
+    SendMessageW(hLV, LVM_INSERTCOLUMNW, 1, (LPARAM) &lvc);
 
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
     lvc.fmt = LVCFMT_CENTER;
-    lvc.pszText = _T("Err");
+    lvc.pszText = errW;
     lvc.cx = 55;
-    ListView_InsertColumn(hLV, 2, &lvc);
+    SendMessageW(hLV, LVM_INSERTCOLUMNW, 2, (LPARAM) &lvc);
 
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
     lvc.fmt = LVCFMT_CENTER;
-    lvc.pszText = _T("Warn");
+    lvc.pszText = warnW;
     lvc.cx = 55;
-    ListView_InsertColumn(hLV, 3, &lvc);
+    SendMessageW(hLV, LVM_INSERTCOLUMNW, 3, (LPARAM) &lvc);
 
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
     lvc.fmt = LVCFMT_CENTER;
-    lvc.pszText = _T("Trace");
+    lvc.pszText = traceW;
     lvc.cx = 55;
-    ListView_InsertColumn(hLV, 4, &lvc);
+    SendMessageW(hLV, LVM_INSERTCOLUMNW, 4, (LPARAM) &lvc);
 
     DebugChannels_FillList(hLV);
 }
@@ -292,32 +280,33 @@ static void DebugChannels_OnNotify(HWND hDlg, LPARAM lParam)
             HANDLE              hProcess;
             NMITEMACTIVATE*     nmia = (NMITEMACTIVATE*)lParam;
 
-            hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE, FALSE, get_selected_pid());
+            hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE,
+                                   FALSE, get_selected_pid());
             if (!hProcess) return; /* FIXME message box */
             lhti.pt = nmia->ptAction;
             hChannelLV = GetDlgItem(hDlg, IDC_DEBUG_CHANNELS_LIST);
-            SendMessage(hChannelLV, LVM_SUBITEMHITTEST, 0, (LPARAM)&lhti);
+            SendMessageW(hChannelLV, LVM_SUBITEMHITTEST, 0, (LPARAM)&lhti);
             if (nmia->iSubItem >= 1 && nmia->iSubItem <= 4)
             {
-                TCHAR           val[2];
-                TCHAR           name[32];
+                WCHAR           val[2];
+                char            name[32];
                 unsigned        bitmask = 1 << (lhti.iSubItem - 1);
                 struct cce_user user;
 
-                ListView_GetItemText(hChannelLV, lhti.iItem, 0, name, sizeof(name) / sizeof(name[0]));
-                ListView_GetItemText(hChannelLV, lhti.iItem, lhti.iSubItem, val, sizeof(val) / sizeof(val[0]));
+                ListView_GetItemTextA(hChannelLV, lhti.iItem, 0, name, ARRAY_SIZE(name));
+                ListView_GetItemTextW(hChannelLV, lhti.iItem, lhti.iSubItem, val, ARRAY_SIZE(val));
                 user.name = name;
                 user.value = (val[0] == 'x') ? 0 : bitmask;
                 user.mask = bitmask;
                 user.done = user.notdone = 0;
-                enum_channel(hProcess, change_channel_CB, &user, FALSE);
+                enum_channel(hProcess, change_channel_CB, &user);
                 if (user.done)
                 {
                     val[0] ^= ('x' ^ ' ');
-                    ListView_SetItemText(hChannelLV, lhti.iItem, lhti.iSubItem, val);
+                    ListView_SetItemTextW(hChannelLV, lhti.iItem, lhti.iSubItem, val);
                 }
                 if (user.notdone)
-                    printf("Some channel instance weren't correctly set\n");
+                    printf("Some channel instances weren't correctly set\n");
             }
             CloseHandle(hProcess);
         }
@@ -348,5 +337,5 @@ static INT_PTR CALLBACK DebugChannelsDlgProc(HWND hDlg, UINT message, WPARAM wPa
 
 void ProcessPage_OnDebugChannels(void)
 {
-    DialogBox(hInst, (LPCTSTR)IDD_DEBUG_CHANNELS_DIALOG, hMainWnd, DebugChannelsDlgProc);
+    DialogBoxW(hInst, (LPCWSTR)IDD_DEBUG_CHANNELS_DIALOG, hMainWnd, DebugChannelsDlgProc);
 }

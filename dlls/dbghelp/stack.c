@@ -3,7 +3,7 @@
  *
  * Copyright 1995 Alexandre Julliard
  * Copyright 1996 Eric Youngdale
- * Copyright 1999 Ove Kåven
+ * Copyright 1999 Ove KÃ¥ven
  * Copyright 2004 Eric Pouech
  *
  * This library is free software; you can redistribute it and/or
@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -28,374 +28,247 @@
 #include <assert.h>
 
 #include "dbghelp_private.h"
-#include "winreg.h"
-#include "ntstatus.h"
-#include "winternl.h"
-#include "wine/winbase16.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
 
-enum st_mode {stm_start, stm_32bit, stm_16bit, stm_done};
-
-static const char* wine_dbgstr_addr(const ADDRESS* addr)
+static DWORD64 WINAPI addr_to_linear(HANDLE hProcess, HANDLE hThread, ADDRESS64* addr)
 {
-    if (!addr) return "(null)";
+    LDT_ENTRY	le;
+
     switch (addr->Mode)
     {
-    case AddrModeFlat:
-        return wine_dbg_sprintf("flat<%08lx>", addr->Offset);
     case AddrMode1616:
-        return wine_dbg_sprintf("1616<%04x:%04lx>", addr->Segment, addr->Offset);
+        if (GetThreadSelectorEntry(hThread, addr->Segment, &le))
+            return (le.HighWord.Bits.BaseHi << 24) +
+                (le.HighWord.Bits.BaseMid << 16) + le.BaseLow + LOWORD(addr->Offset);
+        break;
     case AddrMode1632:
-        return wine_dbg_sprintf("1632<%04x:%08lx>", addr->Segment, addr->Offset);
+        if (GetThreadSelectorEntry(hThread, addr->Segment, &le))
+            return (le.HighWord.Bits.BaseHi << 24) +
+                (le.HighWord.Bits.BaseMid << 16) + le.BaseLow + addr->Offset;
+        break;
     case AddrModeReal:
-        return wine_dbg_sprintf("real<%04x:%04lx>", addr->Segment, addr->Offset);
+        return (DWORD)(LOWORD(addr->Segment) << 4) + addr->Offset;
+    case AddrModeFlat:
+        return addr->Offset;
     default:
-        return "unknown";
+        FIXME("Unsupported (yet) mode (%x)\n", addr->Mode);
+        return 0;
     }
+    FIXME("Failed to linearize address %04x:%s (mode %x)\n",
+          addr->Segment, wine_dbgstr_longlong(addr->Offset), addr->Mode);
+    return 0;
 }
 
 static BOOL CALLBACK read_mem(HANDLE hProcess, DWORD addr, void* buffer,
                               DWORD size, LPDWORD nread)
 {
-    return ReadProcessMemory(hProcess, (void*)addr, buffer, size, nread);
+    SIZE_T      r;
+    if (!ReadProcessMemory(hProcess, (void*)(DWORD_PTR)addr, buffer, size, &r)) return FALSE;
+    if (nread) *nread = r;
+    return TRUE;
 }
 
-/* indexes in Reserved array */
-#define __CurrentMode     0
-#define __CurrentSwitch   1
-#define __NextSwitch      2
+static BOOL CALLBACK read_mem64(HANDLE hProcess, DWORD64 addr, void* buffer,
+                                DWORD size, LPDWORD nread)
+{
+    SIZE_T      r;
+    if (!ReadProcessMemory(hProcess, (void*)(DWORD_PTR)addr, buffer, size, &r)) return FALSE;
+    if (nread) *nread = r;
+    return TRUE;
+}
 
-#define curr_mode   (frame->Reserved[__CurrentMode])
-#define curr_switch (frame->Reserved[__CurrentSwitch])
-#define next_switch (frame->Reserved[__NextSwitch])
+static inline void addr_32to64(const ADDRESS* addr32, ADDRESS64* addr64)
+{
+    addr64->Offset = (ULONG64)addr32->Offset;
+    addr64->Segment = addr32->Segment;
+    addr64->Mode = addr32->Mode;
+}
+
+static inline void addr_64to32(const ADDRESS64* addr64, ADDRESS* addr32)
+{
+    addr32->Offset = (ULONG)addr64->Offset;
+    addr32->Segment = addr64->Segment;
+    addr32->Mode = addr64->Mode;
+}
+
+BOOL sw_read_mem(struct cpu_stack_walk* csw, DWORD64 addr, void* ptr, DWORD sz)
+{
+    DWORD bytes_read = 0;
+    if (csw->is32)
+        return csw->u.s32.f_read_mem(csw->hProcess, addr, ptr, sz, &bytes_read);
+    else
+        return csw->u.s64.f_read_mem(csw->hProcess, addr, ptr, sz, &bytes_read);
+}
+
+DWORD64 sw_xlat_addr(struct cpu_stack_walk* csw, ADDRESS64* addr)
+{
+    if (addr->Mode == AddrModeFlat) return addr->Offset;
+    if (csw->is32)
+    {
+        ADDRESS         addr32;
+
+        addr_64to32(addr, &addr32);
+        return csw->u.s32.f_xlat_adr(csw->hProcess, csw->hThread, &addr32);
+    }
+    else if (csw->u.s64.f_xlat_adr)
+        return csw->u.s64.f_xlat_adr(csw->hProcess, csw->hThread, addr);
+    return addr_to_linear(csw->hProcess, csw->hThread, addr);
+}
+
+void* sw_table_access(struct cpu_stack_walk* csw, DWORD64 addr)
+{
+    if (csw->is32)
+        return csw->u.s32.f_tabl_acs(csw->hProcess, addr);
+    else
+        return csw->u.s64.f_tabl_acs(csw->hProcess, addr);
+}
+
+DWORD64 sw_module_base(struct cpu_stack_walk* csw, DWORD64 addr)
+{
+    if (csw->is32)
+        return csw->u.s32.f_modl_bas(csw->hProcess, addr);
+    else
+        return csw->u.s64.f_modl_bas(csw->hProcess, addr);
+}
 
 /***********************************************************************
  *		StackWalk (DBGHELP.@)
  */
 BOOL WINAPI StackWalk(DWORD MachineType, HANDLE hProcess, HANDLE hThread,
-                      LPSTACKFRAME frame, LPVOID ctx,
+                      LPSTACKFRAME frame32, PVOID ctx,
                       PREAD_PROCESS_MEMORY_ROUTINE f_read_mem,
                       PFUNCTION_TABLE_ACCESS_ROUTINE FunctionTableAccessRoutine,
                       PGET_MODULE_BASE_ROUTINE GetModuleBaseRoutine,
                       PTRANSLATE_ADDRESS_ROUTINE f_xlat_adr)
 {
-    STACK32FRAME        frame32;
-    STACK16FRAME        frame16;
-    char                ch;
-    ADDRESS             tmp;
-    DWORD               p;
-    WORD                val;
-    BOOL                do_switch;
+    struct cpu_stack_walk       csw;
+    STACKFRAME64                frame64;
+    BOOL                        ret;
+    struct cpu*                 cpu;
 
-    TRACE("(%ld, %p, %p, %p, %p, %p, %p, %p, %p)\n",
-          MachineType, hProcess, hThread, frame, ctx,
+    TRACE("(%d, %p, %p, %p, %p, %p, %p, %p, %p)\n",
+          MachineType, hProcess, hThread, frame32, ctx,
           f_read_mem, FunctionTableAccessRoutine,
           GetModuleBaseRoutine, f_xlat_adr);
 
-    if (MachineType != IMAGE_FILE_MACHINE_I386)
+    if (!(cpu = cpu_find(MachineType)))
     {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
 
-    /* sanity check */
-    if (curr_mode >= stm_done) return FALSE;
+    addr_32to64(&frame32->AddrPC,     &frame64.AddrPC);
+    addr_32to64(&frame32->AddrReturn, &frame64.AddrReturn);
+    addr_32to64(&frame32->AddrFrame,  &frame64.AddrFrame);
+    addr_32to64(&frame32->AddrStack,  &frame64.AddrStack);
+    addr_32to64(&frame32->AddrBStore, &frame64.AddrBStore);
+    frame64.FuncTableEntry = frame32->FuncTableEntry; /* FIXME */
+    frame64.Far = frame32->Far;
+    frame64.Virtual = frame32->Virtual;
+    frame64.Reserved[0] = frame32->Reserved[0];
+    frame64.Reserved[1] = frame32->Reserved[1];
+    frame64.Reserved[2] = frame32->Reserved[2];
+    /* we don't handle KdHelp */
 
+    csw.hProcess = hProcess;
+    csw.hThread = hThread;
+    csw.is32 = TRUE;
+    csw.cpu = cpu;
     /* sigh... MS isn't even consistent in the func prototypes */
-    if (!f_read_mem) f_read_mem = read_mem;
-    if (!f_xlat_adr) f_xlat_adr = addr_to_linear;
+    csw.u.s32.f_read_mem = (f_read_mem) ? f_read_mem : read_mem;
+    csw.u.s32.f_xlat_adr = f_xlat_adr;
+    csw.u.s32.f_tabl_acs = (FunctionTableAccessRoutine) ? FunctionTableAccessRoutine : SymFunctionTableAccess;
+    csw.u.s32.f_modl_bas = (GetModuleBaseRoutine) ? GetModuleBaseRoutine : SymGetModuleBase;
 
-    TRACE("Enter: PC=%s Frame=%s Return=%s Stack=%s Mode=%s cSwitch=%08lx nSwitch=%08lx\n",
-          wine_dbgstr_addr(&frame->AddrPC), 
-          wine_dbgstr_addr(&frame->AddrFrame),
-          wine_dbgstr_addr(&frame->AddrReturn),
-          wine_dbgstr_addr(&frame->AddrStack), 
-          curr_mode == stm_start ? "start" : (curr_mode == stm_16bit ? "16bit" : "32bit"),
-          curr_switch, next_switch);
-
-    if (curr_mode == stm_start)
+    if ((ret = cpu->stack_walk(&csw, &frame64, ctx)))
     {
-        THREAD_BASIC_INFORMATION info;
-
-        if ((frame->AddrPC.Mode == AddrModeFlat) &&
-            (frame->AddrFrame.Mode != AddrModeFlat))
-        {
-            WARN("Bad AddrPC.Mode / AddrFrame.Mode combination\n");
-            goto done_err;
-        }
-
-        /* Init done */
-        curr_mode = (frame->AddrPC.Mode == AddrModeFlat) ? 
-            stm_32bit : stm_16bit;
-
-        /* cur_switch holds address of WOW32Reserved field in TEB in debuggee
-         * address space
-         */
-        if (NtQueryInformationThread(hThread, ThreadBasicInformation, &info,    
-                                     sizeof(info), NULL) == STATUS_SUCCESS)
-        {
-            curr_switch = (unsigned long)info.TebBaseAddress + FIELD_OFFSET(TEB, WOW32Reserved);
-            if (!f_read_mem(hProcess, curr_switch, &next_switch,
-                        sizeof(next_switch), NULL))
-            {
-                WARN("Can't read TEB:WOW32Reserved\n");
-                goto done_err;
-            }
-            if (curr_mode == stm_16bit)
-            {
-                if (!f_read_mem(hProcess, next_switch, &frame32,
-                                sizeof(frame32), NULL))
-                {
-                    WARN("Bad stack frame 0x%08lx\n", next_switch);
-                    goto done_err;
-                }
-                curr_switch = (DWORD)frame32.frame16;
-                tmp.Mode    = AddrMode1616;
-                tmp.Segment = SELECTOROF(curr_switch);
-                tmp.Offset  = OFFSETOF(curr_switch);
-                if (!f_read_mem(hProcess, f_xlat_adr(hProcess, hThread, &tmp),
-                                &ch, sizeof(ch), NULL))
-                    curr_switch = 0xFFFFFFFF;
-            }
-            else
-            {
-                tmp.Mode    = AddrMode1616;
-                tmp.Segment = SELECTOROF(next_switch);
-                tmp.Offset  = OFFSETOF(next_switch);
-                p = f_xlat_adr(hProcess, hThread, &tmp);
-                if (!f_read_mem(hProcess, p, &frame16, sizeof(frame16), NULL))
-                {
-                    WARN("Bad stack frame 0x%08lx\n", p);
-                    goto done_err;
-                }
-                curr_switch = (DWORD)frame16.frame32;
-
-                if (!f_read_mem(hProcess, curr_switch, &ch, sizeof(ch), NULL))
-                    curr_switch = 0xFFFFFFFF;
-            }
-        }
-        else
-            /* FIXME: this will allow to work when we're not attached to a live target, 
-             * but the 16 <=> 32 switch facility won't be available.
-             */
-            curr_switch = 0;
-        frame->AddrReturn.Mode = frame->AddrStack.Mode = (curr_mode == stm_16bit) ? AddrMode1616 : AddrModeFlat;
-        /* don't set up AddrStack on first call. Either the caller has set it up, or
-         * we will get it in the next frame
-         */
-    }
-    else
-    {
-        if (frame->AddrFrame.Offset == 0) goto done_err;
-        if (frame->AddrFrame.Mode == AddrModeFlat)
-        {
-            assert(curr_mode == stm_32bit);
-            do_switch = curr_switch && frame->AddrFrame.Offset >= curr_switch;
-        }
-        else
-        {
-            assert(curr_mode == stm_16bit);
-            do_switch = curr_switch && 
-                frame->AddrFrame.Segment == SELECTOROF(curr_switch) &&
-                frame->AddrFrame.Offset >= OFFSETOF(curr_switch);
-        }
-	   
-        if (do_switch)
-        {
-            if (curr_mode == stm_16bit)
-            {
-                if (!f_read_mem(hProcess, next_switch, &frame32, 
-                                sizeof(frame32), NULL))
-                {
-                    WARN("Bad stack frame 0x%08lx\n", next_switch);
-                    goto done_err;
-                }
-
-                frame->AddrPC.Mode        = AddrModeFlat;
-                frame->AddrPC.Segment     = 0;
-                frame->AddrPC.Offset      = frame32.retaddr;
-                frame->AddrFrame.Mode     = AddrModeFlat;
-                frame->AddrFrame.Segment  = 0;
-                frame->AddrFrame.Offset   = frame32.ebp;
-
-                frame->AddrStack.Mode     = AddrModeFlat;
-                frame->AddrStack.Segment  = 0;
-                frame->AddrReturn.Mode    = AddrModeFlat;
-                frame->AddrReturn.Segment = 0;
-
-                next_switch = curr_switch;
-                tmp.Mode    = AddrMode1616;
-                tmp.Segment = SELECTOROF(next_switch);
-                tmp.Offset  = OFFSETOF(next_switch);
-                p = f_xlat_adr(hProcess, hThread, &tmp);
-
-                if (!f_read_mem(hProcess, p, &frame16, sizeof(frame16), NULL))
-                {
-                    WARN("Bad stack frame 0x%08lx\n", p);
-                    goto done_err;
-                }
-                curr_switch = (DWORD)frame16.frame32;
-                curr_mode = stm_32bit;
-                if (!f_read_mem(hProcess, curr_switch, &ch, sizeof(ch), NULL))
-                    curr_switch = 0;
-            }
-            else
-            {
-                tmp.Mode    = AddrMode1616;
-                tmp.Segment = SELECTOROF(next_switch);
-                tmp.Offset  = OFFSETOF(next_switch);
-                p = f_xlat_adr(hProcess, hThread, &tmp);
-
-                if (!f_read_mem(hProcess, p, &frame16, sizeof(frame16), NULL))
-                {
-                    WARN("Bad stack frame 0x%08lx\n", p);
-                    goto done_err;
-                }
-
-                TRACE("Got a 16 bit stack switch:"
-                      "\n\tframe32: %08lx"
-                      "\n\tedx:%08lx ecx:%08lx ebp:%08lx"
-                      "\n\tds:%04x es:%04x fs:%04x gs:%04x"
-                      "\n\tcall_from_ip:%08lx module_cs:%04lx relay=%08lx"
-                      "\n\tentry_ip:%04x entry_point:%08lx"
-                      "\n\tbp:%04x ip:%04x cs:%04x\n",
-                      (unsigned long)frame16.frame32,
-                      frame16.edx, frame16.ecx, frame16.ebp,
-                      frame16.ds, frame16.es, frame16.fs, frame16.gs,
-                      frame16.callfrom_ip, frame16.module_cs, frame16.relay,
-                      frame16.entry_ip, frame16.entry_point,
-                      frame16.bp, frame16.ip, frame16.cs);
-
-                      
-                frame->AddrPC.Mode       = AddrMode1616;
-                frame->AddrPC.Segment    = frame16.cs;
-                frame->AddrPC.Offset     = frame16.ip;
-
-                frame->AddrFrame.Mode    = AddrMode1616;
-                frame->AddrFrame.Segment = SELECTOROF(next_switch);
-                frame->AddrFrame.Offset  = frame16.bp;
-
-                frame->AddrStack.Mode    = AddrMode1616;
-                frame->AddrStack.Segment = SELECTOROF(next_switch);
-
-                frame->AddrReturn.Mode    = AddrMode1616;
-                frame->AddrReturn.Segment = frame16.cs;
-
-                next_switch = curr_switch;
-                if (!f_read_mem(hProcess, next_switch, &frame32, sizeof(frame32), NULL))
-                {
-                    WARN("Bad stack frame 0x%08lx\n", next_switch);
-                    goto done_err;
-                }
-                curr_switch = (DWORD)frame32.frame16;
-                tmp.Mode    = AddrMode1616;
-                tmp.Segment = SELECTOROF(curr_switch);
-                tmp.Offset  = OFFSETOF(curr_switch);
-
-                if (!f_read_mem(hProcess, f_xlat_adr(hProcess, hThread, &tmp),
-                                &ch, sizeof(ch), NULL))
-                    curr_switch = 0;
-                curr_mode = stm_16bit;
-            }
-        }
-        else
-        {
-            frame->AddrPC = frame->AddrReturn;
-            if (curr_mode == stm_16bit)
-            {
-                frame->AddrStack.Offset = frame->AddrFrame.Offset + 2 * sizeof(WORD);
-                /* "pop up" previous BP value */
-                if (!f_read_mem(hProcess, 
-                                f_xlat_adr(hProcess, hThread, &frame->AddrFrame),
-                                &val, sizeof(WORD), NULL))
-                    goto done_err;
-                frame->AddrFrame.Offset = val;
-            }
-            else
-            {
-                frame->AddrStack.Offset = frame->AddrFrame.Offset + 2 * sizeof(DWORD);
-                /* "pop up" previous EBP value */
-                if (!f_read_mem(hProcess, frame->AddrFrame.Offset, 
-                                &frame->AddrFrame.Offset, sizeof(DWORD), NULL))
-                    goto done_err;
-            }
-        }
+        addr_64to32(&frame64.AddrPC,     &frame32->AddrPC);
+        addr_64to32(&frame64.AddrReturn, &frame32->AddrReturn);
+        addr_64to32(&frame64.AddrFrame,  &frame32->AddrFrame);
+        addr_64to32(&frame64.AddrStack,  &frame32->AddrStack);
+        addr_64to32(&frame64.AddrBStore, &frame32->AddrBStore);
+        frame32->FuncTableEntry = frame64.FuncTableEntry; /* FIXME */
+        frame32->Params[0] = frame64.Params[0];
+        frame32->Params[1] = frame64.Params[1];
+        frame32->Params[2] = frame64.Params[2];
+        frame32->Params[3] = frame64.Params[3];
+        frame32->Far = frame64.Far;
+        frame32->Virtual = frame64.Virtual;
+        frame32->Reserved[0] = frame64.Reserved[0];
+        frame32->Reserved[1] = frame64.Reserved[1];
+        frame32->Reserved[2] = frame64.Reserved[2];
     }
 
-    if (curr_mode == stm_16bit)
-    {
-        int     i;
+    return ret;
+}
 
-        p = f_xlat_adr(hProcess, hThread, &frame->AddrFrame);
-        if (!f_read_mem(hProcess, p + sizeof(WORD), &val, sizeof(WORD), NULL))
-            goto done_err;
-        frame->AddrReturn.Offset = val;
-        /* get potential cs if a far call was used */
-        if (!f_read_mem(hProcess, p + 2 * sizeof(WORD), 
-                        &val, sizeof(WORD), NULL))
-            goto done_err;
-        if (frame->AddrFrame.Offset & 1)
-            frame->AddrReturn.Segment = val; /* far call assumed */
-        else
-        {
-            /* not explicitly marked as far call, 
-             * but check whether it could be anyway
-             */
-            if ((val & 7) == 7 && val != frame->AddrReturn.Segment)
-            {
-                LDT_ENTRY	le;
 
-                if (GetThreadSelectorEntry(hThread, val, &le) &&
-                    (le.HighWord.Bits.Type & 0x08)) /* code segment */
-                {
-                    /* it is very uncommon to push a code segment cs as
-                     * a parameter, so this should work in most cases 
-                     */
-                    frame->AddrReturn.Segment = val;
-                }
-	    }
-	}
-        frame->AddrFrame.Offset &= ~1;
-        /* we "pop" parameters as 16 bit entities... of course, this won't
-         * work if the parameter is in fact bigger than 16bit, but
-         * there's no way to know that here
-         */
-        for (i = 0; i < sizeof(frame->Params) / sizeof(frame->Params[0]); i++)
-        {
-            f_read_mem(hProcess, p + (2 + i) * sizeof(WORD), 
-                       &val, sizeof(val), NULL);
-            frame->Params[i] = val;
-        }
-    }
-    else
+/***********************************************************************
+ *		StackWalk64 (DBGHELP.@)
+ */
+BOOL WINAPI StackWalk64(DWORD MachineType, HANDLE hProcess, HANDLE hThread,
+                        LPSTACKFRAME64 frame, PVOID ctx,
+                        PREAD_PROCESS_MEMORY_ROUTINE64 f_read_mem,
+                        PFUNCTION_TABLE_ACCESS_ROUTINE64 FunctionTableAccessRoutine,
+                        PGET_MODULE_BASE_ROUTINE64 GetModuleBaseRoutine,
+                        PTRANSLATE_ADDRESS_ROUTINE64 f_xlat_adr)
+{
+    struct cpu_stack_walk       csw;
+    struct cpu*                 cpu;
+
+    TRACE("(%d, %p, %p, %p, %p, %p, %p, %p, %p)\n",
+          MachineType, hProcess, hThread, frame, ctx,
+          f_read_mem, FunctionTableAccessRoutine,
+          GetModuleBaseRoutine, f_xlat_adr);
+
+    if (!(cpu = cpu_find(MachineType)))
     {
-        if (!f_read_mem(hProcess, 
-                        frame->AddrFrame.Offset + sizeof(DWORD),
-                        &frame->AddrReturn.Offset, sizeof(DWORD), NULL))
-        {
-            WARN("Cannot read new frame offset %08lx\n", frame->AddrFrame.Offset + sizeof(DWORD));
-            goto done_err;
-        }
-        f_read_mem(hProcess, 
-                   frame->AddrFrame.Offset + 2 * sizeof(DWORD), 
-                   frame->Params, sizeof(frame->Params), NULL);
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
     }
 
-    frame->Far = FALSE;
-    frame->Virtual = FALSE;
+    csw.hProcess = hProcess;
+    csw.hThread = hThread;
+    csw.is32 = FALSE;
+    csw.cpu = cpu;
+    /* sigh... MS isn't even consistent in the func prototypes */
+    csw.u.s64.f_read_mem = (f_read_mem) ? f_read_mem : read_mem64;
+    csw.u.s64.f_xlat_adr = (f_xlat_adr) ? f_xlat_adr : addr_to_linear;
+    csw.u.s64.f_tabl_acs = (FunctionTableAccessRoutine) ? FunctionTableAccessRoutine : SymFunctionTableAccess64;
+    csw.u.s64.f_modl_bas = (GetModuleBaseRoutine) ? GetModuleBaseRoutine : SymGetModuleBase64;
 
-    TRACE("Leave: PC=%s Frame=%s Return=%s Stack=%s Mode=%s cSwitch=%08lx nSwitch=%08lx\n",
-          wine_dbgstr_addr(&frame->AddrPC), 
-          wine_dbgstr_addr(&frame->AddrFrame),
-          wine_dbgstr_addr(&frame->AddrReturn),
-          wine_dbgstr_addr(&frame->AddrStack), 
-          curr_mode == stm_start ? "start" : (curr_mode == stm_16bit ? "16bit" : "32bit"),
-          curr_switch, next_switch);
+    if (!cpu->stack_walk(&csw, frame, ctx)) return FALSE;
+
+    /* we don't handle KdHelp */
 
     return TRUE;
-done_err:
-    curr_mode = stm_done;
+}
+
+/******************************************************************
+ *		SymRegisterFunctionEntryCallback (DBGHELP.@)
+ *
+ *
+ */
+BOOL WINAPI SymRegisterFunctionEntryCallback(HANDLE hProc,
+                                             PSYMBOL_FUNCENTRY_CALLBACK cb, PVOID user)
+{
+    FIXME("(%p %p %p): stub!\n", hProc, cb, user);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/******************************************************************
+ *		SymRegisterFunctionEntryCallback64 (DBGHELP.@)
+ *
+ *
+ */
+BOOL WINAPI SymRegisterFunctionEntryCallback64(HANDLE hProc,
+                                               PSYMBOL_FUNCENTRY_CALLBACK64 cb,
+                                               ULONG64 user)
+{
+    FIXME("(%p %p %s): stub!\n", hProc, cb, wine_dbgstr_longlong(user));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }

@@ -15,39 +15,68 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
 #include "config.h"
 #include "wine/port.h"
 
-#include <wine/debug.h>
-#include <wine/library.h>
-
-#include "winecfg.h"
-
+#include <stdarg.h>
 #include <stdio.h>
 #ifdef HAVE_MNTENT_H
 #include <mntent.h>
 #endif
 #include <stdlib.h>
 #include <errno.h>
-
 #include <sys/stat.h>
 
+#include <windef.h>
 #include <winbase.h>
+#include <wine/debug.h>
+#include <wine/library.h>
+
+#include "winecfg.h"
+#include "resource.h"
+
 
 WINE_DEFAULT_DEBUG_CHANNEL(winecfg);
 
 BOOL gui_mode = TRUE;
-static long working_mask = 0;
+static ULONG working_mask = 0;
+
+typedef struct
+{
+  const char *szNode;
+  int nType;
+} DEV_NODES;
 
 #ifdef HAVE_MNTENT_H
 
 static const DEV_NODES sDeviceNodes[] = {
   {"/dev/fd", DRIVE_REMOVABLE},
+  {"/dev/pf", DRIVE_REMOVABLE},
+  {"/dev/acd", DRIVE_CDROM},
+  {"/dev/aztcd", DRIVE_CDROM},
+  {"/dev/bpcd", DRIVE_CDROM},
+  {"/dev/cd", DRIVE_CDROM},
   {"/dev/cdrom", DRIVE_CDROM},
+  {"/dev/cdu535", DRIVE_CDROM},
+  {"/dev/cdwriter", DRIVE_CDROM},
+  {"/dev/cm205cd", DRIVE_CDROM},
+  {"/dev/cm206cd", DRIVE_CDROM},
+  {"/dev/gscd", DRIVE_CDROM},
+  {"/dev/hitcd", DRIVE_CDROM},
+  {"/dev/iseries/vcd", DRIVE_CDROM},
+  {"/dev/lmscd", DRIVE_CDROM},
+  {"/dev/mcd", DRIVE_CDROM},
+  {"/dev/optcd", DRIVE_CDROM},
+  {"/dev/pcd", DRIVE_CDROM},
+  {"/dev/sbpcd", DRIVE_CDROM},
+  {"/dev/scd", DRIVE_CDROM},
+  {"/dev/sjcd", DRIVE_CDROM},
+  {"/dev/sonycd", DRIVE_CDROM},
+  {"/dev/sr", DRIVE_CDROM},
   {"",0}
 };
 
@@ -113,11 +142,16 @@ static BOOL is_drive_defined(char *path)
 }
 
 /* returns Z + 1 if there are no more available letters */
-static char allocate_letter(void)
+static char allocate_letter(int type)
 {
-    char letter;
+    char letter, start;
 
-    for (letter = 'C'; letter <= 'Z'; letter++)
+    if (type == DRIVE_REMOVABLE)
+	start = 'A';
+    else
+	start = 'C';
+
+    for (letter = start; letter <= 'Z'; letter++)
         if ((DRIVE_MASK_BIT(letter) & working_mask) != 0) break;
 
     return letter;
@@ -144,7 +178,7 @@ static void report_error(int code)
                 len = snprintf(NULL, 0, s, strerror(errno));
                 buffer = HeapAlloc(GetProcessHeap(), 0, len + 1);
                 snprintf(buffer, len, s, strerror(errno));
-                MessageBox(NULL, s, "", MB_OK | MB_ICONEXCLAMATION);
+                MessageBoxA(NULL, s, "", MB_OK | MB_ICONEXCLAMATION);
                 HeapFree(GetProcessHeap(), 0, buffer);
             }
             else
@@ -154,12 +188,12 @@ static void report_error(int code)
             break;
 
         case NO_MORE_LETTERS:
-            if (gui_mode) MessageBox(NULL, "No more letters are available to auto-detect available drives with.", "", MB_OK | MB_ICONEXCLAMATION);
+            if (gui_mode) MessageBoxA(NULL, "No more letters are available to auto-detect available drives with.", "", MB_OK | MB_ICONEXCLAMATION);
             fprintf(stderr, "winecfg: no more available letters while scanning /etc/fstab\n");
             break;
 
         case NO_ROOT:
-            if (gui_mode) MessageBox(NULL, "Could not ensure that the root directory was mapped.\n\n"
+            if (gui_mode) MessageBoxA(NULL, "Could not ensure that the root directory was mapped.\n\n"
                                      "This can happen if you run out of drive letters. "
                                      "It's important to have the root directory mapped, otherwise Wine"
                                      "will not be able to always find the programs you want to run. "
@@ -170,13 +204,13 @@ static void report_error(int code)
 
         case NO_DRIVE_C:
             if (gui_mode)
-                MessageBox(NULL, "No virtual drive C mapped\n\nTry running wineprefixcreate", "", MB_OK | MB_ICONEXCLAMATION);
+                MessageBoxA(NULL, "No virtual drive C mapped!\n", "", MB_OK | MB_ICONEXCLAMATION);
             else
                 fprintf(stderr, "winecfg: no drive_c directory\n");
-
+            break;
         case NO_HOME:
             if (gui_mode)
-                MessageBox(NULL, "Could not ensure that your home directory was mapped.\n\n"
+                MessageBoxA(NULL, "Could not ensure that your home directory was mapped.\n\n"
                                  "This can happen if you run out of drive letters. "
                                  "Try unmapping a drive letter then try again.", "",
                                  MB_OK | MB_ICONEXCLAMATION);
@@ -203,7 +237,7 @@ static void ensure_root_is_mapped(void)
         {
             if (!drives[letter - 'A'].in_use) 
             {
-                add_drive(letter, "/", "System", "0", DRIVE_FIXED);
+                add_drive(letter, "/", NULL, NULL, 0, DRIVE_FIXED);
                 WINE_TRACE("allocated drive %c as the root drive\n", letter);
                 break;
             }
@@ -232,7 +266,7 @@ static void ensure_home_is_mapped(void)
         {
             if (!drives[letter - 'A'].in_use)
             {
-                add_drive(letter, home, "Home", "0", DRIVE_FIXED);
+                add_drive(letter, home, NULL, NULL, 0, DRIVE_FIXED);
                 WINE_TRACE("allocated drive %c as the user's home directory\n", letter);
                 break;
             }
@@ -253,19 +287,21 @@ static void ensure_drive_c_is_mapped(void)
     len = snprintf(NULL, 0, "%s/../drive_c", configdir);
     drive_c_dir = HeapAlloc(GetProcessHeap(), 0, len);
     snprintf(drive_c_dir, len, "%s/../drive_c", configdir);
-    HeapFree(GetProcessHeap(), 0, drive_c_dir);
 
     if (stat(drive_c_dir, &buf) == 0)
     {
-        add_drive('C', "../drive_c", "Virtual Windows Drive", "0", DRIVE_FIXED);
+        WCHAR label[64];
+        LoadStringW(GetModuleHandleW(NULL), IDS_SYSTEM_DRIVE_LABEL, label, ARRAY_SIZE(label));
+        add_drive('C', "../drive_c", NULL, label, 0, DRIVE_FIXED);
     }
     else
     {
         report_error(NO_DRIVE_C);
     }
+    HeapFree(GetProcessHeap(), 0, drive_c_dir);
 }
 
-int autodetect_drives()
+BOOL autodetect_drives(void)
 {
 #ifdef HAVE_MNTENT_H
     struct mntent *ent;
@@ -294,28 +330,14 @@ int autodetect_drives()
     while ((ent = getmntent(fstab)))
     {
         char letter;
-        char label[256];
         int type;
-        
+        char *device = NULL;
+
         WINE_TRACE("ent->mnt_dir=%s\n", ent->mnt_dir);
 
         if (should_ignore_fstype(ent->mnt_type)) continue;
         if (should_ignore_mnt_dir(ent->mnt_dir)) continue;
         if (is_drive_defined(ent->mnt_dir)) continue;
-
-        /* allocate a drive for it */
-        letter = allocate_letter();
-        if (letter == ']')
-        {
-            report_error(NO_MORE_LETTERS);
-            fclose(fstab);
-            return FALSE;
-        }
-        
-        strcpy(label, "Drive X");
-        label[6] = letter;
-        
-        WINE_TRACE("adding drive %c for %s, type %s with label %s\n", letter, ent->mnt_dir, ent->mnt_type,label);
 
         if (!strcmp(ent->mnt_type, "nfs")) type = DRIVE_REMOTE;
         else if (!strcmp(ent->mnt_type, "nfs4")) type = DRIVE_REMOTE;
@@ -326,8 +348,21 @@ int autodetect_drives()
         else if (!strcmp(ent->mnt_type, "ramfs")) type = DRIVE_RAMDISK;
         else type = try_dev_node(ent->mnt_fsname);
         
-        add_drive(letter, ent->mnt_dir, label, "0", type);
-        
+        /* allocate a drive for it */
+        letter = allocate_letter(type);
+        if (letter == 'Z' + 1)
+        {
+            report_error(NO_MORE_LETTERS);
+            fclose(fstab);
+            return FALSE;
+        }
+
+        if (type == DRIVE_CDROM) device = ent->mnt_fsname;
+
+        WINE_TRACE("adding drive %c for %s, device %s, type %s\n",
+                   letter, ent->mnt_dir, device, ent->mnt_type);
+        add_drive(letter, ent->mnt_dir, device, NULL, 0, type);
+
         /* working_mask is a map of the drive letters still available. */
         working_mask &= ~DRIVE_MASK_BIT(letter);
     }

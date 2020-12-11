@@ -1,23 +1,23 @@
-EXTRADEFS = -D_OLE32_ -DCOM_NO_WINDOWS_H
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = ole32.dll
-IMPORTLIB = libole32.$(IMPLIBEXT)
-IMPORTS   = advapi32 user32 gdi32 rpcrt4 kernel32 ntdll
-EXTRALIBS = -luuid $(LIBUNICODE)
+IMPORTLIB = ole32
+IMPORTS   = uuid advapi32 user32 gdi32 rpcrt4
+DELAYIMPORTS = oleaut32
+EXTRADEFS = -D_OLE32_
 
 C_SRCS = \
 	antimoniker.c \
 	bindctx.c \
+	classmoniker.c \
 	clipboard.c \
+	comcat.c \
 	compobj.c \
 	compositemoniker.c \
 	datacache.c \
 	defaulthandler.c \
 	dictionary.c \
+	enumx.c \
 	errorinfo.c \
+	filelockbytes.c \
 	filemoniker.c \
 	ftmarshal.c \
 	git.c \
@@ -28,51 +28,32 @@ C_SRCS = \
 	memlockbytes.c \
 	moniker.c \
 	ole2.c \
-	ole2stubs.c \
 	ole2impl.c \
+	ole2stubs.c \
 	ole32_main.c \
 	oleobj.c \
 	oleproxy.c \
-	regsvr.c \
+	pointermoniker.c \
 	rpc.c \
-	stg_bigblockfile.c \
 	stg_prop.c \
 	stg_stream.c \
 	storage32.c \
-	stubmanager.c
-
-C_SRCS16 = \
-	memlockbytes16.c \
-	ole16.c \
-	ole2_16.c \
-	ole2nls.c \
-	storage.c
-
-SPEC_SRCS16 = \
-	compobj.spec \
-	ole2.spec \
-	ole2conv.spec \
-	ole2nls.spec \
-	ole2prox.spec \
-	ole2thk.spec \
-	storage.spec
+	stubmanager.c \
+	usrmarshal.c
 
 RC_SRCS = ole32res.rc
-RC_BINSRC = ole32res.rc
-RC_BINARIES = \
-	drag_copy.cur \
-	drag_link.cur \
-	drag_move.cur \
-	nodrop.cur 
 
 IDL_SRCS = \
-	dcom.idl
+	dcom.idl \
+	irot.idl \
+	ole32_objidl.idl \
+	ole32_oleidl.idl \
+	ole32_unknwn.idl
 
-SUBDIRS = tests
+dlldata_EXTRADEFS = -DENTRY_PREFIX=OLE32_ -DPROXY_CLSID=CLSID_PSFactoryBuffer -DWINE_REGISTER_DLL
 
-@MAKE_DLL_RULES@
-
-### Dependencies:
-
-# note: this will get overwritten by make depend
-$(ALL_OBJS): $(IDL_SRCS:.idl=.h)
+SVG_SRCS = \
+	drag_copy.svg \
+	drag_link.svg \
+	drag_move.svg \
+	nodrop.svg

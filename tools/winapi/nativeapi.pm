@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package nativeapi;
@@ -59,7 +59,7 @@ sub new($) {
 
     $output->progress("$api_file");
 
-    open(IN, "< $api_file");
+    open(IN, "< $api_file") || die "Error: Can't open $api_file: $!\n";
     local $/ = "\n";
     while(<IN>) {
 	s/^\s*(.*?)\s*$/$1/; # remove whitespace at begin and end of line
@@ -73,7 +73,7 @@ sub new($) {
     $output->progress("$configure_ac_file");
 
     my $again = 0;
-    open(IN, "< $configure_ac_file");
+    open(IN, "< $configure_ac_file") || die "Error: Can't open $configure_ac_file: $!\n";
     local $/ = "\n";
     while($again || (defined($_ = <IN>))) {
 	$again = 0;
@@ -98,7 +98,7 @@ sub new($) {
 	# remove leading and trailing whitespace
 	s/^\s*(.*?)\s*$/$1/;
 
-	# skip emty lines
+	# skip empty lines
 	if(/^$/) { next; }
 
 	# skip comments
@@ -141,13 +141,13 @@ sub new($) {
 
     $output->progress("$config_h_in_file");
 
-    open(IN, "< $config_h_in_file");
+    open(IN, "< $config_h_in_file") || die "Error: Can't open $config_h_in_file: $!\n";
     local $/ = "\n";
     while(<IN>) {
 	# remove leading and trailing whitespace
 	s/^\s*(.*?)\s*$/$1/;
 
-	# skip emty lines
+	# skip empty lines
 	if(/^$/) { next; }
 
 	if(/^\#undef\s+(\S+)$/) {

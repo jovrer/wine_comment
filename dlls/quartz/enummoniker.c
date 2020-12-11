@@ -3,9 +3,6 @@
  *
  * Copyright 2003 Robert Shearman
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -18,11 +15,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #define COBJMACROS
-#define COM_NO_WINDOWS_H
 
 #include "quartz_private.h"
 
@@ -32,7 +28,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 
 typedef struct EnumMonikerImpl
 {
-    const IEnumMonikerVtbl *lpVtbl;
+    IEnumMoniker IEnumMoniker_iface;
     LONG ref;
     IMoniker ** ppMoniker;
     ULONG nMonikerCount;
@@ -40,6 +36,11 @@ typedef struct EnumMonikerImpl
 } EnumMonikerImpl;
 
 static const IEnumMonikerVtbl EnumMonikerImpl_Vtbl;
+
+static inline EnumMonikerImpl *impl_from_IEnumMoniker(IEnumMoniker *iface)
+{
+    return CONTAINING_RECORD(iface, EnumMonikerImpl, IEnumMoniker_iface);
+}
 
 static ULONG WINAPI EnumMonikerImpl_AddRef(LPENUMMONIKER iface);
 
@@ -50,21 +51,21 @@ HRESULT EnumMonikerImpl_Create(IMoniker ** ppMoniker, ULONG nMonikerCount, IEnum
      * IMonikers */
     EnumMonikerImpl * pemi = CoTaskMemAlloc(sizeof(EnumMonikerImpl));
 
-    TRACE("(%p, %ld, %p)\n", ppMoniker, nMonikerCount, ppEnum);
+    TRACE("(%p, %d, %p)\n", ppMoniker, nMonikerCount, ppEnum);
 
     *ppEnum = NULL;
 
     if (!pemi)
         return E_OUTOFMEMORY;
 
-    pemi->lpVtbl = &EnumMonikerImpl_Vtbl;
+    pemi->IEnumMoniker_iface.lpVtbl = &EnumMonikerImpl_Vtbl;
     pemi->ref = 1;
     pemi->ppMoniker = CoTaskMemAlloc(nMonikerCount * sizeof(IMoniker*));
     memcpy(pemi->ppMoniker, ppMoniker, nMonikerCount*sizeof(IMoniker*));
     pemi->nMonikerCount = nMonikerCount;
     pemi->index = 0;
 
-    *ppEnum = (IEnumMoniker *)pemi;
+    *ppEnum = &pemi->IEnumMoniker_iface;
 
     return S_OK;
 }
@@ -77,7 +78,7 @@ static HRESULT WINAPI EnumMonikerImpl_QueryInterface(
     REFIID riid,
     LPVOID *ppvObj)
 {
-    EnumMonikerImpl *This = (EnumMonikerImpl *)iface;
+    EnumMonikerImpl *This = impl_from_IEnumMoniker(iface);
     TRACE("\n\tIID:\t%s\n",debugstr_guid(riid));
 
     if (This == NULL || ppvObj == NULL) return E_POINTER;
@@ -85,11 +86,12 @@ static HRESULT WINAPI EnumMonikerImpl_QueryInterface(
     if (IsEqualGUID(riid, &IID_IUnknown) ||
         IsEqualGUID(riid, &IID_IEnumMoniker))
     {
-        *ppvObj = (LPVOID)iface;
+        *ppvObj = iface;
         EnumMonikerImpl_AddRef(iface);
         return S_OK;
     }
 
+    *ppvObj = NULL;
     FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
     return E_NOINTERFACE;
 }
@@ -99,14 +101,14 @@ static HRESULT WINAPI EnumMonikerImpl_QueryInterface(
  */
 static ULONG WINAPI EnumMonikerImpl_AddRef(LPENUMMONIKER iface)
 {
-    EnumMonikerImpl *This = (EnumMonikerImpl *)iface;
+    EnumMonikerImpl *This = impl_from_IEnumMoniker(iface);
     ULONG ref;
 
     if (This == NULL) return E_POINTER;
 
     ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p)->() AddRef from %ld\n", iface, ref - 1);
+    TRACE("(%p)->() AddRef from %d\n", iface, ref - 1);
 
     return ref;
 }
@@ -116,13 +118,18 @@ static ULONG WINAPI EnumMonikerImpl_AddRef(LPENUMMONIKER iface)
  */
 static ULONG WINAPI EnumMonikerImpl_Release(LPENUMMONIKER iface)
 {
-    EnumMonikerImpl *This = (EnumMonikerImpl *)iface;
+    EnumMonikerImpl *This = impl_from_IEnumMoniker(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p)->() Release from %ld\n", iface, ref + 1);
+    TRACE("(%p)->() Release from %d\n", iface, ref + 1);
 
     if (!ref)
     {
+        ULONG i;
+
+        for (i = 0; i < This->nMonikerCount; i++)
+            IMoniker_Release(This->ppMoniker[i]);
+
         CoTaskMemFree(This->ppMoniker);
         This->ppMoniker = NULL;
         CoTaskMemFree(This);
@@ -134,9 +141,9 @@ static ULONG WINAPI EnumMonikerImpl_Release(LPENUMMONIKER iface)
 static HRESULT WINAPI EnumMonikerImpl_Next(LPENUMMONIKER iface, ULONG celt, IMoniker ** rgelt, ULONG * pceltFetched)
 {
     ULONG fetched;
-    EnumMonikerImpl *This = (EnumMonikerImpl *)iface;
+    EnumMonikerImpl *This = impl_from_IEnumMoniker(iface);
 
-    TRACE("(%p)->(%ld, %p, %p)\n", iface, celt, rgelt, pceltFetched);
+    TRACE("(%p)->(%d, %p, %p)\n", iface, celt, rgelt, pceltFetched);
 
     for (fetched = 0; (This->index + fetched < This->nMonikerCount) && (fetched < celt); fetched++)
     {
@@ -146,7 +153,7 @@ static HRESULT WINAPI EnumMonikerImpl_Next(LPENUMMONIKER iface, ULONG celt, IMon
 
     This->index += fetched;
 
-    TRACE("-- fetched %ld\n", fetched);
+    TRACE("-- fetched %d\n", fetched);
 
     if (pceltFetched)
         *pceltFetched = fetched;
@@ -159,9 +166,9 @@ static HRESULT WINAPI EnumMonikerImpl_Next(LPENUMMONIKER iface, ULONG celt, IMon
 
 static HRESULT WINAPI EnumMonikerImpl_Skip(LPENUMMONIKER iface, ULONG celt)
 {
-    EnumMonikerImpl *This = (EnumMonikerImpl *)iface;
+    EnumMonikerImpl *This = impl_from_IEnumMoniker(iface);
 
-    TRACE("(%p)->(%ld)\n", iface, celt);
+    TRACE("(%p)->(%d)\n", iface, celt);
 
     This->index += celt;
 
@@ -170,7 +177,7 @@ static HRESULT WINAPI EnumMonikerImpl_Skip(LPENUMMONIKER iface, ULONG celt)
 
 static HRESULT WINAPI EnumMonikerImpl_Reset(LPENUMMONIKER iface)
 {
-    EnumMonikerImpl *This = (EnumMonikerImpl *)iface;
+    EnumMonikerImpl *This = impl_from_IEnumMoniker(iface);
 
     TRACE("(%p)->()\n", iface);
 

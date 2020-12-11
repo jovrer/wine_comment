@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __TASKMGR_H__
@@ -141,28 +141,9 @@ extern HWND hApplicationPageSwitchToButton;  /* Application Switch To button */
 extern HWND hApplicationPageNewTaskButton;   /* Application New Task button */
 
 
-/* Foward declarations of functions included in this code module: */
-INT_PTR CALLBACK TaskManagerWndProc(HWND, UINT, WPARAM, LPARAM);
-BOOL OnCreate(HWND hWnd);
-void OnSize(UINT nType, int cx, int cy);
-void OnMove(UINT nType, int cx, int cy);
+/* Forward declarations of functions included in this code module: */
 void FillSolidRect(HDC hDC, LPCRECT lpRect, COLORREF clr);
-void FillSolidRect2(HDC hDC, int x, int y, int cx, int cy, COLORREF clr);
-void Draw3dRect(HDC hDC, int x, int y, int cx, int cy, COLORREF clrTopLeft, COLORREF clrBottomRight);
-void Draw3dRect2(HDC hDC, LPRECT lpRect, COLORREF clrTopLeft, COLORREF clrBottomRight);
-void Font_DrawText(HDC hDC, LPCTSTR lpszText, int x, int y);
-void LoadSettings(void);
-void SaveSettings(void);
-void TaskManager_OnRestoreMainWindow(void);
-void TaskManager_OnEnterMenuLoop(HWND hWnd);
-void TaskManager_OnExitMenuLoop(HWND hWnd);
-void TaskManager_OnMenuSelect(HWND hWnd, UINT nItemID, UINT nFlags, HMENU hSysMenu);
-void TaskManager_OnViewUpdateSpeedHigh(void);
-void TaskManager_OnViewUpdateSpeedNormal(void);
-void TaskManager_OnViewUpdateSpeedLow(void);
-void TaskManager_OnViewUpdateSpeedPaused(void);
-void TaskManager_OnViewRefresh(void);
-void TaskManager_OnTabWndSelChange(void);
+void Font_DrawText(HDC hDC, LPWSTR lpwszText, int x, int y);
 
 #define OPTIONS_MENU_INDEX    1
 
@@ -172,7 +153,7 @@ void TaskManager_OnOptionsHideWhenMinimized(void);
 void TaskManager_OnOptionsShow16BitTasks(void);
 void TaskManager_OnFileNew(void);
 
-LPTSTR GetLastErrorText( LPTSTR lpszBuf, DWORD dwSize );
+LPWSTR GetLastErrorText( LPWSTR lpwszBuf, DWORD dwSize );
 
 void OnAbout(void);
 
@@ -192,7 +173,6 @@ void ProcessPage_OnDebugChannels(void);
 
 #define WM_ONTRAYICON   WM_USER + 5
 
-HICON TrayIcon_GetProcessorUsageIcon(void);
 BOOL TrayIcon_ShellAddTrayIcon(void);
 BOOL TrayIcon_ShellRemoveTrayIcon(void);
 BOOL TrayIcon_ShellUpdateTrayIcon(void);
@@ -215,7 +195,6 @@ void ApplicationPage_OnEndTask(void);
 void ApplicationPage_OnGotoProcess(void);
 
 void RefreshApplicationPage(void);
-void UpdateApplicationListControlViewSetting(void);
 void RefreshPerformancePage(void);
 void RefreshProcessPage(void);
 

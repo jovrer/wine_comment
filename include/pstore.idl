@@ -13,26 +13,39 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+import "wtypes.idl";
 import "oaidl.idl";
 
-cpp_quote("#define PST_KEY_CURRENT_USER    0");
-cpp_quote("#define PST_KEY_LOCAL_MACHINE   1");
+cpp_quote("#define PST_KEY_CURRENT_USER    0")
+cpp_quote("#define PST_KEY_LOCAL_MACHINE   1")
 
-cpp_quote("#define PST_E_OK          0x00000000L");
-cpp_quote("#define PST_E_TYPE_EXISTS 0x800C0004L");
+cpp_quote("#define PST_E_OK          0x00000000L")
+cpp_quote("#define PST_E_TYPE_EXISTS 0x800C0004L")
 
-cpp_quote("#define PST_AUTHENTICODE        1");
-cpp_quote("#define PST_BINARY_CHECK        2");
-cpp_quote("#define PST_SECURITY_DESCRIPTOR 4");
+cpp_quote("#define PST_AUTHENTICODE        1")
+cpp_quote("#define PST_BINARY_CHECK        2")
+cpp_quote("#define PST_SECURITY_DESCRIPTOR 4")
 
 typedef DWORD PST_ACCESSMODE;
 typedef DWORD PST_ACCESSCLAUSETYPE;
 typedef DWORD PST_KEY;
 typedef DWORD PST_PROVIDERCAPABILITIES;
 typedef GUID PST_PROVIDERID, *PPST_PROVIDERID;
+
+/*****************************************************************************
+ * PSTOREC library
+ */
+[
+    uuid(5a6f1ebd-2db1-11d0-8c39-00c04fd9126b),
+    version(1.0),
+    helpstring("PStore 1.0 Type Library")
+]
+library PSTORECLib
+{
+    importlib("stdole2.tlb");
 
 typedef struct _PST_PROVIDERINFO
 {
@@ -42,44 +55,42 @@ typedef struct _PST_PROVIDERINFO
     LPWSTR szProviderName;
 } PST_PROVIDERINFO, *PPST_PROVIDERINFO;
 
-typedef void *PPST_PROMPTIFO;
+typedef struct _PST_PROMPTINFO
+{
+    DWORD cbSize;
+    DWORD dwPromptFlags;
+    HWND hwndApp;
+    LPCWSTR szPrompt;
+} PST_PROMPTINFO, *PPST_PROMPTINFO;
 
-
-
-typedef struct {
+typedef struct _PST_ACCESSCLAUSE {
     DWORD cbSize;
     PST_ACCESSCLAUSETYPE ClauseType;
     DWORD cbClauseData;
     BYTE* pbClauseData;
 } PST_ACCESSCLAUSE, *PPST_ACCESSCLAUSE;
 
-typedef struct {
+typedef struct _PST_ACCESSRULE {
     DWORD cbSize;
     PST_ACCESSMODE AccessModeFlags;
     DWORD cClauses;
     PST_ACCESSCLAUSE* rgClauses;
 } PST_ACCESSRULE, *PPST_ACCESSRULE;
 
-typedef struct {
+typedef struct _PST_ACCESSRULESET {
     DWORD cbSize;
     DWORD cClause;
     PST_ACCESSRULE* rgRules;
 } PST_ACCESSRULESET, *PPST_ACCESSRULESET;
 
-typedef struct {
+typedef struct _PST_TYPEINFO {
     DWORD cbSize;
     LPWSTR szDisplayName;
 } PST_TYPEINFO, *PPST_TYPEINFO;
 
-typedef struct {
-    DWORD cbSize;
-    DWORD dwPromptFlags;
-    DWORD_PTR  hwndApp;
-    LPCWSTR szPrompt;
-} PST_PROMPTINFO, *PPST_PROMPTINFO;
-
 [
   object,
+  uuid(5a6f1ec1-2db1-11d0-8c39-00c04fd9126b),
   pointer_default(unique)
 ]
 interface IEnumPStoreItems : IUnknown
@@ -100,6 +111,7 @@ interface IEnumPStoreItems : IUnknown
 
 [
   object,
+  uuid(789c1cbf-31ee-11d0-8c39-00c04fd9126b),
   pointer_default(unique)
 ]
 interface IEnumPStoreTypes : IUnknown
@@ -123,6 +135,7 @@ interface IEnumPStoreTypes : IUnknown
  */
 [
   object,
+  uuid(5a6f1ec0-2db1-11d0-8c39-00c04fd9126b),
   pointer_default(unique)
 ]
 interface IPStore : IUnknown
@@ -222,7 +235,7 @@ interface IPStore : IUnknown
         [in] LPCWSTR szItemName,
         [in] DWORD *cbData,
         [in] BYTE** pbData,
-        [in] PPST_PROMPTIFO pPromptInfo,
+        [in] PPST_PROMPTINFO pPromptInfo,
         [in] DWORD dwFlags );
 
     HRESULT WriteItem(
@@ -232,7 +245,7 @@ interface IPStore : IUnknown
         [in] LPCWSTR szItemName,
         [in] DWORD cbData,
         [in,size_is(cbData)] BYTE *ppbData,
-        [in] PPST_PROMPTIFO pPromptInfo,
+        [in] PPST_PROMPTINFO pPromptInfo,
         [in] DWORD dwDefaultConfirmationStyle,
         [in] DWORD dwFlags);
 
@@ -242,7 +255,7 @@ interface IPStore : IUnknown
         [in] const GUID* pItemSubtype,
         [in] LPCWSTR szItemName,
         [in] PST_ACCESSMODE ModeFlags,
-        [in] PPST_PROMPTIFO pProomptInfo,
+        [in] PPST_PROMPTINFO pPromptInfo,
         [in] DWORD dwFlags );
 
     HRESULT CloseItem( 
@@ -258,4 +271,6 @@ interface IPStore : IUnknown
         [in] const GUID* pItemSubtype,
         [in] DWORD dwFlags,
         [in] IEnumPStoreItems** ppenum );
+}
+
 }

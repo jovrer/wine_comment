@@ -15,17 +15,19 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
 #include "wine/port.h"
 
 #include <stdio.h>
+#include <stdarg.h>
 #include "wine/server.h"
 #include "winecon_private.h"
 #include "winnls.h"
-
+#include "winuser.h"
+#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wineconsole);
@@ -36,16 +38,37 @@ void WINECON_Fatal(const char* msg)
     ExitProcess(0);
 }
 
+static void printf_res(UINT uResId, ...)
+{
+    WCHAR buffer[1024];
+    CHAR ansi[1024];
+    va_list args;
+
+    va_start(args, uResId);
+    LoadStringW(GetModuleHandleW(NULL), uResId, buffer, ARRAY_SIZE(buffer));
+    WideCharToMultiByte(CP_UNIXCP, 0, buffer, -1, ansi, sizeof(ansi), NULL, NULL);
+    vprintf(ansi, args);
+    va_end(args);
+}
+
+static void WINECON_Usage(void)
+{
+    printf_res(IDS_USAGE_HEADER);
+    printf_res(IDS_USAGE_BACKEND);
+    printf_res(IDS_USAGE_COMMAND);
+    printf_res(IDS_USAGE_FOOTER);
+}
+
 /******************************************************************
  *		WINECON_FetchCells
  *
  * updates the local copy of cells (band to update)
  */
-void WINECON_FetchCells(struct inner_data* data, int upd_tp, int upd_bm)
+static void WINECON_FetchCells(struct inner_data* data, int upd_tp, int upd_bm)
 {
     SERVER_START_REQ( read_console_output )
     {
-        req->handle = (obj_handle_t)data->hConOut;
+        req->handle = wine_server_obj_handle( data->hConOut );
         req->x      = 0;
         req->y      = upd_tp;
         req->mode   = CHAR_INFO_MODE_TEXTATTR;
@@ -59,41 +82,31 @@ void WINECON_FetchCells(struct inner_data* data, int upd_tp, int upd_bm)
 }
 
 /******************************************************************
- *		WINECON_NotifyWindowChange
+ *		WINECON_ResizeWithContainer
  *
- * Inform server that visible window on sb has changed
+ * For console embedded in a container (e.g. user in a win32 window, or (n)curses
+ * in a TERM, perform resize of console (screen buffer and window) to fit in
+ * (new) container size.
  */
-void WINECON_NotifyWindowChange(struct inner_data* data)
+void WINECON_ResizeWithContainer(struct inner_data* data, int width, int height)
 {
-    SERVER_START_REQ( set_console_output_info )
-    {
-        req->handle       = (obj_handle_t)data->hConOut;
-        req->win_left     = data->curcfg.win_pos.X;
-        req->win_top      = data->curcfg.win_pos.Y;
-        req->win_right    = data->curcfg.win_pos.X + data->curcfg.win_width - 1;
-        req->win_bottom   = data->curcfg.win_pos.Y + data->curcfg.win_height - 1;
-        req->mask         = SET_CONSOLE_OUTPUT_INFO_DISPLAY_WINDOW;
-        wine_server_call( req );
-    }
-    SERVER_END_REQ;
-}
+    struct config_data  cfg;
 
-/******************************************************************
- *		WINECON_GetHistorySize
- *
- *
- */
-int	WINECON_GetHistorySize(HANDLE hConIn)
-{
-    int	ret = 0;
+    if (data->in_set_config) return;
 
-    SERVER_START_REQ(get_console_input_info)
-    {
-	req->handle = (obj_handle_t)hConIn;
-	if (!wine_server_call_err( req )) ret = reply->history_size;
-    }
-    SERVER_END_REQ;
-    return ret;
+    cfg = data->curcfg;
+    cfg.win_width  = width;
+    cfg.win_height = height;
+
+    /* auto size screen-buffer if it's now smaller than window */
+    if (cfg.sb_width  < cfg.win_width)  cfg.sb_width = cfg.win_width;
+    if (cfg.sb_height < cfg.win_height) cfg.sb_height = cfg.win_height;
+
+    /* and reset window pos so that we don't display outside of the screen-buffer */
+    if (cfg.win_pos.X + cfg.win_width  > cfg.sb_width)  cfg.win_pos.X = cfg.sb_width  - cfg.win_width;
+    if (cfg.win_pos.Y + cfg.win_height > cfg.sb_height) cfg.win_pos.Y = cfg.sb_height - cfg.win_height;
+
+    WINECON_SetConfig(data, &cfg);
 }
 
 /******************************************************************
@@ -101,35 +114,16 @@ int	WINECON_GetHistorySize(HANDLE hConIn)
  *
  *
  */
-BOOL	WINECON_SetHistorySize(HANDLE hConIn, int size)
+static BOOL WINECON_SetHistorySize(HANDLE hConIn, int size)
 {
     BOOL	ret;
 
     SERVER_START_REQ(set_console_input_info)
     {
-	req->handle = (obj_handle_t)hConIn;
+	req->handle = wine_server_obj_handle( hConIn );
 	req->mask = SET_CONSOLE_INPUT_INFO_HISTORY_SIZE;
 	req->history_size = size;
 	ret = !wine_server_call_err( req );
-    }
-    SERVER_END_REQ;
-    return ret;
-}
-
-
-/******************************************************************
- *		WINECON_GetHistoryMode
- *
- *
- */
-int	WINECON_GetHistoryMode(HANDLE hConIn)
-{
-    int	ret = 0;
-
-    SERVER_START_REQ(get_console_input_info)
-    {
-	req->handle = (obj_handle_t)hConIn;
-	if (!wine_server_call_err( req )) ret = reply->history_mode;
     }
     SERVER_END_REQ;
     return ret;
@@ -140,19 +134,36 @@ int	WINECON_GetHistoryMode(HANDLE hConIn)
  *
  *
  */
-BOOL	WINECON_SetHistoryMode(HANDLE hConIn, int mode)
+static BOOL WINECON_SetHistoryMode(HANDLE hConIn, int mode)
 {
     BOOL	ret;
 
     SERVER_START_REQ(set_console_input_info)
     {
-	req->handle = (obj_handle_t)hConIn;
+	req->handle = wine_server_obj_handle( hConIn );
 	req->mask = SET_CONSOLE_INPUT_INFO_HISTORY_MODE;
 	req->history_mode = mode;
 	ret = !wine_server_call_err( req );
     }
     SERVER_END_REQ;
     return ret;
+}
+
+/******************************************************************
+ *              WINECON_SetInsertMode
+ *
+ *
+ */
+static void WINECON_SetInsertMode(HANDLE hConIn, unsigned int enable)
+{
+    DWORD mode;
+
+    GetConsoleMode(hConIn, &mode);
+    if (enable)
+        mode |= ENABLE_INSERT_MODE|ENABLE_EXTENDED_FLAGS;
+    else
+        mode &= ~ENABLE_INSERT_MODE;
+    SetConsoleMode(hConIn, mode);
 }
 
 /******************************************************************
@@ -168,7 +179,7 @@ BOOL WINECON_GetConsoleTitle(HANDLE hConIn, WCHAR* buffer, size_t len)
 
     SERVER_START_REQ( get_console_input_info )
     {
-        req->handle = (obj_handle_t)hConIn;
+        req->handle = wine_server_obj_handle( hConIn );
         wine_server_set_reply( req, buffer, len - sizeof(WCHAR) );
         if ((ret = !wine_server_call_err( req )))
         {
@@ -191,7 +202,7 @@ static BOOL WINECON_SetEditionMode(HANDLE hConIn, int edition_mode)
 
     SERVER_START_REQ( set_console_input_info )
     {
-        req->handle = (obj_handle_t)hConIn;
+        req->handle = wine_server_obj_handle( hConIn );
         req->mask = SET_CONSOLE_INPUT_INFO_EDITION_MODE;
         req->edition_mode = edition_mode;
         ret = !wine_server_call_err( req );
@@ -201,25 +212,51 @@ static BOOL WINECON_SetEditionMode(HANDLE hConIn, int edition_mode)
 }
 
 /******************************************************************
+ *		WINECON_SetColors
+ *
+ * Sets ColorTable and Pop-up menu colors
+ */
+static void WINECON_SetColors(struct inner_data *data, const struct config_data* cfg)
+{
+    size_t color_map_size = sizeof(data->curcfg.color_map);
+
+    memcpy(data->curcfg.color_map, cfg->color_map, color_map_size);
+    data->curcfg.popup_attr = cfg->popup_attr;
+
+    SERVER_START_REQ( set_console_output_info )
+    {
+        req->handle = wine_server_obj_handle( data->hConOut );
+        req->mask = SET_CONSOLE_OUTPUT_INFO_COLORTABLE | SET_CONSOLE_OUTPUT_INFO_POPUP_ATTR;
+        req->popup_attr = cfg->popup_attr;
+        wine_server_add_data( req, cfg->color_map, color_map_size );
+        wine_server_call( req );
+    }
+    SERVER_END_REQ;
+}
+
+/******************************************************************
  *		WINECON_GrabChanges
  *
  * A change occurs, try to figure out which
  */
-int	WINECON_GrabChanges(struct inner_data* data)
+void	WINECON_GrabChanges(struct inner_data* data)
 {
     struct console_renderer_event	evts[256];
     int	i, num, ev_found;
     HANDLE h;
 
+    if (data->in_grab_changes) return;
+
     SERVER_START_REQ( get_console_renderer_events )
     {
         wine_server_set_reply( req, evts, sizeof(evts) );
-        req->handle = (obj_handle_t)data->hSynchro;
+        req->handle = wine_server_obj_handle( data->hSynchro );
         if (!wine_server_call_err( req )) num = wine_server_reply_size(reply) / sizeof(evts[0]);
         else num = 0;
     }
     SERVER_END_REQ;
-    if (!num) {WINE_WARN("hmm renderer signaled but no events available\n"); return 1;}
+    if (!num) {WINE_WARN("hmm renderer signaled but no events available\n"); return;}
+    WINE_TRACE( "got %u events\n", num );
 
     /* FIXME: should do some event compression here (cursor pos, update) */
     /* step 1: keep only last cursor pos event */
@@ -229,7 +266,10 @@ int	WINECON_GrabChanges(struct inner_data* data)
         if (evts[i].event == CONSOLE_RENDERER_CURSOR_POS_EVENT)
         {
             if (ev_found != -1)
+            {
+		WINE_TRACE("%u/%u: curs-pos(%d,%d) ignoring\n", i+1, num, evts[i].u.cursor_pos.x, evts[i].u.cursor_pos.y);
 		evts[i].event = CONSOLE_RENDERER_NONE_EVENT;
+            }
 	    ev_found = i;
         }
     }
@@ -250,6 +290,7 @@ int	WINECON_GrabChanges(struct inner_data* data)
 	    !(evts[i       ].u.update.bottom + 1 < evts[ev_found].u.update.top ||
 	      evts[ev_found].u.update.bottom + 1 < evts[i       ].u.update.top))
 	{
+	    WINE_TRACE("%u/%u: update(%d,%d) merging with %u\n", ev_found+1, num, evts[i].u.update.top, evts[i].u.update.bottom, i+1);
 	    evts[i].u.update.top    = min(evts[i       ].u.update.top,
 					  evts[ev_found].u.update.top);
 	    evts[i].u.update.bottom = max(evts[i       ].u.update.bottom,
@@ -259,29 +300,29 @@ int	WINECON_GrabChanges(struct inner_data* data)
 	ev_found = i;
     }
 
-    WINE_TRACE("Events:");
+    data->in_grab_changes = TRUE;
     for (i = 0; i < num; i++)
     {
 	switch (evts[i].event)
 	{
 	case CONSOLE_RENDERER_NONE_EVENT:
-	    WINE_TRACE(" NOP");
+	    WINE_TRACE("%u/%u: NOP\n", i+1, num);
 	    break;
 	case CONSOLE_RENDERER_TITLE_EVENT:
-	    WINE_TRACE(" title()");
+	    WINE_TRACE("%u/%u: title()\n", i+1, num);
 	    data->fnSetTitle(data);
 	    break;
 	case CONSOLE_RENDERER_ACTIVE_SB_EVENT:
 	    SERVER_START_REQ( open_console )
 	    {
-		req->from    = (int)data->hConIn;
-		req->access  = GENERIC_READ | GENERIC_WRITE;
-		req->share   = FILE_SHARE_READ | FILE_SHARE_WRITE;
-		req->inherit = FALSE;
-		h = wine_server_call_err( req ) ? 0 : (HANDLE)reply->handle;
+                req->from       = wine_server_obj_handle( data->hConIn );
+                req->access     = GENERIC_READ | GENERIC_WRITE;
+                req->attributes = 0;
+                req->share      = FILE_SHARE_READ | FILE_SHARE_WRITE;
+                h = wine_server_call_err( req ) ? 0 : wine_server_ptr_handle(reply->handle);
 	    }
 	    SERVER_END_REQ;
-	    WINE_TRACE(" active(%d)", (int)h);
+	    WINE_TRACE("%u/%u: active(%p)\n", i+1, num, h);
 	    if (h)
 	    {
 		CloseHandle(data->hConOut);
@@ -290,32 +331,28 @@ int	WINECON_GrabChanges(struct inner_data* data)
 	    break;
 	case CONSOLE_RENDERER_SB_RESIZE_EVENT:
 	    if (data->curcfg.sb_width != evts[i].u.resize.width ||
-		data->curcfg.sb_height != evts[i].u.resize.height || !data->cells)
+		data->curcfg.sb_height != evts[i].u.resize.height)
 	    {
-		WINE_TRACE(" resize(%d,%d)", evts[i].u.resize.width, evts[i].u.resize.height);
+		WINE_TRACE("%u/%u: resize(%d,%d)\n", i+1, num, evts[i].u.resize.width, evts[i].u.resize.height);
 		data->curcfg.sb_width  = evts[i].u.resize.width;
 		data->curcfg.sb_height = evts[i].u.resize.height;
 
-		if (data->cells) 
-		    data->cells = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, data->cells,
-					  data->curcfg.sb_width * data->curcfg.sb_height * sizeof(CHAR_INFO));
-		else 
-		    data->cells = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                data->cells = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, data->cells,
 					  data->curcfg.sb_width * data->curcfg.sb_height * sizeof(CHAR_INFO));
 
-		if (!data->cells) WINECON_Fatal("OOM\n");
+		if (!data->cells) WINECON_Fatal("OOM");
 		data->fnResizeScreenBuffer(data);
 		data->fnComputePositions(data);
 	    }
 	    break;
 	case CONSOLE_RENDERER_UPDATE_EVENT:
-	    WINE_TRACE(" update(%d,%d)", evts[i].u.update.top, evts[i].u.update.bottom);
+	    WINE_TRACE("%u/%u: update(%d,%d)\n", i+1, num, evts[i].u.update.top, evts[i].u.update.bottom);
 	    WINECON_FetchCells(data, evts[i].u.update.top, evts[i].u.update.bottom);
 	    break;
 	case CONSOLE_RENDERER_CURSOR_POS_EVENT:
 	    if (evts[i].u.cursor_pos.x != data->cursor.X || evts[i].u.cursor_pos.y != data->cursor.Y)
 	    {
-		WINE_TRACE(" curs-pos(%d,%d)",evts[i].u.cursor_pos.x, evts[i].u.cursor_pos.y);
+		WINE_TRACE("%u/%u: curs-pos(%d,%d)\n", i+1, num, evts[i].u.cursor_pos.x, evts[i].u.cursor_pos.y);
 		data->cursor.X = evts[i].u.cursor_pos.x;
 		data->cursor.Y = evts[i].u.cursor_pos.y;
 		data->fnPosCursor(data);
@@ -325,7 +362,7 @@ int	WINECON_GrabChanges(struct inner_data* data)
 	    if (evts[i].u.cursor_geom.size != data->curcfg.cursor_size ||
 		evts[i].u.cursor_geom.visible != data->curcfg.cursor_visible)
 	    {
-		WINE_TRACE(" curs-geom(%d,%d)",
+		WINE_TRACE("%u/%u: curs-geom(%d,%d)\n", i+1, num,
                            evts[i].u.cursor_geom.size, evts[i].u.cursor_geom.visible);
 		data->fnShapeCursor(data, evts[i].u.cursor_geom.size,
 				    evts[i].u.cursor_geom.visible, FALSE);
@@ -334,35 +371,34 @@ int	WINECON_GrabChanges(struct inner_data* data)
 	case CONSOLE_RENDERER_DISPLAY_EVENT:
 	    if (evts[i].u.display.left != data->curcfg.win_pos.X)
 	    {
-		WINE_TRACE(" h-scroll(%d)", evts[i].u.display.left);
+		WINE_TRACE("%u/%u: h-scroll(%d)\n", i+1, num, evts[i].u.display.left);
 		data->fnScroll(data, evts[i].u.display.left, TRUE);
 		data->fnPosCursor(data);
 	    }
 	    if (evts[i].u.display.top != data->curcfg.win_pos.Y)
 	    {
-		WINE_TRACE(" v-scroll(%d)", evts[i].u.display.top);
+		WINE_TRACE("%u/%u: v-scroll(%d)\n", i+1, num, evts[i].u.display.top);
 		data->fnScroll(data, evts[i].u.display.top, FALSE);
 		data->fnPosCursor(data);
 	    }
 	    if (evts[i].u.display.width != data->curcfg.win_width ||
 		evts[i].u.display.height != data->curcfg.win_height)
 	    {
-		WINE_TRACE(" win-size(%d,%d)", evts[i].u.display.width, evts[i].u.display.height);
+		WINE_TRACE("%u/%u: win-size(%d,%d)\n", i+1, num, evts[i].u.display.width, evts[i].u.display.height);
 		data->curcfg.win_width = evts[i].u.display.width;
 		data->curcfg.win_height = evts[i].u.display.height;
 		data->fnComputePositions(data);
 	    }
 	    break;
 	case CONSOLE_RENDERER_EXIT_EVENT:
-	    WINE_TRACE(". Exit!!\n");
-	    return 0;
+            data->dying = TRUE;
+	    WINE_TRACE("%u/%u: Exit!!\n", i+1, num);
+	    return;
 	default:
 	    WINE_FIXME("Unknown event type (%d)\n", evts[i].event);
 	}
     }
-
-    WINE_TRACE(".\n");
-    return 1;
+    data->in_grab_changes = FALSE;
 }
 
 /******************************************************************
@@ -374,13 +410,15 @@ int	WINECON_GrabChanges(struct inner_data* data)
  */
 void     WINECON_SetConfig(struct inner_data* data, const struct config_data* cfg)
 {
+    if (data->in_set_config) return;
+    data->in_set_config = TRUE;
     if (data->curcfg.cursor_size != cfg->cursor_size ||
         data->curcfg.cursor_visible != cfg->cursor_visible)
     {
         CONSOLE_CURSOR_INFO cinfo;
         cinfo.dwSize = cfg->cursor_size;
-        /* <FIXME>: this hack is needed to pass thru the invariant test operation on server side
-         * (no notification is sent when invariant operation is requested
+        /* <FIXME>: this hack is needed to pass through the invariant test operation on the server side
+         * (no notification is sent when invariant operation is requested)
          */
         cinfo.bVisible = !cfg->cursor_visible;
         SetConsoleCursorInfo(data->hConOut, &cinfo);
@@ -399,17 +437,42 @@ void     WINECON_SetConfig(struct inner_data* data, const struct config_data* cf
         data->curcfg.history_nodup = cfg->history_nodup;
         WINECON_SetHistoryMode(data->hConIn, cfg->history_nodup);
     }
+    if (data->curcfg.insert_mode != cfg->insert_mode)
+    {
+        data->curcfg.insert_mode = cfg->insert_mode;
+        WINECON_SetInsertMode(data->hConIn, cfg->insert_mode);
+    }
     data->curcfg.menu_mask = cfg->menu_mask;
     data->curcfg.quick_edit = cfg->quick_edit;
-    if (1 /* FIXME: font info has changed */)
+    if (strcmpiW(data->curcfg.face_name, cfg->face_name) || data->curcfg.cell_width != cfg->cell_width ||
+        data->curcfg.cell_height != cfg->cell_height || data->curcfg.font_weight != cfg->font_weight)
     {
+        RECT r;
         data->fnSetFont(data, cfg->face_name, cfg->cell_height, cfg->font_weight);
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &r, 0);
+        SERVER_START_REQ(set_console_output_info)
+        {
+            req->handle = wine_server_obj_handle( data->hConOut );
+            req->mask = SET_CONSOLE_OUTPUT_INFO_MAX_SIZE | SET_CONSOLE_OUTPUT_INFO_FONT;
+            req->max_width  = (r.right - r.left) / cfg->cell_width;
+            req->max_height = (r.bottom - r.top - GetSystemMetrics(SM_CYCAPTION)) / cfg->cell_height;
+            req->font_width = cfg->cell_width;
+            req->font_height = cfg->cell_height;
+            wine_server_call( req );
+        }
+        SERVER_END_REQ;
     }
     if (data->curcfg.def_attr != cfg->def_attr)
     {
+        DWORD screen_size, written;
+        COORD top_left = {0,0};
+
         data->curcfg.def_attr = cfg->def_attr;
+        screen_size = cfg->win_width * (cfg->win_height + 1);
+        FillConsoleOutputAttribute(data->hConOut, cfg->def_attr, screen_size, top_left, &written);
         SetConsoleTextAttribute(data->hConOut, cfg->def_attr);
     }
+    WINECON_SetColors(data, cfg);
     /* now let's look at the window / sb size changes...
      * since the server checks that sb is always bigger than window, 
      * we have to take care of doing the operations in the right order
@@ -420,28 +483,30 @@ void     WINECON_SetConfig(struct inner_data* data, const struct config_data* cf
      * The Change<A><B> actually modify the <B> dimension of <A>.
      */
 #define TstSBfWidth()   (data->curcfg.sb_width != cfg->sb_width)
-#define TstWinWidth()   (data->curcfg.win_width != cfg->win_width)
+#define TstWinHPos()    (data->curcfg.win_width != cfg->win_width || data->curcfg.win_pos.X != cfg->win_pos.X)
 
 #define ChgSBfWidth()   do {c.X = cfg->sb_width; \
                             c.Y = data->curcfg.sb_height;\
                             SetConsoleScreenBufferSize(data->hConOut, c);\
                         } while (0)
-#define ChgWinWidth()   do {pos.Left = pos.Top = 0; \
-                            pos.Right = cfg->win_width - data->curcfg.win_width; \
+#define ChgWinHPos()    do {pos.Left = cfg->win_pos.X - data->curcfg.win_pos.X; \
+                            pos.Top = 0; \
+                            pos.Right = pos.Left + cfg->win_width - data->curcfg.win_width; \
                             pos.Bottom = 0; \
                             SetConsoleWindowInfo(data->hConOut, FALSE, &pos);\
                         } while (0)
 #define TstSBfHeight()  (data->curcfg.sb_height != cfg->sb_height)
-#define TstWinHeight()  (data->curcfg.win_height != cfg->win_height)
+#define TstWinVPos()    (data->curcfg.win_height != cfg->win_height || data->curcfg.win_pos.Y != cfg->win_pos.Y)
 
 /* since we're going to apply height after width is done, we use width as defined 
  * in cfg, and not in data->curcfg because if won't be updated yet */
 #define ChgSBfHeight()  do {c.X = cfg->sb_width; c.Y = cfg->sb_height; \
                             SetConsoleScreenBufferSize(data->hConOut, c); \
                         } while (0)
-#define ChgWinHeight()  do {pos.Left = pos.Top = 0; \
+#define ChgWinVPos()    do {pos.Left = 0; \
+                            pos.Top = cfg->win_pos.Y - data->curcfg.win_pos.Y; \
                             pos.Right = 0; \
-                            pos.Bottom = cfg->win_height - data->curcfg.win_height; \
+                            pos.Bottom = pos.Top + cfg->win_height - data->curcfg.win_height; \
                             SetConsoleWindowInfo(data->hConOut, FALSE, &pos);\
                         } while (0)
 
@@ -452,46 +517,46 @@ void     WINECON_SetConfig(struct inner_data* data, const struct config_data* cf
 
         if (TstSBfWidth())            
         {
-            if (TstWinWidth())
+            if (TstWinHPos())
             {
                 /* we're changing both at the same time, do it in the right order */
                 if (cfg->sb_width >= data->curcfg.win_width)
                 {
-                    ChgSBfWidth(); ChgWinWidth();
+                    ChgSBfWidth(); ChgWinHPos();
                 }
                 else
                 {
-                    ChgWinWidth(); ChgSBfWidth();
+                    ChgWinHPos(); ChgSBfWidth();
                 }
             }
             else ChgSBfWidth();
         }
-        else if (TstWinWidth()) ChgWinWidth();
+        else if (TstWinHPos()) ChgWinHPos();
         if (TstSBfHeight())
         {
-            if (TstWinHeight())
+            if (TstWinVPos())
             {
                 if (cfg->sb_height >= data->curcfg.win_height)
                 {
-                    ChgSBfHeight(); ChgWinHeight();
+                    ChgSBfHeight(); ChgWinVPos();
                 }
                 else
                 {
-                    ChgWinHeight(); ChgSBfHeight();
+                    ChgWinVPos(); ChgSBfHeight();
                 }
             }
             else ChgSBfHeight();
         }
-        else if (TstWinHeight()) ChgWinHeight();
+        else if (TstWinVPos()) ChgWinVPos();
     } while (0);
 #undef TstSBfWidth
-#undef TstWinWidth
+#undef TstWinHPos
 #undef ChgSBfWidth
-#undef ChgWinWidth
+#undef ChgWinHPos
 #undef TstSBfHeight
-#undef TstWinHeight
+#undef TstWinVPos
 #undef ChgSBfHeight
-#undef ChgWinHeight
+#undef ChgWinVPos
 
     data->curcfg.exit_on_die = cfg->exit_on_die;
     if (data->curcfg.edition_mode != cfg->edition_mode)
@@ -503,6 +568,7 @@ void     WINECON_SetConfig(struct inner_data* data, const struct config_data* cf
      * in order to get data correctly updated
      */
     WINECON_GrabChanges(data);
+    data->in_set_config = FALSE;
 }
 
 /******************************************************************
@@ -518,6 +584,8 @@ static void WINECON_Delete(struct inner_data* data)
     if (data->hConIn)		CloseHandle(data->hConIn);
     if (data->hConOut)		CloseHandle(data->hConOut);
     if (data->hSynchro)		CloseHandle(data->hSynchro);
+    if (data->hProcess)         CloseHandle(data->hProcess);
+    HeapFree(GetProcessHeap(), 0, data->curcfg.registry);
     HeapFree(GetProcessHeap(), 0, data->cells);
     HeapFree(GetProcessHeap(), 0, data);
 }
@@ -531,11 +599,12 @@ static void WINECON_Delete(struct inner_data* data)
  */
 static BOOL WINECON_GetServerConfig(struct inner_data* data)
 {
-    BOOL        ret;
+    BOOL  ret;
+    DWORD mode;
 
     SERVER_START_REQ(get_console_input_info)
     {
-        req->handle = data->hConIn;
+        req->handle = wine_server_obj_handle( data->hConIn );
         ret = !wine_server_call_err( req );
         data->curcfg.history_size = reply->history_size;
         data->curcfg.history_nodup = reply->history_mode;
@@ -543,9 +612,14 @@ static BOOL WINECON_GetServerConfig(struct inner_data* data)
     }
     SERVER_END_REQ;
     if (!ret) return FALSE;
+
+    GetConsoleMode(data->hConIn, &mode);
+    data->curcfg.insert_mode = (mode & (ENABLE_INSERT_MODE|ENABLE_EXTENDED_FLAGS)) ==
+                                       (ENABLE_INSERT_MODE|ENABLE_EXTENDED_FLAGS);
+
     SERVER_START_REQ(get_console_output_info)
     {
-        req->handle = data->hConOut;
+        req->handle = wine_server_obj_handle( data->hConOut );
         ret = !wine_server_call_err( req );
         data->curcfg.cursor_size = reply->cursor_size;
         data->curcfg.cursor_visible = reply->cursor_visible;
@@ -557,9 +631,6 @@ static BOOL WINECON_GetServerConfig(struct inner_data* data)
     }
     SERVER_END_REQ;
     WINECON_DumpConfig("first cfg: ", &data->curcfg);
-    data->cells = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                            data->curcfg.sb_width * data->curcfg.sb_height * sizeof(CHAR_INFO));
-    if (!data->cells) WINECON_Fatal("OOM\n");
 
     return ret;
 }
@@ -582,13 +653,9 @@ static struct inner_data* WINECON_Init(HINSTANCE hInst, DWORD pid, LPCWSTR appna
     data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*data));
     if (!data) return 0;
 
-    GetStartupInfo(&si);
+    GetStartupInfoW(&si);
 
-    if (pid == 0)
-    {
-        if (!si.lpTitle) WINECON_Fatal("Should have a title set");
-        appname = si.lpTitle;
-    }
+    if (pid == 0) appname = si.lpTitle;
 
     data->nCmdShow = nCmdShow;
     /* load settings */
@@ -615,61 +682,69 @@ static struct inner_data* WINECON_Init(HINSTANCE hInst, DWORD pid, LPCWSTR appna
     SERVER_START_REQ(alloc_console)
     {
         req->access     = GENERIC_READ | GENERIC_WRITE;
-        req->inherit    = FALSE;
+        req->attributes = 0;
         req->pid        = pid;
+        req->input_fd   = -1;
 
         ret = !wine_server_call_err( req );
-        data->hConIn = (HANDLE)reply->handle_in;
-	data->hSynchro = (HANDLE)reply->event;
+        data->hConIn = wine_server_ptr_handle( reply->handle_in );
+        data->hSynchro = wine_server_ptr_handle( reply->event );
     }
     SERVER_END_REQ;
     if (!ret) goto error;
     WINE_TRACE("using hConIn %p, hSynchro event %p\n", data->hConIn, data->hSynchro);
 
-    SERVER_START_REQ( set_console_input_info )
-    {
-        req->handle = (obj_handle_t)data->hConIn;
-        req->mask = SET_CONSOLE_INPUT_INFO_TITLE;
-        wine_server_add_data( req, appname, lstrlenW(appname) * sizeof(WCHAR) );
-        ret = !wine_server_call_err( req );
-    }
-    SERVER_END_REQ;
-    if (!ret) goto error;
-
     SERVER_START_REQ(create_console_output)
     {
-        req->handle_in = (obj_handle_t)data->hConIn;
-        req->access    = GENERIC_WRITE|GENERIC_READ;
-        req->share     = FILE_SHARE_READ|FILE_SHARE_WRITE;
-        req->inherit   = FALSE;
+        req->handle_in  = wine_server_obj_handle( data->hConIn );
+        req->access     = GENERIC_WRITE|GENERIC_READ;
+        req->attributes = 0;
+        req->share      = FILE_SHARE_READ|FILE_SHARE_WRITE;
+        req->fd         = -1;
         ret = !wine_server_call_err( req );
-        data->hConOut  = (HANDLE)reply->handle_out;
+        data->hConOut   = wine_server_ptr_handle( reply->handle_out );
     }
     SERVER_END_REQ;
     if (!ret) goto error;
     WINE_TRACE("using hConOut %p\n", data->hConOut);
 
     /* filling data->curcfg from cfg */
- retry:
     switch ((*backend)(data))
     {
-    case init_success:
-        WINECON_GetServerConfig(data);
-        WINECON_SetConfig(data, &cfg);
-        data->curcfg.registry = cfg.registry;
-        WINECON_DumpConfig("fint", &data->curcfg);
-        return data;
-    case init_failed:
-        break;
     case init_not_supported:
         if (backend == WCCURSES_InitBackend)
         {
-            WINE_ERR("(n)curses was not found at configuration time.\n"
-                     "If you want (n)curses support, please install relevant packages.\n"
-                     "Now forcing user backend instead of (n)curses.\n");
-            backend = WCUSER_InitBackend;
-            goto retry;
+            if (WCUSER_InitBackend( data ) != init_success) break;
         }
+        else if (backend == WCUSER_InitBackend)
+        {
+            if (WCCURSES_InitBackend( data ) != init_success) break;
+        }
+        /* fall through */
+    case init_success:
+        WINECON_GetServerConfig(data);
+        data->cells = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                data->curcfg.sb_width * data->curcfg.sb_height * sizeof(CHAR_INFO));
+        if (!data->cells) goto error;
+        data->fnResizeScreenBuffer(data);
+        data->fnComputePositions(data);
+        WINECON_SetConfig(data, &cfg);
+        data->curcfg.registry = cfg.registry;
+        WINECON_DumpConfig("fint", &data->curcfg);
+        SERVER_START_REQ( set_console_input_info )
+        {
+            req->handle = wine_server_obj_handle( data->hConIn );
+            req->win = wine_server_user_handle( data->hWnd );
+            req->mask = SET_CONSOLE_INPUT_INFO_TITLE |
+                        SET_CONSOLE_INPUT_INFO_WIN;
+            wine_server_add_data( req, appname, lstrlenW(appname) * sizeof(WCHAR) );
+            ret = !wine_server_call_err( req );
+        }
+        SERVER_END_REQ;
+        if (!ret) goto error;
+
+        return data;
+    case init_failed:
         break;
     }
 
@@ -685,11 +760,11 @@ static struct inner_data* WINECON_Init(HINSTANCE hInst, DWORD pid, LPCWSTR appna
  *
  * Spawn the child process when invoked with wineconsole foo bar
  */
-static BOOL WINECON_Spawn(struct inner_data* data, LPWSTR cmdLine)
+static int WINECON_Spawn(struct inner_data* data, LPWSTR cmdLine)
 {
-    PROCESS_INFORMATION	info;
-    STARTUPINFO		startup;
-    BOOL		done;
+    PROCESS_INFORMATION info;
+    STARTUPINFOW        startup;
+    BOOL                done;
 
     /* we're in the case wineconsole <exe> <options>... spawn the new process */
     memset(&startup, 0, sizeof(startup));
@@ -707,21 +782,23 @@ static BOOL WINECON_Spawn(struct inner_data* data, LPWSTR cmdLine)
                          &startup.hStdError, GENERIC_READ|GENERIC_WRITE, TRUE, 0))
     {
 	WINE_ERR("Can't dup handles\n");
-	/* no need to delete handles, we're exiting the programm anyway */
-	return FALSE;
+	/* no need to delete handles, we're exiting the program anyway */
+	return 1;
     }
 
-    done = CreateProcess(NULL, cmdLine, NULL, NULL, TRUE, 0L, NULL, NULL, &startup, &info);
+    done = CreateProcessW(NULL, cmdLine, NULL, NULL, TRUE, 0L, NULL, NULL, &startup, &info);
+    if (done)
+    {
+        data->hProcess = info.hProcess;
+        CloseHandle(info.hThread);
+    }
 
     /* we no longer need the handles passed to the child for the console */
     CloseHandle(startup.hStdInput);
     CloseHandle(startup.hStdOutput);
     CloseHandle(startup.hStdError);
 
-    CloseHandle(info.hProcess);
-    CloseHandle(info.hThread);
-
-    return done;
+    return !done;
 }
 
 struct wc_init {
@@ -731,17 +808,21 @@ struct wc_init {
     HANDLE              event;
 };
 
+#define WINECON_CMD_SHOW_USAGE 0x10000
+
 /******************************************************************
  *		 WINECON_ParseOptions
  *
- *
+ * RETURNS
+ *   On success: 0
+ *   On error:   error string id optionally with the CMD_SHOW_USAGE flag
  */
-static BOOL WINECON_ParseOptions(const char* lpCmdLine, struct wc_init* wci)
+static UINT WINECON_ParseOptions(const char* lpCmdLine, struct wc_init* wci)
 {
     memset(wci, 0, sizeof(*wci));
     wci->ptr = lpCmdLine;
     wci->mode = from_process_name;
-    wci->backend = WCCURSES_InitBackend;
+    wci->backend = WCUSER_InitBackend;
 
     for (;;)
     {
@@ -750,11 +831,10 @@ static BOOL WINECON_ParseOptions(const char* lpCmdLine, struct wc_init* wci)
         if (strncmp(wci->ptr, "--use-event=", 12) == 0)
         {
             char*           end;
-            wci->event = (HANDLE)strtol(wci->ptr + 12, &end, 10);
-            if (end == wci->ptr + 12) return FALSE;
+            wci->event = ULongToHandle( strtoul(wci->ptr + 12, &end, 10) );
+            if (end == wci->ptr + 12) return IDS_CMD_INVALID_EVENT_ID;
             wci->mode = from_event;
             wci->ptr = end;
-            wci->backend = WCUSER_InitBackend;
         }
         else if (strncmp(wci->ptr, "--backend=", 10) == 0)
         {
@@ -765,16 +845,26 @@ static BOOL WINECON_ParseOptions(const char* lpCmdLine, struct wc_init* wci)
             }
             else if (strncmp(wci->ptr + 10, "curses", 6) == 0)
             {
+                wci->backend = WCCURSES_InitBackend;
                 wci->ptr += 16;
             }
             else
-                return FALSE;
+                return IDS_CMD_INVALID_BACKEND;
         }
+        else if (!strncmp(wci->ptr, "--help", 6) &&
+                 (!wci->ptr[6] || wci->ptr[6] == ' ' || wci->ptr[6] == '\t'))
+            return IDS_CMD_ABOUT|WINECON_CMD_SHOW_USAGE;
         else
-            return FALSE;
+            return IDS_CMD_INVALID_OPTION|WINECON_CMD_SHOW_USAGE;
     }
 
-    return TRUE;
+    if (wci->mode == from_event)
+        return 0;
+
+    while (*wci->ptr == ' ' || *wci->ptr == '\t') wci->ptr++;
+    if (*wci->ptr == 0) wci->ptr = "cmd";
+
+    return 0;
 }
 
 /******************************************************************
@@ -792,9 +882,11 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, INT nCmdSh
     int			ret = 1;
     struct wc_init      wci;
 
-    if (!WINECON_ParseOptions(lpCmdLine, &wci))
+    if ((ret = WINECON_ParseOptions(lpCmdLine, &wci)) != 0)
     {
-        WINE_ERR("Wrong command line options\n");
+        printf_res(ret & 0xffff);
+        if (ret & WINECON_CMD_SHOW_USAGE)
+            WINECON_Usage();
         return 0;
     }
 
@@ -802,31 +894,56 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, INT nCmdSh
     {
     case from_event:
         /* case of wineconsole <evt>, signal process that created us that we're up and running */
-        if (!(data = WINECON_Init(hInst, 0, NULL, wci.backend, nCmdShow))) return 0;
-	ret = SetEvent(wci.event);
-	if (!ret) WINE_ERR("SetEvent failed.\n");
+        if (!(data = WINECON_Init(hInst, 0, NULL, wci.backend, nCmdShow))) return 1;
+        ret = !SetEvent(wci.event);
+        if (ret != 0) WINE_ERR("SetEvent failed.\n");
         break;
     case from_process_name:
         {
-            WCHAR           buffer[256];
+            int len;
+            WCHAR *buffer;
 
-            MultiByteToWideChar(CP_ACP, 0, wci.ptr, -1, buffer, sizeof(buffer) / sizeof(buffer[0]));
+            len = MultiByteToWideChar(CP_ACP, 0, wci.ptr, -1, NULL, 0);
+
+            buffer = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+            if (!buffer)
+                return 1;
+
+            MultiByteToWideChar(CP_ACP, 0, wci.ptr, -1, buffer, len);
 
             if (!(data = WINECON_Init(hInst, GetCurrentProcessId(), buffer, wci.backend, nCmdShow)))
-                return 0;
+            {
+                HeapFree(GetProcessHeap(), 0, buffer);
+                return 1;
+            }
             ret = WINECON_Spawn(data, buffer);
-            if (!ret)
-                WINE_MESSAGE("wineconsole: spawning client program failed (%s), invalid/missing command line arguments ?\n", wine_dbgstr_w(buffer));
+            HeapFree(GetProcessHeap(), 0, buffer);
+            if (ret != 0)
+            {
+                WINECON_Delete(data);
+                printf_res(IDS_CMD_LAUNCH_FAILED, wine_dbgstr_a(wci.ptr));
+                return ret;
+            }
         }
         break;
     default:
-        return 0;
+        return 1;
     }
 
-    if (ret)
+    if (!ret)
     {
-	WINE_TRACE("calling MainLoop.\n");
-	ret = data->fnMainLoop(data);
+        DWORD exitcode;
+
+        WINE_TRACE("calling MainLoop.\n");
+        ret = data->fnMainLoop(data);
+
+        if (!ret && data->hProcess &&
+            WaitForSingleObject(data->hProcess, INFINITE) == WAIT_OBJECT_0 &&
+            GetExitCodeProcess(data->hProcess, &exitcode))
+        {
+            WINE_TRACE("forwarding exitcode %u from child process\n", exitcode);
+            ret = exitcode;
+        }
     }
 
     WINECON_Delete(data);

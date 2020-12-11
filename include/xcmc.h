@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _XCMC_H
@@ -25,9 +25,9 @@ extern "C" {
 
 typedef char                CMC_sint8;
 typedef short               CMC_sint16;
-typedef long int            CMC_sint32;
+typedef LONG                CMC_sint32;
 typedef unsigned short int  CMC_uint16;
-typedef unsigned long int   CMC_uint32;
+typedef ULONG               CMC_uint32;
 typedef void*               CMC_buffer;
 typedef char*               CMC_string;
 

@@ -1,7 +1,7 @@
 /*
  * Miscellaneous secur32 tests
  *
- * Copyright 2005 Kai Blin
+ * Copyright 2005, 2006 Kai Blin
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,28 +15,39 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #define SECURITY_WIN32
 
-#include <stdio.h>
 #include <stdarg.h>
-#include <windows.h>
-#include "wine/test.h"
+#include <stdio.h>
+
+#include <windef.h>
 #include <winbase.h>
 #include <sspi.h>
 
-#define BUFF_SIZE 2048
-#define MAX_MESSAGE 12000
+#include "wine/test.h"
 
 static HMODULE secdll;
 static PSecurityFunctionTableA (SEC_ENTRY * pInitSecurityInterfaceA)(void);
 static SECURITY_STATUS (SEC_ENTRY * pEnumerateSecurityPackagesA)(PULONG, PSecPkgInfoA*);
 static SECURITY_STATUS (SEC_ENTRY * pFreeContextBuffer)(PVOID pv);
 static SECURITY_STATUS (SEC_ENTRY * pQuerySecurityPackageInfoA)(SEC_CHAR*, PSecPkgInfoA*);
+static SECURITY_STATUS (SEC_ENTRY * pAcquireCredentialsHandleA)(SEC_CHAR*, SEC_CHAR*,
+                            ULONG, PLUID, PVOID, SEC_GET_KEY_FN, PVOID, PCredHandle, PTimeStamp);
+static SECURITY_STATUS (SEC_ENTRY * pInitializeSecurityContextA)(PCredHandle, PCtxtHandle,
+                            SEC_CHAR*, ULONG, ULONG, ULONG, PSecBufferDesc, ULONG, 
+                            PCtxtHandle, PSecBufferDesc, PULONG, PTimeStamp);
+static SECURITY_STATUS (SEC_ENTRY * pCompleteAuthToken)(PCtxtHandle, PSecBufferDesc);
+static SECURITY_STATUS (SEC_ENTRY * pAcceptSecurityContext)(PCredHandle, PCtxtHandle,
+                            PSecBufferDesc, ULONG, ULONG, PCtxtHandle, PSecBufferDesc,
+                            PULONG, PTimeStamp);
+static SECURITY_STATUS (SEC_ENTRY * pFreeCredentialsHandle)(PCredHandle);
+static SECURITY_STATUS (SEC_ENTRY * pDeleteSecurityContext)(PCtxtHandle);
+static SECURITY_STATUS (SEC_ENTRY * pQueryContextAttributesA)(PCtxtHandle, ULONG, PVOID);
 
-void InitFunctionPtrs(void)
+static void InitFunctionPtrs(void)
 {
     secdll = LoadLibraryA("secur32.dll");
     if(!secdll)
@@ -46,15 +57,24 @@ void InitFunctionPtrs(void)
         pInitSecurityInterfaceA = (PVOID)GetProcAddress(secdll, "InitSecurityInterfaceA");
         pEnumerateSecurityPackagesA = (PVOID)GetProcAddress(secdll, "EnumerateSecurityPackagesA");
         pFreeContextBuffer = (PVOID)GetProcAddress(secdll, "FreeContextBuffer");
-        pQuerySecurityPackageInfoA = (PVOID)GetProcAddress(secdll, "QuerySecurityPackageInfo");
+        pQuerySecurityPackageInfoA = (PVOID)GetProcAddress(secdll, "QuerySecurityPackageInfoA");
+        pAcquireCredentialsHandleA = (PVOID)GetProcAddress(secdll, "AcquireCredentialsHandleA");
+        pInitializeSecurityContextA = (PVOID)GetProcAddress(secdll, "InitializeSecurityContextA");
+        pCompleteAuthToken = (PVOID)GetProcAddress(secdll, "CompleteAuthToken");
+        pAcceptSecurityContext = (PVOID)GetProcAddress(secdll, "AcceptSecurityContext");
+        pFreeCredentialsHandle = (PVOID)GetProcAddress(secdll, "FreeCredentialsHandle");
+        pDeleteSecurityContext = (PVOID)GetProcAddress(secdll, "DeleteSecurityContext");
+        pQueryContextAttributesA = (PVOID)GetProcAddress(secdll, "QueryContextAttributesA");
     }
 }
 
 /*---------------------------------------------------------*/
 /* General helper functions */
 
-static const char* getSecStatusError(SECURITY_STATUS status)
+static const char* getSecError(SECURITY_STATUS status)
 {
+    static char buf[20];
+
 #define _SEC_ERR(x) case (x): return #x;
     switch(status)
     {
@@ -72,9 +92,14 @@ static const char* getSecStatusError(SECURITY_STATUS status)
         _SEC_ERR(SEC_E_QOP_NOT_SUPPORTED);
         _SEC_ERR(SEC_E_NO_IMPERSONATION);
         _SEC_ERR(SEC_I_CONTINUE_NEEDED);
+        _SEC_ERR(SEC_E_BUFFER_TOO_SMALL);
+        _SEC_ERR(SEC_E_ILLEGAL_MESSAGE);
+        _SEC_ERR(SEC_E_LOGON_DENIED);
+        _SEC_ERR(SEC_E_NO_CREDENTIALS);
+        _SEC_ERR(SEC_E_OUT_OF_SEQUENCE);
         default:
-            trace("Error = %ld\n", status);
-            return "Unknown error";
+            sprintf(buf, "%08x\n", status);
+            return buf;
     }
 #undef _SEC_ERR
 }
@@ -83,149 +108,20 @@ static const char* getSecStatusError(SECURITY_STATUS status)
 /* Helper for testQuerySecurityPagageInfo */
 
 static SECURITY_STATUS setupPackageA(SEC_CHAR *p_package_name, 
-        PSecPkgInfo *p_pkg_info)
+        PSecPkgInfoA *p_pkg_info)
 {
-    SECURITY_STATUS ret = SEC_E_SECPKG_NOT_FOUND;
+    SECURITY_STATUS ret;
     
     ret = pQuerySecurityPackageInfoA( p_package_name, p_pkg_info);
     return ret;
 }
-
-/*---------------------------------------------------------*/
-/* Helper for testAuthentication */
-
-static int genClientContext(PBYTE in, DWORD in_count, PBYTE out, 
-        DWORD *out_count, BOOL *done, char *target, CredHandle *cred_handle,
-        PCtxtHandle ctxt_handle, PSecurityFunctionTable sft)
-{
-    SECURITY_STATUS sec_status;
-    TimeStamp       ttl;
-    SecBufferDesc   in_sec_buff_desc, out_sec_buff_desc;
-    SecBuffer       in_sec_buff, out_sec_buff;
-    ULONG           context_attr;
-
-    if(in == NULL){
-        sec_status = (sft->AcquireCredentialsHandle)(NULL, "Negotiate", 
-                SECPKG_CRED_OUTBOUND, NULL, NULL, NULL, NULL, cred_handle,
-                &ttl);
-        ok(sec_status == SEC_E_OK, 
-                "Client AcquireCredentialsHandle should not return %s\n",
-                getSecStatusError(sec_status) );
-    }
-
-    out_sec_buff_desc.ulVersion = 0;
-    out_sec_buff_desc.cBuffers  = 1;
-    out_sec_buff_desc.pBuffers  = &out_sec_buff;
-
-    out_sec_buff.cbBuffer   = *out_count;
-    out_sec_buff.BufferType = SECBUFFER_TOKEN;
-    out_sec_buff.pvBuffer = out;
-
-    if(in){
-        /* we got some data, initialize input buffer, too. */
-        in_sec_buff_desc.ulVersion = 0;
-        in_sec_buff_desc.cBuffers  = 1;
-        in_sec_buff_desc.pBuffers  = &in_sec_buff;
-
-        in_sec_buff.cbBuffer   = in_count;
-        in_sec_buff.BufferType = SECBUFFER_TOKEN;
-        in_sec_buff.pvBuffer = in;
-        
-        sec_status = (sft->InitializeSecurityContext)( cred_handle, ctxt_handle,
-                target,ISC_REQ_CONFIDENTIALITY, 0, SECURITY_NATIVE_DREP, 
-                &in_sec_buff_desc, 0, ctxt_handle, &out_sec_buff_desc, 
-                &context_attr, &ttl);
-
-    }
-    else {
-        sec_status = (sft->InitializeSecurityContext)( cred_handle, NULL, 
-                target, ISC_REQ_CONFIDENTIALITY, 0, SECURITY_NATIVE_DREP, NULL,
-                0, ctxt_handle, &out_sec_buff_desc, &context_attr, &ttl);
-    }
-
-    if( (sec_status == SEC_I_COMPLETE_NEEDED) || 
-            (sec_status == SEC_I_COMPLETE_AND_CONTINUE)){
-        if(sft->CompleteAuthToken != NULL){
-            sec_status = (sft->CompleteAuthToken)( ctxt_handle, 
-                    &out_sec_buff_desc);
-            ok((sec_status == SEC_E_OK)||(sec_status == SEC_I_CONTINUE_NEEDED),
-                    "CompleteAuthToken should not return %s\n", 
-                    getSecStatusError(sec_status));
-
-        }
-
-    }
-
-    *out_count = out_sec_buff.cbBuffer;
-    *done = !( (sec_status == SEC_I_CONTINUE_NEEDED) || 
-            (sec_status == SEC_I_COMPLETE_AND_CONTINUE));
-
-    return 0;
-
-}
-
-static int genServerContext(PBYTE in, DWORD in_count, PBYTE out, 
-        DWORD *out_count, BOOL *done, BOOL *new_conn, CredHandle *cred_handle,
-        PCtxtHandle ctxt_handle, PSecurityFunctionTable sft)
-{
-    SECURITY_STATUS sec_status;
-    TimeStamp       ttl;
-    SecBufferDesc   in_sec_buff_desc, out_sec_buff_desc;
-    SecBuffer       in_sec_buff, out_sec_buff;
-    DWORD           ctxt_attr;
-
-    out_sec_buff_desc.ulVersion = 0;
-    out_sec_buff_desc.cBuffers  = 1;
-    out_sec_buff_desc.pBuffers  = &out_sec_buff;
-
-    out_sec_buff.cbBuffer   = *out_count;
-    out_sec_buff.BufferType = SECBUFFER_TOKEN;
-    out_sec_buff.pvBuffer = out;
-
-    in_sec_buff_desc.ulVersion = 0;
-    in_sec_buff_desc.cBuffers  = 1;
-    in_sec_buff_desc.pBuffers  = &in_sec_buff;
-
-    in_sec_buff.cbBuffer   = in_count;
-    in_sec_buff.BufferType = SECBUFFER_TOKEN;
-    in_sec_buff.pvBuffer = in;
-        
-    sec_status = (sft->AcceptSecurityContext)( cred_handle, 
-            *new_conn ? NULL : ctxt_handle,          /* maybe use an if here? */
-            &in_sec_buff_desc, 0, SECURITY_NATIVE_DREP, 
-            ctxt_handle, &out_sec_buff_desc, &ctxt_attr, &ttl);
-
-   ok((sec_status == SEC_E_OK) || (sec_status == SEC_I_CONTINUE_NEEDED), 
-           "AcceptSecurityContext returned %s\n",
-           getSecStatusError(sec_status));
-
-    if( (sec_status == SEC_I_COMPLETE_NEEDED) || 
-            (sec_status == SEC_I_COMPLETE_AND_CONTINUE)){
-        if(sft->CompleteAuthToken != NULL){
-            sec_status = (sft->CompleteAuthToken)( ctxt_handle, 
-                    &out_sec_buff_desc);
-
-            ok((sec_status ==SEC_E_OK) || (sec_status ==SEC_I_CONTINUE_NEEDED),
-                    "CompleteAuthToken should not return %s\n",
-                    getSecStatusError(sec_status));
-        }
-    }
-
-    *out_count = out_sec_buff.cbBuffer;
-    *done = !( (sec_status == SEC_I_CONTINUE_NEEDED) || 
-            (sec_status == SEC_I_COMPLETE_AND_CONTINUE));
-
-    return 0;
-
-}
-
 
 /*--------------------------------------------------------- */
 /* The test functions */
 
 static void testInitSecurityInterface(void)
 {
-    PSecurityFunctionTable sec_fun_table = NULL;
+    PSecurityFunctionTableA sec_fun_table = NULL;
 
     sec_fun_table = pInitSecurityInterfaceA();
     ok(sec_fun_table != NULL, "InitSecurityInterface() returned NULL.\n");
@@ -237,50 +133,64 @@ static void testEnumerateSecurityPackages(void)
 
     SECURITY_STATUS sec_status;
     ULONG           num_packages, i;
-    PSecPkgInfo     pkg_info = NULL;
+    PSecPkgInfoA    pkg_info = NULL;
 
     trace("Running testEnumerateSecurityPackages\n");
     
     sec_status = pEnumerateSecurityPackagesA(&num_packages, &pkg_info);
 
     ok(sec_status == SEC_E_OK, 
-            "EnumerateSecurityPackages() should return %ld, not %08lx\n",
-            (LONG)SEC_E_OK, (LONG)sec_status);
+            "EnumerateSecurityPackages() should return %d, not %08x\n",
+            SEC_E_OK, sec_status);
 
-    ok(num_packages > 0, "Number of sec packages should be > 0 ,but is %ld\n",
-            num_packages);
+    if (num_packages == 0)
+    {
+        todo_wine
+        ok(num_packages > 0, "Number of sec packages should be > 0 ,but is %d\n",
+                num_packages);
+        skip("no sec packages to check\n");
+        return;
+    }
+    else
+        ok(num_packages > 0, "Number of sec packages should be > 0 ,but is %d\n",
+                num_packages);
 
     ok(pkg_info != NULL, 
             "pkg_info should not be NULL after EnumerateSecurityPackages\n");
     
-    trace("Number of packages: %ld\n", num_packages);
+    trace("Number of packages: %d\n", num_packages);
     for(i = 0; i < num_packages; ++i){
-        trace("%ld: Package \"%s\"\n", i, pkg_info[i].Name);
+        trace("%d: Package \"%s\"\n", i, pkg_info[i].Name);
         trace("Supported flags:\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_INTEGRITY)
-            trace("\tSECPKG_FLAG_INTEGRITY\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_PRIVACY)
-            trace("\tSECPKG_FLAG_PRIVACY\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_TOKEN_ONLY)
-            trace("\tSECPKG_FLAG_TOKEN_ONLY\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_DATAGRAM)
-            trace("\tSECPKG_FLAG_DATAGRAM\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_CONNECTION)
-            trace("\tSECPKG_FLAG_CONNECTION\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_MULTI_REQUIRED)
-            trace("\tSECPKG_FLAG_MULTI_REQUIRED\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_CLIENT_ONLY)
-            trace("\tSECPKG_FLAG_CLIENT_ONLY\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_EXTENDED_ERROR)
-            trace("\tSECPKG_FLAG_EXTENDED_ERROR\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_IMPERSONATION)
-            trace("\tSECPKG_FLAG_IMPERSONATION\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_ACCEPT_WIN32_NAME)
-            trace("\tSECPKG_FLAG_ACCEPT_WIN32_NAME\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_STREAM)
-            trace("\tSECPKG_FLAG_STREAM\n");
-        if(pkg_info[i].fCapabilities & SECPKG_FLAG_READONLY_WITH_CHECKSUM)
-            trace("\tSECPKG_FLAG_READONLY_WITH_CHECKSUM\n");
+#define X(flag) \
+        if(pkg_info[i].fCapabilities & flag) \
+            trace("\t" #flag "\n")
+
+        X(SECPKG_FLAG_INTEGRITY);
+        X(SECPKG_FLAG_PRIVACY);
+        X(SECPKG_FLAG_TOKEN_ONLY);
+        X(SECPKG_FLAG_DATAGRAM);
+        X(SECPKG_FLAG_CONNECTION);
+        X(SECPKG_FLAG_MULTI_REQUIRED);
+        X(SECPKG_FLAG_CLIENT_ONLY);
+        X(SECPKG_FLAG_EXTENDED_ERROR);
+        X(SECPKG_FLAG_IMPERSONATION);
+        X(SECPKG_FLAG_ACCEPT_WIN32_NAME);
+        X(SECPKG_FLAG_STREAM);
+        X(SECPKG_FLAG_NEGOTIABLE);
+        X(SECPKG_FLAG_GSS_COMPATIBLE);
+        X(SECPKG_FLAG_LOGON);
+        X(SECPKG_FLAG_ASCII_BUFFERS);
+        X(SECPKG_FLAG_FRAGMENT);
+        X(SECPKG_FLAG_MUTUAL_AUTH);
+        X(SECPKG_FLAG_DELEGATION);
+        X(SECPKG_FLAG_READONLY_WITH_CHECKSUM);
+        X(SECPKG_FLAG_RESTRICTED_TOKENS);
+        X(SECPKG_FLAG_NEGO_EXTENDER);
+        X(SECPKG_FLAG_NEGOTIABLE2);
+        X(SECPKG_FLAG_APPCONTAINER_PASSTHROUGH);
+        X(SECPKG_FLAG_APPCONTAINER_CHECKS);
+#undef X
         trace("Comment: %s\n", pkg_info[i].Comment);
         trace("\n");
     }
@@ -292,106 +202,46 @@ static void testEnumerateSecurityPackages(void)
 static void testQuerySecurityPackageInfo(void)
 {
     SECURITY_STATUS     sec_status;
-    SEC_CHAR            sec_pkg_name[256];
-    PSecPkgInfo         pkg_info = NULL;
-    ULONG               max_token = 0;
-    USHORT              version = 0;
-    
+    PSecPkgInfoA        pkg_info;
+    static SEC_CHAR     ntlm[]     = "NTLM",
+                        winetest[] = "Winetest";
+
     trace("Running testQuerySecurityPackageInfo\n");
-    
+
     /* Test with an existing package. Test should pass */
-    
-    lstrcpy(sec_pkg_name, "Negotiate");
-    
-    sec_status = setupPackageA(sec_pkg_name, &pkg_info);
 
-    ok(sec_status == SEC_E_OK, 
+    pkg_info = (void *)0xdeadbeef;
+    sec_status = setupPackageA(ntlm, &pkg_info);
+
+    ok((sec_status == SEC_E_OK) || (sec_status == SEC_E_SECPKG_NOT_FOUND) ||
+       broken(sec_status == SEC_E_UNSUPPORTED_FUNCTION), /* win95 */
        "Return value of QuerySecurityPackageInfo() shouldn't be %s\n",
-       getSecStatusError(sec_status) );
-    ok(pkg_info != NULL, 
-                "QuerySecurityPackageInfo should give struct SecPkgInfo, but is NULL\n");
-    
-    if(pkg_info != NULL){
-        max_token = pkg_info->cbMaxToken;
-        version   = pkg_info->wVersion;
-    }
-    
-    ok(version == 1, "wVersion always should be 1, but is %d\n", version);
-    ok(max_token == 12000, "cbMaxToken for Negotiate is %ld, not 12000.\n",
-            max_token);
+       getSecError(sec_status) );
 
-    sec_status = pFreeContextBuffer(&pkg_info);
-    
-    ok( sec_status == SEC_E_OK,
-        "Return value of FreeContextBuffer() shouldn't be %s\n",
-        getSecStatusError(sec_status) );
+    if (sec_status == SEC_E_OK)
+    {
+        ok(pkg_info != (void *)0xdeadbeef, "wrong pkg_info address %p\n", pkg_info);
+        ok(pkg_info->wVersion == 1, "wVersion always should be 1, but is %d\n", pkg_info->wVersion);
+        /* there is no point in testing pkg_info->cbMaxToken since it varies
+         * between implementations.
+         */
+
+        sec_status = pFreeContextBuffer(pkg_info);
+        ok( sec_status == SEC_E_OK,
+            "Return value of FreeContextBuffer() shouldn't be %s\n",
+            getSecError(sec_status) );
+    }
 
     /* Test with a nonexistent package, test should fail */
-   
-    lstrcpy(sec_pkg_name, "Winetest");
 
-    sec_status = pQuerySecurityPackageInfoA( sec_pkg_name, &pkg_info);
+    pkg_info = (void *)0xdeadbeef;
+    sec_status = pQuerySecurityPackageInfoA(winetest, &pkg_info);
 
-    ok( sec_status != SEC_E_OK,
-        "Return value of QuerySecurityPackageInfo() should not be %s for a nonexistent package\n", getSecStatusError(SEC_E_OK));
+    ok( sec_status == SEC_E_SECPKG_NOT_FOUND,
+        "Return value of QuerySecurityPackageInfo() should be %s for a nonexistent package\n",
+        getSecError(SEC_E_SECPKG_NOT_FOUND));
 
-    sec_status = pFreeContextBuffer(&pkg_info);
-    
-    ok( sec_status == SEC_E_OK,
-        "Return value of FreeContextBuffer() shouldn't be %s\n",
-        getSecStatusError(sec_status) );
-
-
-}
-
-void testAuthentication(void)
-{
-    CredHandle      server_cred, client_cred;
-    CtxtHandle      server_ctxt, client_ctxt;
-    BYTE            server_buff[MAX_MESSAGE];
-    BYTE            client_buff[MAX_MESSAGE];
-    SECURITY_STATUS sec_status;
-    DWORD           count_server = MAX_MESSAGE;
-    DWORD           count_client = MAX_MESSAGE;
-    BOOL            done = FALSE, new_conn = TRUE;
-    TimeStamp       server_ttl;
-    PSecurityFunctionTable sft = NULL;
-
-    trace("Running testAuthentication\n");
-
-    sft = pInitSecurityInterfaceA();
-
-    ok(sft != NULL, "InitSecurityInterface() returned NULL!\n");
-
-    memset(&server_cred, 0, sizeof(CredHandle));
-    memset(&client_cred, 0, sizeof(CredHandle));
-    memset(&server_ctxt, 0, sizeof(CtxtHandle));
-    memset(&client_ctxt, 0, sizeof(CtxtHandle));
-    
-    sec_status = (sft->AcquireCredentialsHandle)(NULL, "Negotiate", 
-            SECPKG_CRED_INBOUND, NULL, NULL, NULL, NULL, &server_cred, 
-            &server_ttl);
-
-    ok(sec_status == SEC_E_OK, 
-            "Server's AcquireCredentialsHandle returned %s.\n", 
-            getSecStatusError(sec_status) );
-
-    
-    genClientContext(NULL, 0, server_buff, &count_server, &done, "foo", 
-            &client_cred, &client_ctxt, sft);
-
-    while(!done){
-        genServerContext(server_buff, count_server, client_buff, 
-                &count_client, &done, &new_conn, &server_cred, &server_ctxt, 
-                sft);
-        new_conn = FALSE;
-        genClientContext(client_buff, count_client, server_buff, 
-                &count_server, &done, "foo", &client_cred, &client_ctxt, sft);
-    }
-
-    pFreeContextBuffer(&client_buff);
-    pFreeContextBuffer(&server_buff);
-
+    ok(pkg_info == (void *)0xdeadbeef, "wrong pkg_info address %p\n", pkg_info);
 }
 
 START_TEST(main)
@@ -404,9 +254,9 @@ START_TEST(main)
         if(pEnumerateSecurityPackagesA)
             testEnumerateSecurityPackages();
         if(pQuerySecurityPackageInfoA)
+        {
             testQuerySecurityPackageInfo();
-        if(pInitSecurityInterfaceA)
-            testAuthentication();
+        }
     }
     if(secdll)
         FreeLibrary(secdll);

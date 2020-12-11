@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2003 Michael Günnewig
+ * Copyright 2002-2003 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,12 +13,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /* TODO:
  *   - some improvements possible
- *   - implement DecompressSetPalette? -- does we need it for anything?
+ *   - implement DecompressSetPalette? -- do we need it for anything?
  */
 
 #include <assert.h>
@@ -27,7 +27,6 @@
 
 #include "winnls.h"
 #include "winuser.h"
-#include "windowsx.h"
 
 #include "wine/debug.h"
 
@@ -35,16 +34,14 @@ WINE_DEFAULT_DEBUG_CHANNEL(msrle32);
 
 static HINSTANCE MSRLE32_hModule = 0;
 
-#define ABS(a)                ((a) < 0 ? -(a) : (a))
-#define SQR(a)                ((a) * (a))
+#define compare_fourcc(fcc1, fcc2) (((fcc1)^(fcc2))&~0x20202020)
 
-#define QUALITY_to_DIST(q)    (ICQUALITY_HIGH - q)
-inline WORD ColorCmp(WORD clr1, WORD clr2)
+static inline WORD ColorCmp(WORD clr1, WORD clr2)
 {
-  register UINT a = (clr1-clr2);
-  return SQR(a);
+  UINT a = clr1 - clr2;
+  return a * a;
 }
-inline WORD Intensity(RGBQUAD clr)
+static inline WORD Intensity(RGBQUAD clr)
 {
   return (30 * clr.rgbRed + 59 * clr.rgbGreen + 11 * clr.rgbBlue)/4;
 }
@@ -58,27 +55,30 @@ inline WORD Intensity(RGBQUAD clr)
 /* utility functions */
 static BOOL    isSupportedDIB(LPCBITMAPINFOHEADER lpbi);
 static BOOL    isSupportedMRLE(LPCBITMAPINFOHEADER lpbi);
-static void    LoadWideString(UINT id, LPWSTR str, INT len);
 static BYTE    MSRLE32_GetNearestPaletteIndex(UINT count, const RGBQUAD *clrs, RGBQUAD clr);
 
 /* compression functions */
-static void    computeInternalFrame(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn, LPBYTE lpIn);
+static void    computeInternalFrame(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn, const BYTE *lpIn);
 static LONG    MSRLE32_GetMaxCompressedSize(LPCBITMAPINFOHEADER lpbi);
-static LRESULT MSRLE32_CompressRLE4(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lpIn, LPBITMAPINFOHEADER lpbiOut, LPBYTE lpOut, BOOL isKey);
-static LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lpIn, LPBITMAPINFOHEADER lpbiOut, LPBYTE lpOut, BOOL isKey);
+static LRESULT MSRLE32_CompressRLE4(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
+                                    const BYTE *lpIn, LPBITMAPINFOHEADER lpbiOut,
+                                    LPBYTE lpOut, BOOL isKey);
+static LRESULT MSRLE32_CompressRLE8(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
+                                    const BYTE *lpIn, LPBITMAPINFOHEADER lpbiOut,
+                                    LPBYTE lpOut, BOOL isKey);
 
 /* decompression functions */
-static LRESULT MSRLE32_DecompressRLE4(CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
-				      LPBYTE lpIn, LPBYTE lpOut);
-static LRESULT MSRLE32_DecompressRLE8(CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
-				      LPBYTE lpIn, LPBYTE lpOut);
+static LRESULT MSRLE32_DecompressRLE4(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
+				      const BYTE *lpIn, LPBYTE lpOut);
+static LRESULT MSRLE32_DecompressRLE8(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
+				      const BYTE *lpIn, LPBYTE lpOut);
 
 /* API functions */
 static LRESULT CompressGetFormat(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 				 LPBITMAPINFOHEADER lpbiOut);
 static LRESULT CompressGetSize(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 			       LPCBITMAPINFOHEADER lpbiOut);
-static LRESULT CompressQuery(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
+static LRESULT CompressQuery(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 			     LPCBITMAPINFOHEADER lpbiOut);
 static LRESULT CompressBegin(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 			     LPCBITMAPINFOHEADER lpbiOut);
@@ -98,25 +98,17 @@ static LRESULT DecompressGetPalette(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
 /*****************************************************************************/
 
-static void LoadWideString(UINT id, LPWSTR str, INT len)
-{
-  char szTemp[80];
-
-  LoadStringA(MSRLE32_hModule, id, szTemp, sizeof(szTemp));
-  MultiByteToWideChar(CP_ACP, 0, szTemp, -1, str, len);
-}
-
 static BOOL isSupportedMRLE(LPCBITMAPINFOHEADER lpbi)
 {
   /* pre-conditions */
   assert(lpbi != NULL);
 
-  if (lpbi->biSize < sizeof(BITMAPINFOHEADER) || \
+  if (lpbi->biSize < sizeof(BITMAPINFOHEADER) ||
       lpbi->biPlanes != 1)
     return FALSE;
 
   if (lpbi->biCompression == BI_RLE4) {
-    if (lpbi->biBitCount != 4 || \
+    if (lpbi->biBitCount != 4 ||
 	(lpbi->biWidth % 2) != 0)
       return FALSE;
   } else if (lpbi->biCompression == BI_RLE8) {
@@ -193,7 +185,7 @@ static BYTE MSRLE32_GetNearestPaletteIndex(UINT count, const RGBQUAD *clrs, RGBQ
 
 /*****************************************************************************/
 
-void computeInternalFrame(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn, LPBYTE lpIn)
+void computeInternalFrame(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn, const BYTE *lpIn)
 {
   WORD   wIntensityTbl[256];
   DWORD  lInLine, lOutLine;
@@ -261,14 +253,14 @@ static LONG MSRLE32_GetMaxCompressedSize(LPCBITMAPINFOHEADER lpbi)
   }
 
   size = (2 + a * (2 + ((a + 2) & ~2)) + b * (2 + ((b + 2) & ~2)));
-  return size * lpbi->biHeight;
+  return size * lpbi->biHeight + 2;
 }
 
 /* lpP => current  pos in previous frame
  * lpA => previous pos in current  frame
  * lpB => current  pos in current  frame
  */
-static INT countDiffRLE4(LPWORD lpP, LPWORD lpA, LPWORD lpB, INT pos, LONG lDist, LONG width)
+static INT countDiffRLE4(const WORD *lpP, const WORD *lpA, const WORD *lpB, INT pos, LONG lDist, LONG width)
 {
   INT  count;
   WORD clr1, clr2;
@@ -327,7 +319,7 @@ static INT countDiffRLE4(LPWORD lpP, LPWORD lpA, LPWORD lpB, INT pos, LONG lDist
  * lpA => previous pos in current  frame
  * lpB => current  pos in current  frame
  */
-static INT countDiffRLE8(LPWORD lpP, LPWORD lpA, LPWORD lpB, INT pos, LONG lDist, LONG width)
+static INT countDiffRLE8(const WORD *lpP, const WORD *lpA, const WORD *lpB, INT pos, LONG lDist, LONG width)
 {
   INT count;
 
@@ -356,7 +348,11 @@ static INT countDiffRLE8(LPWORD lpP, LPWORD lpA, LPWORD lpB, INT pos, LONG lDist
   return count;
 }
 
-static INT MSRLE32_CompressRLE4Line(CodecInfo *pi, LPWORD lpP, LPWORD lpC, LPCBITMAPINFOHEADER lpbi, BYTE *lpIn, LONG lDist, INT x, LPBYTE *ppOut, DWORD *lpSizeImage)
+static INT MSRLE32_CompressRLE4Line(const CodecInfo *pi, const WORD *lpP,
+                                    const WORD *lpC, LPCBITMAPINFOHEADER lpbi,
+                                    const BYTE *lpIn, LONG lDist,
+                                    INT x, LPBYTE *ppOut,
+                                    DWORD *lpSizeImage)
 {
   LPBYTE lpOut = *ppOut;
   INT    count, pos;
@@ -397,7 +393,7 @@ static INT MSRLE32_CompressRLE4Line(CodecInfo *pi, LPWORD lpP, LPWORD lpC, LPCBI
       INT  i;
       INT  size       = min(count, 254);
       int  bytes      = ((size + 1) & (~1)) / 2;
-      BOOL extra_byte = bytes & 0x01;
+      int  extra_byte = bytes & 0x01;
 
       *lpSizeImage += 2 + bytes + extra_byte;
       assert(((*lpSizeImage) % 2) == 0);
@@ -455,7 +451,10 @@ static INT MSRLE32_CompressRLE4Line(CodecInfo *pi, LPWORD lpP, LPWORD lpC, LPCBI
   return x;
 }
 
-static INT MSRLE32_CompressRLE8Line(CodecInfo *pi, LPWORD lpP, LPWORD lpC, LPCBITMAPINFOHEADER lpbi, BYTE *lpIn, LONG lDist, INT x, LPBYTE *ppOut, DWORD *lpSizeImage)
+static INT MSRLE32_CompressRLE8Line(const CodecInfo *pi, const WORD *lpP,
+                                    const WORD *lpC, LPCBITMAPINFOHEADER lpbi,
+                                    const BYTE *lpIn, INT x, LPBYTE *ppOut,
+                                    DWORD *lpSizeImage)
 {
   LPBYTE lpOut = *ppOut;
   INT    count, pos;
@@ -468,13 +467,13 @@ static INT MSRLE32_CompressRLE8Line(CodecInfo *pi, LPWORD lpP, LPWORD lpC, LPCBI
   pos = x;
   clr = lpC[pos++];
   for (count = 1; pos < lpbi->biWidth; count++) {
-    if (ColorCmp(clr, lpC[pos++]) > lDist)
+    if (ColorCmp(clr, lpC[pos++]) > 0)
       break;
   }
 
   if (count < 2) {
     /* add some more pixels for absoluting if possible */
-    count += countDiffRLE8(lpP, lpC - 1, lpC, pos-1, lDist, lpbi->biWidth);
+    count += countDiffRLE8(lpP, lpC - 1, lpC, pos-1, 0, lpbi->biWidth);
 
     assert(count > 0);
 
@@ -486,7 +485,7 @@ static INT MSRLE32_CompressRLE8Line(CodecInfo *pi, LPWORD lpP, LPWORD lpC, LPCBI
     while (count > 2) {
       INT  i;
       INT  size       = min(count, 255);
-      BOOL extra_byte = size % 2;
+      int  extra_byte = size % 2;
 
       *lpSizeImage += 2 + size + extra_byte;
       count -= size;
@@ -538,10 +537,12 @@ static INT MSRLE32_CompressRLE8Line(CodecInfo *pi, LPWORD lpP, LPWORD lpC, LPCBI
   return x;
 }
 
-LRESULT MSRLE32_CompressRLE4(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lpIn, LPBITMAPINFOHEADER lpbiOut, LPBYTE lpOut, BOOL isKey)
+LRESULT MSRLE32_CompressRLE4(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
+                             const BYTE *lpIn, LPBITMAPINFOHEADER lpbiOut,
+                             LPBYTE lpOut, BOOL isKey)
 {
   LPWORD lpC;
-  LONG   lLine, lInLine, lDist;
+  LONG   lLine, lInLine;
   LPBYTE lpOutStart = lpOut;
 
   /* pre-conditions */
@@ -550,7 +551,6 @@ LRESULT MSRLE32_CompressRLE4(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
   assert(pi->pCurFrame != NULL);
 
   lpC      = pi->pCurFrame;
-  lDist    = QUALITY_to_DIST(pi->dwQuality);
   lInLine  = DIBWIDTHBYTES(*lpbiIn);
   lLine    = WIDTHBYTES(lpbiOut->biWidth * 16) / 2;
 
@@ -563,7 +563,7 @@ LRESULT MSRLE32_CompressRLE4(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
       x = 0;
 
       do {
-	x = MSRLE32_CompressRLE4Line(pi, NULL, lpC, lpbiIn, lpIn, lDist, x,
+	x = MSRLE32_CompressRLE4Line(pi, NULL, lpC, lpbiIn, lpIn, 0, x,
 				     &lpOut, &lpbiOut->biSizeImage);
       } while (x < lpbiOut->biWidth);
 
@@ -597,7 +597,7 @@ LRESULT MSRLE32_CompressRLE4(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
 	if (jumpx == -1)
 	  jumpx = x;
 	for (count = 0, pos = x; pos < lpbiOut->biWidth; pos++, count++) {
-	  if (ColorCmp(lpP[pos], lpC[pos]) > lDist)
+	  if (ColorCmp(lpP[pos], lpC[pos]) > 0)
 	    break;
 	}
 
@@ -657,7 +657,7 @@ LRESULT MSRLE32_CompressRLE4(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
 
 	if (x < lpbiOut->biWidth) {
 	  /* skipped the 'same' things corresponding to previous frame */
-	  x = MSRLE32_CompressRLE4Line(pi, lpP, lpC, lpbiIn, lpIn, lDist, x,
+	  x = MSRLE32_CompressRLE4Line(pi, lpP, lpC, lpbiIn, lpIn, 0, x,
 			       &lpOut, &lpbiOut->biSizeImage);
 	}
       } while (x < lpbiOut->biWidth);
@@ -690,10 +690,12 @@ LRESULT MSRLE32_CompressRLE4(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
   return ICERR_OK;
 }
 
-LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lpIn, LPBITMAPINFOHEADER lpbiOut, LPBYTE lpOut, BOOL isKey)
+LRESULT MSRLE32_CompressRLE8(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
+                             const BYTE *lpIn, LPBITMAPINFOHEADER lpbiOut,
+                             LPBYTE lpOut, BOOL isKey)
 {
   LPWORD lpC;
-  LONG   lDist, lInLine, lLine;
+  LONG   lInLine, lLine;
   LPBYTE lpOutStart = lpOut;
 
   assert(pi != NULL && lpbiOut != NULL);
@@ -701,7 +703,6 @@ LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
   assert(pi->pCurFrame != NULL);
 
   lpC     = pi->pCurFrame;
-  lDist   = QUALITY_to_DIST(pi->dwQuality);
   lInLine = DIBWIDTHBYTES(*lpbiIn);
   lLine   = WIDTHBYTES(lpbiOut->biWidth * 16) / 2;
 
@@ -714,7 +715,7 @@ LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
       x = 0;
 
       do {
-	x = MSRLE32_CompressRLE8Line(pi, NULL, lpC, lpbiIn, lpIn, lDist, x,
+	x = MSRLE32_CompressRLE8Line(pi, NULL, lpC, lpbiIn, lpIn, x,
 			     &lpOut, &lpbiOut->biSizeImage);
 	assert(lpOut == (lpOutStart + lpbiOut->biSizeImage));
       } while (x < lpbiOut->biWidth);
@@ -749,7 +750,7 @@ LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
 	if (jumpx == -1)
 	  jumpx = x;
 	for (count = 0, pos = x; pos < lpbiOut->biWidth; pos++, count++) {
-	  if (ColorCmp(lpP[pos], lpC[pos]) > lDist)
+	  if (ColorCmp(lpP[pos], lpC[pos]) > 0)
 	    break;
 	}
 
@@ -796,7 +797,7 @@ LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
 
 	if (x < lpbiOut->biWidth) {
 	  /* skip the 'same' things corresponding to previous frame */
-	  x = MSRLE32_CompressRLE8Line(pi, lpP, lpC, lpbiIn, lpIn, lDist, x,
+          x = MSRLE32_CompressRLE8Line(pi, lpP, lpC, lpbiIn, lpIn, x,
 			       &lpOut, &lpbiOut->biSizeImage);
 	  assert(lpOut == (lpOutStart + lpbiOut->biSizeImage));
 	}
@@ -815,14 +816,16 @@ LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
       }
     }
 
-    /* add EOL -- will be changed to EOI */
+    /* add EOL */
     lpbiOut->biSizeImage += 2;
     *((LPWORD)lpOut) = 0;
     lpOut += sizeof(WORD);
   }
 
-  /* change EOL to EOI -- end of image */
-  lpOut[-1] = 1;
+  /* add EOI -- end of image */
+  lpbiOut->biSizeImage += 2;
+  *lpOut++ = 0;
+  *lpOut++ = 1;
   assert(lpOut == (lpOutStart + lpbiOut->biSizeImage));
 
   return ICERR_OK;
@@ -830,8 +833,8 @@ LRESULT MSRLE32_CompressRLE8(CodecInfo *pi, LPBITMAPINFOHEADER lpbiIn, LPBYTE lp
 
 /*****************************************************************************/
 
-static LRESULT MSRLE32_DecompressRLE4(CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
-				      LPBYTE lpIn, LPBYTE lpOut)
+static LRESULT MSRLE32_DecompressRLE4(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
+				      const BYTE *lpIn, LPBYTE lpOut)
 {
   int  bytes_per_pixel;
   int  line_size;
@@ -992,8 +995,8 @@ static LRESULT MSRLE32_DecompressRLE4(CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
   return ICERR_OK;
 }
 
-static LRESULT MSRLE32_DecompressRLE8(CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
-				      LPBYTE lpIn, LPBYTE lpOut)
+static LRESULT MSRLE32_DecompressRLE8(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
+				      const BYTE *lpIn, LPBYTE lpOut)
 {
   int  bytes_per_pixel;
   int  line_size;
@@ -1034,7 +1037,7 @@ static LRESULT MSRLE32_DecompressRLE8(CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
 	break;
       default: /* absolute mode */
 	if (pixel_ptr/bytes_per_pixel + code1 > lpbi->biWidth) {
-	  WARN("aborted absolute: (%d=%d/%d+%d) > %ld\n",pixel_ptr/bytes_per_pixel + code1,pixel_ptr,bytes_per_pixel,code1,lpbi->biWidth);
+          WARN("aborted absolute: (%d=%d/%d+%d) > %d\n",pixel_ptr/bytes_per_pixel + code1,pixel_ptr,bytes_per_pixel,code1,lpbi->biWidth);
 	  return ICERR_ERROR;
 	}
 	extra_byte = code1 & 0x01;
@@ -1062,7 +1065,7 @@ static LRESULT MSRLE32_DecompressRLE8(CodecInfo *pi, LPCBITMAPINFOHEADER lpbi,
     } else {
       /* coded mode */
       if (pixel_ptr/bytes_per_pixel + code0 > lpbi->biWidth) {
-	WARN("aborted coded: (%d=%d/%d+%d) > %ld\n",pixel_ptr/bytes_per_pixel + code1,pixel_ptr,bytes_per_pixel,code1,lpbi->biWidth);
+	WARN("aborted coded: (%d=%d/%d+%d) > %d\n",pixel_ptr/bytes_per_pixel + code1,pixel_ptr,bytes_per_pixel,code1,lpbi->biWidth);
 	return ICERR_ERROR;
       }
 
@@ -1108,13 +1111,12 @@ static CodecInfo* Open(LPICOPEN icinfo)
     return (LPVOID)0xFFFF0000;
   }
 
-  TRACE("(%p = {%lu,0x%08lX(%4.4s),0x%08lX(%4.4s),0x%lX,0x%lX,...})\n", icinfo,
+  if (compare_fourcc(icinfo->fccType, ICTYPE_VIDEO)) return NULL;
+
+  TRACE("(%p = {%u,0x%08X(%4.4s),0x%08X(%4.4s),0x%X,0x%X,...})\n", icinfo,
 	icinfo->dwSize,	icinfo->fccType, (char*)&icinfo->fccType,
 	icinfo->fccHandler, (char*)&icinfo->fccHandler,
 	icinfo->dwVersion,icinfo->dwFlags);
-
-  if (icinfo->fccType != ICTYPE_VIDEO)
-    return NULL;
 
   switch (icinfo->fccHandler) {
   case FOURCC_RLE:
@@ -1126,18 +1128,17 @@ static CodecInfo* Open(LPICOPEN icinfo)
     icinfo->fccHandler = FOURCC_MRLE;
     break;
   default:
-    WARN("unknown FOURCC = 0x%08lX(%4.4s) !\n",
+    WARN("unknown FOURCC = 0x%08X(%4.4s) !\n",
 	 icinfo->fccHandler,(char*)&icinfo->fccHandler);
     return NULL;
   }
 
-  pi = (CodecInfo*)LocalAlloc(LPTR, sizeof(CodecInfo));
+  pi = LocalAlloc(LPTR, sizeof(CodecInfo));
 
   if (pi != NULL) {
     pi->fccHandler  = icinfo->fccHandler;
 
     pi->bCompress   = FALSE;
-    pi->dwQuality   = MSRLE32_DEFAULTQUALITY;
     pi->nPrevFrame  = -1;
     pi->pPrevFrame  = pi->pCurFrame = NULL;
 
@@ -1160,11 +1161,11 @@ static LRESULT Close(CodecInfo *pi)
   if (pi->pPrevFrame != NULL || pi->pCurFrame != NULL)
     CompressEnd(pi);
 
-  LocalFree((HLOCAL)pi);
+  LocalFree(pi);
   return 1;
 }
 
-static LRESULT GetInfo(CodecInfo *pi, ICINFO *icinfo, DWORD dwSize)
+static LRESULT GetInfo(const CodecInfo *pi, ICINFO *icinfo, DWORD dwSize)
 {
   /* pre-condition */
   assert(pi != NULL);
@@ -1176,34 +1177,19 @@ static LRESULT GetInfo(CodecInfo *pi, ICINFO *icinfo, DWORD dwSize)
     return 0;
 
   icinfo->dwSize       = sizeof(ICINFO);
-  icinfo->fccType      = streamtypeVIDEO;
+  icinfo->fccType      = ICTYPE_VIDEO;
   icinfo->fccHandler   = (pi != NULL ? pi->fccHandler : FOURCC_MRLE);
   icinfo->dwFlags      = VIDCF_QUALITY | VIDCF_TEMPORAL | VIDCF_CRUNCH | VIDCF_FASTTEMPORALC;
-  icinfo->dwVersion    = MSRLE32_VERSION;
-  icinfo->dwVersionICM = 0x01040000; /* Version 1.4 build 0 */
+  icinfo->dwVersion    = ICVERSION;
+  icinfo->dwVersionICM = ICVERSION;
 
-  LoadWideString(IDS_NAME, icinfo->szName, sizeof(icinfo->szName));
-  LoadWideString(IDS_DESCRIPTION, icinfo->szDescription, sizeof(icinfo->szDescription));
+  LoadStringW(MSRLE32_hModule, IDS_NAME, icinfo->szName, ARRAY_SIZE(icinfo->szName));
+  LoadStringW(MSRLE32_hModule, IDS_DESCRIPTION, icinfo->szDescription, ARRAY_SIZE(icinfo->szDescription));
 
   return sizeof(ICINFO);
 }
 
-static LRESULT SetQuality(CodecInfo *pi, LONG lQuality)
-{
-  /* pre-condition */
-  assert(pi != NULL);
-
-  if (lQuality == -1)
-    lQuality = MSRLE32_DEFAULTQUALITY;
-  else if (ICQUALITY_LOW > lQuality || lQuality > ICQUALITY_HIGH)
-    return ICERR_BADPARAM;
-
-  pi->dwQuality = (DWORD)lQuality;
-
-  return ICERR_OK;
-}
-
-static LRESULT Configure(CodecInfo *pi, HWND hWnd)
+static LRESULT Configure(const CodecInfo *pi, HWND hWnd)
 {
   /* pre-condition */
   assert(pi != NULL);
@@ -1214,16 +1200,16 @@ static LRESULT Configure(CodecInfo *pi, HWND hWnd)
 
 static LRESULT About(CodecInfo *pi, HWND hWnd)
 {
-  CHAR szTitle[20];
-  CHAR szAbout[128];
+  WCHAR szTitle[20];
+  WCHAR szAbout[128];
 
   /* pre-condition */
   assert(MSRLE32_hModule != 0);
 
-  LoadStringA(MSRLE32_hModule, IDS_NAME, szTitle, sizeof(szTitle));
-  LoadStringA(MSRLE32_hModule, IDS_ABOUT, szAbout, sizeof(szAbout));
+  LoadStringW(MSRLE32_hModule, IDS_NAME, szTitle, ARRAY_SIZE(szTitle));
+  LoadStringW(MSRLE32_hModule, IDS_ABOUT, szAbout, ARRAY_SIZE(szAbout));
 
-  MessageBoxA(hWnd, szAbout, szTitle, MB_OK|MB_ICONINFORMATION);
+  MessageBoxW(hWnd, szAbout, szTitle, MB_OK|MB_ICONINFORMATION);
 
   return ICERR_OK;
 }
@@ -1324,7 +1310,7 @@ static LRESULT CompressGetSize(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
     return MSRLE32_GetMaxCompressedSize(lpbiOut);
 }
 
-static LRESULT CompressQuery(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
+static LRESULT CompressQuery(const CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 			     LPCBITMAPINFOHEADER lpbiOut)
 {
   /* pre-condition */
@@ -1397,10 +1383,10 @@ static LRESULT CompressBegin(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
     CompressEnd(pi);
 
   size = WIDTHBYTES(lpbiOut->biWidth * 16) / 2 * lpbiOut->biHeight;
-  pi->pPrevFrame = (LPWORD)GlobalAllocPtr(GPTR, size * sizeof(WORD));
+  pi->pPrevFrame = GlobalLock(GlobalAlloc(GPTR, size * sizeof(WORD)));
   if (pi->pPrevFrame == NULL)
     return ICERR_MEMORY;
-  pi->pCurFrame = (LPWORD)GlobalAllocPtr(GPTR, size * sizeof(WORD));
+  pi->pCurFrame = GlobalLock(GlobalAlloc(GPTR, size * sizeof(WORD)));
   if (pi->pCurFrame == NULL) {
     CompressEnd(pi);
     return ICERR_MEMORY;
@@ -1414,7 +1400,7 @@ static LRESULT CompressBegin(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
   switch (lpbiOut->biBitCount) {
   case 4:
   case 8:
-    pi->palette_map = (LPBYTE)LocalAlloc(LPTR, lpbiIn->biClrUsed);
+    pi->palette_map = LocalAlloc(LPTR, lpbiIn->biClrUsed);
     if (pi->palette_map == NULL) {
       CompressEnd(pi);
       return ICERR_MEMORY;
@@ -1431,9 +1417,10 @@ static LRESULT CompressBegin(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
 static LRESULT Compress(CodecInfo *pi, ICCOMPRESS* lpic, DWORD dwSize)
 {
+  BOOL is_key;
   int i;
 
-  TRACE("(%p,%p,%lu)\n",pi,lpic,dwSize);
+  TRACE("(%p,%p,%u)\n",pi,lpic,dwSize);
 
   /* pre-condition */
   assert(pi != NULL);
@@ -1445,7 +1432,7 @@ static LRESULT Compress(CodecInfo *pi, ICCOMPRESS* lpic, DWORD dwSize)
       !lpic->lpbiInput  || !lpic->lpInput)
     return ICERR_BADPARAM;
 
-  TRACE("lpic={0x%lX,%p,%p,%p,%p,%p,%p,%ld,%lu,%lu,%p,%p}\n",lpic->dwFlags,lpic->lpbiOutput,lpic->lpOutput,lpic->lpbiInput,lpic->lpInput,lpic->lpckid,lpic->lpdwFlags,lpic->lFrameNum,lpic->dwFrameSize,lpic->dwQuality,lpic->lpbiPrev,lpic->lpPrev);
+  TRACE("lpic={0x%X,%p,%p,%p,%p,%p,%p,%d,%u,%u,%p,%p}\n",lpic->dwFlags,lpic->lpbiOutput,lpic->lpOutput,lpic->lpbiInput,lpic->lpInput,lpic->lpckid,lpic->lpdwFlags,lpic->lFrameNum,lpic->dwFrameSize,lpic->dwQuality,lpic->lpbiPrev,lpic->lpPrev);
 
   if (! pi->bCompress) {
     LRESULT hr = CompressBegin(pi, lpic->lpbiInput, lpic->lpbiOutput);
@@ -1469,34 +1456,32 @@ static LRESULT Compress(CodecInfo *pi, ICCOMPRESS* lpic, DWORD dwSize)
   } else if ((lpic->dwFlags & ICCOMPRESS_KEYFRAME) == 0) {
     LPWORD pTmp;
 
-    WARN(": prev=%ld cur=%ld gone back? -- untested\n",pi->nPrevFrame,lpic->lFrameNum);
+    WARN(": prev=%d cur=%d gone back? -- untested\n",pi->nPrevFrame,lpic->lFrameNum);
     if (lpic->lpbiPrev == NULL || lpic->lpPrev == NULL)
       return ICERR_GOTOKEYFRAME; /* Need a keyframe if you go back */
     if (CompressQuery(pi, lpic->lpbiPrev, lpic->lpbiOutput) != ICERR_OK)
       return ICERR_BADFORMAT;
 
-    WARN(": prev=%ld cur=%ld compute swapped -- untested\n",pi->nPrevFrame,lpic->lFrameNum);
+    WARN(": prev=%d cur=%d compute swapped -- untested\n",pi->nPrevFrame,lpic->lFrameNum);
     computeInternalFrame(pi, lpic->lpbiPrev, lpic->lpPrev);
 
     /* swap buffers for current and previous frame */
-    /* Don't free and alloc new -- costs to much time and they are of equal size ! */
+    /* Don't free and alloc new -- costs too much time and they are of equal size ! */
     pTmp = pi->pPrevFrame;
     pi->pPrevFrame = pi->pCurFrame;
     pi->pCurFrame  = pTmp;
     pi->nPrevFrame = lpic->lFrameNum;
   }
 
-  for (i = 0; i < 3; i++) {
-    SetQuality(pi, lpic->dwQuality);
+  is_key = (lpic->dwFlags & ICCOMPRESS_KEYFRAME) != 0;
 
+  for (i = 0; i < 3; i++) {
     lpic->lpbiOutput->biSizeImage = 0;
 
     if (lpic->lpbiOutput->biBitCount == 4)
-      MSRLE32_CompressRLE4(pi, lpic->lpbiInput, (LPBYTE)lpic->lpInput,
-		   lpic->lpbiOutput, (LPBYTE)lpic->lpOutput, (lpic->dwFlags & ICCOMPRESS_KEYFRAME) != 0);
+      MSRLE32_CompressRLE4(pi, lpic->lpbiInput, lpic->lpInput, lpic->lpbiOutput, lpic->lpOutput, is_key);
     else
-      MSRLE32_CompressRLE8(pi, lpic->lpbiInput, (LPBYTE)lpic->lpInput,
-		   lpic->lpbiOutput, (LPBYTE)lpic->lpOutput, (lpic->dwFlags & ICCOMPRESS_KEYFRAME) != 0);
+      MSRLE32_CompressRLE8(pi, lpic->lpbiInput, lpic->lpInput, lpic->lpbiOutput, lpic->lpOutput, is_key);
 
     if (lpic->dwFrameSize == 0 ||
 	lpic->lpbiOutput->biSizeImage < lpic->dwFrameSize)
@@ -1504,16 +1489,16 @@ static LRESULT Compress(CodecInfo *pi, ICCOMPRESS* lpic, DWORD dwSize)
 
     if ((*lpic->lpdwFlags & ICCOMPRESS_KEYFRAME) == 0) {
       if (lpic->lpbiOutput->biBitCount == 4)
-	MSRLE32_CompressRLE4(pi, lpic->lpbiInput, (LPBYTE)lpic->lpInput,
-			     lpic->lpbiOutput, (LPBYTE)lpic->lpOutput, TRUE);
+        MSRLE32_CompressRLE4(pi, lpic->lpbiInput, lpic->lpInput,
+                             lpic->lpbiOutput, lpic->lpOutput, TRUE);
       else
-	MSRLE32_CompressRLE8(pi, lpic->lpbiInput, (LPBYTE)lpic->lpInput,
-			     lpic->lpbiOutput, (LPBYTE)lpic->lpOutput, TRUE);
+        MSRLE32_CompressRLE8(pi, lpic->lpbiInput, lpic->lpInput,
+                             lpic->lpbiOutput, lpic->lpOutput, TRUE);
 
       if (lpic->dwFrameSize == 0 ||
 	  lpic->lpbiOutput->biSizeImage < lpic->dwFrameSize) {
 	WARN("switched to keyframe, was small enough!\n");
-	*lpic->lpdwFlags |= ICCOMPRESS_KEYFRAME;
+        is_key = TRUE;
 	*lpic->lpckid    = MAKEAVICKID(cktypeDIBbits,
 				       StreamFromFOURCC(*lpic->lpckid));
 	break;
@@ -1527,14 +1512,16 @@ static LRESULT Compress(CodecInfo *pi, ICCOMPRESS* lpic, DWORD dwSize)
   }
 
   { /* swap buffer for current and previous frame */
-    /* Don't free and alloc new -- costs to much time and they are of equal size ! */
-    register LPWORD pTmp = pi->pPrevFrame;
+    /* Don't free and alloc new -- costs too much time and they are of equal size ! */
+    LPWORD pTmp = pi->pPrevFrame;
 
     pi->pPrevFrame = pi->pCurFrame;
     pi->pCurFrame  = pTmp;
     pi->nPrevFrame = lpic->lFrameNum;
   }
 
+  /* FIXME: What is AVIIF_TWOCC? */
+  *lpic->lpdwFlags |= AVIIF_TWOCC | (is_key ? AVIIF_KEYFRAME : 0);
   return ICERR_OK;
 }
 
@@ -1544,9 +1531,15 @@ static LRESULT CompressEnd(CodecInfo *pi)
 
   if (pi != NULL) {
     if (pi->pPrevFrame != NULL)
-      GlobalFreePtr(pi->pPrevFrame);
+    {
+      GlobalUnlock(GlobalHandle(pi->pPrevFrame));
+      GlobalFree(GlobalHandle(pi->pPrevFrame));
+    }
     if (pi->pCurFrame != NULL)
-      GlobalFreePtr(pi->pCurFrame);
+    {
+      GlobalUnlock(GlobalHandle(pi->pCurFrame));
+      GlobalFree(GlobalHandle(pi->pCurFrame));
+    }
     pi->pPrevFrame = NULL;
     pi->pCurFrame  = NULL;
     pi->nPrevFrame = -1;
@@ -1574,8 +1567,16 @@ static LRESULT DecompressGetFormat(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
   size = lpbiIn->biSize;
 
-  if (lpbiIn->biBitCount <= 8)
-    size += lpbiIn->biClrUsed * sizeof(RGBQUAD);
+  if (lpbiIn->biBitCount <= 8) {
+    int colors;
+
+    if (lpbiIn->biClrUsed == 0)
+      colors = 1 << lpbiIn->biBitCount;
+    else
+      colors = lpbiIn->biClrUsed;
+
+    size += colors * sizeof(RGBQUAD);
+  }
 
   if (lpbiOut != NULL) {
     memcpy(lpbiOut, lpbiIn, size);
@@ -1603,7 +1604,7 @@ static LRESULT DecompressQuery(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
   /* check input format if given */
   if (lpbiIn != NULL) {
-    if (!isSupportedMRLE(lpbiIn))
+    if (!isSupportedMRLE(lpbiIn) && !isSupportedDIB(lpbiIn))
       return ICERR_BADFORMAT;
   }
 
@@ -1614,11 +1615,11 @@ static LRESULT DecompressQuery(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
     if (lpbiIn != NULL) {
       if (lpbiIn->biWidth  != lpbiOut->biWidth)
-	hr = ICERR_UNSUPPORTED;
+        hr = ICERR_UNSUPPORTED;
       if (lpbiIn->biHeight != lpbiOut->biHeight)
-	hr = ICERR_UNSUPPORTED;
+        hr = ICERR_UNSUPPORTED;
       if (lpbiIn->biBitCount > lpbiOut->biBitCount)
-	hr = ICERR_UNSUPPORTED;
+        hr = ICERR_UNSUPPORTED;
     }
   }
 
@@ -1652,49 +1653,57 @@ static LRESULT DecompressBegin(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
   if (pi->bDecompress)
     DecompressEnd(pi);
 
-  rgbIn  = (const RGBQUAD*)((const BYTE*)lpbiIn  + lpbiIn->biSize);
-  rgbOut = (const RGBQUAD*)((const BYTE*)lpbiOut + lpbiOut->biSize);
+  if (lpbiIn->biCompression != BI_RGB)
+  {
+    int colors;
 
-  switch (lpbiOut->biBitCount) {
-  case 4:
-  case 8:
-    pi->palette_map = (LPBYTE)LocalAlloc(LPTR, lpbiIn->biClrUsed);
-    if (pi->palette_map == NULL)
-      return ICERR_MEMORY;
+    if (lpbiIn->biBitCount <= 8 && lpbiIn->biClrUsed == 0)
+      colors = 1 << lpbiIn->biBitCount;
+    else
+      colors = lpbiIn->biClrUsed;
 
-    for (i = 0; i < lpbiIn->biClrUsed; i++) {
-      pi->palette_map[i] = MSRLE32_GetNearestPaletteIndex(lpbiOut->biClrUsed, rgbOut, rgbIn[i]);
-    }
-    break;
-  case 15:
-  case 16:
-    pi->palette_map = (LPBYTE)LocalAlloc(LPTR, lpbiIn->biClrUsed * 2);
-    if (pi->palette_map == NULL)
-      return ICERR_MEMORY;
+    rgbIn  = (const RGBQUAD*)((const BYTE*)lpbiIn  + lpbiIn->biSize);
+    rgbOut = (const RGBQUAD*)((const BYTE*)lpbiOut + lpbiOut->biSize);
 
-    for (i = 0; i < lpbiIn->biClrUsed; i++) {
-      WORD color;
+    switch (lpbiOut->biBitCount) {
+    case 4:
+    case 8:
+      pi->palette_map = LocalAlloc(LPTR, colors);
+      if (pi->palette_map == NULL)
+        return ICERR_MEMORY;
 
-      if (lpbiOut->biBitCount == 15)
-	color = ((rgbIn[i].rgbRed >> 3) << 10)
-	  | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
-      else
-	color = ((rgbIn[i].rgbRed >> 3) << 11)
-	  | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
+      for (i = 0; i < colors; i++)
+        pi->palette_map[i] = MSRLE32_GetNearestPaletteIndex(colors, rgbOut, rgbIn[i]);
+      break;
+    case 15:
+    case 16:
+      pi->palette_map = LocalAlloc(LPTR, colors * 2);
+      if (pi->palette_map == NULL)
+        return ICERR_MEMORY;
 
-      pi->palette_map[i * 2 + 1] = color >> 8;
-      pi->palette_map[i * 2 + 0] = color & 0xFF;
+      for (i = 0; i < colors; i++) {
+        WORD color;
+
+        if (lpbiOut->biBitCount == 15)
+    color = ((rgbIn[i].rgbRed >> 3) << 10)
+      | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
+        else
+    color = ((rgbIn[i].rgbRed >> 3) << 11)
+      | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
+
+        pi->palette_map[i * 2 + 1] = color >> 8;
+        pi->palette_map[i * 2 + 0] = color & 0xFF;
+      };
+      break;
+    case 24:
+    case 32:
+      pi->palette_map = LocalAlloc(LPTR, colors * sizeof(RGBQUAD));
+      if (pi->palette_map == NULL)
+        return ICERR_MEMORY;
+      memcpy(pi->palette_map, rgbIn, colors * sizeof(RGBQUAD));
+      break;
     };
-    break;
-  case 24:
-  case 32:
-    pi->palette_map = (LPBYTE)LocalAlloc(LPTR, lpbiIn->biClrUsed * sizeof(RGBQUAD));
-    if (pi->palette_map == NULL)
-      return ICERR_MEMORY;
-    memcpy(pi->palette_map, rgbIn, lpbiIn->biClrUsed * sizeof(RGBQUAD));
-    break;
-  };
-
+  }
   pi->bDecompress = TRUE;
 
   return ICERR_OK;
@@ -1702,7 +1711,7 @@ static LRESULT DecompressBegin(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
 static LRESULT Decompress(CodecInfo *pi, ICDECOMPRESS *pic, DWORD dwSize)
 {
-  TRACE("(%p,%p,%lu)\n",pi,pic,dwSize);
+  TRACE("(%p,%p,%u)\n",pi,pic,dwSize);
 
   /* pre-condition */
   assert(pi != NULL);
@@ -1725,6 +1734,14 @@ static LRESULT Decompress(CodecInfo *pi, ICDECOMPRESS *pic, DWORD dwSize)
   assert(pic->lpbiInput->biWidth  == pic->lpbiOutput->biWidth);
   assert(pic->lpbiInput->biHeight == pic->lpbiOutput->biHeight);
 
+  /* Uncompressed frame? */
+  if (pic->lpbiInput->biCompression == BI_RGB)
+  {
+    pic->lpbiOutput->biSizeImage = pic->lpbiInput->biSizeImage;
+    memcpy(pic->lpOutput, pic->lpInput, pic->lpbiOutput->biSizeImage);
+    return ICERR_OK;
+  }
+
   pic->lpbiOutput->biSizeImage = DIBWIDTHBYTES(*pic->lpbiOutput) * pic->lpbiOutput->biHeight;
   if (pic->lpbiInput->biBitCount == 4)
     return MSRLE32_DecompressRLE4(pi, pic->lpbiOutput, pic->lpInput, pic->lpOutput);
@@ -1742,7 +1759,7 @@ static LRESULT DecompressEnd(CodecInfo *pi)
   pi->bDecompress = FALSE;
 
   if (pi->palette_map != NULL) {
-    LocalFree((HLOCAL)pi->palette_map);
+    LocalFree(pi->palette_map);
     pi->palette_map = NULL;
   }
 
@@ -1784,7 +1801,7 @@ static LRESULT DecompressGetPalette(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 }
 
 /* DriverProc - entry point for an installable driver */
-LRESULT CALLBACK MSRLE32_DriverProc(DWORD dwDrvID, HDRVR hDrv, UINT uMsg,
+LRESULT CALLBACK MSRLE32_DriverProc(DWORD_PTR dwDrvID, HDRVR hDrv, UINT uMsg,
 				    LPARAM lParam1, LPARAM lParam2)
 {
   CodecInfo *pi = (CodecInfo*)dwDrvID;
@@ -1796,9 +1813,6 @@ LRESULT CALLBACK MSRLE32_DriverProc(DWORD dwDrvID, HDRVR hDrv, UINT uMsg,
   case DRV_LOAD:
     return DRVCNF_OK;
   case DRV_OPEN:
-    if (lParam2 == 0)
-      return (LRESULT)0xFFFF0000;
-    else
       return (LRESULT)Open((ICOPEN*)lParam2);
   case DRV_CLOSE:
     if (dwDrvID != 0xFFFF0000 && (LPVOID)dwDrvID != NULL)
@@ -1840,14 +1854,6 @@ LRESULT CALLBACK MSRLE32_DriverProc(DWORD dwDrvID, HDRVR hDrv, UINT uMsg,
       return ICERR_OK;
     }
     break;
-  case ICM_GETQUALITY:
-    if ((LPVOID)lParam1 != NULL) {
-      *((LPDWORD)lParam1) = pi->dwQuality;
-      return ICERR_OK;
-    }
-    break;
-  case ICM_SETQUALITY:
-    return SetQuality(pi, *(LPLONG)lParam1);
   case ICM_COMPRESS_GET_FORMAT:
     return CompressGetFormat(pi, (LPCBITMAPINFOHEADER)lParam1,
 			     (LPBITMAPINFOHEADER)lParam2);
@@ -1900,17 +1906,14 @@ LRESULT CALLBACK MSRLE32_DriverProc(DWORD dwDrvID, HDRVR hDrv, UINT uMsg,
 /* DllMain - library initialization code */
 BOOL WINAPI DllMain(HINSTANCE hModule, DWORD dwReason, LPVOID lpReserved)
 {
-  TRACE("(%p,%ld,%p)\n",(LPVOID)hModule,dwReason,lpReserved);
+  TRACE("(%p,%d,%p)\n",hModule,dwReason,lpReserved);
 
   switch (dwReason) {
   case DLL_PROCESS_ATTACH:
     DisableThreadLibraryCalls(hModule);
     MSRLE32_hModule = hModule;
     break;
-
-  case DLL_PROCESS_DETACH:
-    break;
-  };
+  }
 
   return TRUE;
 }

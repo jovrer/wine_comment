@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * FIXME: Still missing required Winsock 2 definitions.
  */
@@ -47,6 +47,7 @@
 #include <winsock.h>
 #undef  __WINE_WINSOCK2__
 
+#include <ws2def.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -75,6 +76,8 @@ extern "C" {
 
 /* protocol types */
 
+#define FROM_PROTOCOL_INFO       (-1)
+
 #ifndef USE_WS_PREFIX
 #define SOCK_STREAM                1
 #define SOCK_DGRAM                 2
@@ -98,6 +101,15 @@ extern "C" {
 #define FD_ACCEPT_BIT              3
 #define FD_CONNECT_BIT             4
 #define FD_CLOSE_BIT               5
+#define FD_QOS_BIT                 6
+#define FD_GROUP_QOS_BIT           7
+#define FD_ROUTING_INTERFACE_CHANGE_BIT 8
+#define FD_ADDRESS_LIST_CHANGE_BIT 9
+
+#define FD_QOS                      0x00000040
+#define FD_GROUP_QOS                0x00000080
+#define FD_ROUTING_INTERFACE_CHANGE 0x00000100
+#define FD_ADDRESS_LIST_CHANGE      0x00000200
 
 /* Constants for LPCONDITIONPROC */
 #define CF_ACCEPT                  0x0000
@@ -109,12 +121,79 @@ extern "C" {
 #define SD_SEND                    0x01
 #define SD_BOTH                    0x02
 
+/* Constants for WSAPoll() */
+#ifndef USE_WS_PREFIX
+#ifndef __WINE_WINE_PORT_H
+#define POLLERR                    0x0001
+#define POLLHUP                    0x0002
+#define POLLNVAL                   0x0004
+#define POLLWRNORM                 0x0010
+#define POLLWRBAND                 0x0020
+#define POLLRDNORM                 0x0100
+#define POLLRDBAND                 0x0200
+#define POLLPRI                    0x0400
+#define POLLIN                     (POLLRDNORM|POLLRDBAND)
+#define POLLOUT                    (POLLWRNORM)
+#endif
+#else
+#define WS_POLLERR                 0x0001
+#define WS_POLLHUP                 0x0002
+#define WS_POLLNVAL                0x0004
+#define WS_POLLWRNORM              0x0010
+#define WS_POLLWRBAND              0x0020
+#define WS_POLLRDNORM              0x0100
+#define WS_POLLRDBAND              0x0200
+#define WS_POLLPRI                 0x0400
+#define WS_POLLIN                  (WS_POLLRDNORM|WS_POLLRDBAND)
+#define WS_POLLOUT                 (WS_POLLWRNORM)
+#endif
+
 /* Constants for WSAIoctl() */
+#ifdef USE_WS_PREFIX
+#define WS_IOC_UNIX                0x00000000
+#define WS_IOC_WS2                 0x08000000
+#define WS_IOC_PROTOCOL            0x10000000
+#define WS_IOC_VENDOR              0x18000000
+#define WS_IOC_VOID                0x20000000
+#define WS_IOC_OUT                 0x40000000
+#define WS_IOC_IN                  0x80000000
+#define WS_IOC_INOUT               (WS_IOC_IN|WS_IOC_OUT)
+#define _WSAIO(x,y)                (WS_IOC_VOID|(x)|(y))
+#define _WSAIOR(x,y)               (WS_IOC_OUT|(x)|(y))
+#define _WSAIOW(x,y)               (WS_IOC_IN|(x)|(y))
+#define _WSAIORW(x,y)              (WS_IOC_INOUT|(x)|(y))
+#define WS_SIO_ASSOCIATE_HANDLE               _WSAIOW(WS_IOC_WS2,1)
+#define WS_SIO_ENABLE_CIRCULAR_QUEUEING       _WSAIO(WS_IOC_WS2,2)
+#define WS_SIO_FIND_ROUTE                     _WSAIOR(WS_IOC_WS2,3)
+#define WS_SIO_FLUSH                          _WSAIO(WS_IOC_WS2,4)
+#define WS_SIO_GET_BROADCAST_ADDRESS          _WSAIOR(WS_IOC_WS2,5)
+#define WS_SIO_GET_EXTENSION_FUNCTION_POINTER _WSAIORW(WS_IOC_WS2,6)
+#define WS_SIO_GET_QOS                        _WSAIORW(WS_IOC_WS2,7)
+#define WS_SIO_GET_GROUP_QOS                  _WSAIORW(WS_IOC_WS2,8)
+#define WS_SIO_MULTIPOINT_LOOPBACK            _WSAIOW(WS_IOC_WS2,9)
+#define WS_SIO_MULTICAST_SCOPE                _WSAIOW(WS_IOC_WS2,10)
+#define WS_SIO_SET_QOS                        _WSAIOW(WS_IOC_WS2,11)
+#define WS_SIO_SET_GROUP_QOS                  _WSAIOW(WS_IOC_WS2,12)
+#define WS_SIO_TRANSLATE_HANDLE               _WSAIORW(WS_IOC_WS2,13)
+#define WS_SIO_ROUTING_INTERFACE_QUERY        _WSAIORW(WS_IOC_WS2,20)
+#define WS_SIO_ROUTING_INTERFACE_CHANGE       _WSAIOW(WS_IOC_WS2,21)
+#define WS_SIO_ADDRESS_LIST_QUERY             _WSAIOR(WS_IOC_WS2,22)
+#define WS_SIO_ADDRESS_LIST_CHANGE            _WSAIO(WS_IOC_WS2,23)
+#define WS_SIO_QUERY_TARGET_PNP_HANDLE        _WSAIOR(WS_IOC_WS2,24)
+#define WS_SIO_GET_INTERFACE_LIST             WS__IOR('t', 127, ULONG)
+#else /* USE_WS_PREFIX */
+#undef IOC_VOID
+#undef IOC_IN
+#undef IOC_OUT
+#undef IOC_INOUT
 #define IOC_UNIX                   0x00000000
 #define IOC_WS2                    0x08000000
 #define IOC_PROTOCOL               0x10000000
 #define IOC_VENDOR                 0x18000000
 #define IOC_VOID                   0x20000000
+#define IOC_OUT                    0x40000000
+#define IOC_IN                     0x80000000
+#define IOC_INOUT                  (IOC_IN|IOC_OUT)
 #define _WSAIO(x,y)                (IOC_VOID|(x)|(y))
 #define _WSAIOR(x,y)               (IOC_OUT|(x)|(y))
 #define _WSAIOW(x,y)               (IOC_IN|(x)|(y))
@@ -137,24 +216,63 @@ extern "C" {
 #define SIO_ADDRESS_LIST_QUERY     _WSAIOR(IOC_WS2,22)
 #define SIO_ADDRESS_LIST_CHANGE    _WSAIO(IOC_WS2,23)
 #define SIO_QUERY_TARGET_PNP_HANDLE _WSAIOR(IOC_WS2,24)
-#ifndef USE_WS_PREFIX
-#define SIO_GET_INTERFACE_LIST     _IOR ('t', 127, u_long)
-#else
-#define SIO_GET_INTERFACE_LIST     WS__IOR ('t', 127, u_long)
-#endif
+#define SIO_GET_INTERFACE_LIST     _IOR ('t', 127, ULONG)
+#endif /* USE_WS_PREFIX */
 
 /* Constants for WSAIoctl() */
-#define WSA_FLAG_OVERLAPPED        0x01
-#define WSA_FLAG_MULTIPOINT_C_ROOT 0x02
-#define WSA_FLAG_MULTIPOINT_C_LEAF 0x04
-#define WSA_FLAG_MULTIPOINT_D_ROOT 0x08
-#define WSA_FLAG_MULTIPOINT_D_LEAF 0x10
+#define WSA_FLAG_OVERLAPPED             0x0001
+#define WSA_FLAG_MULTIPOINT_C_ROOT      0x0002
+#define WSA_FLAG_MULTIPOINT_C_LEAF      0x0004
+#define WSA_FLAG_MULTIPOINT_D_ROOT      0x0008
+#define WSA_FLAG_MULTIPOINT_D_LEAF      0x0010
+#define WSA_FLAG_ACCESS_SYSTEM_SECURITY 0x0040
+#define WSA_FLAG_NO_HANDLE_INHERIT      0x0080
+#define WSA_FLAG_REGISTERED_IO          0x0100
 
 /* Constants for WSAJoinLeaf() */
 #define JL_SENDER_ONLY    0x01
 #define JL_RECEIVER_ONLY  0x02
 #define JL_BOTH           0x04
 
+/* Constants for WSALookupServiceBegin() */
+#define LUP_DEEP                0x0001
+#define LUP_RETURN_NAME         0x0010
+#define LUP_RETURN_TYPE         0x0020
+#define LUP_RETURN_VERSION      0x0040
+#define LUP_RETURN_COMMENT      0x0080
+#define LUP_RETURN_ADDR         0x0100
+#define LUP_RETURN_BLOB         0x0200
+#define LUP_RETURN_ALIASES      0x0400
+#define LUP_RETURN_QUERY_STRING 0x0800
+#define LUP_RETURN_ALL          (LUP_RETURN_ADDR|LUP_RETURN_BLOB|LUP_RETURN_ALIASES|LUP_RETURN_QUERY_STRING \
+                                |LUP_RETURN_NAME|LUP_RETURN_TYPE|LUP_RETURN_VERSION|LUP_RETURN_COMMENT)
+
+/* Constants for dwNameSpace from struct WSANAMESPACE_INFO */
+#define NS_ALL         0
+#define NS_SAP         1
+#define NS_NDS         2
+#define NS_PEER_BROWSE 3
+#define NS_SLP         5
+#define NS_DHCP        6
+#define NS_TCPIP_LOCAL 10
+#define NS_TCPIP_HOSTS 11
+#define NS_DNS         12
+#define NS_NETBT       13
+#define NS_WINS        14
+#define NS_NLA         15
+#define NS_BTH         16
+#define NS_NBP         20
+#define NS_MS          30
+#define NS_STDA        31
+#define NS_NTDS        32
+#define NS_EMAIL       37
+#define NS_PNRPNAME    38
+#define NS_PNRPCLOUD   39
+#define NS_X500        40
+#define NS_NIS         41
+#define NS_NISPLUS     42
+#define NS_WRQ         50
+#define NS_NETDES      60
 
 #ifndef GUID_DEFINED
 #include <guiddef.h>
@@ -172,6 +290,12 @@ typedef struct _WSAPROTOCOLCHAIN
                                    /* length > 1 means protocol chain */
     DWORD ChainEntries[MAX_PROTOCOL_CHAIN]; /* a list of dwCatalogEntryIds */
 } WSAPROTOCOLCHAIN, * LPWSAPROTOCOLCHAIN;
+
+/* constants used in dwProviderFlags from struct WSAPROTOCOL_INFO */
+#define PFL_MULTIPLE_PROTO_ENTRIES          0x00000001
+#define PFL_RECOMMENDED_PROTO_ENTRY         0x00000002
+#define PFL_HIDDEN                          0x00000004
+#define PFL_MATCHES_PROTOCOL_ZERO           0x00000008
 
 #define XP1_CONNECTIONLESS                  0x00000001
 #define XP1_GUARANTEED_DELIVERY             0x00000002
@@ -197,6 +321,13 @@ typedef struct _WSAPROTOCOLCHAIN
 #define LITTLEENDIAN                        0x0001
 
 #define SECURITY_PROTOCOL_NONE              0x0000
+
+typedef struct /*WS(pollfd)*/
+{
+    SOCKET fd;
+    SHORT events;
+    SHORT revents;
+} WSAPOLLFD;
 
 #define WSAPROTOCOL_LEN  255
 typedef struct _WSAPROTOCOL_INFOA
@@ -252,7 +383,7 @@ DECL_WINELIB_TYPE_AW(LPWSAPROTOCOL_INFO)
 
 typedef struct _WSANETWORKEVENTS
 {
-    long lNetworkEvents;
+    LONG lNetworkEvents;
     int iErrorCode[FD_MAX_EVENTS];
 } WSANETWORKEVENTS, *LPWSANETWORKEVENTS;
 
@@ -299,12 +430,6 @@ DECL_WINELIB_TYPE_AW(WSASERVICECLASSINFO)
 DECL_WINELIB_TYPE_AW(PWSASERVICECLASSINFO)
 DECL_WINELIB_TYPE_AW(LPWSASERVICECLASSINFO)
 
-typedef struct _WSABUF
-{
-    ULONG len;
-    CHAR* buf;
-} WSABUF, *LPWSABUF;
-
 #define WSAEVENT      HANDLE
 #define LPWSAEVENT    LPHANDLE
 #define WSAOVERLAPPED OVERLAPPED
@@ -319,7 +444,7 @@ typedef struct _OVERLAPPED* LPWSAOVERLAPPED;
 
 #define WSA_INVALID_EVENT          ((WSAEVENT)NULL)
 #define WSA_MAXIMUM_WAIT_EVENTS    (MAXIMUM_WAIT_OBJECTS)
-#define WSA_WAIT_FAILED            ((DWORD)-1L)
+#define WSA_WAIT_FAILED            ((DWORD)-1)
 #define WSA_WAIT_EVENT_0           (WAIT_OBJECT_0)
 #define WSA_WAIT_IO_COMPLETION     (WAIT_IO_COMPLETION)
 #define WSA_WAIT_TIMEOUT           (WAIT_TIMEOUT)
@@ -361,7 +486,7 @@ typedef int (CALLBACK *LPCONDITIONPROC)
     LPWSABUF lpCalleeId,
     LPWSABUF lpCalleeData,
     GROUP *g,
-    DWORD dwCallbackData
+    DWORD_PTR dwCallbackData
 );
 
 typedef void (CALLBACK *LPWSAOVERLAPPED_COMPLETION_ROUTINE)
@@ -381,28 +506,6 @@ typedef struct _BLOB {
         BYTE   *pBlobData;
 } BLOB, *LPBLOB;
 #endif
-
-#ifndef __CSADDR_DEFINED__
-#define __CSADDR_DEFINED__
-
-typedef struct _SOCKET_ADDRESS {
-        LPSOCKADDR      lpSockaddr;
-        INT             iSockaddrLength;
-} SOCKET_ADDRESS, *PSOCKET_ADDRESS, *LPSOCKET_ADDRESS;
-
-typedef struct _CSADDR_INFO {
-        SOCKET_ADDRESS  LocalAddr;
-        SOCKET_ADDRESS  RemoteAddr;
-        INT             iSocketType;
-        INT             iProtocol;
-} CSADDR_INFO, *PCSADDR_INFO, *LPCSADDR_INFO;
-#endif
-
-/*socket address list */
-typedef struct _SOCKET_ADDRESS_LIST {
-        INT             iAddressCount;
-        SOCKET_ADDRESS  Address[1];
-} SOCKET_ADDRESS_LIST, *LPSOCKET_ADDRESS_LIST;
 
 /*   addressfamily protocol pairs */
 typedef struct _AFPROTOCOLS {
@@ -488,6 +591,37 @@ DECL_WINELIB_TYPE_AW(WSANAMESPACE_INFO)
 DECL_WINELIB_TYPE_AW(PWSANAMESPACE_INFO)
 DECL_WINELIB_TYPE_AW(LPWSANAMESPACE_INFO)
 
+typedef enum _WSACOMPLETIONTYPE {
+    NSP_NOTIFY_IMMEDIATELY = 0,
+    NSP_NOTIFY_HWND = 1,
+    NSP_NOTIFY_EVENT = 2,
+    NSP_NOTIFY_PORT = 3,
+    NSP_NOTIFY_APC = 4
+} WSACOMPLETIONTYPE, * PWSACOMPLETIONTYPE, * LPWSACOMPLETIONTYPE;
+
+typedef struct _WSACOMPLETION {
+    WSACOMPLETIONTYPE Type;
+    union {
+        struct {
+            HWND hWnd;
+            UINT uMsg;
+            WPARAM context;
+        } WindowMessage;
+        struct {
+            LPWSAOVERLAPPED lpOverlapped;
+        } Event;
+        struct {
+            LPWSAOVERLAPPED lpOverlapped;
+            LPWSAOVERLAPPED_COMPLETION_ROUTINE lpfnCompletionProc;
+        } Apc;
+        struct {
+            LPWSAOVERLAPPED lpOverlapped;
+            HANDLE hPort;
+            ULONG_PTR Key;
+        } Port;
+    } Parameters;
+} WSACOMPLETION, *PWSACOMPLETION, *LPWSACOMPLETION;
+
 /*
  * Winsock Function Typedefs
  *
@@ -495,13 +629,13 @@ DECL_WINELIB_TYPE_AW(LPWSANAMESPACE_INFO)
  * "Prototypes" section in winsock.h.
  */
 #if WS_API_TYPEDEFS
-typedef HANDLE (WINAPI *LPFN_WSAASYNCGETHOSTBYADDR)(HWND,u_int,const char*,int,int,char*,int);
-typedef HANDLE (WINAPI *LPFN_WSAASYNCGETHOSTBYNAME)(HWND,u_int,const char*,char*,int);
-typedef HANDLE (WINAPI *LPFN_WSAASYNCGETPROTOBYNAME)(HWND,u_int,const char*,char*,int);
-typedef HANDLE (WINAPI *LPFN_WSAASYNCGETPROTOBYNUMBER)(HWND,u_int,int,char*,int);
-typedef HANDLE (WINAPI *LPFN_WSAASYNCGETSERVBYNAME)(HWND,u_int,const char*,const char*,char*,int);
-typedef HANDLE (WINAPI *LPFN_WSAASYNCGETSERVBYPORT)(HWND,u_int,int,const char*,char*,int);
-typedef int (WINAPI *LPFN_WSAASYNCSELECT)(SOCKET,HWND,u_int,long);
+typedef HANDLE (WINAPI *LPFN_WSAASYNCGETHOSTBYADDR)(HWND,WS(u_int),const char*,int,int,char*,int);
+typedef HANDLE (WINAPI *LPFN_WSAASYNCGETHOSTBYNAME)(HWND,WS(u_int),const char*,char*,int);
+typedef HANDLE (WINAPI *LPFN_WSAASYNCGETPROTOBYNAME)(HWND,WS(u_int),const char*,char*,int);
+typedef HANDLE (WINAPI *LPFN_WSAASYNCGETPROTOBYNUMBER)(HWND,WS(u_int),int,char*,int);
+typedef HANDLE (WINAPI *LPFN_WSAASYNCGETSERVBYNAME)(HWND,WS(u_int),const char*,const char*,char*,int);
+typedef HANDLE (WINAPI *LPFN_WSAASYNCGETSERVBYPORT)(HWND,WS(u_int),int,const char*,char*,int);
+typedef int (WINAPI *LPFN_WSAASYNCSELECT)(SOCKET,HWND,WS(u_int),LONG);
 typedef int (WINAPI *LPFN_WSACANCELASYNCREQUEST)(HANDLE);
 typedef int (WINAPI *LPFN_WSACANCELBLOCKINGCALL)(void);
 typedef int (WINAPI *LPFN_WSACLEANUP)(void);
@@ -529,14 +663,14 @@ typedef struct WS(servent)* (WINAPI *LPFN_GETSERVBYNAME)(const char*,const char*
 typedef struct WS(servent)* (WINAPI *LPFN_GETSERVBYPORT)(int,const char*);
 typedef int (WINAPI *LPFN_GETSOCKNAME)(SOCKET,struct WS(sockaddr)*,int*);
 typedef int (WINAPI *LPFN_GETSOCKOPT)(SOCKET,int,int,char*,int*);
-typedef u_long (WINAPI *LPFN_HTONL)(u_long);
-typedef u_short (WINAPI *LPFN_HTONS)(u_short);
-typedef unsigned long (WINAPI *LPFN_INET_ADDR)(const char*);
-typedef char* (WINAPI *LPFN_INET_NTOA)(struct WS(in_addr);
-typedef int (WINAPI *LPFN_IOCTLSOCKET)(SOCKET,long,u_long*);
+typedef ULONG (WINAPI *LPFN_HTONL)(ULONG);
+typedef WS(u_short) (WINAPI *LPFN_HTONS)(WS(u_short));
+typedef ULONG (WINAPI *LPFN_INET_ADDR)(const char*);
+typedef char* (WINAPI *LPFN_INET_NTOA)(struct WS(in_addr));
+typedef int (WINAPI *LPFN_IOCTLSOCKET)(SOCKET,LONG,ULONG*);
 typedef int (WINAPI *LPFN_LISTEN)(SOCKET,int);
-typedef u_long (WINAPI *LPFN_NTOHL)(u_long);
-typedef u_short (WINAPI *LPFN_NTOHS)(u_short);
+typedef ULONG (WINAPI *LPFN_NTOHL)(ULONG);
+typedef WS(u_short) (WINAPI *LPFN_NTOHS)(WS(u_short));
 typedef int (WINAPI *LPFN_RECV)(SOCKET,char*,int,int);
 typedef int (WINAPI *LPFN_RECVFROM)(SOCKET,char*,int,int,struct WS(sockaddr)*,int*);
 typedef int (WINAPI *LPFN_SEND)(SOCKET,const char*,int,int);
@@ -555,7 +689,7 @@ typedef SOCKET (WINAPI *LPFN_SOCKET)(int,int,int);
  * "Winsock2 Function Typedefs" section below.
  */
 #if WS_API_PROTOTYPES
-SOCKET WINAPI WSAAccept(SOCKET,struct WS(sockaddr)*,LPINT,LPCONDITIONPROC,DWORD);
+SOCKET WINAPI WSAAccept(SOCKET,struct WS(sockaddr)*,LPINT,LPCONDITIONPROC,DWORD_PTR);
 INT WINAPI WSAAddressToStringA(LPSOCKADDR,DWORD,LPWSAPROTOCOL_INFOA,LPSTR,LPDWORD);
 INT WINAPI WSAAddressToStringW(LPSOCKADDR,DWORD,LPWSAPROTOCOL_INFOW,LPWSTR,LPDWORD);
 #define WSAAddressToString         WINELIB_NAME_AW(WSAAddressToString)
@@ -572,7 +706,7 @@ int WINAPI WSAEnumNetworkEvents(SOCKET,WSAEVENT,LPWSANETWORKEVENTS);
 int WINAPI WSAEnumProtocolsA(LPINT,LPWSAPROTOCOL_INFOA,LPDWORD);
 int WINAPI WSAEnumProtocolsW(LPINT,LPWSAPROTOCOL_INFOW,LPDWORD);
 #define WSAEnumProtocols           WINELIB_NAME_AW(WSAEnumProtocols)
-int WINAPI WSAEventSelect(SOCKET,WSAEVENT,long);
+int WINAPI WSAEventSelect(SOCKET,WSAEVENT,LONG);
 BOOL WINAPI WSAGetOverlappedResult(SOCKET,LPWSAOVERLAPPED,LPDWORD,BOOL,LPDWORD);
 BOOL WINAPI WSAGetQOSByName(SOCKET,LPWSABUF,LPQOS);
 INT WINAPI WSAGetServiceClassInfoA(LPGUID,LPGUID,LPDWORD,LPWSASERVICECLASSINFOA);
@@ -581,8 +715,8 @@ INT WINAPI WSAGetServiceClassInfoW(LPGUID,LPGUID,LPDWORD,LPWSASERVICECLASSINFOW)
 INT WINAPI WSAGetServiceClassNameByClassIdA(LPGUID,LPSTR,LPDWORD);
 INT WINAPI WSAGetServiceClassNameByClassIdW(LPGUID,LPWSTR,LPDWORD);
 #define WSAGetServiceClassNameByClassId WINELIB_NAME_AW(WSAGetServiceClassNameByClassId)
-int WINAPI WSAHtonl(SOCKET,u_long,u_long*);
-int WINAPI WSAHtons(SOCKET,u_short,u_short*);
+int WINAPI WSAHtonl(SOCKET,ULONG,ULONG*);
+int WINAPI WSAHtons(SOCKET,WS(u_short),WS(u_short)*);
 int WINAPI WSAInstallServiceClassA(LPWSASERVICECLASSINFOA);
 int WINAPI WSAInstallServiceClassW(LPWSASERVICECLASSINFOW);
 #define WSAInstallServiceClass     WINELIB_NAME_AW(WSAInstallServiceClass)
@@ -595,8 +729,10 @@ INT WINAPI WSALookupServiceEnd(HANDLE);
 INT WINAPI WSALookupServiceNextA(HANDLE,DWORD,LPDWORD,LPWSAQUERYSETA);
 INT WINAPI WSALookupServiceNextW(HANDLE,DWORD,LPDWORD,LPWSAQUERYSETW);
 #define WSALookupServiceNext       WINELIB_NAME_AW(WSALookupServiceNext) 
-int WINAPI WSANtohl(SOCKET,u_long,u_long*);
-int WINAPI WSANtohs(SOCKET,u_short,u_short*);
+int WINAPI WSANSPIoctl(HANDLE,DWORD,LPVOID,DWORD,LPVOID,DWORD,LPDWORD,LPWSACOMPLETION);
+int WINAPI WSANtohl(SOCKET,ULONG,ULONG*);
+int WINAPI WSANtohs(SOCKET,WS(u_short),WS(u_short)*);
+int WINAPI WSAPoll(WSAPOLLFD*,ULONG,int);
 INT WINAPI WSAProviderConfigChange(LPHANDLE,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 int WINAPI WSARecv(SOCKET,LPWSABUF,DWORD,LPDWORD,LPDWORD,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 int WINAPI WSARecvDisconnect(SOCKET,LPWSABUF);
@@ -628,9 +764,9 @@ DWORD WINAPI WSAWaitForMultipleEvents(DWORD,const WSAEVENT*,BOOL,DWORD,BOOL);
  * "Winsock2 Prototypes" section above.
  */
 #if WS_API_TYPEDEFS
-typedef SOCKET (WINAPI *LPFN_WSAACCEPT)(SOCKET,WS(sockaddr)*,LPINT,LPCONDITIONPROC,DWORD);
-typedef INT (WINAPI *LPFN_WSAADRESSTOSTRINGA)(LPSOCKADDR,DWORD,LPWSAPROTOCOL_INFOA,LPSTR,LPDWORD);
-typedef INT (WINAPI *LPFN_WSAADRESSTOSTRINGW)(LPSOCKADDR,DWORD,LPWSAPROTOCOL_INFOW,LPWSTR,LPDWORD);
+typedef SOCKET (WINAPI *LPFN_WSAACCEPT)(SOCKET,struct WS(sockaddr)*,LPINT,LPCONDITIONPROC,DWORD_PTR);
+typedef INT (WINAPI *LPFN_WSAADDRESSTOSTRINGA)(LPSOCKADDR,DWORD,LPWSAPROTOCOL_INFOA,LPSTR,LPDWORD);
+typedef INT (WINAPI *LPFN_WSAADDRESSTOSTRINGW)(LPSOCKADDR,DWORD,LPWSAPROTOCOL_INFOW,LPWSTR,LPDWORD);
 #define LPFN_WSAADDRESSTOSTRING    WINELIB_NAME_AW(LPFN_WSAADDRESSTOSTRING)
 typedef BOOL (WINAPI *LPFN_WSACLOSEEVENT)(WSAEVENT);
 typedef int (WINAPI *LPFN_WSACONNECT)(SOCKET,const struct WS(sockaddr)*,int,LPWSABUF,LPWSABUF,LPQOS,LPQOS);
@@ -638,38 +774,40 @@ typedef WSAEVENT (WINAPI *LPFN_WSACREATEEVENT)(void);
 typedef INT (WINAPI *LPFN_WSADUPLICATESOCKETA)(SOCKET,DWORD,LPWSAPROTOCOL_INFOA);
 typedef INT (WINAPI *LPFN_WSADUPLICATESOCKETW)(SOCKET,DWORD,LPWSAPROTOCOL_INFOW);
 #define LPFN_WSADUPLICATESOCKET    WINELIB_NAME_AW(LPFN_WSADUPLICATESOCKET)
-typedef INT (WINAPI *LPFNWSAENUMNAMESPACEPROVIDERSA)(LPDWORD,LPWSANAMESPACE_INFOA);
-typedef INT (WINAPI *LPFNWSAENUMNAMESPACEPROVIDERSW)(LPDWORD,LPWSANAMESPACE_INFOW);
-#define LPFN_WSAENUMNAMESPACEPROVIDERS WINELIB_NAME_AW(LPFNWSAENUMNAMESPACEPROVIDERS)
-typedef int (WINAPI *LPFN_WSAENUMNETWORKEVENT)(SOCKET,WSAEVENT,LPWSANETWORKEVENTS);
+typedef INT (WINAPI *LPFN_WSAENUMNAMESPACEPROVIDERSA)(LPDWORD,LPWSANAMESPACE_INFOA);
+typedef INT (WINAPI *LPFN_WSAENUMNAMESPACEPROVIDERSW)(LPDWORD,LPWSANAMESPACE_INFOW);
+#define LPFN_WSAENUMNAMESPACEPROVIDERS WINELIB_NAME_AW(LPFN_WSAENUMNAMESPACEPROVIDERS)
+typedef int (WINAPI *LPFN_WSAENUMNETWORKEVENTS)(SOCKET,WSAEVENT,LPWSANETWORKEVENTS);
 typedef int (WINAPI *LPFN_WSAENUMPROTOCOLSA)(LPINT,LPWSAPROTOCOL_INFOA,LPDWORD);
 typedef int (WINAPI *LPFN_WSAENUMPROTOCOLSW)(LPINT,LPWSAPROTOCOL_INFOW,LPDWORD);
 #define LPFN_WSAENUMPROTOCOLS      WINELIB_NAME_AW(LPFN_WSAENUMPROTOCOLS)
-typedef int (WINAPI *LPFN_WSAEVENTSELECT)(SOCKET,WSAEVENT,long);
+typedef int (WINAPI *LPFN_WSAEVENTSELECT)(SOCKET,WSAEVENT,LONG);
 typedef BOOL (WINAPI *LPFN_WSAGETOVERLAPPEDRESULT)(SOCKET,LPWSAOVERLAPPED,LPDWORD,BOOL,LPDWORD);
-typedef BOOL (WINAPI *LPFNWSAGETQOSBYNAME)(SOCKET,LPWSABUF,LPQOS);
-typedef INT (WINAPI *LPFNWSAGETSERVICECLASSINFOA)(LPGUID,LPGUID,LPDWORD,LPWSASERVICECLASSINFOA);
-typedef INT (WINAPI *LPFNWSAGETSERVICECLASSINFOW)(LPGUID,LPGUID,LPDWORD,LPWSASERVICECLASSINFOW);
+typedef BOOL (WINAPI *LPFN_WSAGETQOSBYNAME)(SOCKET,LPWSABUF,LPQOS);
+typedef INT (WINAPI *LPFN_WSAGETSERVICECLASSINFOA)(LPGUID,LPGUID,LPDWORD,LPWSASERVICECLASSINFOA);
+typedef INT (WINAPI *LPFN_WSAGETSERVICECLASSINFOW)(LPGUID,LPGUID,LPDWORD,LPWSASERVICECLASSINFOW);
 #define LPFN_LPFNWSAGETSERVICECLASSINFO WINELIB_NAME_AW(LPFN_LPFNWSAGETSERVICECLASSINFO)
 typedef INT (WINAPI *LPFN_WSAGETSERVICECLASSNAMEBYCLASSIDA)(LPGUID,LPSTR,LPDWORD);
 typedef INT (WINAPI *LPFN_WSAGETSERVICECLASSNAMEBYCLASSIDW)(LPGUID,LPWSTR,LPDWORD);
 #define LPFN_WSAGETSERVICECLASSNAMEBYCLASSID WINELIB_NAME_AW(LPFN_WSAGETSERVICECLASSNAMEBYCLASSID)
-typedef int (WINAPI *LPFN_WSAHTONL)(SOCKET,u_long,u_long*);
-typedef int (WINAPI *LPFN_WSAHTONS)(SOCKET,u_short,u_short*);
-typedef int (WINAPI LPFN_WSAINSTALLSERVICECLASSA)(LPWSASERVICECLASSINFOA);
-typedef int (WINAPI LPFN_WSAINSTALLSERVICECLASSW)(LPWSASERVICECLASSINFOW);
+typedef int (WINAPI *LPFN_WSAHTONL)(SOCKET,ULONG,ULONG*);
+typedef int (WINAPI *LPFN_WSAHTONS)(SOCKET,WS(u_short),WS(u_short)*);
+typedef int (WINAPI *LPFN_WSAINSTALLSERVICECLASSA)(LPWSASERVICECLASSINFOA);
+typedef int (WINAPI *LPFN_WSAINSTALLSERVICECLASSW)(LPWSASERVICECLASSINFOW);
 typedef int (WINAPI *LPFN_WSAIOCTL)(SOCKET,DWORD,LPVOID,DWORD,LPVOID,DWORD,LPDWORD,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 typedef int (WINAPI *LPFN_WSAJOINLEAF)(SOCKET,const struct WS(sockaddr)*,int,LPWSABUF,LPWSABUF,LPQOS,LPQOS,DWORD);
 typedef INT (WINAPI *LPFN_WSALOOKUPSERVICEBEGINA)(LPWSAQUERYSETA,DWORD,LPHANDLE);
 typedef INT (WINAPI *LPFN_WSALOOKUPSERVICEBEGINW)(LPWSAQUERYSETW,DWORD,LPHANDLE);
-#define LPFN_WSALOOKUPSERVICEBEGIN WINELIB_NAME_AW(LPFN_WSALOOKUPSERVICEBEGIN);
-typedef INT (WINAPI *LPFN_WSALOOKUPSERVICEEND(HANDLE);
+#define LPFN_WSALOOKUPSERVICEBEGIN WINELIB_NAME_AW(LPFN_WSALOOKUPSERVICEBEGIN)
+typedef INT (WINAPI *LPFN_WSALOOKUPSERVICEEND)(HANDLE);
 typedef INT (WINAPI *LPFN_WSALOOKUPSERVICENEXTA)(HANDLE,DWORD,LPDWORD,LPWSAQUERYSETA);
 typedef INT (WINAPI *LPFN_WSALOOKUPSERVICENEXTW)(HANDLE,DWORD,LPDWORD,LPWSAQUERYSETW);
 #define LPFN_WSALOOKUPSERVICENEXT WINELIB_NAME_AW(LPFN_WSALOOKUPSERVICENEXT)
-typedef int (WINAPI *LPFN_WSANTOHL)(SOCKET,u_long,u_long*);
-typedef int (WINAPI *LPFN_WSANTOHS)(SOCKET,u_short,u_short*);
+typedef int (WINAPI *LPFN_WSANSPIOCTL)(HANDLE,DWORD,LPVOID,DWORD,LPVOID,DWORD,LPDWORD,LPWSACOMPLETION);
+typedef int (WINAPI *LPFN_WSANTOHL)(SOCKET,ULONG,ULONG*);
+typedef int (WINAPI *LPFN_WSANTOHS)(SOCKET,WS(u_short),WS(u_short)*);
 typedef INT (WINAPI *LPFN_WSAPROVIDERCONFIGCHANGE)(LPHANDLE,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
+typedef int (WINAPI *LPFN_WSAPOLL)(WSAPOLLFD*,ULONG,int);
 typedef int (WINAPI *LPFN_WSARECV)(SOCKET,LPWSABUF,DWORD,LPDWORD,LPDWORD,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 typedef int (WINAPI *LPFN_WSARECVDISCONNECT)(SOCKET,LPWSABUF);
 typedef int (WINAPI *LPFN_WSARECVFROM)(SOCKET,LPWSABUF,DWORD,LPDWORD,LPDWORD,struct WS(sockaddr)*,LPINT,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);

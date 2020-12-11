@@ -15,12 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINTERNL_H
 #define __WINE_WINTERNL_H
 
+#include <ntdef.h>
 #include <windef.h>
 
 #ifdef __cplusplus
@@ -37,16 +38,19 @@ extern "C" {
 typedef LONG NTSTATUS;
 #endif
 
-typedef CONST char *PCSZ;
+typedef const char *PCSZ;
 
 typedef short CSHORT;
 typedef CSHORT *PCSHORT;
 
+#ifndef __STRING_DEFINED__
+#define __STRING_DEFINED__
 typedef struct _STRING {
   USHORT Length;
   USHORT MaximumLength;
   PCHAR Buffer;
 } STRING, *PSTRING;
+#endif
 
 typedef STRING ANSI_STRING;
 typedef PSTRING PANSI_STRING;
@@ -56,11 +60,14 @@ typedef STRING OEM_STRING;
 typedef PSTRING POEM_STRING;
 typedef const STRING *PCOEM_STRING;
 
+#ifndef __UNICODE_STRING_DEFINED__
+#define __UNICODE_STRING_DEFINED__
 typedef struct _UNICODE_STRING {
   USHORT Length;        /* bytes */
   USHORT MaximumLength; /* bytes */
   PWSTR  Buffer;
 } UNICODE_STRING, *PUNICODE_STRING;
+#endif
 
 typedef const UNICODE_STRING *PCUNICODE_STRING;
 
@@ -82,7 +89,7 @@ typedef struct _FILETIME
 /*
  * RTL_SYSTEM_TIME and RTL_TIME_ZONE_INFORMATION are the same as
  * the SYSTEMTIME and TIME_ZONE_INFORMATION structures defined
- * in winbase.h, however we need to define them seperately so
+ * in winbase.h, however we need to define them separately so
  * winternl.h doesn't depend on winbase.h.  They are used by
  * RtlQueryTimeZoneInformation and RtlSetTimeZoneInformation.
  * The names are guessed; if anybody knows the real names, let me know.
@@ -108,6 +115,19 @@ typedef struct _RTL_TIME_ZONE_INFORMATION {
     LONG DaylightBias;
 } RTL_TIME_ZONE_INFORMATION, *PRTL_TIME_ZONE_INFORMATION;
 
+typedef struct _RTL_TIME_DYNAMIC_ZONE_INFORMATION
+{
+    LONG Bias;
+    WCHAR StandardName[32];
+    RTL_SYSTEM_TIME StandardDate;
+    LONG StandardBias;
+    WCHAR DaylightName[32];
+    RTL_SYSTEM_TIME DaylightDate;
+    LONG DaylightBias;
+    WCHAR TimeZoneKeyName[128];
+    BOOLEAN DynamicDaylightTimeDisabled;
+} RTL_DYNAMIC_TIME_ZONE_INFORMATION, *PRTL_DYNAMIC_TIME_ZONE_INFORMATION;
+
 typedef struct _CLIENT_ID
 {
    HANDLE UniqueProcess;
@@ -127,6 +147,13 @@ typedef struct RTL_DRIVE_LETTER_CURDIR
     ULONG               TimeStamp;
     UNICODE_STRING      DosPath;
 } RTL_DRIVE_LETTER_CURDIR, *PRTL_DRIVE_LETTER_CURDIR;
+
+typedef struct _RTL_RELATIVE_NAME
+{
+    UNICODE_STRING RelativeName;
+    HANDLE         ContainerDirectory;
+    void          *CurDirRef;
+} RTL_RELATIVE_NAME, *PRTL_RELATIVE_NAME;
 
 typedef struct tagRTL_BITMAP {
     ULONG  SizeOfBitMap; /* Number of bits in the bitmap */
@@ -185,6 +212,7 @@ typedef struct _PEB_LDR_DATA
     LIST_ENTRY          InLoadOrderModuleList;
     LIST_ENTRY          InMemoryOrderModuleList;
     LIST_ENTRY          InInitializationOrderModuleList;
+    PVOID               EntryInProgress;
 } PEB_LDR_DATA, *PPEB_LDR_DATA;
 
 typedef struct _GDI_TEB_BATCH
@@ -194,137 +222,200 @@ typedef struct _GDI_TEB_BATCH
     ULONG  Buffer[0x136];
 } GDI_TEB_BATCH;
 
+typedef struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME
+{
+    struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME *Previous;
+    struct _ACTIVATION_CONTEXT                 *ActivationContext;
+    ULONG                                       Flags;
+} RTL_ACTIVATION_CONTEXT_STACK_FRAME, *PRTL_ACTIVATION_CONTEXT_STACK_FRAME;
+
+typedef struct _ACTIVATION_CONTEXT_STACK
+{
+    ULONG                               Flags;
+    ULONG                               NextCookieSequenceNumber;
+    RTL_ACTIVATION_CONTEXT_STACK_FRAME *ActiveFrame;
+    LIST_ENTRY                          FrameListCache;
+} ACTIVATION_CONTEXT_STACK, *PACTIVATION_CONTEXT_STACK;
+
+typedef struct _TEB_ACTIVE_FRAME_CONTEXT
+{
+    ULONG       Flags;
+    const char *FrameName;
+} TEB_ACTIVE_FRAME_CONTEXT, *PTEB_ACTIVE_FRAME_CONTEXT;
+
+typedef struct _TEB_ACTIVE_FRAME_CONTEXT_EX
+{
+    TEB_ACTIVE_FRAME_CONTEXT BasicContext;
+    const char              *SourceLocation;
+} TEB_ACTIVE_FRAME_CONTEXT_EX, *PTEB_ACTIVE_FRAME_CONTEXT_EX;
+
+typedef struct _TEB_ACTIVE_FRAME
+{
+    ULONG                     Flags;
+    struct _TEB_ACTIVE_FRAME *Previous;
+    TEB_ACTIVE_FRAME_CONTEXT *Context;
+} TEB_ACTIVE_FRAME, *PTEB_ACTIVE_FRAME;
+
+typedef struct _TEB_ACTIVE_FRAME_EX
+{
+    TEB_ACTIVE_FRAME BasicFrame;
+    void            *ExtensionIdentifier;
+} TEB_ACTIVE_FRAME_EX, *PTEB_ACTIVE_FRAME_EX;
+
+#define TEB_ACTIVE_FRAME_CONTEXT_FLAG_EXTENDED 0x00000001
+#define TEB_ACTIVE_FRAME_FLAG_EXTENDED         0x00000001
+
 /***********************************************************************
  * PEB data structure
  */
 typedef struct _PEB
-{
-    BOOLEAN                      InheritedAddressSpace;             /*  00 */
-    BOOLEAN                      ReadImageFileExecOptions;          /*  01 */
-    BOOLEAN                      BeingDebugged;                     /*  02 */
-    BOOLEAN                      SpareBool;                         /*  03 */
-    HANDLE                       Mutant;                            /*  04 */
-    HMODULE                      ImageBaseAddress;                  /*  08 */
-    PPEB_LDR_DATA                LdrData;                           /*  0c */
-    RTL_USER_PROCESS_PARAMETERS *ProcessParameters;                 /*  10 */
-    PVOID                        SubSystemData;                     /*  14 */
-    HANDLE                       ProcessHeap;                       /*  18 */
-    PRTL_CRITICAL_SECTION        FastPebLock;                       /*  1c */
-    PVOID /*PPEBLOCKROUTINE*/    FastPebLockRoutine;                /*  20 */
-    PVOID /*PPEBLOCKROUTINE*/    FastPebUnlockRoutine;              /*  24 */
-    ULONG                        EnvironmentUpdateCount;            /*  28 */
-    PVOID                        KernelCallbackTable;               /*  2c */
-    PVOID                        EventLogSection;                   /*  30 */
-    PVOID                        EventLog;                          /*  34 */
-    PVOID /*PPEB_FREE_BLOCK*/    FreeList;                          /*  38 */
-    ULONG                        TlsExpansionCounter;               /*  3c */
-    PRTL_BITMAP                  TlsBitmap;                         /*  40 */
-    ULONG                        TlsBitmapBits[2];                  /*  44 */
-    PVOID                        ReadOnlySharedMemoryBase;          /*  4c */
-    PVOID                        ReadOnlySharedMemoryHeap;          /*  50 */
-    PVOID                       *ReadOnlyStaticServerData;          /*  54 */
-    PVOID                        AnsiCodePageData;                  /*  58 */
-    PVOID                        OemCodePageData;                   /*  5c */
-    PVOID                        UnicodeCaseTableData;              /*  60 */
-    ULONG                        NumberOfProcessors;                /*  64 */
-    ULONG                        NtGlobalFlag;                      /*  68 */
-    BYTE                         Spare2[4];                         /*  6c */
-    LARGE_INTEGER                CriticalSectionTimeout;            /*  70 */
-    ULONG                        HeapSegmentReserve;                /*  78 */
-    ULONG                        HeapSegmentCommit;                 /*  7c */
-    ULONG                        HeapDeCommitTotalFreeThreshold;    /*  80 */
-    ULONG                        HeapDeCommitFreeBlockThreshold;    /*  84 */
-    ULONG                        NumberOfHeaps;                     /*  88 */
-    ULONG                        MaximumNumberOfHeaps;              /*  8c */
-    PVOID                       *ProcessHeaps;                      /*  90 */
-    PVOID                        GdiSharedHandleTable;              /*  94 */
-    PVOID                        ProcessStarterHelper;              /*  98 */
-    PVOID                        GdiDCAttributeList;                /*  9c */
-    PVOID                        LoaderLock;                        /*  a0 */
-    ULONG                        OSMajorVersion;                    /*  a4 */
-    ULONG                        OSMinorVersion;                    /*  a8 */
-    ULONG                        OSBuildNumber;                     /*  ac */
-    ULONG                        OSPlatformId;                      /*  b0 */
-    ULONG                        ImageSubSystem;                    /*  b4 */
-    ULONG                        ImageSubSystemMajorVersion;        /*  b8 */
-    ULONG                        ImageSubSystemMinorVersion;        /*  bc */
-    ULONG                        ImageProcessAffinityMask;          /*  c0 */
-    ULONG                        GdiHandleBuffer[34];               /*  c4 */
-    ULONG                        PostProcessInitRoutine;            /* 14c */
-    PRTL_BITMAP                  TlsExpansionBitmap;                /* 150 */
-    ULONG                        TlsExpansionBitmapBits[32];        /* 154 */
-    ULONG                        SessionId;                         /* 1d4 */
+{                                                                 /* win32/win64 */
+    BOOLEAN                      InheritedAddressSpace;             /* 000/000 */
+    BOOLEAN                      ReadImageFileExecOptions;          /* 001/001 */
+    BOOLEAN                      BeingDebugged;                     /* 002/002 */
+    BOOLEAN                      SpareBool;                         /* 003/003 */
+    HANDLE                       Mutant;                            /* 004/008 */
+    HMODULE                      ImageBaseAddress;                  /* 008/010 */
+    PPEB_LDR_DATA                LdrData;                           /* 00c/018 */
+    RTL_USER_PROCESS_PARAMETERS *ProcessParameters;                 /* 010/020 */
+    PVOID                        SubSystemData;                     /* 014/028 */
+    HANDLE                       ProcessHeap;                       /* 018/030 */
+    PRTL_CRITICAL_SECTION        FastPebLock;                       /* 01c/038 */
+    PVOID /*PPEBLOCKROUTINE*/    FastPebLockRoutine;                /* 020/040 */
+    PVOID /*PPEBLOCKROUTINE*/    FastPebUnlockRoutine;              /* 024/048 */
+    ULONG                        EnvironmentUpdateCount;            /* 028/050 */
+    PVOID                        KernelCallbackTable;               /* 02c/058 */
+    ULONG                        Reserved[2];                       /* 030/060 */
+    PVOID /*PPEB_FREE_BLOCK*/    FreeList;                          /* 038/068 */
+    ULONG                        TlsExpansionCounter;               /* 03c/070 */
+    PRTL_BITMAP                  TlsBitmap;                         /* 040/078 */
+    ULONG                        TlsBitmapBits[2];                  /* 044/080 */
+    PVOID                        ReadOnlySharedMemoryBase;          /* 04c/088 */
+    PVOID                        ReadOnlySharedMemoryHeap;          /* 050/090 */
+    PVOID                       *ReadOnlyStaticServerData;          /* 054/098 */
+    PVOID                        AnsiCodePageData;                  /* 058/0a0 */
+    PVOID                        OemCodePageData;                   /* 05c/0a8 */
+    PVOID                        UnicodeCaseTableData;              /* 060/0b0 */
+    ULONG                        NumberOfProcessors;                /* 064/0b8 */
+    ULONG                        NtGlobalFlag;                      /* 068/0bc */
+    LARGE_INTEGER                CriticalSectionTimeout;            /* 070/0c0 */
+    SIZE_T                       HeapSegmentReserve;                /* 078/0c8 */
+    SIZE_T                       HeapSegmentCommit;                 /* 07c/0d0 */
+    SIZE_T                       HeapDeCommitTotalFreeThreshold;    /* 080/0d8 */
+    SIZE_T                       HeapDeCommitFreeBlockThreshold;    /* 084/0e0 */
+    ULONG                        NumberOfHeaps;                     /* 088/0e8 */
+    ULONG                        MaximumNumberOfHeaps;              /* 08c/0ec */
+    PVOID                       *ProcessHeaps;                      /* 090/0f0 */
+    PVOID                        GdiSharedHandleTable;              /* 094/0f8 */
+    PVOID                        ProcessStarterHelper;              /* 098/100 */
+    PVOID                        GdiDCAttributeList;                /* 09c/108 */
+    PVOID                        LoaderLock;                        /* 0a0/110 */
+    ULONG                        OSMajorVersion;                    /* 0a4/118 */
+    ULONG                        OSMinorVersion;                    /* 0a8/11c */
+    ULONG                        OSBuildNumber;                     /* 0ac/120 */
+    ULONG                        OSPlatformId;                      /* 0b0/124 */
+    ULONG                        ImageSubSystem;                    /* 0b4/128 */
+    ULONG                        ImageSubSystemMajorVersion;        /* 0b8/12c */
+    ULONG                        ImageSubSystemMinorVersion;        /* 0bc/130 */
+    ULONG                        ImageProcessAffinityMask;          /* 0c0/134 */
+    HANDLE                       GdiHandleBuffer[28];               /* 0c4/138 */
+    ULONG                        unknown[6];                        /* 134/218 */
+    PVOID                        PostProcessInitRoutine;            /* 14c/230 */
+    PRTL_BITMAP                  TlsExpansionBitmap;                /* 150/238 */
+    ULONG                        TlsExpansionBitmapBits[32];        /* 154/240 */
+    ULONG                        SessionId;                         /* 1d4/2c0 */
+    ULARGE_INTEGER               AppCompatFlags;                    /* 1d8/2c8 */
+    ULARGE_INTEGER               AppCompatFlagsUser;                /* 1e0/2d0 */
+    PVOID                        ShimData;                          /* 1e8/2d8 */
+    PVOID                        AppCompatInfo;                     /* 1ec/2e0 */
+    UNICODE_STRING               CSDVersion;                        /* 1f0/2e8 */
+    PVOID                        ActivationContextData;             /* 1f8/2f8 */
+    PVOID                        ProcessAssemblyStorageMap;         /* 1fc/300 */
+    PVOID                        SystemDefaultActivationData;       /* 200/308 */
+    PVOID                        SystemAssemblyStorageMap;          /* 204/310 */
+    SIZE_T                       MinimumStackCommit;                /* 208/318 */
+    PVOID                       *FlsCallback;                       /* 20c/320 */
+    LIST_ENTRY                   FlsListHead;                       /* 210/328 */
+    PRTL_BITMAP                  FlsBitmap;                         /* 218/338 */
+    ULONG                        FlsBitmapBits[4];                  /* 21c/340 */
 } PEB, *PPEB;
 
 
 /***********************************************************************
  * TEB data structure
  */
-#ifndef WINE_NO_TEB  /* don't define TEB if included from thread.h */
-# ifndef WINE_TEB_DEFINED
-# define WINE_TEB_DEFINED
 typedef struct _TEB
-{
-    NT_TIB          Tib;                        /* 000 */
-    PVOID           EnvironmentPointer;         /* 01c */
-    CLIENT_ID       ClientId;                   /* 020 */
-    PVOID           ActiveRpcHandle;            /* 028 */
-    PVOID           ThreadLocalStoragePointer;  /* 02c */
-    PPEB            Peb;                        /* 030 */
-    ULONG           LastErrorValue;             /* 034 */
-    ULONG           CountOfOwnedCriticalSections;/* 038 */
-    PVOID           CsrClientThread;            /* 03c */
-    PVOID           Win32ThreadInfo;            /* 040 */
-    ULONG           Win32ClientInfo[31];        /* 044 used for user32 private data in Wine */
-    PVOID           WOW32Reserved;              /* 0c0 */
-    ULONG           CurrentLocale;              /* 0c4 */
-    ULONG           FpSoftwareStatusRegister;   /* 0c8 */
-    PVOID           SystemReserved1[54];        /* 0cc used for kernel32 private data in Wine */
-    PVOID           Spare1;                     /* 1a4 */
-    LONG            ExceptionCode;              /* 1a8 */
-    BYTE            SpareBytes1[40];            /* 1ac */
-    PVOID           SystemReserved2[10];        /* 1d4 used for ntdll private data in Wine */
-    GDI_TEB_BATCH   GdiTebBatch;                /* 1fc */
-    ULONG           gdiRgn;                     /* 6dc */
-    ULONG           gdiPen;                     /* 6e0 */
-    ULONG           gdiBrush;                   /* 6e4 */
-    CLIENT_ID       RealClientId;               /* 6e8 */
-    HANDLE          GdiCachedProcessHandle;     /* 6f0 */
-    ULONG           GdiClientPID;               /* 6f4 */
-    ULONG           GdiClientTID;               /* 6f8 */
-    PVOID           GdiThreadLocaleInfo;        /* 6fc */
-    PVOID           UserReserved[5];            /* 700 */
-    PVOID           glDispachTable[280];        /* 714 */
-    ULONG           glReserved1[26];            /* b74 */
-    PVOID           glReserved2;                /* bdc */
-    PVOID           glSectionInfo;              /* be0 */
-    PVOID           glSection;                  /* be4 */
-    PVOID           glTable;                    /* be8 */
-    PVOID           glCurrentRC;                /* bec */
-    PVOID           glContext;                  /* bf0 */
-    ULONG           LastStatusValue;            /* bf4 */
-    UNICODE_STRING  StaticUnicodeString;        /* bf8 used by advapi32 */
-    WCHAR           StaticUnicodeBuffer[261];   /* c00 used by advapi32 */
-    PVOID           DeallocationStack;          /* e0c */
-    PVOID           TlsSlots[64];               /* e10 */
-    LIST_ENTRY      TlsLinks;                   /* f10 */
-    PVOID           Vdm;                        /* f18 */
-    PVOID           ReservedForNtRpc;           /* f1c */
-    PVOID           DbgSsReserved[2];           /* f20 */
-    ULONG           HardErrorDisabled;          /* f28 */
-    PVOID           Instrumentation[16];        /* f2c */
-    PVOID           WinSockData;                /* f6c */
-    ULONG           GdiBatchCount;              /* f70 */
-    ULONG           Spare2;                     /* f74 */
-    ULONG           Spare3;                     /* f78 */
-    ULONG           Spare4;                     /* f7c */
-    PVOID           ReservedForOle;             /* f80 */
-    ULONG           WaitingOnLoaderLock;        /* f84 */
-    PVOID           Reserved5[3];               /* f88 */
-    PVOID          *TlsExpansionSlots;          /* f94 */
+{                                                                 /* win32/win64 */
+    NT_TIB                       Tib;                               /* 000/0000 */
+    PVOID                        EnvironmentPointer;                /* 01c/0038 */
+    CLIENT_ID                    ClientId;                          /* 020/0040 */
+    PVOID                        ActiveRpcHandle;                   /* 028/0050 */
+    PVOID                        ThreadLocalStoragePointer;         /* 02c/0058 */
+    PPEB                         Peb;                               /* 030/0060 */
+    ULONG                        LastErrorValue;                    /* 034/0068 */
+    ULONG                        CountOfOwnedCriticalSections;      /* 038/006c */
+    PVOID                        CsrClientThread;                   /* 03c/0070 */
+    PVOID                        Win32ThreadInfo;                   /* 040/0078 */
+    ULONG                        Win32ClientInfo[31];               /* 044/0080 used for user32 private data in Wine */
+    PVOID                        WOW32Reserved;                     /* 0c0/0100 */
+    ULONG                        CurrentLocale;                     /* 0c4/0108 */
+    ULONG                        FpSoftwareStatusRegister;          /* 0c8/010c */
+    PVOID                        SystemReserved1[54];               /* 0cc/0110 used for kernel32 private data in Wine */
+    LONG                         ExceptionCode;                     /* 1a4/02c0 */
+    ACTIVATION_CONTEXT_STACK     ActivationContextStack;            /* 1a8/02c8 */
+    BYTE                         SpareBytes1[24];                   /* 1bc/02e8 */
+    PVOID                        SystemReserved2[10];               /* 1d4/0300 used for ntdll platform-specific private data in Wine */
+    GDI_TEB_BATCH                GdiTebBatch;                       /* 1fc/0350 used for ntdll private data in Wine */
+    HANDLE                       gdiRgn;                            /* 6dc/0838 */
+    HANDLE                       gdiPen;                            /* 6e0/0840 */
+    HANDLE                       gdiBrush;                          /* 6e4/0848 */
+    CLIENT_ID                    RealClientId;                      /* 6e8/0850 */
+    HANDLE                       GdiCachedProcessHandle;            /* 6f0/0860 */
+    ULONG                        GdiClientPID;                      /* 6f4/0868 */
+    ULONG                        GdiClientTID;                      /* 6f8/086c */
+    PVOID                        GdiThreadLocaleInfo;               /* 6fc/0870 */
+    ULONG                        UserReserved[5];                   /* 700/0878 */
+    PVOID                        glDispatchTable[280];              /* 714/0890 */
+    PVOID                        glReserved1[26];                   /* b74/1150 */
+    PVOID                        glReserved2;                       /* bdc/1220 */
+    PVOID                        glSectionInfo;                     /* be0/1228 */
+    PVOID                        glSection;                         /* be4/1230 */
+    PVOID                        glTable;                           /* be8/1238 */
+    PVOID                        glCurrentRC;                       /* bec/1240 */
+    PVOID                        glContext;                         /* bf0/1248 */
+    ULONG                        LastStatusValue;                   /* bf4/1250 */
+    UNICODE_STRING               StaticUnicodeString;               /* bf8/1258 used by advapi32 */
+    WCHAR                        StaticUnicodeBuffer[261];          /* c00/1268 used by advapi32 */
+    PVOID                        DeallocationStack;                 /* e0c/1478 */
+    PVOID                        TlsSlots[64];                      /* e10/1480 */
+    LIST_ENTRY                   TlsLinks;                          /* f10/1680 */
+    PVOID                        Vdm;                               /* f18/1690 */
+    PVOID                        ReservedForNtRpc;                  /* f1c/1698 */
+    PVOID                        DbgSsReserved[2];                  /* f20/16a0 */
+    ULONG                        HardErrorDisabled;                 /* f28/16b0 */
+    PVOID                        Instrumentation[16];               /* f2c/16b8 */
+    PVOID                        WinSockData;                       /* f6c/1738 */
+    ULONG                        GdiBatchCount;                     /* f70/1740 */
+    ULONG                        Spare2;                            /* f74/1744 */
+    PVOID                        Spare3;                            /* f78/1748 */
+    PVOID                        Spare4;                            /* f7c/1750 */
+    PVOID                        ReservedForOle;                    /* f80/1758 */
+    ULONG                        WaitingOnLoaderLock;               /* f84/1760 */
+    PVOID                        Reserved5[3];                      /* f88/1768 */
+    PVOID                       *TlsExpansionSlots;                 /* f94/1780 */
+#ifdef _WIN64
+    PVOID                        DeallocationBStore;                /*    /1788 */
+    PVOID                        BStoreLimit;                       /*    /1790 */
+#endif
+    ULONG                        ImpersonationLocale;               /* f98/1798 */
+    ULONG                        IsImpersonating;                   /* f9c/179c */
+    PVOID                        NlsCache;                          /* fa0/17a0 */
+    PVOID                        ShimData;                          /* fa4/17a8 */
+    ULONG                        HeapVirtualAffinity;               /* fa8/17b0 */
+    PVOID                        CurrentTransactionHandle;          /* fac/17b8 */
+    TEB_ACTIVE_FRAME            *ActiveFrame;                       /* fb0/17c0 */
+    PVOID                       *FlsSlots;                          /* fb4/17c8 */
 } TEB, *PTEB;
-# endif /* WINE_TEB_DEFINED */
-#endif  /* WINE_NO_TEB */
 
 /***********************************************************************
  * Enums
@@ -367,6 +458,33 @@ typedef enum _FILE_INFORMATION_CLASS {
     FileNetworkOpenInformation,
     FileAttributeTagInformation,
     FileTrackingInformation,
+    FileIdBothDirectoryInformation,
+    FileIdFullDirectoryInformation,
+    FileValidDataLengthInformation,
+    FileShortNameInformation,
+    FileIoCompletionNotificationInformation,
+    FileIoStatusBlockRangeInformation,
+    FileIoPriorityHintInformation,
+    FileSfioReserveInformation,
+    FileSfioVolumeInformation,
+    FileHardLinkInformation,
+    FileProcessIdsUsingFileInformation,
+    FileNormalizedNameInformation,
+    FileNetworkPhysicalNameInformation,
+    FileIdGlobalTxDirectoryInformation,
+    FileIsRemoteDeviceInformation,
+    FileAttributeCacheInformation,
+    FileNumaNodeInformation,
+    FileStandardLinkInformation,
+    FileRemoteProtocolInformation,
+    FileRenameInformationBypassAccessCheck,
+    FileLinkInformationBypassAccessCheck,
+    FileVolumeNameInformation,
+    FileIdInformation,
+    FileIdExtdDirectoryInformation,
+    FileReplaceCompletionInformation,
+    FileHardLinkFullIdInformation,
+    FileIdExtdBothDirectoryInformation,
     FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
 
@@ -400,6 +518,22 @@ typedef struct _FILE_FULL_DIRECTORY_INFORMATION {
 } FILE_FULL_DIRECTORY_INFORMATION, *PFILE_FULL_DIRECTORY_INFORMATION,
   FILE_FULL_DIR_INFORMATION, *PFILE_FULL_DIR_INFORMATION;
 
+typedef struct _FILE_ID_FULL_DIRECTORY_INFORMATION {
+    ULONG               NextEntryOffset;
+    ULONG               FileIndex;
+    LARGE_INTEGER       CreationTime;
+    LARGE_INTEGER       LastAccessTime;
+    LARGE_INTEGER       LastWriteTime;
+    LARGE_INTEGER       ChangeTime;
+    LARGE_INTEGER       EndOfFile;
+    LARGE_INTEGER       AllocationSize;
+    ULONG               FileAttributes;
+    ULONG               FileNameLength;
+    ULONG               EaSize;
+    LARGE_INTEGER       FileId;
+    WCHAR               FileName[ANYSIZE_ARRAY];
+} FILE_ID_FULL_DIRECTORY_INFORMATION, *PFILE_ID_FULL_DIRECTORY_INFORMATION;
+
 typedef struct _FILE_BOTH_DIRECTORY_INFORMATION {
     ULONG               NextEntryOffset;
     ULONG               FileIndex;
@@ -417,6 +551,41 @@ typedef struct _FILE_BOTH_DIRECTORY_INFORMATION {
     WCHAR               FileName[ANYSIZE_ARRAY];
 } FILE_BOTH_DIRECTORY_INFORMATION, *PFILE_BOTH_DIRECTORY_INFORMATION,
   FILE_BOTH_DIR_INFORMATION, *PFILE_BOTH_DIR_INFORMATION;
+
+typedef struct _FILE_ID_BOTH_DIRECTORY_INFORMATION {
+    ULONG               NextEntryOffset;
+    ULONG               FileIndex;
+    LARGE_INTEGER       CreationTime;
+    LARGE_INTEGER       LastAccessTime;
+    LARGE_INTEGER       LastWriteTime;
+    LARGE_INTEGER       ChangeTime;
+    LARGE_INTEGER       EndOfFile;
+    LARGE_INTEGER       AllocationSize;
+    ULONG               FileAttributes;
+    ULONG               FileNameLength;
+    ULONG               EaSize;
+    CHAR                ShortNameLength;
+    WCHAR               ShortName[12];
+    LARGE_INTEGER       FileId;
+    WCHAR               FileName[ANYSIZE_ARRAY];
+} FILE_ID_BOTH_DIRECTORY_INFORMATION, *PFILE_ID_BOTH_DIRECTORY_INFORMATION;
+
+typedef struct _FILE_ID_GLOBAL_TX_DIR_INFORMATION {
+    ULONG               NextEntryOffset;
+    ULONG               FileIndex;
+    LARGE_INTEGER       CreationTime;
+    LARGE_INTEGER       LastAccessTime;
+    LARGE_INTEGER       LastWriteTime;
+    LARGE_INTEGER       ChangeTime;
+    LARGE_INTEGER       EndOfFile;
+    LARGE_INTEGER       AllocationSize;
+    ULONG               FileAttributes;
+    ULONG               FileNameLength;
+    LARGE_INTEGER       FileId;
+    GUID                LockingTransactionId;
+    ULONG               TxInfoFlags;
+    WCHAR               FileName[ANYSIZE_ARRAY];
+} FILE_ID_GLOBAL_TX_DIR_INFORMATION, *PFILE_ID_GLOBAL_TX_DIR_INFORMATION;
 
 typedef struct _FILE_BASIC_INFORMATION {
     LARGE_INTEGER CreationTime;
@@ -438,6 +607,15 @@ typedef struct _FILE_INTERNAL_INFORMATION {
     LARGE_INTEGER IndexNumber;
 } FILE_INTERNAL_INFORMATION, *PFILE_INTERNAL_INFORMATION;
 
+typedef struct _FILE_ID_128 {
+    UCHAR Identifier[16];
+} FILE_ID_128, *PFILE_ID_128;
+
+typedef struct _FILE_ID_INFORMATION {
+    ULONGLONG VolumeSerialNumber;
+    FILE_ID_128 FileId;
+} FILE_ID_INFORMATION, *PFILE_ID_INFORMATION;
+
 typedef struct _FILE_EA_INFORMATION {
     ULONG EaSize;
 } FILE_EA_INFORMATION, *PFILE_EA_INFORMATION;
@@ -457,6 +635,13 @@ typedef struct _FILE_RENAME_INFORMATION {
     ULONG FileNameLength;
     WCHAR FileName[1];
 } FILE_RENAME_INFORMATION, *PFILE_RENAME_INFORMATION;
+
+typedef struct _FILE_LINK_INFORMATION {
+    BOOLEAN ReplaceIfExists;
+    HANDLE RootDirectory;
+    ULONG FileNameLength;
+    WCHAR FileName[1];
+} FILE_LINK_INFORMATION, *PFILE_LINK_INFORMATION;
 
 typedef struct _FILE_NAMES_INFORMATION {
     ULONG NextEntryOffset;
@@ -534,8 +719,58 @@ typedef struct _FILE_MAILSLOT_SET_INFORMATION {
     LARGE_INTEGER ReadTimeout;
 } FILE_MAILSLOT_SET_INFORMATION, *PFILE_MAILSLOT_SET_INFORMATION;
 
-typedef struct _FILE_ALL_INFORMATION
-{
+typedef struct _FILE_PIPE_INFORMATION {
+    ULONG ReadMode;
+    ULONG CompletionMode;
+} FILE_PIPE_INFORMATION, *PFILE_PIPE_INFORMATION;
+
+typedef struct _FILE_PIPE_LOCAL_INFORMATION {
+    ULONG NamedPipeType;
+    ULONG NamedPipeConfiguration;
+    ULONG MaximumInstances;
+    ULONG CurrentInstances;
+    ULONG InboundQuota;
+    ULONG ReadDataAvailable;
+    ULONG OutboundQuota;
+    ULONG WriteQuotaAvailable;
+    ULONG NamedPipeState;
+    ULONG NamedPipeEnd;
+} FILE_PIPE_LOCAL_INFORMATION, *PFILE_PIPE_LOCAL_INFORMATION;
+
+#define FILE_PIPE_DISCONNECTED_STATE        0x00000001
+#define FILE_PIPE_LISTENING_STATE           0x00000002
+#define FILE_PIPE_CONNECTED_STATE           0x00000003
+#define FILE_PIPE_CLOSING_STATE             0x00000004
+
+typedef struct _FILE_OBJECTID_INFORMATION {
+    LONGLONG FileReference;
+    UCHAR ObjectId[16];
+    union {
+        struct {
+            UCHAR BirthVolumeId[16];
+            UCHAR BirthObjectId[16];
+            UCHAR DomainId[16];
+        } DUMMYSTRUCTNAME;
+        UCHAR ExtendedInfo[48];
+    } DUMMYUNIONNAME;
+} FILE_OBJECTID_INFORMATION, *PFILE_OBJECTID_INFORMATION;
+
+typedef struct _FILE_QUOTA_INFORMATION {
+    ULONG NextEntryOffset;
+    ULONG SidLength;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER QuotaUsed;
+    LARGE_INTEGER QuotaThreshold;
+    LARGE_INTEGER QuotaLimit;
+    SID Sid;
+} FILE_QUOTA_INFORMATION, *PFILE_QUOTA_INFORMATION;
+
+typedef struct _FILE_REPARSE_POINT_INFORMATION {
+    LONGLONG FileReference;
+    ULONG Tag;
+} FILE_REPARSE_POINT_INFORMATION, *PFILE_REPARSE_POINT_INFORMATION;
+
+typedef struct _FILE_ALL_INFORMATION {
     FILE_BASIC_INFORMATION     BasicInformation;
     FILE_STANDARD_INFORMATION  StandardInformation;
     FILE_INTERNAL_INFORMATION  InternalInformation;
@@ -546,6 +781,14 @@ typedef struct _FILE_ALL_INFORMATION
     FILE_ALIGNMENT_INFORMATION AlignmentInformation;
     FILE_NAME_INFORMATION      NameInformation;
 } FILE_ALL_INFORMATION, *PFILE_ALL_INFORMATION;
+
+typedef struct _FILE_IO_COMPLETION_NOTIFICATION_INFORMATION {
+    ULONG Flags;
+} FILE_IO_COMPLETION_NOTIFICATION_INFORMATION, *PFILE_IO_COMPLETION_NOTIFICATION_INFORMATION;
+
+#define FILE_SKIP_COMPLETION_PORT_ON_SUCCESS 0x1
+#define FILE_SKIP_SET_EVENT_ON_HANDLE        0x2
+#define FILE_SKIP_SET_USER_EVENT_ON_FAST_IO  0x4
 
 typedef enum _FSINFOCLASS {
     FileFsVolumeInformation = 1,
@@ -562,7 +805,13 @@ typedef enum _FSINFOCLASS {
 typedef enum _KEY_INFORMATION_CLASS {
     KeyBasicInformation,
     KeyNodeInformation,
-    KeyFullInformation
+    KeyFullInformation,
+    KeyNameInformation,
+    KeyCachedInformation,
+    KeyFlagsInformation,
+    KeyVirtualizationInformation,
+    KeyHandleTagsInformation,
+    MaxKeyInfoClass
 } KEY_INFORMATION_CLASS;
 
 typedef enum _KEY_VALUE_INFORMATION_CLASS {
@@ -615,8 +864,23 @@ typedef enum _PROCESSINFOCLASS {
     ProcessDebugObjectHandle = 30,
     ProcessDebugFlags = 31,
     ProcessHandleTracing = 32,
+    ProcessExecuteFlags = 34,
+    ProcessTlsInformation = 35,
+    ProcessCookie = 36,
+    ProcessImageInformation = 37,
+    ProcessCycleTime = 38,
+    ProcessPagePriority = 39,
+    ProcessInstrumentationCallback = 40,
+    ProcessThreadStackAllocation = 41,
+    ProcessWorkingSetWatchEx = 42,
+    ProcessImageFileNameWin32 = 43,
     MaxProcessInfoClass
 } PROCESSINFOCLASS, PROCESS_INFORMATION_CLASS;
+
+#define MEM_EXECUTE_OPTION_DISABLE   0x01
+#define MEM_EXECUTE_OPTION_ENABLE    0x02
+#define MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION 0x04
+#define MEM_EXECUTE_OPTION_PERMANENT 0x08
 
 typedef enum _SECTION_INHERIT {
     ViewShare = 1,
@@ -677,13 +941,37 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemVerifierInformation = 51,
     SystemAddVerifier = 52,
     SystemSessionProcessesInformation	= 53,
+    SystemLoadGdiDriverInSystemSpace = 54,
+    SystemNumaProcessorMap = 55,
+    SystemPrefetcherInformation = 56,
+    SystemExtendedProcessInformation = 57,
+    SystemRecommendedSharedDataAlignment = 58,
+    SystemComPlusPackage = 59,
+    SystemNumaAvailableMemory = 60,
+    SystemProcessorPowerInformation = 61,
+    SystemEmulationBasicInformation = 62,
+    SystemEmulationProcessorInformation = 63,
+    SystemExtendedHandleInformation = 64,
+    SystemLostDelayedWriteInformation = 65,
+    SystemBigPoolInformation = 66,
+    SystemSessionPoolTagInformation = 67,
+    SystemSessionMappedViewInformation = 68,
+    SystemHotpatchInformation = 69,
+    SystemObjectSecurityMode = 70,
+    SystemWatchdogTimerHandler = 71,
+    SystemWatchdogTimerInformation = 72,
+    SystemLogicalProcessorInformation = 73,
+    SystemWow64SharedInformation = 74,
+    SystemRegisterFirmwareTableInformationHandler = 75,
+    SystemFirmwareTableInformation = 76,
+    SystemModuleInformationEx = 77,
+    SystemVerifierTriageInformation = 78,
+    SystemSuperfetchInformation = 79,
+    SystemMemoryListInformation = 80,
+    SystemFileCacheInformationEx = 81,
+    SystemLogicalProcessorInformationEx = 107,
     SystemInformationClassMax
 } SYSTEM_INFORMATION_CLASS, *PSYSTEM_INFORMATION_CLASS;
-
-typedef enum _TIMER_TYPE {
-    NotificationTimer,
-    SynchronizationTimer
-} TIMER_TYPE;
 
 typedef enum _THREADINFOCLASS {
     ThreadBasicInformation,
@@ -703,6 +991,23 @@ typedef enum _THREADINFOCLASS {
     ThreadPriorityBoost,
     ThreadSetTlsArrayAddress,
     ThreadIsIoPending,
+    ThreadHideFromDebugger,
+    ThreadBreakOnTermination,
+    ThreadSwitchLegacyState,
+    ThreadIsTerminated,
+    ThreadLastSystemCall,
+    ThreadIoPriority,
+    ThreadCycleTime,
+    ThreadPagePriority,
+    ThreadActualBasePriority,
+    ThreadTebInformation,
+    ThreadCSwitchMon,
+    ThreadCSwitchPmu,
+    ThreadWow64Context,
+    ThreadGroupInformation,
+    ThreadUmsInformation,
+    ThreadCounterProfiling,
+    ThreadIdealProcessorEx,
     MaxThreadInfoClass
 } THREADINFOCLASS;
 
@@ -711,10 +1016,16 @@ typedef struct _THREAD_BASIC_INFORMATION
     NTSTATUS  ExitStatus;
     PVOID     TebBaseAddress;
     CLIENT_ID ClientId;
-    ULONG     AffinityMask;
+    ULONG_PTR AffinityMask;
     LONG      Priority;
     LONG      BasePriority;
 } THREAD_BASIC_INFORMATION, *PTHREAD_BASIC_INFORMATION;
+
+typedef struct _THREAD_DESCRIPTOR_INFORMATION
+{
+    DWORD       Selector;
+    LDT_ENTRY   Entry;
+} THREAD_DESCRIPTOR_INFORMATION, *PTHREAD_DESCRIPTOR_INFORMATION;
 
 typedef struct _KERNEL_USER_TIMES {
     LARGE_INTEGER  CreateTime;
@@ -733,6 +1044,11 @@ typedef enum _MEMORY_INFORMATION_CLASS {
     MemorySectionName,
     MemoryBasicVlmInformation
 } MEMORY_INFORMATION_CLASS;
+
+typedef struct _MEMORY_SECTION_NAME
+{
+    UNICODE_STRING SectionFileName;
+} MEMORY_SECTION_NAME, *PMEMORY_SECTION_NAME;
 
 typedef enum _MUTANT_INFORMATION_CLASS
 {
@@ -770,60 +1086,26 @@ typedef enum
     UNC_DOT_PATH           /* "//." */
 } DOS_PATHNAME_TYPE;
 
-/***********************************************************************
- * IA64 specific types and data structures
- */
-
-#ifdef __ia64__
-
-typedef struct _FRAME_POINTERS {
-  ULONGLONG MemoryStackFp;
-  ULONGLONG BackingStoreFp;
-} FRAME_POINTERS, *PFRAME_POINTERS;
-
-#define UNWIND_HISTORY_TABLE_SIZE 12
-
-typedef struct _RUNTIME_FUNCTION {
-  ULONG BeginAddress;
-  ULONG EndAddress;
-  ULONG UnwindInfoAddress;
-} RUNTIME_FUNCTION, *PRUNTIME_FUNCTION;
-
-typedef struct _UNWIND_HISTORY_TABLE_ENTRY {
-  ULONG64 ImageBase;
-  ULONG64 Gp;
-  PRUNTIME_FUNCTION FunctionEntry;
-} UNWIND_HISTORY_TABLE_ENTRY, *PUNWIND_HISTORY_TABLE_ENTRY;
-
-typedef struct _UNWIND_HISTORY_TABLE {
-  ULONG Count;
-  UCHAR Search;
-  ULONG64 LowAddress;
-  ULONG64 HighAddress;
-  UNWIND_HISTORY_TABLE_ENTRY Entry[UNWIND_HISTORY_TABLE_SIZE];
-} UNWIND_HISTORY_TABLE, *PUNWIND_HISTORY_TABLE;
-
-#endif /* defined(__ia64__) */
 
 /***********************************************************************
  * Types and data structures
  */
 
 /* This is used by NtQuerySystemInformation */
-typedef struct _SYSTEM_THREAD_INFORMATION{
-    FILETIME    ftKernelTime;
-    FILETIME    ftUserTime;
-    FILETIME    ftCreateTime;
-    DWORD       dwTickCount;
-    DWORD       dwStartAddress;
-    DWORD       dwOwningPID;
-    DWORD       dwThreadID;
-    DWORD       dwCurrentPriority;
-    DWORD       dwBasePriority;
-    DWORD       dwContextSwitches;
-    DWORD       dwThreadState;
-    DWORD       dwWaitReason;
-    DWORD       dwUnknown;
+typedef struct _SYSTEM_THREAD_INFORMATION
+{                                    /* win32/win64 */
+    LARGE_INTEGER KernelTime;          /* 00/00 */
+    LARGE_INTEGER UserTime;            /* 08/08 */
+    LARGE_INTEGER CreateTime;          /* 10/10 */
+    DWORD         dwTickCount;         /* 18/18 */
+    LPVOID        StartAddress;        /* 1c/20 */
+    CLIENT_ID     ClientId;            /* 20/28 */
+    DWORD         dwCurrentPriority;   /* 28/38 */
+    DWORD         dwBasePriority;      /* 2c/3c */
+    DWORD         dwContextSwitches;   /* 30/40 */
+    DWORD         dwThreadState;       /* 34/44 */
+    DWORD         dwWaitReason;        /* 38/48 */
+    DWORD         dwUnknown;           /* 3c/4c */
 } SYSTEM_THREAD_INFORMATION, *PSYSTEM_THREAD_INFORMATION;
 
 typedef struct _IO_STATUS_BLOCK {
@@ -870,6 +1152,23 @@ typedef struct _KEY_FULL_INFORMATION
     WCHAR         Class[1];
 } KEY_FULL_INFORMATION, *PKEY_FULL_INFORMATION;
 
+typedef struct _KEY_NAME_INFORMATION {
+    ULONG         NameLength;
+    WCHAR         Name[1];
+} KEY_NAME_INFORMATION, *PKEY_NAME_INFORMATION;
+
+typedef struct _KEY_CACHED_INFORMATION
+{
+    LARGE_INTEGER LastWriteTime;
+    ULONG         TitleIndex;
+    ULONG         SubKeys;
+    ULONG         MaxNameLen;
+    ULONG         Values;
+    ULONG         MaxValueNameLen;
+    ULONG         MaxValueDataLen;
+    ULONG         NameLength;
+} KEY_CACHED_INFORMATION, *PKEY_CACHED_INFORMATION;
+
 typedef struct _KEY_VALUE_ENTRY
 {
     PUNICODE_STRING ValueName;
@@ -901,6 +1200,8 @@ typedef struct _KEY_VALUE_PARTIAL_INFORMATION {
     UCHAR Data[1];
 } KEY_VALUE_PARTIAL_INFORMATION, *PKEY_VALUE_PARTIAL_INFORMATION;
 
+#ifndef __OBJECT_ATTRIBUTES_DEFINED__
+#define __OBJECT_ATTRIBUTES_DEFINED__
 typedef struct _OBJECT_ATTRIBUTES {
   ULONG Length;
   HANDLE RootDirectory;
@@ -909,6 +1210,7 @@ typedef struct _OBJECT_ATTRIBUTES {
   PVOID SecurityDescriptor;       /* type SECURITY_DESCRIPTOR */
   PVOID SecurityQualityOfService; /* type SECURITY_QUALITY_OF_SERVICE */
 } OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES;
+#endif
 
 typedef struct _OBJECT_DATA_INFORMATION {
     BOOLEAN InheritHandle;
@@ -929,14 +1231,23 @@ typedef struct _OBJECT_BASIC_INFORMATION {
     LARGE_INTEGER  CreateTime;
 } OBJECT_BASIC_INFORMATION, *POBJECT_BASIC_INFORMATION;
 
+typedef struct _OBJECT_NAME_INFORMATION {
+    UNICODE_STRING Name;
+} OBJECT_NAME_INFORMATION, *POBJECT_NAME_INFORMATION;
+
+typedef struct __OBJECT_TYPE_INFORMATION {
+    UNICODE_STRING TypeName;
+    ULONG Reserved [22];
+} OBJECT_TYPE_INFORMATION, *POBJECT_TYPE_INFORMATION;
+
 typedef struct _PROCESS_BASIC_INFORMATION {
 #ifdef __WINESRC__
-    DWORD ExitStatus;
-    DWORD PebBaseAddress;
-    DWORD AffinityMask;
-    DWORD BasePriority;
-    ULONG UniqueProcessId;
-    ULONG InheritedFromUniqueProcessId;
+    DWORD_PTR ExitStatus;
+    PPEB PebBaseAddress;
+    DWORD_PTR AffinityMask;
+    DWORD_PTR BasePriority;
+    ULONG_PTR UniqueProcessId;
+    ULONG_PTR InheritedFromUniqueProcessId;
 #else
     PVOID Reserved1;
     PPEB PebBaseAddress;
@@ -983,19 +1294,17 @@ typedef struct _RTL_RWLOCK {
 
 typedef struct _SYSTEM_BASIC_INFORMATION {
 #ifdef __WINESRC__
-    DWORD dwUnknown1;
-    ULONG uKeMaximumIncrement;
-    ULONG uPageSize;
-    ULONG uMmNumberOfPhysicalPages;
-    ULONG uMmLowestPhysicalPage;
-    ULONG uMmHighestPhysicalPage;
-    ULONG uAllocationGranularity;
-    PVOID pLowestUserAddress;
-    PVOID pMmHighestUserAddress;
-    ULONG uKeActiveProcessors;
-    BYTE bKeNumberProcessors;
-    BYTE bUnknown2;
-    WORD wUnknown3;
+    DWORD     unknown;
+    ULONG     KeMaximumIncrement;
+    ULONG     PageSize;
+    ULONG     MmNumberOfPhysicalPages;
+    ULONG     MmLowestPhysicalPage;
+    ULONG     MmHighestPhysicalPage;
+    ULONG_PTR AllocationGranularity;
+    PVOID     LowestUserAddress;
+    PVOID     HighestUserAddress;
+    ULONG_PTR ActiveProcessorsAffinityMask;
+    BYTE      NumberOfProcessors;
 #else
     BYTE Reserved1[24];
     PVOID Reserved2[4];
@@ -1022,21 +1331,93 @@ typedef struct _SYSTEM_CPU_INFORMATION {
 #define CPU_FEATURE_MTRR   0x00000040   /* Memory Type Range Registers */
 #define CPU_FEATURE_CX8    0x00000080   /* Compare and eXchange 8 byte instr. */
 #define CPU_FEATURE_MMX    0x00000100   /* Multi Media eXtensions */
-#define CPU_FEATURE_X86    0x00000200   /* seems to be alway ON, on the '86 */
+#define CPU_FEATURE_X86    0x00000200   /* seems to be always ON, on the '86 */
 #define CPU_FEATURE_PAT    0x00000400   /* Page Attribute Table */
 #define CPU_FEATURE_FXSR   0x00000800   /* FXSAVE and FXSTORE instructions */
 #define CPU_FEATURE_SEP    0x00001000   /* SYSENTER and SYSEXIT instructions */
-#define CPU_FEATURE_SSE    0x00002000   /* SSE extenstions (ext. MMX) */
-#define CPU_FEATURE_3DNOW  0x00008000   /* 3DNOW instructions available 
-                                           (FIXME: needs to be confirmed) */
+#define CPU_FEATURE_SSE    0x00002000   /* SSE extensions (ext. MMX) */
+#define CPU_FEATURE_3DNOW  0x00004000   /* 3DNOW instructions available */
 #define CPU_FEATURE_SSE2   0x00010000   /* SSE2 extensions (XMMI64) */
 #define CPU_FEATURE_DS     0x00020000   /* Debug Store */
 #define CPU_FEATURE_HTT    0x00040000   /* Hyper Threading Technology */
 
 /* System Information Class 0x02 */
 
+/* Documented in "Windows NT/2000 Native API Reference" by Gary Nebbett. */
 typedef struct _SYSTEM_PERFORMANCE_INFORMATION {
-    BYTE Reserved1[312];
+    LARGE_INTEGER IdleTime;
+    LARGE_INTEGER ReadTransferCount;
+    LARGE_INTEGER WriteTransferCount;
+    LARGE_INTEGER OtherTransferCount;
+    ULONG ReadOperationCount;
+    ULONG WriteOperationCount;
+    ULONG OtherOperationCount;
+    ULONG AvailablePages;
+    ULONG TotalCommittedPages;
+    ULONG TotalCommitLimit;
+    ULONG PeakCommitment;
+    ULONG PageFaults;
+    ULONG WriteCopyFaults;
+    ULONG TransitionFaults;
+    ULONG Reserved1;
+    ULONG DemandZeroFaults;
+    ULONG PagesRead;
+    ULONG PageReadIos;
+    ULONG Reserved2[2];
+    ULONG PagefilePagesWritten;
+    ULONG PagefilePageWriteIos;
+    ULONG MappedFilePagesWritten;
+    ULONG MappedFilePageWriteIos;
+    ULONG PagedPoolUsage;
+    ULONG NonPagedPoolUsage;
+    ULONG PagedPoolAllocs;
+    ULONG PagedPoolFrees;
+    ULONG NonPagedPoolAllocs;
+    ULONG NonPagedPoolFrees;
+    ULONG TotalFreeSystemPtes;
+    ULONG SystemCodePage;
+    ULONG TotalSystemDriverPages;
+    ULONG TotalSystemCodePages;
+    ULONG SmallNonPagedLookasideListAllocateHits;
+    ULONG SmallPagedLookasideListAllocateHits;
+    ULONG Reserved3;
+    ULONG MmSystemCachePage;
+    ULONG PagedPoolPage;
+    ULONG SystemDriverPage;
+    ULONG FastReadNoWait;
+    ULONG FastReadWait;
+    ULONG FastReadResourceMiss;
+    ULONG FastReadNotPossible;
+    ULONG FastMdlReadNoWait;
+    ULONG FastMdlReadWait;
+    ULONG FastMdlReadResourceMiss;
+    ULONG FastMdlReadNotPossible;
+    ULONG MapDataNoWait;
+    ULONG MapDataWait;
+    ULONG MapDataNoWaitMiss;
+    ULONG MapDataWaitMiss;
+    ULONG PinMappedDataCount;
+    ULONG PinReadNoWait;
+    ULONG PinReadWait;
+    ULONG PinReadNoWaitMiss;
+    ULONG PinReadWaitMiss;
+    ULONG CopyReadNoWait;
+    ULONG CopyReadWait;
+    ULONG CopyReadNoWaitMiss;
+    ULONG CopyReadWaitMiss;
+    ULONG MdlReadNoWait;
+    ULONG MdlReadWait;
+    ULONG MdlReadNoWaitMiss;
+    ULONG MdlReadWaitMiss;
+    ULONG ReadAheadIos;
+    ULONG LazyWriteIos;
+    ULONG LazyWritePages;
+    ULONG DataFlushes;
+    ULONG DataPages;
+    ULONG ContextSwitches;
+    ULONG FirstLevelTbFills;
+    ULONG SecondLevelTbFills;
+    ULONG SystemCalls;
 } SYSTEM_PERFORMANCE_INFORMATION, *PSYSTEM_PERFORMANCE_INFORMATION;
 
 /* System Information Class 0x03 */
@@ -1056,18 +1437,11 @@ typedef struct _SYSTEM_TIMEOFDAY_INFORMATION {
 /* System Information Class 0x08 */
 
 typedef struct _SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION {
-#ifdef __WINESRC__
-    LARGE_INTEGER liIdleTime;
-    LARGE_INTEGER liKernelTime;
-    LARGE_INTEGER liUserTime;
-    DWORD dwSpare[5];
-#else
     LARGE_INTEGER IdleTime;
     LARGE_INTEGER KernelTime;
     LARGE_INTEGER UserTime;
     LARGE_INTEGER Reserved1[2];
     ULONG Reserved2;
-#endif
 } SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, *PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION;
 
 /* System Information Class 0x0b */
@@ -1106,6 +1480,9 @@ typedef struct _SYSTEM_CACHE_INFORMATION {
     ULONG MinimumWorkingSet;
     ULONG MaximumWorkingSet;
     ULONG unused[4];
+#ifdef _WIN64
+    ULONG unknown64[7];
+#endif
 } SYSTEM_CACHE_INFORMATION, *PSYSTEM_CACHE_INFORMATION;
 
 /* System Information Class 0x17 */
@@ -1160,38 +1537,39 @@ typedef struct _VM_COUNTERS_ {
     SIZE_T QuotaNonPagedPoolUsage;
     SIZE_T PagefileUsage;
     SIZE_T PeakPagefileUsage;
+    SIZE_T PrivatePageCount;
 } VM_COUNTERS, *PVM_COUNTERS;
 
 typedef struct _SYSTEM_PROCESS_INFORMATION {
-#ifdef __WINESRC__
-    DWORD dwOffset;
-    DWORD dwThreadCount;
-    DWORD dwUnknown1[6];
-    FILETIME ftCreationTime;
-    FILETIME ftUserTime;
-    FILETIME ftKernelTime;
-    UNICODE_STRING ProcessName;
-    DWORD dwBasePriority;
-    DWORD dwProcessID;
-    DWORD dwParentProcessID;
-    DWORD dwHandleCount;
-    DWORD dwUnknown3;
-    DWORD dwUnknown4;
-    VM_COUNTERS vmCounters;
-    IO_COUNTERS ioCounters;
-    SYSTEM_THREAD_INFORMATION ti[1];
+#ifdef __WINESRC__                  /* win32/win64 */
+    ULONG NextEntryOffset;             /* 00/00 */
+    DWORD dwThreadCount;               /* 04/04 */
+    DWORD dwUnknown1[6];               /* 08/08 */
+    LARGE_INTEGER CreationTime;        /* 20/20 */
+    LARGE_INTEGER UserTime;            /* 28/28 */
+    LARGE_INTEGER KernelTime;          /* 30/30 */
+    UNICODE_STRING ProcessName;        /* 38/38 */
+    DWORD dwBasePriority;              /* 40/48 */
+    HANDLE UniqueProcessId;            /* 44/50 */
+    HANDLE ParentProcessId;            /* 48/58 */
+    ULONG HandleCount;                 /* 4c/60 */
+    ULONG SessionId;                   /* 50/64 */
+    DWORD dwUnknown4;                  /* 54/68 */
+    VM_COUNTERS vmCounters;            /* 58/70 */
+    IO_COUNTERS ioCounters;            /* 88/d0 */
+    SYSTEM_THREAD_INFORMATION ti[1];   /* b8/100 */
 #else
-    ULONG NextEntryOffset;
-    BYTE Reserved1[52];
-    PVOID Reserved2[3];
-    HANDLE UniqueProcessId;
-    PVOID Reserved3;
-    ULONG HandleCount;
-    BYTE Reserved4[4];
-    PVOID Reserved5[11];
-    SIZE_T PeakPagefileUsage;
-    SIZE_T PrivatePageCount;
-    LARGE_INTEGER Reserved6[6];
+    ULONG NextEntryOffset;             /* 00/00 */
+    BYTE Reserved1[52];                /* 04/04 */
+    PVOID Reserved2[3];                /* 38/38 */
+    HANDLE UniqueProcessId;            /* 44/50 */
+    PVOID Reserved3;                   /* 48/58 */
+    ULONG HandleCount;                 /* 4c/60 */
+    BYTE Reserved4[4];                 /* 50/64 */
+    PVOID Reserved5[11];               /* 54/68 */
+    SIZE_T PeakPagefileUsage;          /* 80/c0 */
+    SIZE_T PrivatePageCount;           /* 84/c8 */
+    LARGE_INTEGER Reserved6[6];        /* 88/d0 */
 #endif
 } SYSTEM_PROCESS_INFORMATION, *PSYSTEM_PROCESS_INFORMATION;
 
@@ -1205,6 +1583,23 @@ typedef struct _SYSTEM_TIME_ADJUSTMENT {
     ULONG   TimeAdjustment;
     BOOLEAN TimeAdjustmentDisabled;
 } SYSTEM_TIME_ADJUSTMENT, *PSYSTEM_TIME_ADJUSTMENT;
+
+typedef enum _SYSTEM_FIRMWARE_TABLE_ACTION
+{
+    SystemFirmwareTable_Enumerate = 0,
+    SystemFirmwareTable_Get = 1
+} SYSTEM_FIRMWARE_TABLE_ACTION, *PSYSTEM_FIRMWARE_TABLE_ACTION;
+
+/* System Information Class 0x4C */
+
+typedef struct _SYSTEM_FIRMWARE_TABLE_INFORMATION
+{
+    ULONG ProviderSignature;
+    SYSTEM_FIRMWARE_TABLE_ACTION Action;
+    ULONG TableID;
+    ULONG TableBufferLength;
+    UCHAR TableBuffer[1];
+} SYSTEM_FIRMWARE_TABLE_INFORMATION, *PSYSTEM_FIRMWARE_TABLE_INFORMATION;
 
 typedef struct _TIME_FIELDS
 {   CSHORT Year;
@@ -1227,8 +1622,8 @@ typedef BOOLEAN (WINAPI * PWINSTATIONQUERYINFORMATIONW)(HANDLE,ULONG,WINSTATIONI
 
 typedef struct _LDR_RESOURCE_INFO
 {
-    ULONG Type;
-    ULONG Name;
+    ULONG_PTR Type;
+    ULONG_PTR Name;
     ULONG Language;
 } LDR_RESOURCE_INFO, *PLDR_RESOURCE_INFO;
 
@@ -1314,7 +1709,7 @@ typedef unsigned short RTL_ATOM, *PRTL_ATOM;
 
 /* Wine doesn't implement atom table as NT does:
  * - in NT, atom tables are user space tables, which ntdll directly accesses
- * - on Wine, (even local) atom tables are wineserver object, hence a HANDLE
+ * - on Wine, (even local) atom tables are wineserver objects, hence a HANDLE
  */
 typedef struct atom_table *RTL_ATOM_TABLE, **PRTL_ATOM_TABLE;
 
@@ -1395,40 +1790,59 @@ typedef struct _RTL_HANDLE_TABLE
 #define FILE_MAXIMUM_DISPOSITION        5
 
 /* Characteristics of a File System */
-#define FILE_REMOVABLE_MEDIA            0x00000001
-#define FILE_READ_ONLY_DEVICE           0x00000002
-#define FILE_FLOPPY_DISKETTE            0x00000004
-#define FILE_WRITE_ONE_MEDIA            0x00000008
-#define FILE_REMOTE_DEVICE              0x00000010
-#define FILE_DEVICE_IS_MOUNTED          0x00000020
-#define FILE_VIRTUAL_VOLUME             0x00000040
-#define FILE_AUTOGENERATED_DEVICE_NAME  0x00000080
-#define FILE_DEVICE_SECURE_OPEN         0x00000100
+#define FILE_REMOVABLE_MEDIA                      0x00000001
+#define FILE_READ_ONLY_DEVICE                     0x00000002
+#define FILE_FLOPPY_DISKETTE                      0x00000004
+#define FILE_WRITE_ONE_MEDIA                      0x00000008
+#define FILE_REMOTE_DEVICE                        0x00000010
+#define FILE_DEVICE_IS_MOUNTED                    0x00000020
+#define FILE_VIRTUAL_VOLUME                       0x00000040
+#define FILE_AUTOGENERATED_DEVICE_NAME            0x00000080
+#define FILE_DEVICE_SECURE_OPEN                   0x00000100
+#define FILE_CHARACTERISTIC_PNP_DEVICE            0x00000800
+#define FILE_CHARACTERISTIC_TS_DEVICE             0x00001000
+#define FILE_CHARACTERISTIC_WEBDAV_DEVICE         0x00002000
+#define FILE_CHARACTERISTIC_CSV                   0x00010000
+#define FILE_DEVICE_ALLOW_APPCONTAINER_TRAVERSAL  0x00020000
+#define FILE_PORTABLE_DEVICE                      0x00040000
 
 /* options for NtCreateNamedPipeFile */
 #define FILE_PIPE_INBOUND               0x00000000
 #define FILE_PIPE_OUTBOUND              0x00000001
 #define FILE_PIPE_FULL_DUPLEX           0x00000002
 
-#if (_WIN32_WINNT >= 0x0501)
+/* options for pipe's type */
+#define FILE_PIPE_TYPE_MESSAGE          0x00000001
+#define FILE_PIPE_TYPE_BYTE             0x00000000
+/* options for pipe's message mode */
+#define FILE_PIPE_MESSAGE_MODE          0x00000001
+#define FILE_PIPE_BYTE_STREAM_MODE      0x00000000
+/* options for pipe's blocking mode */
+#define FILE_PIPE_COMPLETE_OPERATION    0x00000001
+#define FILE_PIPE_QUEUE_OPERATION       0x00000000
+/* and client / server end */
+#define FILE_PIPE_SERVER_END            0x00000001
+#define FILE_PIPE_CLIENT_END            0x00000000
+
 #define INTERNAL_TS_ACTIVE_CONSOLE_ID ( *((volatile ULONG*)(0x7ffe02d8)) )
-#endif /* (_WIN32_WINNT >= 0x0501) */
 
 #define LOGONID_CURRENT    ((ULONG)-1)
 
-#define OBJ_INHERIT          0x00000002L
-#define OBJ_PERMANENT        0x00000010L
-#define OBJ_EXCLUSIVE        0x00000020L
-#define OBJ_CASE_INSENSITIVE 0x00000040L
-#define OBJ_OPENIF           0x00000080L
-#define OBJ_OPENLINK         0x00000100L
-#define OBJ_KERNEL_HANDLE    0x00000200L
-#define OBJ_VALID_ATTRIBUTES 0x000003F2L
+#define OBJ_INHERIT          0x00000002
+#define OBJ_PERMANENT        0x00000010
+#define OBJ_EXCLUSIVE        0x00000020
+#define OBJ_CASE_INSENSITIVE 0x00000040
+#define OBJ_OPENIF           0x00000080
+#define OBJ_OPENLINK         0x00000100
+#define OBJ_KERNEL_HANDLE    0x00000200
+#define OBJ_VALID_ATTRIBUTES 0x000003F2
 
 #define SERVERNAME_CURRENT ((HANDLE)NULL)
 
 typedef void (CALLBACK *PNTAPCFUNC)(ULONG_PTR,ULONG_PTR,ULONG_PTR); /* FIXME: not the right name */
 typedef void (CALLBACK *PRTL_THREAD_START_ROUTINE)(LPVOID); /* FIXME: not the right name */
+typedef DWORD (CALLBACK *PRTL_WORK_ITEM_ROUTINE)(LPVOID); /* FIXME: not the right name */
+typedef void (NTAPI *RTL_WAITORTIMERCALLBACKFUNC)(PVOID,BOOLEAN); /* FIXME: not the right name */
 
 
 /* DbgPrintEx default levels */
@@ -1439,39 +1853,71 @@ typedef void (CALLBACK *PRTL_THREAD_START_ROUTINE)(LPVOID); /* FIXME: not the ri
 #define DPFLTR_MASK    0x8000000
 
 /* Well-known LUID values */
-#define SE_MIN_WELL_KNOWN_PRIVILEGE       2L
-#define SE_CREATE_TOKEN_PRIVILEGE         2L
-#define SE_ASSIGNPRIMARYTOKEN_PRIVILEGE   3L
-#define SE_LOCK_MEMORY_PRIVILEGE          4L
-#define SE_INCREASE_QUOTA_PRIVILEGE       5L
-#define SE_UNSOLICITED_INPUT_PRIVILEGE    6L /* obsolete */
-#define SE_MACHINE_ACCOUNT_PRIVILEGE      6L
-#define SE_TCB_PRIVILEGE                  7L
-#define SE_SECURITY_PRIVILEGE             8L
-#define SE_TAKE_OWNERSHIP_PRIVILEGE       9L
-#define SE_LOAD_DRIVER_PRIVILEGE         10L
-#define SE_SYSTEM_PROFILE_PRIVILEGE      11L
-#define SE_SYSTEMTIME_PRIVILEGE          12L
-#define SE_PROF_SINGLE_PROCESS_PRIVILEGE 13L
-#define SE_INC_BASE_PRIORITY_PRIVILEGE   14L
-#define SE_CREATE_PAGEFILE_PRIVILEGE     15L
-#define SE_CREATE_PERMANENT_PRIVILEGE    16L
-#define SE_BACKUP_PRIVILEGE              17L
-#define SE_RESTORE_PRIVILEGE             18L
-#define SE_SHUTDOWN_PRIVILEGE            19L
-#define SE_DEBUG_PRIVILEGE               20L
-#define SE_AUDIT_PRIVILEGE               21L
-#define SE_SYSTEM_ENVIRONMENT_PRIVILEGE  22L
-#define SE_CHANGE_NOTIFY_PRIVILLEGE      23L
-#define SE_REMOTE_SHUTDOWN_PRIVILEGE     24L
-#define SE_UNDOCK_PRIVILEGE              25L
-#define SE_SYNC_AGENT_PRIVILEGE          26L
-#define SE_ENABLE_DELEGATION_PRIVILEGE   27L
-#define SE_MANAGE_VOLUME_PRIVILEGE       28L
-#define SE_IMPERSONATE_PRIVILEGE         29L
-#define SE_CREATE_GLOBAL_PRIVILEGE       30L
+#define SE_MIN_WELL_KNOWN_PRIVILEGE       2
+#define SE_CREATE_TOKEN_PRIVILEGE         2
+#define SE_ASSIGNPRIMARYTOKEN_PRIVILEGE   3
+#define SE_LOCK_MEMORY_PRIVILEGE          4
+#define SE_INCREASE_QUOTA_PRIVILEGE       5
+#define SE_UNSOLICITED_INPUT_PRIVILEGE    6 /* obsolete */
+#define SE_MACHINE_ACCOUNT_PRIVILEGE      6
+#define SE_TCB_PRIVILEGE                  7
+#define SE_SECURITY_PRIVILEGE             8
+#define SE_TAKE_OWNERSHIP_PRIVILEGE       9
+#define SE_LOAD_DRIVER_PRIVILEGE         10
+#define SE_SYSTEM_PROFILE_PRIVILEGE      11
+#define SE_SYSTEMTIME_PRIVILEGE          12
+#define SE_PROF_SINGLE_PROCESS_PRIVILEGE 13
+#define SE_INC_BASE_PRIORITY_PRIVILEGE   14
+#define SE_CREATE_PAGEFILE_PRIVILEGE     15
+#define SE_CREATE_PERMANENT_PRIVILEGE    16
+#define SE_BACKUP_PRIVILEGE              17
+#define SE_RESTORE_PRIVILEGE             18
+#define SE_SHUTDOWN_PRIVILEGE            19
+#define SE_DEBUG_PRIVILEGE               20
+#define SE_AUDIT_PRIVILEGE               21
+#define SE_SYSTEM_ENVIRONMENT_PRIVILEGE  22
+#define SE_CHANGE_NOTIFY_PRIVILEGE       23
+#define SE_REMOTE_SHUTDOWN_PRIVILEGE     24
+#define SE_UNDOCK_PRIVILEGE              25
+#define SE_SYNC_AGENT_PRIVILEGE          26
+#define SE_ENABLE_DELEGATION_PRIVILEGE   27
+#define SE_MANAGE_VOLUME_PRIVILEGE       28
+#define SE_IMPERSONATE_PRIVILEGE         29
+#define SE_CREATE_GLOBAL_PRIVILEGE       30
 #define SE_MAX_WELL_KNOWN_PRIVILEGE      SE_CREATE_GLOBAL_PRIVILEGE
 
+/* NtGlobalFlag bits */
+#define FLG_STOP_ON_EXCEPTION            0x00000001
+#define FLG_SHOW_LDR_SNAPS               0x00000002
+#define FLG_DEBUG_INITIAL_COMMAND        0x00000004
+#define FLG_STOP_ON_HUNG_GUI             0x00000008
+#define FLG_HEAP_ENABLE_TAIL_CHECK       0x00000010
+#define FLG_HEAP_ENABLE_FREE_CHECK       0x00000020
+#define FLG_HEAP_VALIDATE_PARAMETERS     0x00000040
+#define FLG_HEAP_VALIDATE_ALL            0x00000080
+#define FLG_APPLICATION_VERIFIER         0x00000100
+#define FLG_POOL_ENABLE_TAGGING          0x00000400
+#define FLG_HEAP_ENABLE_TAGGING          0x00000800
+#define FLG_USER_STACK_TRACE_DB          0x00001000
+#define FLG_KERNEL_STACK_TRACE_DB        0x00002000
+#define FLG_MAINTAIN_OBJECT_TYPELIST     0x00004000
+#define FLG_HEAP_ENABLE_TAG_BY_DLL       0x00008000
+#define FLG_DISABLE_STACK_EXTENSION      0x00010000
+#define FLG_ENABLE_CSRDEBUG              0x00020000
+#define FLG_ENABLE_KDEBUG_SYMBOL_LOAD    0x00040000
+#define FLG_DISABLE_PAGE_KERNEL_STACKS   0x00080000
+#define FLG_ENABLE_SYSTEM_CRIT_BREAKS    0x00100000
+#define FLG_HEAP_DISABLE_COALESCING      0x00200000
+#define FLG_ENABLE_CLOSE_EXCEPTIONS      0x00400000
+#define FLG_ENABLE_EXCEPTION_LOGGING     0x00800000
+#define FLG_ENABLE_HANDLE_TYPE_TAGGING   0x01000000
+#define FLG_HEAP_PAGE_ALLOCS             0x02000000
+#define FLG_DEBUG_INITIAL_COMMAND_EX     0x04000000
+#define FLG_DISABLE_DBGPRINT             0x08000000
+#define FLG_CRITSEC_EVENT_CREATION       0x10000000
+#define FLG_LDR_TOP_DOWN                 0x20000000
+#define FLG_ENABLE_HANDLE_EXCEPTIONS     0x40000000
+#define FLG_DISABLE_PROTDLLS             0x80000000
 
 /* Rtl*Registry* functions structs and defines */
 #define RTL_REGISTRY_ABSOLUTE             0
@@ -1518,12 +1964,9 @@ typedef struct _KEY_MULTIPLE_VALUE_INFORMATION
   ULONG Type;
 } KEY_MULTIPLE_VALUE_INFORMATION, *PKEY_MULTIPLE_VALUE_INFORMATION;
 
-typedef VOID (*PTIMER_APC_ROUTINE) ( PVOID, ULONG, LONG );
+typedef VOID (CALLBACK *PRTL_OVERLAPPED_COMPLETION_ROUTINE)(DWORD,DWORD,LPVOID);
 
-typedef enum _EVENT_TYPE {
-  NotificationEvent,
-  SynchronizationEvent
-} EVENT_TYPE, *PEVENT_TYPE;
+typedef VOID (CALLBACK *PTIMER_APC_ROUTINE) ( PVOID, ULONG, LONG );
 
 typedef enum _EVENT_INFORMATION_CLASS {
   EventBasicInformation
@@ -1550,23 +1993,40 @@ typedef enum _SECTION_INFORMATION_CLASS
 } SECTION_INFORMATION_CLASS;
 
 typedef struct _SECTION_BASIC_INFORMATION {
-  ULONG BaseAddress;
+  PVOID BaseAddress;
   ULONG Attributes;
   LARGE_INTEGER Size;
 } SECTION_BASIC_INFORMATION, *PSECTION_BASIC_INFORMATION;
 
 typedef struct _SECTION_IMAGE_INFORMATION {
-  PVOID EntryPoint;
-  ULONG StackZeroBits;
-  ULONG StackReserved;
-  ULONG StackCommit;
-  ULONG ImageSubsystem;
+  PVOID TransferAddress;
+  ULONG ZeroBits;
+  SIZE_T MaximumStackSize;
+  SIZE_T CommittedStackSize;
+  ULONG SubSystemType;
   WORD SubsystemVersionLow;
   WORD SubsystemVersionHigh;
-  ULONG Unknown1;
-  ULONG ImageCharacteristics;
-  ULONG ImageMachineType;
-  ULONG Unknown2[3];
+  ULONG GpValue;
+  USHORT ImageCharacteristics;
+  USHORT DllCharacteristics;
+  USHORT Machine;
+  BOOLEAN ImageContainsCode;
+  union
+  {
+      UCHAR ImageFlags;
+      struct
+      {
+          UCHAR ComPlusNativeReady        : 1;
+          UCHAR ComPlusILOnly             : 1;
+          UCHAR ImageDynamicallyRelocated : 1;
+          UCHAR ImageMappedFlat           : 1;
+          UCHAR BaseBelow4gb              : 1;
+          UCHAR Reserved                  : 3;
+      } DUMMYSTRUCTNAME;
+  } DUMMYUNIONNAME;
+  ULONG LoaderFlags;
+  ULONG ImageFileSize;
+  ULONG CheckSum;
 } SECTION_IMAGE_INFORMATION, *PSECTION_IMAGE_INFORMATION;
 
 typedef struct _LPC_SECTION_WRITE {
@@ -1590,10 +2050,19 @@ typedef struct _LPC_MESSAGE {
   USHORT MessageType;
   USHORT VirtualRangesOffset;
   CLIENT_ID ClientId;
-  ULONG MessageId;
-  ULONG SectionSize;
+  ULONG_PTR MessageId;
+  ULONG_PTR SectionSize;
   UCHAR Data[ANYSIZE_ARRAY];
 } LPC_MESSAGE, *PLPC_MESSAGE;
+
+typedef struct _RTL_USER_PROCESS_INFORMATION
+{
+  ULONG Length;
+  HANDLE Process;
+  HANDLE Thread;
+  CLIENT_ID ClientId;
+  SECTION_IMAGE_INFORMATION ImageInformation;
+} RTL_USER_PROCESS_INFORMATION, *PRTL_USER_PROCESS_INFORMATION;
 
 typedef enum _SHUTDOWN_ACTION {
   ShutdownNoReboot,
@@ -1650,6 +2119,21 @@ typedef enum _IO_COMPLETION_INFORMATION_CLASS {
   IoCompletionBasicInformation
 } IO_COMPLETION_INFORMATION_CLASS, *PIO_COMPLETION_INFORMATION_CLASS;
 
+typedef struct _FILE_COMPLETION_INFORMATION {
+    HANDLE CompletionPort;
+    ULONG_PTR CompletionKey;
+} FILE_COMPLETION_INFORMATION, *PFILE_COMPLETION_INFORMATION;
+
+#define IO_COMPLETION_QUERY_STATE  0x0001
+#define IO_COMPLETION_MODIFY_STATE 0x0002
+#define IO_COMPLETION_ALL_ACCESS   (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0x3)
+
+typedef struct _FILE_IO_COMPLETION_INFORMATION {
+    ULONG_PTR CompletionKey;
+    ULONG_PTR CompletionValue;
+    IO_STATUS_BLOCK IoStatusBlock;
+} FILE_IO_COMPLETION_INFORMATION, *PFILE_IO_COMPLETION_INFORMATION;
+
 typedef enum _HARDERROR_RESPONSE_OPTION {
   OptionAbortRetryIgnore,
   OptionOk,
@@ -1678,545 +2162,787 @@ typedef enum _SYSDBG_COMMAND {
   SysDbgSetTracepoint,
   SysDbgSetSpecialCall,
   SysDbgClearSpecialCalls,
-  SysDbgQuerySpecialCalls
+  SysDbgQuerySpecialCalls,
+  SysDbgBreakPoint,
+  SysDbgQueryVersion,
+  SysDbgReadVirtual,
+  SysDbgWriteVirtual,
+  SysDbgReadPhysical,
+  SysDbgWritePhysical,
+  SysDbgReadControlSpace,
+  SysDbgWriteControlSpace,
+  SysDbgReadIoSpace,
+  SysDbgWriteIoSpace,
+  SysDbgReadMsr,
+  SysDbgWriteMsr,
+  SysDbgReadBusData,
+  SysDbgWriteBusData
 } SYSDBG_COMMAND, *PSYSDBG_COMMAND;
- 
+
+
+/*************************************************************************
+ * Loader structures
+ *
+ * Those are not part of standard Winternl.h
+ */
+typedef struct _LDR_MODULE
+{
+    LIST_ENTRY          InLoadOrderModuleList;
+    LIST_ENTRY          InMemoryOrderModuleList;
+    LIST_ENTRY          InInitializationOrderModuleList;
+    void*               BaseAddress;
+    void*               EntryPoint;
+    ULONG               SizeOfImage;
+    UNICODE_STRING      FullDllName;
+    UNICODE_STRING      BaseDllName;
+    ULONG               Flags;
+    SHORT               LoadCount;
+    SHORT               TlsIndex;
+    HANDLE              SectionHandle;
+    ULONG               CheckSum;
+    ULONG               TimeDateStamp;
+    HANDLE              ActivationContext;
+} LDR_MODULE, *PLDR_MODULE;
+
+typedef struct _LDR_DLL_LOADED_NOTIFICATION_DATA
+{
+    ULONG Flags;
+    const UNICODE_STRING *FullDllName;
+    const UNICODE_STRING *BaseDllName;
+    void *DllBase;
+    ULONG SizeOfImage;
+} LDR_DLL_LOADED_NOTIFICATION_DATA, *PLDR_DLL_LOADED_NOTIFICATION_DATA;
+
+typedef struct _LDR_DLL_UNLOADED_NOTIFICATION_DATA
+{
+    ULONG Flags;
+    const UNICODE_STRING *FullDllName;
+    const UNICODE_STRING *BaseDllName;
+    void *DllBase;
+    ULONG SizeOfImage;
+} LDR_DLL_UNLOADED_NOTIFICATION_DATA, *PLDR_DLL_UNLOADED_NOTIFICATION_DATA;
+
+typedef union _LDR_DLL_NOTIFICATION_DATA
+{
+    LDR_DLL_LOADED_NOTIFICATION_DATA Loaded;
+    LDR_DLL_UNLOADED_NOTIFICATION_DATA Unloaded;
+} LDR_DLL_NOTIFICATION_DATA, *PLDR_DLL_NOTIFICATION_DATA;
+
+typedef void (CALLBACK *PLDR_DLL_NOTIFICATION_FUNCTION)(ULONG, LDR_DLL_NOTIFICATION_DATA*, void*);
+
+/* those defines are (some of the) regular LDR_MODULE.Flags values */
+#define LDR_IMAGE_IS_DLL                0x00000004
+#define LDR_LOAD_IN_PROGRESS            0x00001000
+#define LDR_UNLOAD_IN_PROGRESS          0x00002000
+#define LDR_NO_DLL_CALLS                0x00040000
+#define LDR_PROCESS_ATTACHED            0x00080000
+#define LDR_COR_IMAGE                   0x00400000
+#define LDR_COR_ILONLY                  0x01000000
+
+/* these ones is Wine specific */
+#define LDR_DONT_RESOLVE_REFS           0x40000000
+#define LDR_WINE_INTERNAL               0x80000000
+
+/* flag for LdrAddRefDll */
+#define LDR_ADDREF_DLL_PIN              0x00000001
+
+#define LDR_DLL_NOTIFICATION_REASON_LOADED   1
+#define LDR_DLL_NOTIFICATION_REASON_UNLOADED 2
+
+/* FIXME: to be checked */
+#define MAXIMUM_FILENAME_LENGTH 256
+
+typedef struct _SYSTEM_MODULE
+{
+    PVOID               Reserved1;                      /* 00/00 */
+    PVOID               Reserved2;                      /* 04/08 */
+    PVOID               ImageBaseAddress;               /* 08/10 */
+    ULONG               ImageSize;                      /* 0c/18 */
+    ULONG               Flags;                          /* 10/1c */
+    WORD                Id;                             /* 14/20 */
+    WORD                Rank;                           /* 16/22 */
+    WORD                Unknown;                        /* 18/24 */
+    WORD                NameOffset;                     /* 1a/26 */
+    BYTE                Name[MAXIMUM_FILENAME_LENGTH];  /* 1c/28 */
+} SYSTEM_MODULE, *PSYSTEM_MODULE;
+
+typedef struct _SYSTEM_MODULE_INFORMATION
+{
+    ULONG               ModulesCount;
+    SYSTEM_MODULE       Modules[1]; /* FIXME: should be Modules[0] */
+} SYSTEM_MODULE_INFORMATION, *PSYSTEM_MODULE_INFORMATION;
+
+#define THREAD_CREATE_FLAGS_CREATE_SUSPENDED        0x00000001
+#define THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH      0x00000002
+#define THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER      0x00000004
+#define THREAD_CREATE_FLAGS_HAS_SECURITY_DESCRIPTOR 0x00000010
+#define THREAD_CREATE_FLAGS_ACCESS_CHECK_IN_TARGET  0x00000020
+#define THREAD_CREATE_FLAGS_INITIAL_THREAD          0x00000080
+
+typedef LONG (CALLBACK *PRTL_EXCEPTION_FILTER)(PEXCEPTION_POINTERS);
+
 /***********************************************************************
  * Function declarations
  */
-
-extern LPSTR _strlwr(LPSTR str); /* FIXME: Doesn't belong here */
-extern LPSTR _strupr(LPSTR str); /* FIXME: Doesn't belong here */
 
 #if defined(__i386__) && defined(__GNUC__)
 static inline void WINAPI DbgBreakPoint(void) { __asm__ __volatile__("int3"); }
 static inline void WINAPI DbgUserBreakPoint(void) { __asm__ __volatile__("int3"); }
 #else  /* __i386__ && __GNUC__ */
-void WINAPI DbgBreakPoint(void);
-void WINAPI DbgUserBreakPoint(void);
+NTSYSAPI void WINAPI DbgBreakPoint(void);
+NTSYSAPI void WINAPI DbgUserBreakPoint(void);
 #endif  /* __i386__ && __GNUC__ */
-NTSTATUS WINAPIV DbgPrint(LPCSTR fmt, ...);
-NTSTATUS WINAPIV DbgPrintEx(ULONG iComponentId, ULONG Level, LPCSTR fmt, ...);
+NTSYSAPI NTSTATUS WINAPIV DbgPrint(LPCSTR fmt, ...);
+NTSYSAPI NTSTATUS WINAPIV DbgPrintEx(ULONG iComponentId, ULONG Level, LPCSTR fmt, ...);
+NTSYSAPI NTSTATUS  WINAPI LdrAccessResource(HMODULE,const IMAGE_RESOURCE_DATA_ENTRY*,void**,PULONG);
+NTSYSAPI NTSTATUS  WINAPI LdrAddRefDll(ULONG,HMODULE);
+NTSYSAPI NTSTATUS  WINAPI LdrFindResourceDirectory_U(HMODULE,const LDR_RESOURCE_INFO*,ULONG,const IMAGE_RESOURCE_DIRECTORY**);
+NTSYSAPI NTSTATUS  WINAPI LdrFindResource_U(HMODULE,const LDR_RESOURCE_INFO*,ULONG,const IMAGE_RESOURCE_DATA_ENTRY**);
+NTSYSAPI NTSTATUS  WINAPI LdrDisableThreadCalloutsForDll(HMODULE);
+NTSYSAPI NTSTATUS  WINAPI LdrFindEntryForAddress(const void*, PLDR_MODULE*);
+NTSYSAPI NTSTATUS  WINAPI LdrGetDllHandle(LPCWSTR, ULONG, const UNICODE_STRING*, HMODULE*);
+NTSYSAPI NTSTATUS  WINAPI LdrGetProcedureAddress(HMODULE, const ANSI_STRING*, ULONG, void**);
+NTSYSAPI void      WINAPI LdrInitializeThunk(void*,ULONG_PTR,ULONG_PTR,ULONG_PTR);
+NTSYSAPI NTSTATUS  WINAPI LdrLoadDll(LPCWSTR, DWORD, const UNICODE_STRING*, HMODULE*);
+NTSYSAPI NTSTATUS  WINAPI LdrLockLoaderLock(ULONG,ULONG*,ULONG_PTR*);
+IMAGE_BASE_RELOCATION * WINAPI LdrProcessRelocationBlock(void*,UINT,USHORT*,INT_PTR);
+NTSYSAPI NTSTATUS  WINAPI LdrQueryImageFileExecutionOptions(const UNICODE_STRING*,LPCWSTR,ULONG,void*,ULONG,ULONG*);
+NTSYSAPI NTSTATUS  WINAPI LdrQueryProcessModuleInformation(SYSTEM_MODULE_INFORMATION*, ULONG, ULONG*);
+NTSYSAPI void      WINAPI LdrShutdownProcess(void);
+NTSYSAPI void      WINAPI LdrShutdownThread(void);
+NTSYSAPI NTSTATUS  WINAPI LdrUnloadDll(HMODULE);
+NTSYSAPI NTSTATUS  WINAPI LdrUnlockLoaderLock(ULONG,ULONG_PTR);
+NTSYSAPI NTSTATUS  WINAPI NtAcceptConnectPort(PHANDLE,ULONG,PLPC_MESSAGE,BOOLEAN,PLPC_SECTION_WRITE,PLPC_SECTION_READ);
+NTSYSAPI NTSTATUS  WINAPI NtAccessCheck(PSECURITY_DESCRIPTOR,HANDLE,ACCESS_MASK,PGENERIC_MAPPING,PPRIVILEGE_SET,PULONG,PULONG,NTSTATUS*);
+NTSYSAPI NTSTATUS  WINAPI NtAccessCheckAndAuditAlarm(PUNICODE_STRING,HANDLE,PUNICODE_STRING,PUNICODE_STRING,PSECURITY_DESCRIPTOR,ACCESS_MASK,PGENERIC_MAPPING,BOOLEAN,PACCESS_MASK,PBOOLEAN,PBOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtAddAtom(const WCHAR*,ULONG,RTL_ATOM*);
+NTSYSAPI NTSTATUS  WINAPI NtAdjustGroupsToken(HANDLE,BOOLEAN,PTOKEN_GROUPS,ULONG,PTOKEN_GROUPS,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtAdjustPrivilegesToken(HANDLE,BOOLEAN,PTOKEN_PRIVILEGES,DWORD,PTOKEN_PRIVILEGES,PDWORD);
+NTSYSAPI NTSTATUS  WINAPI NtAlertResumeThread(HANDLE,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtAlertThread(HANDLE ThreadHandle);
+NTSYSAPI NTSTATUS  WINAPI NtAllocateLocallyUniqueId(PLUID lpLuid);
+NTSYSAPI NTSTATUS  WINAPI NtAllocateUuids(PULARGE_INTEGER,PULONG,PULONG,PUCHAR);
+NTSYSAPI NTSTATUS  WINAPI NtAllocateVirtualMemory(HANDLE,PVOID*,ULONG,SIZE_T*,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtAreMappedFilesTheSame(PVOID,PVOID);
+NTSYSAPI NTSTATUS  WINAPI NtAssignProcessToJobObject(HANDLE,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtCallbackReturn(PVOID,ULONG,NTSTATUS);
+NTSYSAPI NTSTATUS  WINAPI NtCancelIoFile(HANDLE,PIO_STATUS_BLOCK);
+NTSYSAPI NTSTATUS  WINAPI NtCancelIoFileEx(HANDLE,PIO_STATUS_BLOCK,PIO_STATUS_BLOCK);
+NTSYSAPI NTSTATUS  WINAPI NtCancelTimer(HANDLE, BOOLEAN*);
+NTSYSAPI NTSTATUS  WINAPI NtClearEvent(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtClose(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtCloseObjectAuditAlarm(PUNICODE_STRING,HANDLE,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtCompleteConnectPort(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtConnectPort(PHANDLE,PUNICODE_STRING,PSECURITY_QUALITY_OF_SERVICE,PLPC_SECTION_WRITE,PLPC_SECTION_READ,PULONG,PVOID,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtContinue(PCONTEXT,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtCreateDirectoryObject(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
+NTSYSAPI NTSTATUS  WINAPI NtCreateEvent(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *,EVENT_TYPE,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtCreateEventPair(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
+NTSYSAPI NTSTATUS  WINAPI NtCreateFile(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,PLARGE_INTEGER,ULONG,ULONG,ULONG,ULONG,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtCreateIoCompletion(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtCreateJobObject(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtCreateKey(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG,const UNICODE_STRING*,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtCreateKeyTransacted(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG,const UNICODE_STRING*,ULONG,HANDLE,ULONG*);
+NTSYSAPI NTSTATUS  WINAPI NtCreateKeyedEvent(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtCreateMailslotFile(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG,ULONG,PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtCreateMutant(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtCreateNamedPipeFile(PHANDLE,ULONG,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtCreatePagingFile(PUNICODE_STRING,PLARGE_INTEGER,PLARGE_INTEGER,PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtCreatePort(PHANDLE,POBJECT_ATTRIBUTES,ULONG,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtCreateProcess(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,HANDLE,BOOLEAN,HANDLE,HANDLE,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtCreateProfile(PHANDLE,HANDLE,PVOID,ULONG,ULONG,PVOID,ULONG,KPROFILE_SOURCE,KAFFINITY);
+NTSYSAPI NTSTATUS  WINAPI NtCreateSection(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,const LARGE_INTEGER*,ULONG,ULONG,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtCreateSemaphore(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,LONG,LONG);
+NTSYSAPI NTSTATUS  WINAPI NtCreateSymbolicLinkObject(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PUNICODE_STRING);
+NTSYSAPI NTSTATUS  WINAPI NtCreateThread(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,HANDLE,PCLIENT_ID,PCONTEXT,PINITIAL_TEB,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtCreateTimer(HANDLE*, ACCESS_MASK, const OBJECT_ATTRIBUTES*, TIMER_TYPE);
+NTSYSAPI NTSTATUS  WINAPI NtCreateToken(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,TOKEN_TYPE,PLUID,PLARGE_INTEGER,PTOKEN_USER,PTOKEN_GROUPS,PTOKEN_PRIVILEGES,PTOKEN_OWNER,PTOKEN_PRIMARY_GROUP,PTOKEN_DEFAULT_DACL,PTOKEN_SOURCE);
+NTSYSAPI NTSTATUS  WINAPI NtDelayExecution(BOOLEAN,const LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtDeleteAtom(RTL_ATOM);
+NTSYSAPI NTSTATUS  WINAPI NtDeleteFile(POBJECT_ATTRIBUTES);
+NTSYSAPI NTSTATUS  WINAPI NtDeleteKey(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtDeleteValueKey(HANDLE,const UNICODE_STRING *);
+NTSYSAPI NTSTATUS  WINAPI NtDeviceIoControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtDisplayString(PUNICODE_STRING);
+NTSYSAPI NTSTATUS  WINAPI NtDuplicateObject(HANDLE,HANDLE,HANDLE,PHANDLE,ACCESS_MASK,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtDuplicateToken(HANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,SECURITY_IMPERSONATION_LEVEL,TOKEN_TYPE,PHANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtEnumerateKey(HANDLE,ULONG,KEY_INFORMATION_CLASS,void *,DWORD,DWORD *);
+NTSYSAPI NTSTATUS  WINAPI NtEnumerateValueKey(HANDLE,ULONG,KEY_VALUE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtExtendSection(HANDLE,PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtFindAtom(const WCHAR*,ULONG,RTL_ATOM*);
+NTSYSAPI NTSTATUS  WINAPI NtFlushBuffersFile(HANDLE,IO_STATUS_BLOCK*);
+NTSYSAPI NTSTATUS  WINAPI NtFlushInstructionCache(HANDLE,LPCVOID,SIZE_T);
+NTSYSAPI NTSTATUS  WINAPI NtFlushKey(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtFlushWriteBuffer(VOID);
+NTSYSAPI NTSTATUS  WINAPI NtFreeVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtFsControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtGetContextThread(HANDLE,CONTEXT*);
+NTSYSAPI ULONG     WINAPI NtGetCurrentProcessorNumber(void);
+NTSYSAPI NTSTATUS  WINAPI NtGetPlugPlayEvent(ULONG,ULONG,PVOID,ULONG);
+NTSYSAPI ULONG     WINAPI NtGetTickCount(VOID);
+NTSYSAPI NTSTATUS  WINAPI NtGetWriteWatch(HANDLE,ULONG,PVOID,SIZE_T,PVOID*,ULONG_PTR*,ULONG*);
+NTSYSAPI NTSTATUS  WINAPI NtImpersonateAnonymousToken(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtImpersonateClientOfPort(HANDLE,PPORT_MESSAGE);
+NTSYSAPI NTSTATUS  WINAPI NtImpersonateThread(HANDLE,HANDLE,PSECURITY_QUALITY_OF_SERVICE);
+NTSYSAPI NTSTATUS  WINAPI NtInitializeRegistry(BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtInitiatePowerAction(POWER_ACTION,SYSTEM_POWER_STATE,ULONG,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtIsProcessInJob(HANDLE,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtListenPort(HANDLE,PLPC_MESSAGE);
+NTSYSAPI NTSTATUS  WINAPI NtLoadDriver(const UNICODE_STRING *);
+NTSYSAPI NTSTATUS  WINAPI NtLoadKey(const OBJECT_ATTRIBUTES *,OBJECT_ATTRIBUTES *);
+NTSYSAPI NTSTATUS  WINAPI NtLockFile(HANDLE,HANDLE,PIO_APC_ROUTINE,void*,PIO_STATUS_BLOCK,PLARGE_INTEGER,PLARGE_INTEGER,ULONG*,BOOLEAN,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtLockVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtMakeTemporaryObject(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtMapViewOfSection(HANDLE,HANDLE,PVOID*,ULONG,SIZE_T,const LARGE_INTEGER*,SIZE_T*,SECTION_INHERIT,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtNotifyChangeDirectoryFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,ULONG,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtNotifyChangeKey(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,BOOLEAN,PVOID,ULONG,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtNotifyChangeMultipleKeys(HANDLE,ULONG,OBJECT_ATTRIBUTES*,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,BOOLEAN,PVOID,ULONG,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtOpenDirectoryObject(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenEvent(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *);
+NTSYSAPI NTSTATUS  WINAPI NtOpenEventPair(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenFile(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtOpenIoCompletion(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenJobObject(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenKey(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *);
+NTSYSAPI NTSTATUS  WINAPI NtOpenKeyEx(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtOpenKeyTransacted(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtOpenKeyTransactedEx(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtOpenKeyedEvent(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenMutant(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenObjectAuditAlarm(PUNICODE_STRING,PHANDLE,PUNICODE_STRING,PUNICODE_STRING,PSECURITY_DESCRIPTOR,HANDLE,ACCESS_MASK,ACCESS_MASK,PPRIVILEGE_SET,BOOLEAN,BOOLEAN,PBOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtOpenProcess(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,const CLIENT_ID*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenProcessToken(HANDLE,DWORD,HANDLE *);
+NTSYSAPI NTSTATUS  WINAPI NtOpenProcessTokenEx(HANDLE,DWORD,DWORD,HANDLE *);
+NTSYSAPI NTSTATUS  WINAPI NtOpenSection(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenSemaphore(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenSymbolicLinkObject(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenThread(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,const CLIENT_ID*);
+NTSYSAPI NTSTATUS  WINAPI NtOpenThreadToken(HANDLE,DWORD,BOOLEAN,HANDLE *);
+NTSYSAPI NTSTATUS  WINAPI NtOpenThreadTokenEx(HANDLE,DWORD,BOOLEAN,DWORD,HANDLE *);
+NTSYSAPI NTSTATUS  WINAPI NtOpenTimer(HANDLE*, ACCESS_MASK, const OBJECT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtPowerInformation(POWER_INFORMATION_LEVEL,PVOID,ULONG,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtPrivilegeCheck(HANDLE,PPRIVILEGE_SET,PBOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtPrivilegeObjectAuditAlarm(PUNICODE_STRING,HANDLE,HANDLE,ULONG,PPRIVILEGE_SET,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtPrivilegedServiceAuditAlarm(PUNICODE_STRING,PUNICODE_STRING,HANDLE,PPRIVILEGE_SET,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtProtectVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG,ULONG*);
+NTSYSAPI NTSTATUS  WINAPI NtPulseEvent(HANDLE,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueueApcThread(HANDLE,PNTAPCFUNC,ULONG_PTR,ULONG_PTR,ULONG_PTR);
+NTSYSAPI NTSTATUS  WINAPI NtQueryAttributesFile(const OBJECT_ATTRIBUTES*,FILE_BASIC_INFORMATION*);
+NTSYSAPI NTSTATUS  WINAPI NtQueryDefaultLocale(BOOLEAN,LCID*);
+NTSYSAPI NTSTATUS  WINAPI NtQueryDefaultUILanguage(LANGID*);
+NTSYSAPI NTSTATUS  WINAPI NtQueryDirectoryFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,FILE_INFORMATION_CLASS,BOOLEAN,PUNICODE_STRING,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtQueryDirectoryObject(HANDLE,PDIRECTORY_BASIC_INFORMATION,ULONG,BOOLEAN,BOOLEAN,PULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryEaFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,BOOLEAN,PVOID,ULONG,PULONG,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtQueryEvent(HANDLE,EVENT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryFullAttributesFile(const OBJECT_ATTRIBUTES*,FILE_NETWORK_OPEN_INFORMATION*);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationAtom(RTL_ATOM,ATOM_INFORMATION_CLASS,PVOID,ULONG,ULONG*);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,LONG,FILE_INFORMATION_CLASS);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationJobObject(HANDLE,JOBOBJECTINFOCLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationPort(HANDLE,PORT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationProcess(HANDLE,PROCESSINFOCLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationThread(HANDLE,THREADINFOCLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationToken(HANDLE,TOKEN_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInstallUILanguage(LANGID*);
+NTSYSAPI NTSTATUS  WINAPI NtQueryIntervalProfile(KPROFILE_SOURCE,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryIoCompletion(HANDLE,IO_COMPLETION_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryKey(HANDLE,KEY_INFORMATION_CLASS,void *,DWORD,DWORD *);
+NTSYSAPI NTSTATUS  WINAPI NtQueryMultipleValueKey(HANDLE,PKEY_MULTIPLE_VALUE_INFORMATION,ULONG,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryMutant(HANDLE,MUTANT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryObject(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryOpenSubKeys(POBJECT_ATTRIBUTES,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryPerformanceCounter(PLARGE_INTEGER, PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySecurityObject(HANDLE,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySection(HANDLE,SECTION_INFORMATION_CLASS,PVOID,SIZE_T,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySemaphore(HANDLE,SEMAPHORE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySymbolicLinkObject(HANDLE,PUNICODE_STRING,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySystemEnvironmentValue(PUNICODE_STRING,PWCHAR,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySystemInformationEx(SYSTEM_INFORMATION_CLASS,void*,ULONG,void*,ULONG,ULONG*);
+NTSYSAPI NTSTATUS  WINAPI NtQuerySystemTime(PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtQueryTimer(HANDLE,TIMER_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryTimerResolution(PULONG,PULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtQueryValueKey(HANDLE,const UNICODE_STRING *,KEY_VALUE_INFORMATION_CLASS,void *,DWORD,DWORD *);
+NTSYSAPI NTSTATUS  WINAPI NtQueryLicenseValue(const UNICODE_STRING *,ULONG *,PVOID,ULONG,ULONG *);
+NTSYSAPI NTSTATUS  WINAPI NtQueryVirtualMemory(HANDLE,LPCVOID,MEMORY_INFORMATION_CLASS,PVOID,SIZE_T,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI NtQueryVolumeInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FS_INFORMATION_CLASS);
+NTSYSAPI NTSTATUS  WINAPI NtRaiseException(PEXCEPTION_RECORD,PCONTEXT,BOOL);
+NTSYSAPI NTSTATUS  WINAPI NtRaiseHardError(NTSTATUS,ULONG,PUNICODE_STRING,PVOID*,HARDERROR_RESPONSE_OPTION,PHARDERROR_RESPONSE);
+NTSYSAPI NTSTATUS  WINAPI NtReadFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,PLARGE_INTEGER,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtReadFileScatter(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,FILE_SEGMENT_ELEMENT*,ULONG,PLARGE_INTEGER,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtReadRequestData(HANDLE,PLPC_MESSAGE,ULONG,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtReadVirtualMemory(HANDLE,const void*,void*,SIZE_T,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI NtRegisterThreadTerminatePort(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtReleaseKeyedEvent(HANDLE,const void*,BOOLEAN,const LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtReleaseMutant(HANDLE,PLONG);
+NTSYSAPI NTSTATUS  WINAPI NtReleaseSemaphore(HANDLE,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtRemoveIoCompletion(HANDLE,PULONG_PTR,PULONG_PTR,PIO_STATUS_BLOCK,PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtRemoveIoCompletionEx(HANDLE,FILE_IO_COMPLETION_INFORMATION*,ULONG,ULONG*,LARGE_INTEGER*,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtRenameKey(HANDLE,UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI NtReplaceKey(POBJECT_ATTRIBUTES,HANDLE,POBJECT_ATTRIBUTES);
+NTSYSAPI NTSTATUS  WINAPI NtReplyPort(HANDLE,PLPC_MESSAGE);
+NTSYSAPI NTSTATUS  WINAPI NtReplyWaitReceivePort(HANDLE,PULONG,PLPC_MESSAGE,PLPC_MESSAGE);
+NTSYSAPI NTSTATUS  WINAPI NtReplyWaitReceivePortEx(HANDLE,PVOID*,PPORT_MESSAGE,PPORT_MESSAGE,PLARGE_INTEGER);
+NTSYSAPI NTSTATUS  WINAPI NtReplyWaitReplyPort(HANDLE,PLPC_MESSAGE);
+NTSYSAPI NTSTATUS  WINAPI NtRequestPort(HANDLE,PLPC_MESSAGE);
+NTSYSAPI NTSTATUS  WINAPI NtRequestWaitReplyPort(HANDLE,PLPC_MESSAGE,PLPC_MESSAGE);
+NTSYSAPI NTSTATUS  WINAPI NtResetEvent(HANDLE,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtResetWriteWatch(HANDLE,PVOID,SIZE_T);
+NTSYSAPI NTSTATUS  WINAPI NtRestoreKey(HANDLE,HANDLE,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtResumeThread(HANDLE,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSaveKey(HANDLE,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtSecureConnectPort(PHANDLE,PUNICODE_STRING,PSECURITY_QUALITY_OF_SERVICE,PLPC_SECTION_WRITE,PSID,PLPC_SECTION_READ,PULONG,PVOID,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetContextThread(HANDLE,const CONTEXT*);
+NTSYSAPI NTSTATUS  WINAPI NtSetDefaultHardErrorPort(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtSetDefaultLocale(BOOLEAN,LCID);
+NTSYSAPI NTSTATUS  WINAPI NtSetDefaultUILanguage(LANGID);
+NTSYSAPI NTSTATUS  WINAPI NtSetEaFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetEvent(HANDLE,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetHighEventPair(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtSetHighWaitLowEventPair(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtSetHighWaitLowThread(VOID);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FILE_INFORMATION_CLASS);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationJobObject(HANDLE,JOBOBJECTINFOCLASS,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationKey(HANDLE,const int,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationObject(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationProcess(HANDLE,PROCESS_INFORMATION_CLASS,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationThread(HANDLE,THREADINFOCLASS,LPCVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationToken(HANDLE,TOKEN_INFORMATION_CLASS,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetIntervalProfile(ULONG,KPROFILE_SOURCE);
+NTSYSAPI NTSTATUS  WINAPI NtSetIoCompletion(HANDLE,ULONG_PTR,ULONG_PTR,NTSTATUS,SIZE_T);
+NTSYSAPI NTSTATUS  WINAPI NtSetLdtEntries(ULONG,ULONG,ULONG,ULONG,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetLowEventPair(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtSetLowWaitHighEventPair(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtSetLowWaitHighThread(VOID);
+NTSYSAPI NTSTATUS  WINAPI NtSetSecurityObject(HANDLE,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR);
+NTSYSAPI NTSTATUS  WINAPI NtSetSystemEnvironmentValue(PUNICODE_STRING,PUNICODE_STRING);
+NTSYSAPI NTSTATUS  WINAPI NtSetSystemInformation(SYSTEM_INFORMATION_CLASS,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetSystemPowerState(POWER_ACTION,SYSTEM_POWER_STATE,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetSystemTime(const LARGE_INTEGER*,LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtSetTimer(HANDLE, const LARGE_INTEGER*, PTIMER_APC_ROUTINE, PVOID, BOOLEAN, ULONG, BOOLEAN*);
+NTSYSAPI NTSTATUS  WINAPI NtSetTimerResolution(ULONG,BOOLEAN,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetValueKey(HANDLE,const UNICODE_STRING *,ULONG,ULONG,const void *,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetVolumeInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FS_INFORMATION_CLASS);
+NTSYSAPI NTSTATUS  WINAPI NtSignalAndWaitForSingleObject(HANDLE,HANDLE,BOOLEAN,const LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtShutdownSystem(SHUTDOWN_ACTION);
+NTSYSAPI NTSTATUS  WINAPI NtStartProfile(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtStopProfile(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtSuspendThread(HANDLE,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSystemDebugControl(SYSDBG_COMMAND,PVOID,ULONG,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtTerminateJobObject(HANDLE,NTSTATUS);
+NTSYSAPI NTSTATUS  WINAPI NtTerminateProcess(HANDLE,LONG);
+NTSYSAPI NTSTATUS  WINAPI NtTerminateThread(HANDLE,LONG);
+NTSYSAPI NTSTATUS  WINAPI NtTestAlert(VOID);
+NTSYSAPI NTSTATUS  WINAPI NtUnloadDriver(const UNICODE_STRING *);
+NTSYSAPI NTSTATUS  WINAPI NtUnloadKey(POBJECT_ATTRIBUTES);
+NTSYSAPI NTSTATUS  WINAPI NtUnloadKeyEx(POBJECT_ATTRIBUTES,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtUnlockFile(HANDLE,PIO_STATUS_BLOCK,PLARGE_INTEGER,PLARGE_INTEGER,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtUnlockVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtUnmapViewOfSection(HANDLE,PVOID);
+NTSYSAPI NTSTATUS  WINAPI NtVdmControl(ULONG,PVOID);
+NTSYSAPI NTSTATUS  WINAPI NtWaitForKeyedEvent(HANDLE,const void*,BOOLEAN,const LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtWaitForSingleObject(HANDLE,BOOLEAN,const LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtWaitForMultipleObjects(ULONG,const HANDLE*,BOOLEAN,BOOLEAN,const LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtWaitHighEventPair(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtWaitLowEventPair(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtWriteFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,const void*,ULONG,PLARGE_INTEGER,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtWriteFileGather(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,FILE_SEGMENT_ELEMENT*,ULONG,PLARGE_INTEGER,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtWriteRequestData(HANDLE,PLPC_MESSAGE,ULONG,PVOID,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtWriteVirtualMemory(HANDLE,void*,const void*,SIZE_T,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI NtYieldExecution(void);
 
-NTSTATUS  WINAPI LdrAccessResource(HMODULE,const IMAGE_RESOURCE_DATA_ENTRY*,void**,PULONG);
-NTSTATUS  WINAPI LdrFindResourceDirectory_U(HMODULE,const LDR_RESOURCE_INFO*,ULONG,const IMAGE_RESOURCE_DIRECTORY**);
-NTSTATUS  WINAPI LdrFindResource_U(HMODULE,const LDR_RESOURCE_INFO*,ULONG,const IMAGE_RESOURCE_DATA_ENTRY**);
-NTSTATUS  WINAPI LdrGetDllHandle(ULONG, ULONG, const UNICODE_STRING*, HMODULE*);
-NTSTATUS  WINAPI LdrGetProcedureAddress(HMODULE, const ANSI_STRING*, ULONG, void**);
-void      WINAPI LdrInitializeThunk(HANDLE,ULONG,ULONG,ULONG);
-NTSTATUS  WINAPI LdrLoadDll(LPCWSTR, DWORD, const UNICODE_STRING*, HMODULE*);
-void      WINAPI LdrShutdownProcess(void);
-void      WINAPI LdrShutdownThread(void);
-NTSTATUS  WINAPI NtAcceptConnectPort(PHANDLE,ULONG,PLPC_MESSAGE,BOOLEAN,PLPC_SECTION_WRITE,PLPC_SECTION_READ);
-NTSTATUS  WINAPI NtAccessCheck(PSECURITY_DESCRIPTOR,HANDLE,ACCESS_MASK,PGENERIC_MAPPING,PPRIVILEGE_SET,PULONG,PULONG,NTSTATUS*);
-NTSTATUS  WINAPI NtAccessCheckAndAuditAlarm(PUNICODE_STRING,HANDLE,PUNICODE_STRING,PUNICODE_STRING,PSECURITY_DESCRIPTOR,ACCESS_MASK,PGENERIC_MAPPING,BOOLEAN,PACCESS_MASK,PBOOLEAN,PBOOLEAN);
-NTSTATUS  WINAPI NtAddAtom(const WCHAR*,ULONG,RTL_ATOM*);
-NTSTATUS  WINAPI NtAdjustGroupsToken(HANDLE,BOOLEAN,PTOKEN_GROUPS,ULONG,PTOKEN_GROUPS,PULONG);
-NTSTATUS  WINAPI NtAdjustPrivilegesToken(HANDLE,BOOLEAN,PTOKEN_PRIVILEGES,DWORD,PTOKEN_PRIVILEGES,PDWORD);
-NTSTATUS  WINAPI NtAlertResumeThread(HANDLE,PULONG);
-NTSTATUS  WINAPI NtAlertThread(HANDLE ThreadHandle);
-NTSTATUS  WINAPI NtAllocateLocallyUniqueId(PLUID lpLuid);
-NTSTATUS  WINAPI NtAllocateUuids(PULARGE_INTEGER,PULONG,PULONG);
-NTSTATUS  WINAPI NtAllocateVirtualMemory(HANDLE,PVOID*,ULONG,SIZE_T*,ULONG,ULONG);
-NTSTATUS  WINAPI NtCallbackReturn(PVOID,ULONG,NTSTATUS);
-NTSTATUS  WINAPI NtCancelIoFile(HANDLE,PIO_STATUS_BLOCK);
-NTSTATUS  WINAPI NtCancelTimer(HANDLE, BOOLEAN*);
-NTSTATUS  WINAPI NtClearEvent(HANDLE);
-NTSTATUS  WINAPI NtClose(HANDLE);
-NTSTATUS  WINAPI NtCloseObjectAuditAlarm(PUNICODE_STRING,HANDLE,BOOLEAN);
-NTSTATUS  WINAPI NtCompleteConnectPort(HANDLE);
-NTSTATUS  WINAPI NtConnectPort(PHANDLE,PUNICODE_STRING,PSECURITY_QUALITY_OF_SERVICE,PLPC_SECTION_WRITE,PLPC_SECTION_READ,PULONG,PVOID,PULONG);
-NTSTATUS  WINAPI NtContinue(PCONTEXT,BOOLEAN); 
-NTSTATUS  WINAPI NtCreateDirectoryObject(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtCreateEvent(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *,BOOLEAN,BOOLEAN);
-NTSTATUS  WINAPI NtCreateEventPair(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtCreateFile(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,PLARGE_INTEGER,ULONG,ULONG,ULONG,ULONG,PVOID,ULONG);
-NTSTATUS  WINAPI NtCreateIoCompletion(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,ULONG);
-NTSTATUS  WINAPI NtCreateKey(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG,const UNICODE_STRING*,ULONG,PULONG);
-NTSTATUS  WINAPI NtCreateMailslotFile(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG,ULONG,PLARGE_INTEGER);
-NTSTATUS  WINAPI NtCreateMutant(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,BOOLEAN);
-NTSTATUS  WINAPI NtCreateNamedPipeFile(PHANDLE,ULONG,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,PLARGE_INTEGER);
-NTSTATUS  WINAPI NtCreatePagingFile(PUNICODE_STRING,PLARGE_INTEGER,PLARGE_INTEGER,PLARGE_INTEGER);
-NTSTATUS  WINAPI NtCreatePort(PHANDLE,POBJECT_ATTRIBUTES,ULONG,ULONG,PULONG);
-NTSTATUS  WINAPI NtCreateProcess(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,HANDLE,BOOLEAN,HANDLE,HANDLE,HANDLE);
-NTSTATUS  WINAPI NtCreateProfile(PHANDLE,HANDLE,PVOID,ULONG,ULONG,PVOID,ULONG,KPROFILE_SOURCE,KAFFINITY);
-NTSTATUS  WINAPI NtCreateSection(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,const LARGE_INTEGER*,ULONG,ULONG,HANDLE);
-NTSTATUS  WINAPI NtCreateSemaphore(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,LONG,LONG);
-NTSTATUS  WINAPI NtCreateSymbolicLinkObject(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PUNICODE_STRING);
-NTSTATUS  WINAPI NtCreateThread(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,HANDLE,PCLIENT_ID,PCONTEXT,PINITIAL_TEB,BOOLEAN);
-NTSTATUS  WINAPI NtCreateTimer(HANDLE*, ACCESS_MASK, const OBJECT_ATTRIBUTES*, TIMER_TYPE);
-NTSTATUS  WINAPI NtCreateToken(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,TOKEN_TYPE,PLUID,PLARGE_INTEGER,PTOKEN_USER,PTOKEN_GROUPS,PTOKEN_PRIVILEGES,PTOKEN_OWNER,PTOKEN_PRIMARY_GROUP,PTOKEN_DEFAULT_DACL,PTOKEN_SOURCE);
-NTSTATUS  WINAPI NtDelayExecution(BOOLEAN,const LARGE_INTEGER*);
-NTSTATUS  WINAPI NtDeleteAtom(RTL_ATOM);
-NTSTATUS  WINAPI NtDeleteFile(POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtDeleteKey(HANDLE);
-NTSTATUS  WINAPI NtDeleteValueKey(HANDLE,const UNICODE_STRING *);
-NTSTATUS  WINAPI NtDeviceIoControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
-NTSTATUS  WINAPI NtDisplayString(PUNICODE_STRING); 
-NTSTATUS  WINAPI NtDuplicateObject(HANDLE,HANDLE,HANDLE,PHANDLE,ACCESS_MASK,ULONG,ULONG);
-NTSTATUS  WINAPI NtDuplicateToken(HANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,SECURITY_IMPERSONATION_LEVEL,TOKEN_TYPE,PHANDLE);
-NTSTATUS  WINAPI NtEnumerateKey(HANDLE,ULONG,KEY_INFORMATION_CLASS,void *,DWORD,DWORD *);
-NTSTATUS  WINAPI NtEnumerateValueKey(HANDLE,ULONG,KEY_VALUE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtExtendSection(HANDLE,PLARGE_INTEGER); 
-NTSTATUS  WINAPI NtFindAtom(const WCHAR*,ULONG,RTL_ATOM*);
-NTSTATUS  WINAPI NtFlushBuffersFile(HANDLE,IO_STATUS_BLOCK*);
-NTSTATUS  WINAPI NtFlushInstructionCache(HANDLE,LPCVOID,SIZE_T);
-NTSTATUS  WINAPI NtFlushKey(HANDLE);
-NTSTATUS  WINAPI NtFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,ULONG);
-NTSTATUS  WINAPI NtFlushWriteBuffer(VOID);
-NTSTATUS  WINAPI NtFreeVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
-NTSTATUS  WINAPI NtFsControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
-NTSTATUS  WINAPI NtGetContextThread(HANDLE,CONTEXT*);
-NTSTATUS  WINAPI NtGetPlugPlayEvent(ULONG,ULONG,PVOID,ULONG);
-ULONG     WINAPI NtGetTickCount(VOID);
-NTSTATUS  WINAPI NtImpersonateAnonymousToken(HANDLE);
-NTSTATUS  WINAPI NtImpersonateClientOfPort(HANDLE,PPORT_MESSAGE);
-NTSTATUS  WINAPI NtImpersonateThread(HANDLE,HANDLE,PSECURITY_QUALITY_OF_SERVICE);
-NTSTATUS  WINAPI NtInitializeRegistry(BOOLEAN);
-NTSTATUS  WINAPI NtInitiatePowerAction(POWER_ACTION,SYSTEM_POWER_STATE,ULONG,BOOLEAN);
-NTSTATUS  WINAPI NtListenPort(HANDLE,PLPC_MESSAGE);
-NTSTATUS  WINAPI NtLoadDriver(const UNICODE_STRING *);
-NTSTATUS  WINAPI NtLoadKey(const OBJECT_ATTRIBUTES *,OBJECT_ATTRIBUTES *);
-NTSTATUS  WINAPI NtLockFile(HANDLE,HANDLE,PIO_APC_ROUTINE,void*,PIO_STATUS_BLOCK,PLARGE_INTEGER,PLARGE_INTEGER,ULONG*,BOOLEAN,BOOLEAN);
-NTSTATUS  WINAPI NtLockVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
-NTSTATUS  WINAPI NtMakeTemporaryObject(HANDLE); 
-NTSTATUS  WINAPI NtMapViewOfSection(HANDLE,HANDLE,PVOID*,ULONG,SIZE_T,const LARGE_INTEGER*,SIZE_T*,SECTION_INHERIT,ULONG,ULONG);
-NTSTATUS  WINAPI NtNotifyChangeDirectoryFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,ULONG,BOOLEAN);
-NTSTATUS  WINAPI NtNotifyChangeKey(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,BOOLEAN,PVOID,ULONG,BOOLEAN);
-NTSTATUS  WINAPI NtOpenDirectoryObject(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtOpenEvent(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *);
-NTSTATUS  WINAPI NtOpenEventPair(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtOpenFile(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG);
-NTSTATUS  WINAPI NtOpenIoCompletion(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtOpenKey(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *);
-NTSTATUS  WINAPI NtOpenMutant(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
-NTSTATUS  WINAPI NtOpenObjectAuditAlarm(PUNICODE_STRING,PHANDLE,PUNICODE_STRING,PUNICODE_STRING,PSECURITY_DESCRIPTOR,HANDLE,ACCESS_MASK,ACCESS_MASK,PPRIVILEGE_SET,BOOLEAN,BOOLEAN,PBOOLEAN);
-NTSTATUS  WINAPI NtOpenProcess(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,const CLIENT_ID*);
-NTSTATUS  WINAPI NtOpenProcessToken(HANDLE,DWORD,HANDLE *);
-NTSTATUS  WINAPI NtOpenSection(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
-NTSTATUS  WINAPI NtOpenSemaphore(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*);
-NTSTATUS  WINAPI NtOpenSymbolicLinkObject(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtOpenThread(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,const CLIENT_ID*);
-NTSTATUS  WINAPI NtOpenThreadToken(HANDLE,DWORD,BOOLEAN,HANDLE *);
-NTSTATUS  WINAPI NtOpenTimer(HANDLE*, ACCESS_MASK, const OBJECT_ATTRIBUTES*);
-NTSTATUS  WINAPI NtPowerInformation(POWER_INFORMATION_LEVEL,PVOID,ULONG,PVOID,ULONG);
-NTSTATUS  WINAPI NtPrivilegeCheck(HANDLE,PPRIVILEGE_SET,PBOOLEAN);
-NTSTATUS  WINAPI NtPrivilegeObjectAuditAlarm(PUNICODE_STRING,HANDLE,HANDLE,ULONG,PPRIVILEGE_SET,BOOLEAN);
-NTSTATUS  WINAPI NtPrivilegedServiceAuditAlarm(PUNICODE_STRING,PUNICODE_STRING,HANDLE,PPRIVILEGE_SET,BOOLEAN);
-NTSTATUS  WINAPI NtProtectVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG,ULONG*);
-NTSTATUS  WINAPI NtPulseEvent(HANDLE,PULONG);
-NTSTATUS  WINAPI NtQueueApcThread(HANDLE,PNTAPCFUNC,ULONG_PTR,ULONG_PTR,ULONG_PTR);
-NTSTATUS  WINAPI NtQueryAttributesFile(const OBJECT_ATTRIBUTES*,FILE_BASIC_INFORMATION*);
-NTSTATUS  WINAPI NtQueryDefaultLocale(BOOLEAN,LCID*);
-NTSTATUS  WINAPI NtQueryDefaultUILanguage(LANGID*);
-NTSTATUS  WINAPI NtQueryDirectoryFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,FILE_INFORMATION_CLASS,BOOLEAN,PUNICODE_STRING,BOOLEAN);
-NTSTATUS  WINAPI NtQueryDirectoryObject(HANDLE,PDIRECTORY_BASIC_INFORMATION,ULONG,BOOLEAN,BOOLEAN,PULONG,PULONG);
-NTSTATUS  WINAPI NtQueryEaFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,BOOLEAN,PVOID,ULONG,PVOID,BOOLEAN);
-NTSTATUS  WINAPI NtQueryEvent(HANDLE,EVENT_INFORMATION_CLASS,PVOID,ULONG,PULONG); 
-NTSTATUS  WINAPI NtQueryFullAttributesFile(const OBJECT_ATTRIBUTES*,FILE_NETWORK_OPEN_INFORMATION*);
-NTSTATUS  WINAPI NtQueryInformationAtom(RTL_ATOM,ATOM_INFORMATION_CLASS,PVOID,ULONG,ULONG*);
-NTSTATUS  WINAPI NtQueryInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,LONG,FILE_INFORMATION_CLASS);
-NTSTATUS  WINAPI NtQueryInformationPort(HANDLE,PORT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQueryInformationProcess(HANDLE,PROCESSINFOCLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQueryInformationThread(HANDLE,THREADINFOCLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQueryInformationToken(HANDLE,DWORD,LPVOID,DWORD,LPDWORD);
-NTSTATUS  WINAPI NtQueryInstallUILanguage(LANGID*);
-NTSTATUS  WINAPI NtQueryIntervalProfile(KPROFILE_SOURCE,PULONG);
-NTSTATUS  WINAPI NtQueryIoCompletion(HANDLE,IO_COMPLETION_INFORMATION_CLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQueryKey(HANDLE,KEY_INFORMATION_CLASS,void *,DWORD,DWORD *);
-NTSTATUS  WINAPI NtQueryMultipleValueKey(HANDLE,PKEY_MULTIPLE_VALUE_INFORMATION,ULONG,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQueryMutant(HANDLE,MUTANT_INFORMATION_CLASS,PVOID,ULONG,PULONG); 
-NTSTATUS  WINAPI NtQueryObject(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
-NTSTATUS  WINAPI NtQueryOpenSubKeys(POBJECT_ATTRIBUTES,PULONG);
-NTSTATUS  WINAPI NtQueryPerformanceCounter(PLARGE_INTEGER, PLARGE_INTEGER);
-NTSTATUS  WINAPI NtQuerySecurityObject(HANDLE,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR,ULONG,PULONG);
-NTSTATUS  WINAPI NtQuerySection(HANDLE,SECTION_INFORMATION_CLASS,PVOID,ULONG,PULONG); 
-NTSTATUS  WINAPI NtQuerySemaphore(HANDLE,SEMAPHORE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQuerySymbolicLinkObject(HANDLE,PUNICODE_STRING,PULONG);
-NTSTATUS  WINAPI NtQuerySystemEnvironmentValue(PUNICODE_STRING,PWCHAR,ULONG,PULONG);
-NTSTATUS  WINAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQuerySystemTime(PLARGE_INTEGER);
-NTSTATUS  WINAPI NtQueryTimer(HANDLE,TIMER_INFORMATION_CLASS,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtQueryTimerResolution(PULONG,PULONG,PULONG);
-NTSTATUS  WINAPI NtQueryValueKey(HANDLE,const UNICODE_STRING *,KEY_VALUE_INFORMATION_CLASS,void *,DWORD,DWORD *);
-NTSTATUS  WINAPI NtQueryVirtualMemory(HANDLE,LPCVOID,MEMORY_INFORMATION_CLASS,PVOID,SIZE_T,SIZE_T*);
-NTSTATUS  WINAPI NtQueryVolumeInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FS_INFORMATION_CLASS);
-void      WINAPI NtRaiseException(PEXCEPTION_RECORD,PCONTEXT,BOOL);
-NTSTATUS  WINAPI NtRaiseHardError(NTSTATUS,ULONG,PUNICODE_STRING,PVOID*,HARDERROR_RESPONSE_OPTION,PHARDERROR_RESPONSE);
-NTSTATUS  WINAPI NtReadFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,PLARGE_INTEGER,PULONG);
-NTSTATUS  WINAPI NtReadFileScatter(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,FILE_SEGMENT_ELEMENT,ULONG,PLARGE_INTEGER,PULONG);
-NTSTATUS  WINAPI NtReadRequestData(HANDLE,PLPC_MESSAGE,ULONG,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtReadVirtualMemory(HANDLE,const void*,void*,SIZE_T,SIZE_T*);
-NTSTATUS  WINAPI NtRegisterThreadTerminatePort(HANDLE); 
-NTSTATUS  WINAPI NtReleaseMutant(HANDLE,PLONG);
-NTSTATUS  WINAPI NtReleaseSemaphore(HANDLE,ULONG,PULONG);
-NTSTATUS  WINAPI NtRemoveIoCompletion(HANDLE,PULONG,PULONG,PIO_STATUS_BLOCK,PLARGE_INTEGER);
-NTSTATUS  WINAPI NtReplaceKey(POBJECT_ATTRIBUTES,HANDLE,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI NtReplyPort(HANDLE,PLPC_MESSAGE);
-NTSTATUS  WINAPI NtReplyWaitReceivePort(HANDLE,PULONG,PLPC_MESSAGE,PLPC_MESSAGE);
-NTSTATUS  WINAPI NtReplyWaitReceivePortEx(HANDLE,PVOID*,PPORT_MESSAGE,PPORT_MESSAGE,PLARGE_INTEGER);
-NTSTATUS  WINAPI NtReplyWaitReplyPort(HANDLE,PLPC_MESSAGE);
-NTSTATUS  WINAPI NtRequestPort(HANDLE,PLPC_MESSAGE);
-NTSTATUS  WINAPI NtRequestWaitReplyPort(HANDLE,PLPC_MESSAGE,PLPC_MESSAGE);
-NTSTATUS  WINAPI NtResetEvent(HANDLE,PULONG);
-NTSTATUS  WINAPI NtRestoreKey(HANDLE,HANDLE,ULONG);
-NTSTATUS  WINAPI NtResumeThread(HANDLE,PULONG);
-NTSTATUS  WINAPI NtSaveKey(HANDLE,HANDLE);
-NTSTATUS  WINAPI NtSecureConnectPort(PHANDLE,PUNICODE_STRING,PSECURITY_QUALITY_OF_SERVICE,PLPC_SECTION_WRITE,PSID,PLPC_SECTION_READ,PULONG,PVOID,PULONG);
-NTSTATUS  WINAPI NtSetContextThread(HANDLE,const CONTEXT*);
-NTSTATUS  WINAPI NtSetDefaultHardErrorPort(HANDLE); 
-NTSTATUS  WINAPI NtSetDefaultLocale(BOOLEAN,LCID);
-NTSTATUS  WINAPI NtSetDefaultUILanguage(LANGID);
-NTSTATUS  WINAPI NtSetEaFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG);
-NTSTATUS  WINAPI NtSetEvent(HANDLE,PULONG);
-NTSTATUS  WINAPI NtSetHighEventPair(HANDLE); 
-NTSTATUS  WINAPI NtSetHighWaitLowEventPair(HANDLE); 
-NTSTATUS  WINAPI NtSetHighWaitLowThread(VOID);
-NTSTATUS  WINAPI NtSetInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FILE_INFORMATION_CLASS);
-NTSTATUS  WINAPI NtSetInformationKey(HANDLE,const int,PVOID,ULONG);
-NTSTATUS  WINAPI NtSetInformationObject(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG);
-NTSTATUS  WINAPI NtSetInformationProcess(HANDLE,PROCESS_INFORMATION_CLASS,PVOID,ULONG);
-NTSTATUS  WINAPI NtSetInformationThread(HANDLE,THREADINFOCLASS,LPCVOID,ULONG);
-NTSTATUS  WINAPI NtSetInformationToken(HANDLE,TOKEN_INFORMATION_CLASS,PVOID,ULONG);
-NTSTATUS  WINAPI NtSetIntervalProfile(ULONG,KPROFILE_SOURCE);
-NTSTATUS  WINAPI NtSetIoCompletion(HANDLE,ULONG,ULONG,NTSTATUS,ULONG);
-NTSTATUS  WINAPI NtSetLdtEntries(ULONG,LDT_ENTRY,ULONG,LDT_ENTRY);
-NTSTATUS  WINAPI NtSetLowEventPair(HANDLE); 
-NTSTATUS  WINAPI NtSetLowWaitHighEventPair(HANDLE); 
-NTSTATUS  WINAPI NtSetLowWaitHighThread(VOID); 
-NTSTATUS  WINAPI NtSetSecurityObject(HANDLE,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR);
-NTSTATUS  WINAPI NtSetSystemEnvironmentValue(PUNICODE_STRING,PUNICODE_STRING);
-NTSTATUS  WINAPI NtSetSystemInformation(SYSTEM_INFORMATION_CLASS,PVOID,ULONG);
-NTSTATUS  WINAPI NtSetSystemPowerState(POWER_ACTION,SYSTEM_POWER_STATE,ULONG);
-NTSTATUS  WINAPI NtSetSystemTime(const LARGE_INTEGER*,LARGE_INTEGER*);
-NTSTATUS  WINAPI NtSetTimer(HANDLE, const LARGE_INTEGER*, PTIMER_APC_ROUTINE, PVOID, BOOLEAN, ULONG, BOOLEAN*);
-NTSTATUS  WINAPI NtSetTimerResolution(ULONG,BOOLEAN,PULONG); 
-NTSTATUS  WINAPI NtSetValueKey(HANDLE,const UNICODE_STRING *,ULONG,ULONG,const void *,ULONG);
-NTSTATUS  WINAPI NtSetVolumeInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FS_INFORMATION_CLASS);
-NTSTATUS  WINAPI NtSignalAndWaitForSingleObject(HANDLE,HANDLE,BOOLEAN,const LARGE_INTEGER*);
-NTSTATUS  WINAPI NtShutdownSystem(SHUTDOWN_ACTION); 
-NTSTATUS  WINAPI NtStartProfile(HANDLE); 
-NTSTATUS  WINAPI NtStopProfile(HANDLE); 
-NTSTATUS  WINAPI NtSuspendThread(HANDLE,PULONG);
-NTSTATUS  WINAPI NtSystemDebugControl(SYSDBG_COMMAND,PVOID,ULONG,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtTerminateProcess(HANDLE,LONG);
-NTSTATUS  WINAPI NtTerminateThread(HANDLE,LONG);
-NTSTATUS  WINAPI NtTestAlert(VOID); 
-NTSTATUS  WINAPI NtUnloadDriver(const UNICODE_STRING *);
-NTSTATUS  WINAPI NtUnloadKey(HANDLE);
-NTSTATUS  WINAPI NtUnloadKeyEx(POBJECT_ATTRIBUTES,HANDLE);
-NTSTATUS  WINAPI NtUnlockFile(HANDLE,PIO_STATUS_BLOCK,PLARGE_INTEGER,PLARGE_INTEGER,PULONG);
-NTSTATUS  WINAPI NtUnlockVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
-NTSTATUS  WINAPI NtUnmapViewOfSection(HANDLE,PVOID);
-NTSTATUS  WINAPI NtVdmControl(ULONG,PVOID); 
-NTSTATUS  WINAPI NtWaitForSingleObject(HANDLE,BOOLEAN,const LARGE_INTEGER*);
-NTSTATUS  WINAPI NtWaitForMultipleObjects(ULONG,const HANDLE*,BOOLEAN,BOOLEAN,const LARGE_INTEGER*);
-NTSTATUS  WINAPI NtWaitHighEventPair(HANDLE); 
-NTSTATUS  WINAPI NtWaitLowEventPair(HANDLE); 
-NTSTATUS  WINAPI NtWriteFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,const void*,ULONG,PLARGE_INTEGER,PULONG);
-NTSTATUS  WINAPI NtWriteFileGather(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,FILE_SEGMENT_ELEMENT,ULONG,PLARGE_INTEGER,PULONG);
-NTSTATUS  WINAPI NtWriteRequestData(HANDLE,PLPC_MESSAGE,ULONG,PVOID,ULONG,PULONG);
-NTSTATUS  WINAPI NtWriteVirtualMemory(HANDLE,void*,const void*,SIZE_T,SIZE_T*);
-NTSTATUS  WINAPI NtYieldExecution(void);
-
-void      WINAPI RtlAcquirePebLock(void);
-BYTE      WINAPI RtlAcquireResourceExclusive(LPRTL_RWLOCK,BYTE);
-BYTE      WINAPI RtlAcquireResourceShared(LPRTL_RWLOCK,BYTE);
-NTSTATUS  WINAPI RtlAddAce(PACL,DWORD,DWORD,PACE_HEADER,DWORD);
-NTSTATUS  WINAPI RtlAddAccessAllowedAce(PACL,DWORD,DWORD,PSID);
-NTSTATUS  WINAPI RtlAddAccessAllowedAceEx(PACL,DWORD,DWORD,DWORD,PSID);
-NTSTATUS  WINAPI RtlAddAccessDeniedAce(PACL,DWORD,DWORD,PSID);
-NTSTATUS  WINAPI RtlAddAccessDeniedAceEx(PACL,DWORD,DWORD,DWORD,PSID);
-NTSTATUS  WINAPI RtlAddAtomToAtomTable(RTL_ATOM_TABLE,const WCHAR*,RTL_ATOM*);
-NTSTATUS  WINAPI RtlAddAuditAccessAce(PACL,DWORD,DWORD,PSID,BOOL,BOOL); 
-PVOID     WINAPI RtlAddVectoredExceptionHandler(ULONG,PVECTORED_EXCEPTION_HANDLER);
-NTSTATUS  WINAPI RtlAdjustPrivilege(ULONG,BOOLEAN,BOOLEAN,PBOOLEAN);
-NTSTATUS  WINAPI RtlAllocateAndInitializeSid(PSID_IDENTIFIER_AUTHORITY,BYTE,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,PSID *);
-RTL_HANDLE * WINAPI RtlAllocateHandle(RTL_HANDLE_TABLE *,ULONG *);
-PVOID     WINAPI RtlAllocateHeap(HANDLE,ULONG,SIZE_T);
-WCHAR     WINAPI RtlAnsiCharToUnicodeChar(LPSTR *);
-DWORD     WINAPI RtlAnsiStringToUnicodeSize(const STRING *);
-NTSTATUS  WINAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING,PCANSI_STRING,BOOLEAN);
-NTSTATUS  WINAPI RtlAppendAsciizToString(STRING *,LPCSTR);
-NTSTATUS  WINAPI RtlAppendStringToString(STRING *,const STRING *);
-NTSTATUS  WINAPI RtlAppendUnicodeStringToString(UNICODE_STRING *,const UNICODE_STRING *);
-NTSTATUS  WINAPI RtlAppendUnicodeToString(UNICODE_STRING *,LPCWSTR);
-BOOLEAN   WINAPI RtlAreAllAccessesGranted(ACCESS_MASK,ACCESS_MASK);
-BOOLEAN   WINAPI RtlAreAnyAccessesGranted(ACCESS_MASK,ACCESS_MASK);
-BOOLEAN   WINAPI RtlAreBitsSet(PCRTL_BITMAP,ULONG,ULONG);
-BOOLEAN   WINAPI RtlAreBitsClear(PCRTL_BITMAP,ULONG,ULONG);
-
-NTSTATUS  WINAPI RtlCharToInteger(PCSZ,ULONG,PULONG);
-NTSTATUS  WINAPI RtlCheckRegistryKey(ULONG, PWSTR);
-void      WINAPI RtlClearAllBits(PRTL_BITMAP);
-void      WINAPI RtlClearBits(PRTL_BITMAP,ULONG,ULONG);
-PDEBUG_BUFFER WINAPI RtlCreateQueryDebugBuffer(ULONG,BOOLEAN);
-ULONG     WINAPI RtlCompactHeap(HANDLE,ULONG);
-LONG      WINAPI RtlCompareString(const STRING*,const STRING*,BOOLEAN);
-LONG      WINAPI RtlCompareUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
-DWORD     WINAPI RtlComputeCrc32(DWORD,PBYTE,INT);
-NTSTATUS  WINAPI RtlConvertSidToUnicodeString(PUNICODE_STRING,PSID,BOOLEAN);
-LONGLONG  WINAPI RtlConvertLongToLargeInteger(LONG);
-ULONGLONG WINAPI RtlConvertUlongToLargeInteger(ULONG);
-void      WINAPI RtlCopyLuid(PLUID,const LUID*);
-void      WINAPI RtlCopyLuidAndAttributesArray(ULONG,const LUID_AND_ATTRIBUTES*,PLUID_AND_ATTRIBUTES);
-BOOLEAN   WINAPI RtlCopySid(DWORD,PSID,PSID);
-NTSTATUS  WINAPI RtlCopySecurityDescriptor(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR);
-void      WINAPI RtlCopyString(STRING*,const STRING*);
-void      WINAPI RtlCopyUnicodeString(UNICODE_STRING*,const UNICODE_STRING*);
-NTSTATUS  WINAPI RtlCreateAcl(PACL,DWORD,DWORD);
-NTSTATUS  WINAPI RtlCreateAtomTable(ULONG,RTL_ATOM_TABLE*);
-NTSTATUS  WINAPI RtlCreateEnvironment(BOOLEAN, PWSTR*);
-HANDLE    WINAPI RtlCreateHeap(ULONG,PVOID,SIZE_T,SIZE_T,PVOID,PRTL_HEAP_DEFINITION);
-NTSTATUS  WINAPI RtlCreateProcessParameters(RTL_USER_PROCESS_PARAMETERS**,const UNICODE_STRING*,
-                                            const UNICODE_STRING*,const UNICODE_STRING*,
-                                            const UNICODE_STRING*,PWSTR,const UNICODE_STRING*,
-                                            const UNICODE_STRING*,const UNICODE_STRING*,
-                                            const UNICODE_STRING*);
-NTSTATUS  WINAPI RtlCreateSecurityDescriptor(PSECURITY_DESCRIPTOR,DWORD);
-BOOLEAN   WINAPI RtlCreateUnicodeString(PUNICODE_STRING,LPCWSTR);
-BOOLEAN   WINAPI RtlCreateUnicodeStringFromAsciiz(PUNICODE_STRING,LPCSTR);
-NTSTATUS  WINAPI RtlCreateUserThread(HANDLE,const SECURITY_DESCRIPTOR*,BOOLEAN,PVOID,SIZE_T,SIZE_T,PRTL_THREAD_START_ROUTINE,void*,HANDLE*,CLIENT_ID*);
-
-NTSTATUS  WINAPI RtlDeleteAce(PACL,DWORD);
-NTSTATUS  WINAPI RtlDeleteAtomFromAtomTable(RTL_ATOM_TABLE,RTL_ATOM);
-NTSTATUS  WINAPI RtlDeleteCriticalSection(RTL_CRITICAL_SECTION *);
-NTSTATUS  WINAPI RtlDeleteRegistryValue(ULONG, PCWSTR, PCWSTR);
-void      WINAPI RtlDeleteResource(LPRTL_RWLOCK);
-DWORD     WINAPI RtlDeleteSecurityObject(DWORD);
-PRTL_USER_PROCESS_PARAMETERS WINAPI RtlDeNormalizeProcessParams(RTL_USER_PROCESS_PARAMETERS*);
-NTSTATUS  WINAPI RtlDestroyAtomTable(RTL_ATOM_TABLE);
-NTSTATUS  WINAPI RtlDestroyEnvironment(PWSTR);
-NTSTATUS  WINAPI RtlDestroyHandleTable(RTL_HANDLE_TABLE *);
-HANDLE    WINAPI RtlDestroyHeap(HANDLE);
-void      WINAPI RtlDestroyProcessParameters(RTL_USER_PROCESS_PARAMETERS*);
-NTSTATUS  WINAPI RtlDestroyQueryDebugBuffer(PDEBUG_BUFFER);
-DOS_PATHNAME_TYPE WINAPI RtlDetermineDosPathNameType_U(PCWSTR);
-BOOLEAN   WINAPI RtlDoesFileExists_U(LPCWSTR);
-BOOLEAN   WINAPI RtlDosPathNameToNtPathName_U(PCWSTR,PUNICODE_STRING,PWSTR*,CURDIR*);
-ULONG     WINAPI RtlDosSearchPath_U(LPCWSTR, LPCWSTR, LPCWSTR, ULONG, LPWSTR, LPWSTR*);
-WCHAR     WINAPI RtlDowncaseUnicodeChar(WCHAR);
-NTSTATUS  WINAPI RtlDowncaseUnicodeString(UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
-void      WINAPI RtlDumpResource(LPRTL_RWLOCK);
-NTSTATUS  WINAPI RtlDuplicateUnicodeString(int,const UNICODE_STRING*,UNICODE_STRING*);
-
-NTSTATUS  WINAPI RtlEmptyAtomTable(RTL_ATOM_TABLE,BOOLEAN);
-LONGLONG  WINAPI RtlEnlargedIntegerMultiply(INT,INT);
-ULONGLONG WINAPI RtlEnlargedUnsignedMultiply(UINT,UINT);
-UINT      WINAPI RtlEnlargedUnsignedDivide(ULONGLONG,UINT,UINT *);
-NTSTATUS  WINAPI RtlEnterCriticalSection(RTL_CRITICAL_SECTION *);
-void      WINAPI RtlEraseUnicodeString(UNICODE_STRING*);
-NTSTATUS  WINAPI RtlEqualComputerName(const UNICODE_STRING*,const UNICODE_STRING*);
-NTSTATUS  WINAPI RtlEqualDomainName(const UNICODE_STRING*,const UNICODE_STRING*);
-BOOLEAN   WINAPI RtlEqualLuid(const LUID*,const LUID*);
-BOOL      WINAPI RtlEqualPrefixSid(PSID,PSID);
-BOOL      WINAPI RtlEqualSid(PSID,PSID);
-BOOLEAN   WINAPI RtlEqualString(const STRING*,const STRING*,BOOLEAN);
-BOOLEAN   WINAPI RtlEqualUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
-void      WINAPI RtlExitUserThread(ULONG) DECLSPEC_NORETURN;
-NTSTATUS  WINAPI RtlExpandEnvironmentStrings_U(PWSTR, const UNICODE_STRING*, UNICODE_STRING*, ULONG*);
-LONGLONG  WINAPI RtlExtendedMagicDivide(LONGLONG,LONGLONG,INT);
-LONGLONG  WINAPI RtlExtendedIntegerMultiply(LONGLONG,INT);
-LONGLONG  WINAPI RtlExtendedLargeIntegerDivide(LONGLONG,INT,INT *);
-
-NTSTATUS  WINAPI RtlFindCharInUnicodeString(int,const UNICODE_STRING*,const UNICODE_STRING*,USHORT*);
-ULONG     WINAPI RtlFindClearBits(PCRTL_BITMAP,ULONG,ULONG);
-ULONG     WINAPI RtlFindClearBitsAndSet(PRTL_BITMAP,ULONG,ULONG);
-ULONG     WINAPI RtlFindClearRuns(PCRTL_BITMAP,PRTL_BITMAP_RUN,ULONG,BOOLEAN);
-ULONG     WINAPI RtlFindLastBackwardRunSet(PCRTL_BITMAP,ULONG,PULONG);
-ULONG     WINAPI RtlFindLastBackwardRunClear(PCRTL_BITMAP,ULONG,PULONG);
-CCHAR     WINAPI RtlFindLeastSignificantBit(ULONGLONG);
-ULONG     WINAPI RtlFindLongestRunSet(PCRTL_BITMAP,PULONG);
-ULONG     WINAPI RtlFindLongestRunClear(PCRTL_BITMAP,PULONG);
-NTSTATUS  WINAPI RtlFindMessage(HMODULE,ULONG,ULONG,ULONG,const MESSAGE_RESOURCE_ENTRY**);
-CCHAR     WINAPI RtlFindMostSignificantBit(ULONGLONG);
-ULONG     WINAPI RtlFindNextForwardRunSet(PCRTL_BITMAP,ULONG,PULONG);
-ULONG     WINAPI RtlFindNextForwardRunClear(PCRTL_BITMAP,ULONG,PULONG);
-ULONG     WINAPI RtlFindSetBits(PCRTL_BITMAP,ULONG,ULONG);
-ULONG     WINAPI RtlFindSetBitsAndClear(PRTL_BITMAP,ULONG,ULONG);
-ULONG     WINAPI RtlFindSetRuns(PCRTL_BITMAP,PRTL_BITMAP_RUN,ULONG,BOOLEAN);
-BOOLEAN   WINAPI RtlFirstFreeAce(PACL,PACE_HEADER *);
-NTSTATUS  WINAPI RtlFormatCurrentUserKeyPath(PUNICODE_STRING);
-NTSTATUS  WINAPI RtlFormatMessage(LPWSTR,UCHAR,BOOLEAN,BOOLEAN,BOOLEAN,va_list *,LPWSTR,ULONG);
-void      WINAPI RtlFreeAnsiString(PANSI_STRING);
-BOOLEAN   WINAPI RtlFreeHandle(RTL_HANDLE_TABLE *,RTL_HANDLE *);
-BOOLEAN   WINAPI RtlFreeHeap(HANDLE,ULONG,PVOID);
-void      WINAPI RtlFreeOemString(POEM_STRING);
-DWORD     WINAPI RtlFreeSid(PSID);
-void      WINAPI RtlFreeUnicodeString(PUNICODE_STRING);
-
-NTSTATUS  WINAPI RtlGetAce(PACL,DWORD,LPVOID *);
-NTSTATUS  WINAPI RtlGetControlSecurityDescriptor(PSECURITY_DESCRIPTOR, PSECURITY_DESCRIPTOR_CONTROL,LPDWORD);
-NTSTATUS  WINAPI RtlGetCurrentDirectory_U(ULONG, LPWSTR);
-PEB *     WINAPI RtlGetCurrentPeb(void);
-NTSTATUS  WINAPI RtlGetDaclSecurityDescriptor(PSECURITY_DESCRIPTOR,PBOOLEAN,PACL *,PBOOLEAN);
-ULONG     WINAPI RtlGetFullPathName_U(PCWSTR,ULONG,PWSTR,PWSTR*);
-NTSTATUS  WINAPI RtlGetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID *,PBOOLEAN);
-NTSTATUS  WINAPI RtlGetLastNtStatus(void);
-DWORD     WINAPI RtlGetLastWin32Error(void);
-DWORD     WINAPI RtlGetLongestNtPathLength(void);
-BOOLEAN   WINAPI RtlGetNtProductType(LPDWORD);
-NTSTATUS  WINAPI RtlGetOwnerSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID *,PBOOLEAN);
-ULONG     WINAPI RtlGetProcessHeaps(ULONG,HANDLE*);
-NTSTATUS  WINAPI RtlGetSaclSecurityDescriptor(PSECURITY_DESCRIPTOR,PBOOLEAN,PACL *,PBOOLEAN);
-NTSTATUS  WINAPI RtlGetVersion(RTL_OSVERSIONINFOEXW*);
-NTSTATUS  WINAPI RtlGUIDFromString(PUNICODE_STRING,GUID*);
-
-PSID_IDENTIFIER_AUTHORITY WINAPI RtlIdentifierAuthoritySid(PSID);
-PVOID     WINAPI RtlImageDirectoryEntryToData(HMODULE,BOOL,WORD,ULONG *);
-PIMAGE_NT_HEADERS WINAPI RtlImageNtHeader(HMODULE);
-PIMAGE_SECTION_HEADER WINAPI RtlImageRvaToSection(const IMAGE_NT_HEADERS *,HMODULE,DWORD);
-PVOID     WINAPI RtlImageRvaToVa(const IMAGE_NT_HEADERS *,HMODULE,DWORD,IMAGE_SECTION_HEADER **);
-NTSTATUS  WINAPI RtlImpersonateSelf(SECURITY_IMPERSONATION_LEVEL);
-void      WINAPI RtlInitString(PSTRING,PCSZ);
-void      WINAPI RtlInitAnsiString(PANSI_STRING,PCSZ);
-NTSTATUS  WINAPI RtlInitAnsiStringEx(PANSI_STRING,PCSZ);
-void      WINAPI RtlInitUnicodeString(PUNICODE_STRING,PCWSTR);
-NTSTATUS  WINAPI RtlInitUnicodeStringEx(PUNICODE_STRING,PCWSTR);
-NTSTATUS  WINAPI RtlInitializeCriticalSection(RTL_CRITICAL_SECTION *);
-NTSTATUS  WINAPI RtlInitializeCriticalSectionAndSpinCount(RTL_CRITICAL_SECTION *,DWORD);
-void      WINAPI RtlInitializeBitMap(PRTL_BITMAP,PULONG,ULONG);
-void      WINAPI RtlInitializeHandleTable(ULONG,ULONG,RTL_HANDLE_TABLE *);
-void      WINAPI RtlInitializeResource(LPRTL_RWLOCK);
-BOOL      WINAPI RtlInitializeSid(PSID,PSID_IDENTIFIER_AUTHORITY,BYTE);
-
-NTSTATUS  WINAPI RtlInt64ToUnicodeString(ULONGLONG,ULONG,UNICODE_STRING *);
-NTSTATUS  WINAPI RtlIntegerToChar(ULONG,ULONG,ULONG,PCHAR);
-NTSTATUS  WINAPI RtlIntegerToUnicodeString(ULONG,ULONG,UNICODE_STRING *);
-ULONG     WINAPI RtlIsDosDeviceName_U(PCWSTR);
-BOOLEAN   WINAPI RtlIsNameLegalDOS8Dot3(const UNICODE_STRING*,POEM_STRING,PBOOLEAN);
-BOOLEAN   WINAPI RtlIsTextUnicode(LPCVOID,INT,INT *);
-BOOLEAN   WINAPI RtlIsValidHandle(const RTL_HANDLE_TABLE *, const RTL_HANDLE *);
-BOOLEAN   WINAPI RtlIsValidIndexHandle(const RTL_HANDLE_TABLE *, ULONG Index, RTL_HANDLE **);
-
-LONGLONG  WINAPI RtlLargeIntegerAdd(LONGLONG,LONGLONG);
-LONGLONG  WINAPI RtlLargeIntegerArithmeticShift(LONGLONG,INT);
-ULONGLONG WINAPI RtlLargeIntegerDivide( ULONGLONG,ULONGLONG,ULONGLONG *);
-LONGLONG  WINAPI RtlLargeIntegerNegate(LONGLONG);
-LONGLONG  WINAPI RtlLargeIntegerShiftLeft(LONGLONG,INT);
-LONGLONG  WINAPI RtlLargeIntegerShiftRight(LONGLONG,INT);
-LONGLONG  WINAPI RtlLargeIntegerSubtract(LONGLONG,LONGLONG);
-NTSTATUS  WINAPI RtlLargeIntegerToChar(const ULONGLONG *,ULONG,ULONG,PCHAR);
-NTSTATUS  WINAPI RtlLeaveCriticalSection(RTL_CRITICAL_SECTION *);
-DWORD     WINAPI RtlLengthRequiredSid(DWORD);
-ULONG     WINAPI RtlLengthSecurityDescriptor(PSECURITY_DESCRIPTOR);
-DWORD     WINAPI RtlLengthSid(PSID);
-NTSTATUS  WINAPI RtlLocalTimeToSystemTime(const LARGE_INTEGER*,PLARGE_INTEGER);
-BOOLEAN   WINAPI RtlLockHeap(HANDLE);
-NTSTATUS  WINAPI RtlLookupAtomInAtomTable(RTL_ATOM_TABLE,const WCHAR*,RTL_ATOM*);
-
-NTSTATUS  WINAPI RtlMakeSelfRelativeSD(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,LPDWORD);
-void      WINAPI RtlMapGenericMask(PACCESS_MASK,const GENERIC_MAPPING*);
-NTSTATUS  WINAPI RtlMultiByteToUnicodeN(LPWSTR,DWORD,LPDWORD,LPCSTR,DWORD);
-NTSTATUS  WINAPI RtlMultiByteToUnicodeSize(DWORD*,LPCSTR,UINT);
-
-DWORD     WINAPI RtlNewSecurityObject(DWORD,DWORD,DWORD,DWORD,DWORD,DWORD);
-PRTL_USER_PROCESS_PARAMETERS WINAPI RtlNormalizeProcessParams(RTL_USER_PROCESS_PARAMETERS*);
-ULONG     WINAPI RtlNtStatusToDosError(NTSTATUS);
-ULONG     WINAPI RtlNtStatusToDosErrorNoTeb(NTSTATUS);
-ULONG     WINAPI RtlNumberOfSetBits(PCRTL_BITMAP);
-ULONG     WINAPI RtlNumberOfClearBits(PCRTL_BITMAP);
-
-UINT      WINAPI RtlOemStringToUnicodeSize(const STRING*);
-NTSTATUS  WINAPI RtlOemStringToUnicodeString(UNICODE_STRING*,const STRING*,BOOLEAN);
-NTSTATUS  WINAPI RtlOemToUnicodeN(LPWSTR,DWORD,LPDWORD,LPCSTR,DWORD);
-DWORD     WINAPI RtlOpenCurrentUser(ACCESS_MASK,PHANDLE);
-
-NTSTATUS  WINAPI RtlPinAtomInAtomTable(RTL_ATOM_TABLE,RTL_ATOM);
-BOOLEAN   WINAPI RtlPrefixString(const STRING*,const STRING*,BOOLEAN);
-BOOLEAN   WINAPI RtlPrefixUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
-
-NTSTATUS  WINAPI RtlQueryAtomInAtomTable(RTL_ATOM_TABLE,RTL_ATOM,ULONG*,ULONG*,WCHAR*,ULONG*);
-NTSTATUS  WINAPI RtlQueryEnvironmentVariable_U(PWSTR,PUNICODE_STRING,PUNICODE_STRING);
-NTSTATUS  WINAPI RtlQueryInformationAcl(PACL,LPVOID,DWORD,ACL_INFORMATION_CLASS);
-NTSTATUS  WINAPI RtlQueryProcessDebugInformation(ULONG,ULONG,PDEBUG_BUFFER);
-NTSTATUS  WINAPI RtlQueryRegistryValues(ULONG, PCWSTR, PRTL_QUERY_REGISTRY_TABLE, PVOID, PVOID);
-NTSTATUS  WINAPI RtlQueryTimeZoneInformation(RTL_TIME_ZONE_INFORMATION*);
-void      WINAPI RtlRaiseException(PEXCEPTION_RECORD);
-void      WINAPI RtlRaiseStatus(NTSTATUS);
-ULONG     WINAPI RtlRandom(PULONG);
-PVOID     WINAPI RtlReAllocateHeap(HANDLE,ULONG,PVOID,SIZE_T);
-void      WINAPI RtlReleasePebLock(void);
-void      WINAPI RtlReleaseResource(LPRTL_RWLOCK);
-ULONG     WINAPI RtlRemoveVectoredExceptionHandler(PVOID);
-void      WINAPI RtlRestoreLastWin32Error(DWORD);
-
-void      WINAPI RtlSecondsSince1970ToTime(DWORD,LARGE_INTEGER *);
-void      WINAPI RtlSecondsSince1980ToTime(DWORD,LARGE_INTEGER *);
-NTSTATUS  WINAPI RtlSelfRelativeToAbsoluteSD(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,
-                                             PDWORD,PACL,PDWORD,PACL,PDWORD,PSID,PDWORD,PSID,PDWORD);
-void      WINAPI RtlSetAllBits(PRTL_BITMAP);
-void      WINAPI RtlSetBits(PRTL_BITMAP,ULONG,ULONG);
-ULONG     WINAPI RtlSetCriticalSectionSpinCount(RTL_CRITICAL_SECTION*,ULONG);
-NTSTATUS  WINAPI RtlSetCurrentDirectory_U(const UNICODE_STRING*);
-void      WINAPI RtlSetCurrentEnvironment(PWSTR, PWSTR*);
-NTSTATUS  WINAPI RtlSetDaclSecurityDescriptor(PSECURITY_DESCRIPTOR,BOOLEAN,PACL,BOOLEAN);
-NTSTATUS  WINAPI RtlSetEnvironmentVariable(PWSTR*,PUNICODE_STRING,PUNICODE_STRING);
-NTSTATUS  WINAPI RtlSetOwnerSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID,BOOLEAN);
-NTSTATUS  WINAPI RtlSetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID,BOOLEAN);
-void      WINAPI RtlSetLastWin32Error(DWORD);
-void      WINAPI RtlSetLastWin32ErrorAndNtStatusFromNtStatus(NTSTATUS);
-NTSTATUS  WINAPI RtlSetSaclSecurityDescriptor(PSECURITY_DESCRIPTOR,BOOLEAN,PACL,BOOLEAN);
-NTSTATUS  WINAPI RtlSetTimeZoneInformation(const RTL_TIME_ZONE_INFORMATION*);
-SIZE_T    WINAPI RtlSizeHeap(HANDLE,ULONG,PVOID);
-NTSTATUS  WINAPI RtlStringFromGUID(REFGUID,PUNICODE_STRING);
-LPDWORD   WINAPI RtlSubAuthoritySid(PSID,DWORD);
-LPBYTE    WINAPI RtlSubAuthorityCountSid(PSID);
-NTSTATUS  WINAPI RtlSystemTimeToLocalTime(const LARGE_INTEGER*,PLARGE_INTEGER);
-
-void      WINAPI RtlTimeToTimeFields(const LARGE_INTEGER*,PTIME_FIELDS);
-BOOLEAN   WINAPI RtlTimeFieldsToTime(PTIME_FIELDS,PLARGE_INTEGER);
-void      WINAPI RtlTimeToElapsedTimeFields(const LARGE_INTEGER *,PTIME_FIELDS);
-BOOLEAN   WINAPI RtlTimeToSecondsSince1970(const LARGE_INTEGER *,LPDWORD);
-BOOLEAN   WINAPI RtlTimeToSecondsSince1980(const LARGE_INTEGER *,LPDWORD);
-BOOL      WINAPI RtlTryEnterCriticalSection(RTL_CRITICAL_SECTION *);
-
-ULONGLONG __cdecl RtlUlonglongByteSwap(ULONGLONG);
-DWORD     WINAPI RtlUnicodeStringToAnsiSize(const UNICODE_STRING*);
-NTSTATUS  WINAPI RtlUnicodeStringToAnsiString(PANSI_STRING,PCUNICODE_STRING,BOOLEAN);
-NTSTATUS  WINAPI RtlUnicodeStringToInteger(const UNICODE_STRING *,ULONG,ULONG *);
-DWORD     WINAPI RtlUnicodeStringToOemSize(const UNICODE_STRING*);
-NTSTATUS  WINAPI RtlUnicodeStringToOemString(POEM_STRING,PCUNICODE_STRING,BOOLEAN);
-NTSTATUS  WINAPI RtlUnicodeToMultiByteN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
-NTSTATUS  WINAPI RtlUnicodeToMultiByteSize(PULONG,PCWSTR,ULONG);
-NTSTATUS  WINAPI RtlUnicodeToOemN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
-ULONG     WINAPI RtlUniform(PULONG);
-BOOLEAN   WINAPI RtlUnlockHeap(HANDLE);
-void      WINAPI RtlUnwind(PVOID,PVOID,PEXCEPTION_RECORD,PVOID);
-#ifdef __ia64__
-void      WINAPI RtlUnwind2(FRAME_POINTERS,PVOID,PEXCEPTION_RECORD,PVOID,PCONTEXT);
-void      WINAPI RtlUnwindEx(FRAME_POINTERS,PVOID,PEXCEPTION_RECORD,PVOID,PCONTEXT,PUNWIND_HISTORY_TABLE);
+NTSYSAPI void      WINAPI RtlAcquirePebLock(void);
+NTSYSAPI BYTE      WINAPI RtlAcquireResourceExclusive(LPRTL_RWLOCK,BYTE);
+NTSYSAPI BYTE      WINAPI RtlAcquireResourceShared(LPRTL_RWLOCK,BYTE);
+NTSYSAPI void      WINAPI RtlAcquireSRWLockExclusive(RTL_SRWLOCK*);
+NTSYSAPI void      WINAPI RtlAcquireSRWLockShared(RTL_SRWLOCK*);
+NTSYSAPI NTSTATUS  WINAPI RtlActivateActivationContext(DWORD,HANDLE,ULONG_PTR*);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAce(PACL,DWORD,DWORD,PACE_HEADER,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAccessAllowedAce(PACL,DWORD,DWORD,PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAccessAllowedAceEx(PACL,DWORD,DWORD,DWORD,PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAccessAllowedObjectAce(PACL,DWORD,DWORD,DWORD,GUID*,GUID*,PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAccessDeniedAce(PACL,DWORD,DWORD,PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAccessDeniedAceEx(PACL,DWORD,DWORD,DWORD,PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAccessDeniedObjectAce(PACL,DWORD,DWORD,DWORD,GUID*,GUID*,PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAtomToAtomTable(RTL_ATOM_TABLE,const WCHAR*,RTL_ATOM*);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAuditAccessAce(PACL,DWORD,DWORD,PSID,BOOL,BOOL);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAuditAccessAceEx(PACL,DWORD,DWORD,DWORD,PSID,BOOL,BOOL);
+NTSYSAPI NTSTATUS  WINAPI RtlAddAuditAccessObjectAce(PACL,DWORD,DWORD,DWORD,GUID*,GUID*,PSID,BOOL,BOOL);
+NTSYSAPI NTSTATUS  WINAPI RtlAddMandatoryAce(PACL,DWORD,DWORD,DWORD,DWORD,PSID);
+NTSYSAPI void      WINAPI RtlAddRefActivationContext(HANDLE);
+NTSYSAPI PVOID     WINAPI RtlAddVectoredExceptionHandler(ULONG,PVECTORED_EXCEPTION_HANDLER);
+NTSYSAPI NTSTATUS  WINAPI RtlAdjustPrivilege(ULONG,BOOLEAN,BOOLEAN,PBOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlAllocateAndInitializeSid(PSID_IDENTIFIER_AUTHORITY,BYTE,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,PSID *);
+NTSYSAPI RTL_HANDLE * WINAPI RtlAllocateHandle(RTL_HANDLE_TABLE *,ULONG *);
+NTSYSAPI PVOID     WINAPI RtlAllocateHeap(HANDLE,ULONG,SIZE_T) __WINE_ALLOC_SIZE(3);
+NTSYSAPI WCHAR     WINAPI RtlAnsiCharToUnicodeChar(LPSTR *);
+NTSYSAPI DWORD     WINAPI RtlAnsiStringToUnicodeSize(const STRING *);
+NTSYSAPI NTSTATUS  WINAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING,PCANSI_STRING,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlAppendAsciizToString(STRING *,LPCSTR);
+NTSYSAPI NTSTATUS  WINAPI RtlAppendStringToString(STRING *,const STRING *);
+NTSYSAPI NTSTATUS  WINAPI RtlAppendUnicodeStringToString(UNICODE_STRING *,const UNICODE_STRING *);
+NTSYSAPI NTSTATUS  WINAPI RtlAppendUnicodeToString(UNICODE_STRING *,LPCWSTR);
+NTSYSAPI BOOLEAN   WINAPI RtlAreAllAccessesGranted(ACCESS_MASK,ACCESS_MASK);
+NTSYSAPI BOOLEAN   WINAPI RtlAreAnyAccessesGranted(ACCESS_MASK,ACCESS_MASK);
+NTSYSAPI BOOLEAN   WINAPI RtlAreBitsSet(PCRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI BOOLEAN   WINAPI RtlAreBitsClear(PCRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlCharToInteger(PCSZ,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlCheckRegistryKey(ULONG, PWSTR);
+NTSYSAPI void      WINAPI RtlClearAllBits(PRTL_BITMAP);
+NTSYSAPI void      WINAPI RtlClearBits(PRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateActivationContext(HANDLE*,const void*);
+NTSYSAPI PDEBUG_BUFFER WINAPI RtlCreateQueryDebugBuffer(ULONG,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateRegistryKey(ULONG,PWSTR);
+NTSYSAPI ULONG     WINAPI RtlCompactHeap(HANDLE,ULONG);
+NTSYSAPI LONG      WINAPI RtlCompareString(const STRING*,const STRING*,BOOLEAN);
+NTSYSAPI LONG      WINAPI RtlCompareUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI LONG      WINAPI RtlCompareUnicodeStrings(const WCHAR*,SIZE_T,const WCHAR*,SIZE_T,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlCompressBuffer(USHORT,PUCHAR,ULONG,PUCHAR,ULONG,ULONG,PULONG,PVOID);
+NTSYSAPI DWORD     WINAPI RtlComputeCrc32(DWORD,const BYTE*,INT);
+NTSYSAPI NTSTATUS  WINAPI RtlConvertSidToUnicodeString(PUNICODE_STRING,PSID,BOOLEAN);
+NTSYSAPI void      WINAPI RtlCopyLuid(PLUID,const LUID*);
+NTSYSAPI void      WINAPI RtlCopyLuidAndAttributesArray(ULONG,const LUID_AND_ATTRIBUTES*,PLUID_AND_ATTRIBUTES);
+NTSYSAPI BOOLEAN   WINAPI RtlCopySid(DWORD,PSID,PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlCopySecurityDescriptor(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR);
+NTSYSAPI void      WINAPI RtlCopyString(STRING*,const STRING*);
+NTSYSAPI void      WINAPI RtlCopyUnicodeString(UNICODE_STRING*,const UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateAcl(PACL,DWORD,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateAtomTable(ULONG,RTL_ATOM_TABLE*);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateEnvironment(BOOLEAN, PWSTR*);
+NTSYSAPI HANDLE    WINAPI RtlCreateHeap(ULONG,PVOID,SIZE_T,SIZE_T,PVOID,PRTL_HEAP_DEFINITION);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateProcessParameters(RTL_USER_PROCESS_PARAMETERS**,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,PWSTR,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateProcessParametersEx(RTL_USER_PROCESS_PARAMETERS**,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,PWSTR,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateSecurityDescriptor(PSECURITY_DESCRIPTOR,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateTimerQueue(PHANDLE);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateTimer(PHANDLE, HANDLE, RTL_WAITORTIMERCALLBACKFUNC, PVOID, DWORD, DWORD, ULONG);
+NTSYSAPI BOOLEAN   WINAPI RtlCreateUnicodeString(PUNICODE_STRING,LPCWSTR);
+NTSYSAPI BOOLEAN   WINAPI RtlCreateUnicodeStringFromAsciiz(PUNICODE_STRING,LPCSTR);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateUserProcess(UNICODE_STRING*,ULONG,RTL_USER_PROCESS_PARAMETERS*,SECURITY_DESCRIPTOR*,SECURITY_DESCRIPTOR*,HANDLE,BOOLEAN,HANDLE,HANDLE,RTL_USER_PROCESS_INFORMATION*);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateUserThread(HANDLE,SECURITY_DESCRIPTOR*,BOOLEAN,PVOID,SIZE_T,SIZE_T,PRTL_THREAD_START_ROUTINE,void*,HANDLE*,CLIENT_ID*);
+NTSYSAPI void      WINAPI RtlDeactivateActivationContext(DWORD,ULONG_PTR);
+NTSYSAPI PVOID     WINAPI RtlDecodePointer(PVOID);
+NTSYSAPI NTSTATUS  WINAPI RtlDecompressBuffer(USHORT,PUCHAR,ULONG,PUCHAR,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlDeleteAce(PACL,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlDeleteAtomFromAtomTable(RTL_ATOM_TABLE,RTL_ATOM);
+NTSYSAPI NTSTATUS  WINAPI RtlDeleteCriticalSection(RTL_CRITICAL_SECTION *);
+NTSYSAPI NTSTATUS  WINAPI RtlDeleteRegistryValue(ULONG, PCWSTR, PCWSTR);
+NTSYSAPI void      WINAPI RtlDeleteResource(LPRTL_RWLOCK);
+NTSYSAPI NTSTATUS  WINAPI RtlDeleteSecurityObject(PSECURITY_DESCRIPTOR*);
+NTSYSAPI NTSTATUS  WINAPI RtlDeleteTimer(HANDLE, HANDLE, HANDLE);
+NTSYSAPI NTSTATUS  WINAPI RtlDeleteTimerQueueEx(HANDLE, HANDLE);
+NTSYSAPI PRTL_USER_PROCESS_PARAMETERS WINAPI RtlDeNormalizeProcessParams(RTL_USER_PROCESS_PARAMETERS*);
+NTSYSAPI NTSTATUS  WINAPI RtlDeregisterWait(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI RtlDeregisterWaitEx(HANDLE,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI RtlDestroyAtomTable(RTL_ATOM_TABLE);
+NTSYSAPI NTSTATUS  WINAPI RtlDestroyEnvironment(PWSTR);
+NTSYSAPI NTSTATUS  WINAPI RtlDestroyHandleTable(RTL_HANDLE_TABLE *);
+NTSYSAPI HANDLE    WINAPI RtlDestroyHeap(HANDLE);
+NTSYSAPI void      WINAPI RtlDestroyProcessParameters(RTL_USER_PROCESS_PARAMETERS*);
+NTSYSAPI NTSTATUS  WINAPI RtlDestroyQueryDebugBuffer(PDEBUG_BUFFER);
+NTSYSAPI DOS_PATHNAME_TYPE WINAPI RtlDetermineDosPathNameType_U(PCWSTR);
+NTSYSAPI BOOLEAN   WINAPI RtlDllShutdownInProgress(void);
+NTSYSAPI BOOLEAN   WINAPI RtlDoesFileExists_U(LPCWSTR);
+NTSYSAPI BOOLEAN   WINAPI RtlDosPathNameToNtPathName_U(PCWSTR,PUNICODE_STRING,PWSTR*,CURDIR*);
+NTSYSAPI NTSTATUS  WINAPI RtlDosPathNameToNtPathName_U_WithStatus(PCWSTR,PUNICODE_STRING,PWSTR*,CURDIR*);
+NTSYSAPI ULONG     WINAPI RtlDosSearchPath_U(LPCWSTR, LPCWSTR, LPCWSTR, ULONG, LPWSTR, LPWSTR*);
+NTSYSAPI WCHAR     WINAPI RtlDowncaseUnicodeChar(WCHAR);
+NTSYSAPI NTSTATUS  WINAPI RtlDowncaseUnicodeString(UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI void      WINAPI RtlDumpResource(LPRTL_RWLOCK);
+NTSYSAPI NTSTATUS  WINAPI RtlDuplicateUnicodeString(int,const UNICODE_STRING*,UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlEmptyAtomTable(RTL_ATOM_TABLE,BOOLEAN);
+NTSYSAPI PVOID     WINAPI RtlEncodePointer(PVOID);
+NTSYSAPI NTSTATUS  WINAPI RtlEnterCriticalSection(RTL_CRITICAL_SECTION *);
+NTSYSAPI void      WINAPI RtlEraseUnicodeString(UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlEqualComputerName(const UNICODE_STRING*,const UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlEqualDomainName(const UNICODE_STRING*,const UNICODE_STRING*);
+NTSYSAPI BOOLEAN   WINAPI RtlEqualLuid(const LUID*,const LUID*);
+NTSYSAPI BOOL      WINAPI RtlEqualPrefixSid(PSID,PSID);
+NTSYSAPI BOOL      WINAPI RtlEqualSid(PSID,PSID);
+NTSYSAPI BOOLEAN   WINAPI RtlEqualString(const STRING*,const STRING*,BOOLEAN);
+NTSYSAPI BOOLEAN   WINAPI RtlEqualUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI void      DECLSPEC_NORETURN WINAPI RtlExitUserProcess(ULONG);
+NTSYSAPI void      DECLSPEC_NORETURN WINAPI RtlExitUserThread(ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlExpandEnvironmentStrings(const WCHAR*,WCHAR*,SIZE_T,WCHAR*,SIZE_T,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI RtlExpandEnvironmentStrings_U(PCWSTR, const UNICODE_STRING*, UNICODE_STRING*, ULONG*);
+NTSYSAPI NTSTATUS  WINAPI RtlFindActivationContextSectionString(ULONG,const GUID*,ULONG,const UNICODE_STRING*,PVOID);
+NTSYSAPI NTSTATUS  WINAPI RtlFindActivationContextSectionGuid(ULONG,const GUID*,ULONG,const GUID*,PVOID);
+NTSYSAPI NTSTATUS  WINAPI RtlFindCharInUnicodeString(int,const UNICODE_STRING*,const UNICODE_STRING*,USHORT*);
+NTSYSAPI ULONG     WINAPI RtlFindClearBits(PCRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI ULONG     WINAPI RtlFindClearBitsAndSet(PRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI ULONG     WINAPI RtlFindClearRuns(PCRTL_BITMAP,PRTL_BITMAP_RUN,ULONG,BOOLEAN);
+NTSYSAPI ULONG     WINAPI RtlFindLastBackwardRunSet(PCRTL_BITMAP,ULONG,PULONG);
+NTSYSAPI ULONG     WINAPI RtlFindLastBackwardRunClear(PCRTL_BITMAP,ULONG,PULONG);
+NTSYSAPI CCHAR     WINAPI RtlFindLeastSignificantBit(ULONGLONG);
+NTSYSAPI ULONG     WINAPI RtlFindLongestRunSet(PCRTL_BITMAP,PULONG);
+NTSYSAPI ULONG     WINAPI RtlFindLongestRunClear(PCRTL_BITMAP,PULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlFindMessage(HMODULE,ULONG,ULONG,ULONG,const MESSAGE_RESOURCE_ENTRY**);
+NTSYSAPI CCHAR     WINAPI RtlFindMostSignificantBit(ULONGLONG);
+NTSYSAPI ULONG     WINAPI RtlFindNextForwardRunSet(PCRTL_BITMAP,ULONG,PULONG);
+NTSYSAPI ULONG     WINAPI RtlFindNextForwardRunClear(PCRTL_BITMAP,ULONG,PULONG);
+NTSYSAPI ULONG     WINAPI RtlFindSetBits(PCRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI ULONG     WINAPI RtlFindSetBitsAndClear(PRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI ULONG     WINAPI RtlFindSetRuns(PCRTL_BITMAP,PRTL_BITMAP_RUN,ULONG,BOOLEAN);
+NTSYSAPI BOOLEAN   WINAPI RtlFirstFreeAce(PACL,PACE_HEADER *);
+NTSYSAPI NTSTATUS  WINAPI RtlFormatCurrentUserKeyPath(PUNICODE_STRING);
+NTSYSAPI NTSTATUS  WINAPI RtlFormatMessage(LPWSTR,UCHAR,BOOLEAN,BOOLEAN,BOOLEAN,__ms_va_list *,LPWSTR,ULONG);
+NTSYSAPI void      WINAPI RtlFreeAnsiString(PANSI_STRING);
+NTSYSAPI BOOLEAN   WINAPI RtlFreeHandle(RTL_HANDLE_TABLE *,RTL_HANDLE *);
+NTSYSAPI BOOLEAN   WINAPI RtlFreeHeap(HANDLE,ULONG,PVOID);
+NTSYSAPI void      WINAPI RtlFreeOemString(POEM_STRING);
+NTSYSAPI DWORD     WINAPI RtlFreeSid(PSID);
+NTSYSAPI void      WINAPI RtlFreeThreadActivationContextStack(void);
+NTSYSAPI void      WINAPI RtlFreeUnicodeString(PUNICODE_STRING);
+NTSYSAPI NTSTATUS  WINAPI RtlGetAce(PACL,DWORD,LPVOID *);
+NTSYSAPI NTSTATUS  WINAPI RtlGetActiveActivationContext(HANDLE*);
+NTSYSAPI NTSTATUS  WINAPI RtlGetCompressionWorkSpaceSize(USHORT,PULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlGetControlSecurityDescriptor(PSECURITY_DESCRIPTOR, PSECURITY_DESCRIPTOR_CONTROL,LPDWORD);
+NTSYSAPI ULONG     WINAPI RtlGetCurrentDirectory_U(ULONG, LPWSTR);
+NTSYSAPI PEB *     WINAPI RtlGetCurrentPeb(void);
+NTSYSAPI NTSTATUS  WINAPI RtlGetDaclSecurityDescriptor(PSECURITY_DESCRIPTOR,PBOOLEAN,PACL *,PBOOLEAN);
+NTSYSAPI TEB_ACTIVE_FRAME * WINAPI RtlGetFrame(void);
+NTSYSAPI ULONG     WINAPI RtlGetFullPathName_U(PCWSTR,ULONG,PWSTR,PWSTR*);
+NTSYSAPI NTSTATUS  WINAPI RtlGetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID *,PBOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlGetLastNtStatus(void);
+NTSYSAPI DWORD     WINAPI RtlGetLastWin32Error(void);
+NTSYSAPI DWORD     WINAPI RtlGetLongestNtPathLength(void);
+NTSYSAPI ULONG     WINAPI RtlGetNtGlobalFlags(void);
+NTSYSAPI BOOLEAN   WINAPI RtlGetNtProductType(LPDWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlGetOwnerSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID *,PBOOLEAN);
+NTSYSAPI ULONG     WINAPI RtlGetProcessHeaps(ULONG,HANDLE*);
+NTSYSAPI DWORD     WINAPI RtlGetThreadErrorMode(void);
+NTSYSAPI NTSTATUS  WINAPI RtlGetSaclSecurityDescriptor(PSECURITY_DESCRIPTOR,PBOOLEAN,PACL *,PBOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlGetVersion(RTL_OSVERSIONINFOEXW*);
+NTSYSAPI NTSTATUS  WINAPI RtlGUIDFromString(PUNICODE_STRING,GUID*);
+NTSYSAPI PSID_IDENTIFIER_AUTHORITY WINAPI RtlIdentifierAuthoritySid(PSID);
+NTSYSAPI PVOID     WINAPI RtlImageDirectoryEntryToData(HMODULE,BOOL,WORD,ULONG *);
+NTSYSAPI PIMAGE_NT_HEADERS WINAPI RtlImageNtHeader(HMODULE);
+NTSYSAPI PIMAGE_SECTION_HEADER WINAPI RtlImageRvaToSection(const IMAGE_NT_HEADERS *,HMODULE,DWORD);
+NTSYSAPI PVOID     WINAPI RtlImageRvaToVa(const IMAGE_NT_HEADERS *,HMODULE,DWORD,IMAGE_SECTION_HEADER **);
+NTSYSAPI NTSTATUS  WINAPI RtlImpersonateSelf(SECURITY_IMPERSONATION_LEVEL);
+NTSYSAPI void      WINAPI RtlInitString(PSTRING,PCSZ);
+NTSYSAPI void      WINAPI RtlInitAnsiString(PANSI_STRING,PCSZ);
+NTSYSAPI NTSTATUS  WINAPI RtlInitAnsiStringEx(PANSI_STRING,PCSZ);
+NTSYSAPI void      WINAPI RtlInitUnicodeString(PUNICODE_STRING,PCWSTR);
+NTSYSAPI NTSTATUS  WINAPI RtlInitUnicodeStringEx(PUNICODE_STRING,PCWSTR);
+NTSYSAPI void      WINAPI RtlInitializeBitMap(PRTL_BITMAP,PULONG,ULONG);
+NTSYSAPI void      WINAPI RtlInitializeConditionVariable(RTL_CONDITION_VARIABLE *);
+NTSYSAPI NTSTATUS  WINAPI RtlInitializeCriticalSection(RTL_CRITICAL_SECTION *);
+NTSYSAPI NTSTATUS  WINAPI RtlInitializeCriticalSectionAndSpinCount(RTL_CRITICAL_SECTION *,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlInitializeCriticalSectionEx(RTL_CRITICAL_SECTION *,ULONG,ULONG);
+NTSYSAPI void      WINAPI RtlInitializeHandleTable(ULONG,ULONG,RTL_HANDLE_TABLE *);
+NTSYSAPI void      WINAPI RtlInitializeResource(LPRTL_RWLOCK);
+NTSYSAPI void      WINAPI RtlInitializeSRWLock(RTL_SRWLOCK*);
+NTSYSAPI BOOL      WINAPI RtlInitializeSid(PSID,PSID_IDENTIFIER_AUTHORITY,BYTE);
+NTSYSAPI NTSTATUS  WINAPI RtlInt64ToUnicodeString(ULONGLONG,ULONG,UNICODE_STRING *);
+NTSYSAPI NTSTATUS  WINAPI RtlIntegerToChar(ULONG,ULONG,ULONG,PCHAR);
+NTSYSAPI NTSTATUS  WINAPI RtlIntegerToUnicodeString(ULONG,ULONG,UNICODE_STRING *);
+NTSYSAPI BOOLEAN   WINAPI RtlIsActivationContextActive(HANDLE);
+NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLocked(RTL_CRITICAL_SECTION *);
+NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLockedByThread(RTL_CRITICAL_SECTION *);
+NTSYSAPI ULONG     WINAPI RtlIsDosDeviceName_U(PCWSTR);
+NTSYSAPI BOOLEAN   WINAPI RtlIsNameLegalDOS8Dot3(const UNICODE_STRING*,POEM_STRING,PBOOLEAN);
+NTSYSAPI BOOLEAN   WINAPI RtlIsTextUnicode(LPCVOID,INT,INT *);
+NTSYSAPI BOOLEAN   WINAPI RtlIsValidHandle(const RTL_HANDLE_TABLE *, const RTL_HANDLE *);
+NTSYSAPI BOOLEAN   WINAPI RtlIsValidIndexHandle(const RTL_HANDLE_TABLE *, ULONG Index, RTL_HANDLE **);
+NTSYSAPI NTSTATUS  WINAPI RtlLeaveCriticalSection(RTL_CRITICAL_SECTION *);
+NTSYSAPI DWORD     WINAPI RtlLengthRequiredSid(DWORD);
+NTSYSAPI ULONG     WINAPI RtlLengthSecurityDescriptor(PSECURITY_DESCRIPTOR);
+NTSYSAPI DWORD     WINAPI RtlLengthSid(PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlLocalTimeToSystemTime(const LARGE_INTEGER*,PLARGE_INTEGER);
+NTSYSAPI BOOLEAN   WINAPI RtlLockHeap(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI RtlLookupAtomInAtomTable(RTL_ATOM_TABLE,const WCHAR*,RTL_ATOM*);
+NTSYSAPI NTSTATUS  WINAPI RtlMakeSelfRelativeSD(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,LPDWORD);
+NTSYSAPI void      WINAPI RtlMapGenericMask(PACCESS_MASK,const GENERIC_MAPPING*);
+NTSYSAPI NTSTATUS  WINAPI RtlMultiByteToUnicodeN(LPWSTR,DWORD,LPDWORD,LPCSTR,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlMultiByteToUnicodeSize(DWORD*,LPCSTR,UINT);
+NTSYSAPI NTSTATUS  WINAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR*,BOOLEAN,HANDLE,PGENERIC_MAPPING);
+NTSYSAPI PRTL_USER_PROCESS_PARAMETERS WINAPI RtlNormalizeProcessParams(RTL_USER_PROCESS_PARAMETERS*);
+NTSYSAPI ULONG     WINAPI RtlNtStatusToDosError(NTSTATUS);
+NTSYSAPI ULONG     WINAPI RtlNtStatusToDosErrorNoTeb(NTSTATUS);
+NTSYSAPI ULONG     WINAPI RtlNumberOfSetBits(PCRTL_BITMAP);
+NTSYSAPI ULONG     WINAPI RtlNumberOfClearBits(PCRTL_BITMAP);
+NTSYSAPI UINT      WINAPI RtlOemStringToUnicodeSize(const STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlOemStringToUnicodeString(UNICODE_STRING*,const STRING*,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlOemToUnicodeN(LPWSTR,DWORD,LPDWORD,LPCSTR,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlOpenCurrentUser(ACCESS_MASK,PHANDLE);
+NTSYSAPI PVOID     WINAPI RtlPcToFileHeader(PVOID,PVOID*);
+NTSYSAPI NTSTATUS  WINAPI RtlPinAtomInAtomTable(RTL_ATOM_TABLE,RTL_ATOM);
+NTSYSAPI void      WINAPI RtlPopFrame(TEB_ACTIVE_FRAME*);
+NTSYSAPI BOOLEAN   WINAPI RtlPrefixString(const STRING*,const STRING*,BOOLEAN);
+NTSYSAPI BOOLEAN   WINAPI RtlPrefixUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI void      WINAPI RtlPushFrame(TEB_ACTIVE_FRAME*);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryActivationContextApplicationSettings(DWORD,HANDLE,const WCHAR*,const WCHAR*,WCHAR*,SIZE_T,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryAtomInAtomTable(RTL_ATOM_TABLE,RTL_ATOM,ULONG*,ULONG*,WCHAR*,ULONG*);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryDynamicTimeZoneInformation(RTL_DYNAMIC_TIME_ZONE_INFORMATION*);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryEnvironmentVariable_U(PWSTR,PUNICODE_STRING,PUNICODE_STRING);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryHeapInformation(HANDLE,HEAP_INFORMATION_CLASS,PVOID,SIZE_T,PSIZE_T);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryInformationAcl(PACL,LPVOID,DWORD,ACL_INFORMATION_CLASS);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryInformationActivationContext(ULONG,HANDLE,PVOID,ULONG,PVOID,SIZE_T,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryProcessDebugInformation(ULONG,ULONG,PDEBUG_BUFFER);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryRegistryValues(ULONG, PCWSTR, PRTL_QUERY_REGISTRY_TABLE, PVOID, PVOID);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryTimeZoneInformation(RTL_TIME_ZONE_INFORMATION*);
+NTSYSAPI NTSTATUS  WINAPI RtlQueryUnbiasedInterruptTime(ULONGLONG*);
+NTSYSAPI NTSTATUS  WINAPI RtlQueueWorkItem(PRTL_WORK_ITEM_ROUTINE,PVOID,ULONG);
+NTSYSAPI void      WINAPI RtlRaiseException(PEXCEPTION_RECORD);
+NTSYSAPI void      WINAPI RtlRaiseStatus(NTSTATUS);
+NTSYSAPI ULONG     WINAPI RtlRandom(PULONG);
+NTSYSAPI PVOID     WINAPI RtlReAllocateHeap(HANDLE,ULONG,PVOID,SIZE_T);
+NTSYSAPI NTSTATUS  WINAPI RtlRegisterWait(PHANDLE,HANDLE,RTL_WAITORTIMERCALLBACKFUNC,PVOID,ULONG,ULONG);
+NTSYSAPI void      WINAPI RtlReleaseActivationContext(HANDLE);
+NTSYSAPI void      WINAPI RtlReleasePebLock(void);
+NTSYSAPI void      WINAPI RtlReleaseResource(LPRTL_RWLOCK);
+NTSYSAPI void      WINAPI RtlReleaseSRWLockExclusive(RTL_SRWLOCK*);
+NTSYSAPI void      WINAPI RtlReleaseSRWLockShared(RTL_SRWLOCK*);
+NTSYSAPI ULONG     WINAPI RtlRemoveVectoredExceptionHandler(PVOID);
+NTSYSAPI void      WINAPI RtlRestoreLastWin32Error(DWORD);
+NTSYSAPI void      WINAPI RtlSecondsSince1970ToTime(DWORD,LARGE_INTEGER *);
+NTSYSAPI void      WINAPI RtlSecondsSince1980ToTime(DWORD,LARGE_INTEGER *);
+NTSYSAPI NTSTATUS  WINAPI RtlSelfRelativeToAbsoluteSD(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,PDWORD,PACL,PDWORD,PACL,PDWORD,PSID,PDWORD,PSID,PDWORD);
+NTSYSAPI void      WINAPI RtlSetAllBits(PRTL_BITMAP);
+NTSYSAPI void      WINAPI RtlSetBits(PRTL_BITMAP,ULONG,ULONG);
+NTSYSAPI ULONG     WINAPI RtlSetCriticalSectionSpinCount(RTL_CRITICAL_SECTION*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlSetControlSecurityDescriptor(PSECURITY_DESCRIPTOR,SECURITY_DESCRIPTOR_CONTROL,SECURITY_DESCRIPTOR_CONTROL);
+NTSYSAPI NTSTATUS  WINAPI RtlSetCurrentDirectory_U(const UNICODE_STRING*);
+NTSYSAPI void      WINAPI RtlSetCurrentEnvironment(PWSTR, PWSTR*);
+NTSYSAPI NTSTATUS  WINAPI RtlSetDaclSecurityDescriptor(PSECURITY_DESCRIPTOR,BOOLEAN,PACL,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlSetEnvironmentVariable(PWSTR*,PUNICODE_STRING,PUNICODE_STRING);
+NTSYSAPI NTSTATUS  WINAPI RtlSetHeapInformation(HANDLE,HEAP_INFORMATION_CLASS,PVOID,SIZE_T);
+NTSYSAPI NTSTATUS  WINAPI RtlSetOwnerSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlSetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlSetIoCompletionCallback(HANDLE,PRTL_OVERLAPPED_COMPLETION_ROUTINE,ULONG);
+NTSYSAPI void      WINAPI RtlSetLastWin32Error(DWORD);
+NTSYSAPI void      WINAPI RtlSetLastWin32ErrorAndNtStatusFromNtStatus(NTSTATUS);
+NTSYSAPI NTSTATUS  WINAPI RtlSetSaclSecurityDescriptor(PSECURITY_DESCRIPTOR,BOOLEAN,PACL,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlSetThreadErrorMode(DWORD,LPDWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlSetTimeZoneInformation(const RTL_TIME_ZONE_INFORMATION*);
+NTSYSAPI void      WINAPI RtlSetUnhandledExceptionFilter(PRTL_EXCEPTION_FILTER);
+NTSYSAPI SIZE_T    WINAPI RtlSizeHeap(HANDLE,ULONG,const void*);
+NTSYSAPI NTSTATUS  WINAPI RtlSleepConditionVariableCS(RTL_CONDITION_VARIABLE*,RTL_CRITICAL_SECTION*,const LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI RtlSleepConditionVariableSRW(RTL_CONDITION_VARIABLE*,RTL_SRWLOCK*,const LARGE_INTEGER*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlStringFromGUID(REFGUID,PUNICODE_STRING);
+NTSYSAPI LPDWORD   WINAPI RtlSubAuthoritySid(PSID,DWORD);
+NTSYSAPI LPBYTE    WINAPI RtlSubAuthorityCountSid(PSID);
+NTSYSAPI NTSTATUS  WINAPI RtlSystemTimeToLocalTime(const LARGE_INTEGER*,PLARGE_INTEGER);
+NTSYSAPI void      WINAPI RtlTimeToTimeFields(const LARGE_INTEGER*,PTIME_FIELDS);
+NTSYSAPI BOOLEAN   WINAPI RtlTimeFieldsToTime(PTIME_FIELDS,PLARGE_INTEGER);
+NTSYSAPI void      WINAPI RtlTimeToElapsedTimeFields(const LARGE_INTEGER *,PTIME_FIELDS);
+NTSYSAPI BOOLEAN   WINAPI RtlTimeToSecondsSince1970(const LARGE_INTEGER *,LPDWORD);
+NTSYSAPI BOOLEAN   WINAPI RtlTimeToSecondsSince1980(const LARGE_INTEGER *,LPDWORD);
+NTSYSAPI BOOLEAN   WINAPI RtlTryAcquireSRWLockExclusive(RTL_SRWLOCK *);
+NTSYSAPI BOOLEAN   WINAPI RtlTryAcquireSRWLockShared(RTL_SRWLOCK *);
+NTSYSAPI BOOL      WINAPI RtlTryEnterCriticalSection(RTL_CRITICAL_SECTION *);
+NTSYSAPI ULONGLONG __cdecl RtlUlonglongByteSwap(ULONGLONG);
+NTSYSAPI DWORD     WINAPI RtlUnicodeStringToAnsiSize(const UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlUnicodeStringToAnsiString(PANSI_STRING,PCUNICODE_STRING,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlUnicodeStringToInteger(const UNICODE_STRING *,ULONG,ULONG *);
+NTSYSAPI DWORD     WINAPI RtlUnicodeStringToOemSize(const UNICODE_STRING*);
+NTSYSAPI NTSTATUS  WINAPI RtlUnicodeStringToOemString(POEM_STRING,PCUNICODE_STRING,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlUnicodeToMultiByteN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlUnicodeToMultiByteSize(PULONG,PCWSTR,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlUnicodeToOemN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
+NTSYSAPI ULONG     WINAPI RtlUniform(PULONG);
+NTSYSAPI BOOLEAN   WINAPI RtlUnlockHeap(HANDLE);
+NTSYSAPI void      WINAPI RtlUnwind(PVOID,PVOID,PEXCEPTION_RECORD,PVOID);
+#ifdef __x86_64__
+NTSYSAPI void      WINAPI RtlUnwindEx(PVOID,PVOID,PEXCEPTION_RECORD,PVOID,PCONTEXT,PUNWIND_HISTORY_TABLE);
+#elif defined(__ia64__)
+NTSYSAPI void      WINAPI RtlUnwind2(FRAME_POINTERS,PVOID,PEXCEPTION_RECORD,PVOID,PCONTEXT);
+NTSYSAPI void      WINAPI RtlUnwindEx(FRAME_POINTERS,PVOID,PEXCEPTION_RECORD,PVOID,PCONTEXT,PUNWIND_HISTORY_TABLE);
 #endif
-WCHAR     WINAPI RtlUpcaseUnicodeChar(WCHAR);
-NTSTATUS  WINAPI RtlUpcaseUnicodeString(UNICODE_STRING*,const UNICODE_STRING *,BOOLEAN);
-NTSTATUS  WINAPI RtlUpcaseUnicodeStringToAnsiString(STRING*,const UNICODE_STRING*,BOOLEAN);
-NTSTATUS  WINAPI RtlUpcaseUnicodeStringToCountedOemString(STRING*,const UNICODE_STRING*,BOOLEAN);
-NTSTATUS  WINAPI RtlUpcaseUnicodeStringToOemString(STRING*,const UNICODE_STRING*,BOOLEAN);
-NTSTATUS  WINAPI RtlUpcaseUnicodeToMultiByteN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
-NTSTATUS  WINAPI RtlUpcaseUnicodeToOemN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
-CHAR      WINAPI RtlUpperChar(CHAR);
-void      WINAPI RtlUpperString(STRING *,const STRING *);
+NTSYSAPI WCHAR     WINAPI RtlUpcaseUnicodeChar(WCHAR);
+NTSYSAPI NTSTATUS  WINAPI RtlUpcaseUnicodeString(UNICODE_STRING*,const UNICODE_STRING *,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlUpcaseUnicodeStringToAnsiString(STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlUpcaseUnicodeStringToCountedOemString(STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlUpcaseUnicodeStringToOemString(STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlUpcaseUnicodeToMultiByteN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlUpcaseUnicodeToOemN(LPSTR,DWORD,LPDWORD,LPCWSTR,DWORD);
+NTSYSAPI NTSTATUS  WINAPI RtlUpdateTimer(HANDLE, HANDLE, DWORD, DWORD);
+NTSYSAPI CHAR      WINAPI RtlUpperChar(CHAR);
+NTSYSAPI void      WINAPI RtlUpperString(STRING *,const STRING *);
+NTSYSAPI NTSTATUS  WINAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR);
+NTSYSAPI BOOLEAN   WINAPI RtlValidRelativeSecurityDescriptor(PSECURITY_DESCRIPTOR,ULONG,SECURITY_INFORMATION);
+NTSYSAPI BOOLEAN   WINAPI RtlValidAcl(PACL);
+NTSYSAPI BOOLEAN   WINAPI RtlValidSid(PSID);
+NTSYSAPI BOOLEAN   WINAPI RtlValidateHeap(HANDLE,ULONG,LPCVOID);
+NTSYSAPI NTSTATUS  WINAPI RtlVerifyVersionInfo(const RTL_OSVERSIONINFOEXW*,DWORD,DWORDLONG);
+NTSYSAPI NTSTATUS  WINAPI RtlWaitOnAddress(const void *,const void *,SIZE_T,const LARGE_INTEGER *);
+NTSYSAPI void      WINAPI RtlWakeAddressAll(const void *);
+NTSYSAPI void      WINAPI RtlWakeAddressSingle(const void *);
+NTSYSAPI void      WINAPI RtlWakeAllConditionVariable(RTL_CONDITION_VARIABLE *);
+NTSYSAPI void      WINAPI RtlWakeConditionVariable(RTL_CONDITION_VARIABLE *);
+NTSYSAPI NTSTATUS  WINAPI RtlWalkHeap(HANDLE,PVOID);
+NTSYSAPI NTSTATUS  WINAPI RtlWow64EnableFsRedirection(BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlWow64EnableFsRedirectionEx(ULONG,ULONG*);
+#ifdef __x86_64__
+NTSYSAPI NTSTATUS  WINAPI RtlWow64GetThreadContext(HANDLE, WOW64_CONTEXT *);
+NTSYSAPI NTSTATUS  WINAPI RtlWow64SetThreadContext(HANDLE, const WOW64_CONTEXT *);
+#endif
+NTSYSAPI NTSTATUS  WINAPI RtlWriteRegistryValue(ULONG,PCWSTR,PCWSTR,ULONG,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlZombifyActivationContext(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI RtlpNtCreateKey(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG,const UNICODE_STRING*,ULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlpNtEnumerateSubKey(HANDLE,UNICODE_STRING *, ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlpWaitForCriticalSection(RTL_CRITICAL_SECTION *);
+NTSYSAPI NTSTATUS  WINAPI RtlpUnWaitCriticalSection(RTL_CRITICAL_SECTION *);
+NTSYSAPI NTSTATUS  WINAPI vDbgPrintEx(ULONG,ULONG,LPCSTR,__ms_va_list);
+NTSYSAPI NTSTATUS  WINAPI vDbgPrintExWithPrefix(LPCSTR,ULONG,ULONG,LPCSTR,__ms_va_list);
 
-NTSTATUS  WINAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR);
-BOOLEAN   WINAPI RtlValidAcl(PACL);
-BOOLEAN   WINAPI RtlValidSid(PSID);
-BOOLEAN   WINAPI RtlValidateHeap(HANDLE,ULONG,LPCVOID);
-NTSTATUS  WINAPI RtlVerifyVersionInfo(const RTL_OSVERSIONINFOEXW*,DWORD,DWORDLONG);
+/* 32-bit only functions */
 
-NTSTATUS  WINAPI RtlWalkHeap(HANDLE,PVOID);
+#ifndef _WIN64
+NTSYSAPI LONGLONG  WINAPI RtlConvertLongToLargeInteger(LONG);
+NTSYSAPI ULONGLONG WINAPI RtlConvertUlongToLargeInteger(ULONG);
+NTSYSAPI LONGLONG  WINAPI RtlEnlargedIntegerMultiply(INT,INT);
+NTSYSAPI ULONGLONG WINAPI RtlEnlargedUnsignedMultiply(UINT,UINT);
+NTSYSAPI UINT      WINAPI RtlEnlargedUnsignedDivide(ULONGLONG,UINT,UINT *);
+NTSYSAPI LONGLONG  WINAPI RtlExtendedMagicDivide(LONGLONG,LONGLONG,INT);
+NTSYSAPI LONGLONG  WINAPI RtlExtendedIntegerMultiply(LONGLONG,INT);
+NTSYSAPI LONGLONG  WINAPI RtlExtendedLargeIntegerDivide(LONGLONG,INT,INT *);
+NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerAdd(LONGLONG,LONGLONG);
+NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerArithmeticShift(LONGLONG,INT);
+NTSYSAPI ULONGLONG WINAPI RtlLargeIntegerDivide( ULONGLONG,ULONGLONG,ULONGLONG *);
+NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerNegate(LONGLONG);
+NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerShiftLeft(LONGLONG,INT);
+NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerShiftRight(LONGLONG,INT);
+NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerSubtract(LONGLONG,LONGLONG);
+NTSYSAPI NTSTATUS  WINAPI RtlLargeIntegerToChar(const ULONGLONG *,ULONG,ULONG,PCHAR);
+#endif
 
-NTSTATUS  WINAPI RtlpNtCreateKey(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG,const UNICODE_STRING*,ULONG,PULONG);
-NTSTATUS  WINAPI RtlpWaitForCriticalSection(RTL_CRITICAL_SECTION *);
-NTSTATUS  WINAPI RtlpUnWaitCriticalSection(RTL_CRITICAL_SECTION *);
+/* Threadpool functions */
 
-NTSTATUS WINAPI vDbgPrintEx(ULONG,ULONG,LPCSTR,va_list);
-NTSTATUS WINAPI vDbgPrintExWithPrefix(LPCSTR,ULONG,ULONG,LPCSTR,va_list);
+NTSYSAPI NTSTATUS  WINAPI TpAllocCleanupGroup(TP_CLEANUP_GROUP **);
+NTSYSAPI NTSTATUS  WINAPI TpAllocPool(TP_POOL **,PVOID);
+NTSYSAPI NTSTATUS  WINAPI TpAllocTimer(TP_TIMER **,PTP_TIMER_CALLBACK,PVOID,TP_CALLBACK_ENVIRON *);
+NTSYSAPI NTSTATUS  WINAPI TpAllocWait(TP_WAIT **,PTP_WAIT_CALLBACK,PVOID,TP_CALLBACK_ENVIRON *);
+NTSYSAPI NTSTATUS  WINAPI TpAllocWork(TP_WORK **,PTP_WORK_CALLBACK,PVOID,TP_CALLBACK_ENVIRON *);
+NTSYSAPI void      WINAPI TpCallbackLeaveCriticalSectionOnCompletion(TP_CALLBACK_INSTANCE *,RTL_CRITICAL_SECTION *);
+NTSYSAPI NTSTATUS  WINAPI TpCallbackMayRunLong(TP_CALLBACK_INSTANCE *);
+NTSYSAPI void      WINAPI TpCallbackReleaseMutexOnCompletion(TP_CALLBACK_INSTANCE *,HANDLE);
+NTSYSAPI void      WINAPI TpCallbackReleaseSemaphoreOnCompletion(TP_CALLBACK_INSTANCE *,HANDLE,DWORD);
+NTSYSAPI void      WINAPI TpCallbackSetEventOnCompletion(TP_CALLBACK_INSTANCE *,HANDLE);
+NTSYSAPI void      WINAPI TpCallbackUnloadDllOnCompletion(TP_CALLBACK_INSTANCE *,HMODULE);
+NTSYSAPI void      WINAPI TpDisassociateCallback(TP_CALLBACK_INSTANCE *);
+NTSYSAPI BOOL      WINAPI TpIsTimerSet(TP_TIMER *);
+NTSYSAPI void      WINAPI TpPostWork(TP_WORK *);
+NTSYSAPI void      WINAPI TpReleaseCleanupGroup(TP_CLEANUP_GROUP *);
+NTSYSAPI void      WINAPI TpReleaseCleanupGroupMembers(TP_CLEANUP_GROUP *,BOOL,PVOID);
+NTSYSAPI void      WINAPI TpReleasePool(TP_POOL *);
+NTSYSAPI void      WINAPI TpReleaseTimer(TP_TIMER *);
+NTSYSAPI void      WINAPI TpReleaseWait(TP_WAIT *);
+NTSYSAPI void      WINAPI TpReleaseWork(TP_WORK *);
+NTSYSAPI void      WINAPI TpSetPoolMaxThreads(TP_POOL *,DWORD);
+NTSYSAPI BOOL      WINAPI TpSetPoolMinThreads(TP_POOL *,DWORD);
+NTSYSAPI void      WINAPI TpSetTimer(TP_TIMER *, LARGE_INTEGER *,LONG,LONG);
+NTSYSAPI void      WINAPI TpSetWait(TP_WAIT *,HANDLE,LARGE_INTEGER *);
+NTSYSAPI NTSTATUS  WINAPI TpSimpleTryPost(PTP_SIMPLE_CALLBACK,PVOID,TP_CALLBACK_ENVIRON *);
+NTSYSAPI void      WINAPI TpWaitForTimer(TP_TIMER *,BOOL);
+NTSYSAPI void      WINAPI TpWaitForWait(TP_WAIT *,BOOL);
+NTSYSAPI void      WINAPI TpWaitForWork(TP_WORK *,BOOL);
 
 /* Wine internal functions */
 
-extern NTSTATUS wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
-                                           UINT disposition, BOOLEAN check_case );
-extern NTSTATUS wine_unix_to_nt_file_name( const ANSI_STRING *name, UNICODE_STRING *nt );
+NTSYSAPI NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+                                                   UINT disposition, BOOLEAN check_case );
+NTSYSAPI NTSTATUS CDECL wine_unix_to_nt_file_name( const ANSI_STRING *name, UNICODE_STRING *nt );
 
 
 /***********************************************************************
@@ -2243,7 +2969,7 @@ extern NTSTATUS wine_unix_to_nt_file_name( const ANSI_STRING *name, UNICODE_STRI
 #define RtlRetrieveUlonglong(p,s) memcpy((p), (s), sizeof(ULONGLONG))
 #define RtlZeroMemory(Destination,Length) memset((Destination),0,(Length))
 
-inline static BOOLEAN RtlCheckBit(PCRTL_BITMAP lpBits, ULONG ulBit)
+static inline BOOLEAN RtlCheckBit(PCRTL_BITMAP lpBits, ULONG ulBit)
 {
     if (lpBits && ulBit < lpBits->SizeOfBitMap &&
         lpBits->Buffer[ulBit >> 5] & (1 << (ulBit & 31)))
@@ -2252,11 +2978,11 @@ inline static BOOLEAN RtlCheckBit(PCRTL_BITMAP lpBits, ULONG ulBit)
 }
 
 /* These are implemented as __fastcall, so we can't let Winelib apps link with them */
-inline static USHORT RtlUshortByteSwap(USHORT s)
+static inline USHORT RtlUshortByteSwap(USHORT s)
 {
     return (s >> 8) | (s << 8);
 }
-inline static ULONG RtlUlongByteSwap(ULONG i)
+static inline ULONG RtlUlongByteSwap(ULONG i)
 {
 #if defined(__i386__) && defined(__GNUC__)
     ULONG ret;
@@ -2266,71 +2992,6 @@ inline static ULONG RtlUlongByteSwap(ULONG i)
     return ((ULONG)RtlUshortByteSwap((USHORT)i) << 16) | RtlUshortByteSwap((USHORT)(i >> 16));
 #endif
 }
-
-/*************************************************************************
- * Loader functions and structures.
- *
- * Those are not part of standard Winternl.h
- */
-typedef struct _LDR_MODULE
-{
-    LIST_ENTRY          InLoadOrderModuleList;
-    LIST_ENTRY          InMemoryOrderModuleList;
-    LIST_ENTRY          InInitializationOrderModuleList;
-    void*               BaseAddress;
-    void*               EntryPoint;
-    ULONG               SizeOfImage;
-    UNICODE_STRING      FullDllName;
-    UNICODE_STRING      BaseDllName;
-    ULONG               Flags;
-    SHORT               LoadCount;
-    SHORT               TlsIndex;
-    HANDLE              SectionHandle;
-    ULONG               CheckSum;
-    ULONG               TimeDateStamp;
-} LDR_MODULE, *PLDR_MODULE;
-
-/* those defines are (some of the) regular LDR_MODULE.Flags values */
-#define LDR_IMAGE_IS_DLL                0x00000004
-#define LDR_LOAD_IN_PROGRESS            0x00001000
-#define LDR_UNLOAD_IN_PROGRESS          0x00002000
-#define LDR_NO_DLL_CALLS                0x00040000
-#define LDR_PROCESS_ATTACHED            0x00080000
-#define LDR_MODULE_REBASED              0x00200000
-
-/* these ones is Wine specific */
-#define LDR_DONT_RESOLVE_REFS           0x40000000
-#define LDR_WINE_INTERNAL               0x80000000
-
-/* FIXME: to be checked */
-#define MAXIMUM_FILENAME_LENGTH 256
-
-typedef struct _SYSTEM_MODULE
-{
-    ULONG               Reserved1;
-    ULONG               Reserved2;
-    PVOID               ImageBaseAddress;
-    ULONG               ImageSize;
-    ULONG               Flags;
-    WORD                Id;
-    WORD                Rank;
-    WORD                Unknown;
-    WORD                NameOffset;
-    BYTE                Name[MAXIMUM_FILENAME_LENGTH];
-} SYSTEM_MODULE, *PSYSTEM_MODULE;
-
-typedef struct _SYSTEM_MODULE_INFORMATION
-{
-    ULONG               ModulesCount;
-    SYSTEM_MODULE       Modules[1]; /* FIXME: should be Modules[0] */
-} SYSTEM_MODULE_INFORMATION, *PSYSTEM_MODULE_INFORMATION;
-
-NTSTATUS WINAPI LdrDisableThreadCalloutsForDll(HMODULE);
-NTSTATUS WINAPI LdrFindEntryForAddress(const void*, PLDR_MODULE*);
-NTSTATUS WINAPI LdrLockLoaderLock(ULONG,ULONG*,ULONG*);
-NTSTATUS WINAPI LdrQueryProcessModuleInformation(SYSTEM_MODULE_INFORMATION*, ULONG, ULONG*);
-NTSTATUS WINAPI LdrUnloadDll(HMODULE);
-NTSTATUS WINAPI LdrUnlockLoaderLock(ULONG,ULONG);
 
 /* list manipulation macros */
 #define InitializeListHead(le)  (void)((le)->Flink = (le)->Blink = (le))
@@ -2364,6 +3025,24 @@ static inline PLIST_ENTRY RemoveTailList(PLIST_ENTRY le)
     if (e != le) e->Flink = e->Blink = NULL;
     return e;
 }
+
+
+#ifdef __WINESRC__
+
+/* The thread information for 16-bit threads */
+/* NtCurrentTeb()->SubSystemTib points to this */
+typedef struct
+{
+    void           *unknown;    /* 00 unknown */
+    UNICODE_STRING *exe_name;   /* 04 exe module name */
+
+    /* the following fields do not exist under Windows */
+    UNICODE_STRING  exe_str;    /* exe name string pointed to by exe_name */
+    CURDIR          curdir;     /* current directory */
+    WCHAR           curdir_buffer[MAX_PATH];
+} WIN16_SUBSYSTEM_TIB;
+
+#endif /* __WINESRC__ */
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -29,10 +29,12 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "wine/unicode.h"
 #include "wine/debug.h"
 #include "ntdll_misc.h"
+#include "ddk/wdm.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ver);
 
@@ -48,13 +50,21 @@ typedef enum
     NT40,    /* Windows NT 4.0 */
     NT2K,    /* Windows 2000 */
     WINXP,   /* Windows XP */
+    WINXP64, /* Windows XP 64-bit */
     WIN2K3,  /* Windows 2003 */
+    WINVISTA,/* Windows Vista */
+    WIN2K8,  /* Windows 2008 */
+    WIN2K8R2,/* Windows 2008 R2 */
+    WIN7,    /* Windows 7 */
+    WIN8,    /* Windows 8 */
+    WIN81,   /* Windows 8.1 */
+    WIN10,   /* Windows 10 */
     NB_WINDOWS_VERSIONS
 } WINDOWS_VERSION;
 
 /* FIXME: compare values below with original and fix.
  * An *excellent* win9x version page (ALL versions !)
- * can be found at members.aol.com/axcel216/ver.htm */
+ * can be found at www.mdgx.com/ver.htm */
 static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
 {
     /* WIN20 FIXME: verify values */
@@ -83,8 +93,6 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
          * Win95osr2.1: 4, 3, 0x40304BC, " B " (according to doc)
          * Win95osr2.5: 4, 3, 0x40304BE, " C " (according to doc)
          * Win95a/b can be discerned via regkey SubVersionNumber
-         * See also:
-         * http://support.microsoft.com/support/kb/articles/q158/2/38.asp
          */
         sizeof(RTL_OSVERSIONINFOEXW), 4, 0, 0x40003B6, VER_PLATFORM_WIN32_WINDOWS,
         {0},
@@ -108,8 +116,8 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
     /* NT351 */
     {
         sizeof(RTL_OSVERSIONINFOEXW), 3, 51, 0x421, VER_PLATFORM_WIN32_NT,
-        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
-        0, 0, 0, 0, 0
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','5',0},
+        5, 0, 0, VER_NT_WORKSTATION, 0
     },
     /* NT40 */
     {
@@ -126,15 +134,61 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
     /* WINXP */
     {
         sizeof(RTL_OSVERSIONINFOEXW), 5, 1, 0xA28, VER_PLATFORM_WIN32_NT,
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','3',0},
+        3, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 30 /* FIXME: Great, a reserved field with a value! */
+    },
+    /* WINXP64 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 5, 2, 0xECE, VER_PLATFORM_WIN32_NT,
         {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
-        2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 30 /* FIXME: Great, a reserved field with a value! */
+        2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
     },
     /* WIN2K3 */
     {
         sizeof(RTL_OSVERSIONINFOEXW), 5, 2, 0xECE, VER_PLATFORM_WIN32_NT,
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
+        2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
+    },
+    /* WINVISTA */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 0, 0x1772, VER_PLATFORM_WIN32_NT,
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
+        2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
+    },
+    /* WIN2K8 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 0, 0x1772, VER_PLATFORM_WIN32_NT,
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
+        2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
+    },
+    /* WIN7 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 1, 0x1DB1, VER_PLATFORM_WIN32_NT,
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','1',0},
+        1, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
+    },
+    /* WIN2K8R2 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 1, 0x1DB1, VER_PLATFORM_WIN32_NT,
         {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','1',0},
         1, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
-    }
+    },
+    /* WIN8 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 2, 0x23F0, VER_PLATFORM_WIN32_NT,
+        {0}, 0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
+    },
+    /* WIN81 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 3, 0x2580, VER_PLATFORM_WIN32_NT,
+        {0}, 0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
+    },
+    /* WIN10 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 10, 0, 0x42EE, VER_PLATFORM_WIN32_NT,
+        {0}, 0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
+    },
+
 };
 
 static const char * const WinVersionNames[NB_WINDOWS_VERSIONS] =
@@ -149,7 +203,15 @@ static const char * const WinVersionNames[NB_WINDOWS_VERSIONS] =
     "nt40",                       /* NT40 */
     "win2000,win2k,nt2k,nt2000",  /* NT2K */
     "winxp",                      /* WINXP */
-    "win2003,win2k3"              /* WIN2K3 */
+    "winxp64",                    /* WINXP64 */
+    "win2003,win2k3",             /* WIN2K3 */
+    "vista,winvista",             /* WINVISTA*/
+    "win2008,win2k8",             /* WIN2K8 */
+    "win2008r2,win2k8r2",         /* WIN2K8R2 */
+    "win7",                       /* WIN7 */
+    "win8",                       /* WIN8 */
+    "win81",                      /* WIN81 */
+    "win10",                      /* WIN10 */
 };
 
 
@@ -427,13 +489,12 @@ void version_init( const WCHAR *appname )
 {
     static const WCHAR configW[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e',0};
     static const WCHAR appdefaultsW[] = {'A','p','p','D','e','f','a','u','l','t','s','\\',0};
-
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW;
     HANDLE root, hkey, config_key;
     BOOL got_win_ver = FALSE;
 
-    current_version = &VersionData[NT2K];  /* default if nothing else is specified */
+    current_version = &VersionData[WIN7];
 
     RtlOpenCurrentUser( KEY_ALL_ACCESS, &root );
     attr.Length = sizeof(attr);
@@ -496,7 +557,13 @@ done:
     NtCurrentTeb()->Peb->OSBuildNumber  = current_version->dwBuildNumber;
     NtCurrentTeb()->Peb->OSPlatformId   = current_version->dwPlatformId;
 
-    TRACE( "got %ld.%ld plaform %ld build %lx name %s service pack %d.%d product %d\n",
+    user_shared_data->NtProductType      = current_version->wProductType;
+    user_shared_data->ProductTypeIsValid = TRUE;
+    user_shared_data->NtMajorVersion     = current_version->dwMajorVersion;
+    user_shared_data->NtMinorVersion     = current_version->dwMinorVersion;
+    user_shared_data->SuiteMask          = current_version->wSuiteMask;
+
+    TRACE( "got %d.%d platform %d build %x name %s service pack %d.%d product %d\n",
            current_version->dwMajorVersion, current_version->dwMinorVersion,
            current_version->dwPlatformId, current_version->dwBuildNumber,
            debugstr_w(current_version->szCSDVersion),
@@ -504,6 +571,36 @@ done:
            current_version->wProductType );
 }
 
+/***********************************************************************
+ *           RtlGetProductInfo    (NTDLL.@)
+ *
+ * Gives info about the current Windows product type, in a format compatible
+ * with the given Windows version
+ *
+ * Returns TRUE if the input is valid, FALSE otherwise
+ */
+BOOLEAN WINAPI RtlGetProductInfo(DWORD dwOSMajorVersion, DWORD dwOSMinorVersion, DWORD dwSpMajorVersion,
+                                 DWORD dwSpMinorVersion, PDWORD pdwReturnedProductType)
+{
+    TRACE("(%d, %d, %d, %d, %p)\n", dwOSMajorVersion, dwOSMinorVersion,
+          dwSpMajorVersion, dwSpMinorVersion, pdwReturnedProductType);
+
+    if (!pdwReturnedProductType)
+        return FALSE;
+
+    if (dwOSMajorVersion < 6)
+    {
+        *pdwReturnedProductType = PRODUCT_UNDEFINED;
+        return FALSE;
+    }
+
+    if (current_version->wProductType == VER_NT_WORKSTATION)
+        *pdwReturnedProductType = PRODUCT_ULTIMATE_N;
+    else
+        *pdwReturnedProductType = PRODUCT_STANDARD_SERVER;
+
+    return TRUE;
+}
 
 /***********************************************************************
  *         RtlGetVersion   (NTDLL.@)
@@ -560,6 +657,58 @@ BOOLEAN WINAPI RtlGetNtProductType( LPDWORD type )
     return TRUE;
 }
 
+static inline UCHAR version_update_condition(UCHAR *last_condition, UCHAR condition)
+{
+    switch (*last_condition)
+    {
+        case 0:
+            *last_condition = condition;
+            break;
+        case VER_EQUAL:
+            if (condition >= VER_EQUAL && condition <= VER_LESS_EQUAL)
+            {
+                *last_condition = condition;
+                return condition;
+            }
+            break;
+        case VER_GREATER:
+        case VER_GREATER_EQUAL:
+            if (condition >= VER_EQUAL && condition <= VER_GREATER_EQUAL)
+                return condition;
+            break;
+        case VER_LESS:
+        case VER_LESS_EQUAL:
+            if (condition == VER_EQUAL || (condition >= VER_LESS && condition <= VER_LESS_EQUAL))
+                return condition;
+            break;
+    }
+    if (!condition) *last_condition |= 0x10;
+    return *last_condition & 0xf;
+}
+
+static inline NTSTATUS version_compare_values(ULONG left, ULONG right, UCHAR condition)
+{
+    switch (condition) {
+        case VER_EQUAL:
+            if (left != right) return STATUS_REVISION_MISMATCH;
+            break;
+        case VER_GREATER:
+            if (left <= right) return STATUS_REVISION_MISMATCH;
+            break;
+        case VER_GREATER_EQUAL:
+            if (left < right) return STATUS_REVISION_MISMATCH;
+            break;
+        case VER_LESS:
+            if (left >= right) return STATUS_REVISION_MISMATCH;
+            break;
+        case VER_LESS_EQUAL:
+            if (left > right) return STATUS_REVISION_MISMATCH;
+            break;
+        default:
+            return STATUS_REVISION_MISMATCH;
+    }
+    return STATUS_SUCCESS;
+}
 
 /******************************************************************************
  *        RtlVerifyVersionInfo   (NTDLL.@)
@@ -570,15 +719,7 @@ NTSTATUS WINAPI RtlVerifyVersionInfo( const RTL_OSVERSIONINFOEXW *info,
     RTL_OSVERSIONINFOEXW ver;
     NTSTATUS status;
 
-    FIXME("(%p,%lu,%llx): Not all cases correctly implemented yet\n",
-          info, dwTypeMask, dwlConditionMask);
-
-    /* FIXME:
-        - Check the following special case on Windows (various versions):
-          o lp->wSuiteMask == 0 and ver.wSuiteMask != 0 and VER_AND/VER_OR
-          o lp->dwOSVersionInfoSize != sizeof(OSVERSIONINFOEXW)
-        - MSDN talks about some tests being impossible. Check what really happens.
-     */
+    TRACE("(%p,0x%x,0x%s)\n", info, dwTypeMask, wine_dbgstr_longlong(dwlConditionMask));
 
     ver.dwOSVersionInfoSize = sizeof(ver);
     if ((status = RtlGetVersion( &ver )) != STATUS_SUCCESS) return status;
@@ -586,25 +727,11 @@ NTSTATUS WINAPI RtlVerifyVersionInfo( const RTL_OSVERSIONINFOEXW *info,
     if(!(dwTypeMask && dwlConditionMask)) return STATUS_INVALID_PARAMETER;
 
     if(dwTypeMask & VER_PRODUCT_TYPE)
-        switch(dwlConditionMask >> 7*3 & 0x07) {
-            case VER_EQUAL:
-                if(ver.wProductType != info->wProductType) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER:
-                if(ver.wProductType <= info->wProductType) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER_EQUAL:
-                if(ver.wProductType < info->wProductType) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS:
-                if(ver.wProductType >= info->wProductType) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS_EQUAL:
-                if(ver.wProductType > info->wProductType) return STATUS_REVISION_MISMATCH;
-                break;
-            default:
-                return STATUS_INVALID_PARAMETER;
-        }
+    {
+        status = version_compare_values(ver.wProductType, info->wProductType, dwlConditionMask >> 7*3 & 0x07);
+        if (status != STATUS_SUCCESS)
+            return status;
+    }
     if(dwTypeMask & VER_SUITENAME)
         switch(dwlConditionMask >> 6*3 & 0x07)
         {
@@ -620,131 +747,53 @@ NTSTATUS WINAPI RtlVerifyVersionInfo( const RTL_OSVERSIONINFOEXW *info,
                 return STATUS_INVALID_PARAMETER;
         }
     if(dwTypeMask & VER_PLATFORMID)
-        switch(dwlConditionMask >> 3*3 & 0x07)
-        {
-            case VER_EQUAL:
-                if(ver.dwPlatformId != info->dwPlatformId) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER:
-                if(ver.dwPlatformId <= info->dwPlatformId) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER_EQUAL:
-                if(ver.dwPlatformId < info->dwPlatformId) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS:
-                if(ver.dwPlatformId >= info->dwPlatformId) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS_EQUAL:
-                if(ver.dwPlatformId > info->dwPlatformId) return STATUS_REVISION_MISMATCH;
-                break;
-            default:
-                return STATUS_INVALID_PARAMETER;
-        }
+    {
+        status = version_compare_values(ver.dwPlatformId, info->dwPlatformId, dwlConditionMask >> 3*3 & 0x07);
+        if (status != STATUS_SUCCESS)
+            return status;
+    }
     if(dwTypeMask & VER_BUILDNUMBER)
-        switch(dwlConditionMask >> 2*3 & 0x07)
+    {
+        status = version_compare_values(ver.dwBuildNumber, info->dwBuildNumber, dwlConditionMask >> 2*3 & 0x07);
+        if (status != STATUS_SUCCESS)
+            return status;
+    }
+
+    if(dwTypeMask & (VER_MAJORVERSION|VER_MINORVERSION|VER_SERVICEPACKMAJOR|VER_SERVICEPACKMINOR))
+    {
+        unsigned char condition, last_condition = 0;
+        BOOLEAN do_next_check = TRUE;
+
+        if(dwTypeMask & VER_MAJORVERSION)
         {
-            case VER_EQUAL:
-                if(ver.dwBuildNumber != info->dwBuildNumber) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER:
-                if(ver.dwBuildNumber <= info->dwBuildNumber) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER_EQUAL:
-                if(ver.dwBuildNumber < info->dwBuildNumber) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS:
-                if(ver.dwBuildNumber >= info->dwBuildNumber) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS_EQUAL:
-                if(ver.dwBuildNumber > info->dwBuildNumber) return STATUS_REVISION_MISMATCH;
-                break;
-            default:
-                return STATUS_INVALID_PARAMETER;
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 1*3 & 0x07);
+            status = version_compare_values(ver.dwMajorVersion, info->dwMajorVersion, condition);
+            do_next_check = (ver.dwMajorVersion == info->dwMajorVersion) &&
+                ((condition >= VER_EQUAL) && (condition <= VER_LESS_EQUAL));
         }
-    if(dwTypeMask & VER_MAJORVERSION)
-        switch(dwlConditionMask >> 1*3 & 0x07)
+        if((dwTypeMask & VER_MINORVERSION) && do_next_check)
         {
-            case VER_EQUAL:
-                if(ver.dwMajorVersion != info->dwMajorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER:
-                if(ver.dwMajorVersion <= info->dwMajorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER_EQUAL:
-                if(ver.dwMajorVersion < info->dwMajorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS:
-                if(ver.dwMajorVersion >= info->dwMajorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS_EQUAL:
-                if(ver.dwMajorVersion > info->dwMajorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            default:
-                return STATUS_INVALID_PARAMETER;
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 0*3 & 0x07);
+            status = version_compare_values(ver.dwMinorVersion, info->dwMinorVersion, condition);
+            do_next_check = (ver.dwMinorVersion == info->dwMinorVersion) &&
+                ((condition >= VER_EQUAL) && (condition <= VER_LESS_EQUAL));
         }
-    if(dwTypeMask & VER_MINORVERSION)
-        switch(dwlConditionMask >> 0*3 & 0x07)
+        if((dwTypeMask & VER_SERVICEPACKMAJOR) && do_next_check)
         {
-            case VER_EQUAL:
-                if(ver.dwMinorVersion != info->dwMinorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER:
-                if(ver.dwMinorVersion <= info->dwMinorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER_EQUAL:
-                if(ver.dwMinorVersion < info->dwMinorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS:
-                if(ver.dwMinorVersion >= info->dwMinorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS_EQUAL:
-                if(ver.dwMinorVersion > info->dwMinorVersion) return STATUS_REVISION_MISMATCH;
-                break;
-            default:
-                return STATUS_INVALID_PARAMETER;
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 5*3 & 0x07);
+            status = version_compare_values(ver.wServicePackMajor, info->wServicePackMajor, condition);
+            do_next_check = (ver.wServicePackMajor == info->wServicePackMajor) &&
+                ((condition >= VER_EQUAL) && (condition <= VER_LESS_EQUAL));
         }
-    if(dwTypeMask & VER_SERVICEPACKMAJOR)
-        switch(dwlConditionMask >> 5*3 & 0x07)
+        if((dwTypeMask & VER_SERVICEPACKMINOR) && do_next_check)
         {
-            case VER_EQUAL:
-                if(ver.wServicePackMajor != info->wServicePackMajor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER:
-                if(ver.wServicePackMajor <= info->wServicePackMajor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER_EQUAL:
-                if(ver.wServicePackMajor < info->wServicePackMajor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS:
-                if(ver.wServicePackMajor >= info->wServicePackMajor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS_EQUAL:
-                if(ver.wServicePackMajor > info->wServicePackMajor) return STATUS_REVISION_MISMATCH;
-                break;
-            default:
-                return STATUS_INVALID_PARAMETER;
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 4*3 & 0x07);
+            status = version_compare_values(ver.wServicePackMinor, info->wServicePackMinor, condition);
         }
-    if(dwTypeMask & VER_SERVICEPACKMINOR)
-        switch(dwlConditionMask >> 4*3 & 0x07)
-        {
-            case VER_EQUAL:
-                if(ver.wServicePackMinor != info->wServicePackMinor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER:
-                if(ver.wServicePackMinor <= info->wServicePackMinor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_GREATER_EQUAL:
-                if(ver.wServicePackMinor < info->wServicePackMinor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS:
-                if(ver.wServicePackMinor >= info->wServicePackMinor) return STATUS_REVISION_MISMATCH;
-                break;
-            case VER_LESS_EQUAL:
-                if(ver.wServicePackMinor > info->wServicePackMinor) return STATUS_REVISION_MISMATCH;
-                break;
-            default:
-                return STATUS_INVALID_PARAMETER;
-        }
+
+        if (status != STATUS_SUCCESS)
+            return status;
+    }
 
     return STATUS_SUCCESS;
 }

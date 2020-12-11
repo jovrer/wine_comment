@@ -1,13 +1,6 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = taskmgr.exe
-APPMODE   = -mwindows
-IMPORTS   = psapi shell32 comctl32 msvcrt user32 gdi32 advapi32 kernel32
-EXTRAINCL = -I$(TOPSRCDIR)/include/msvcrt
-EXTRADEFS = -DNO_LIBWINE_PORT
-MODCFLAGS = @BUILTINFLAG@
+APPMODE   = -mwindows -mno-cygwin
+IMPORTS   = shell32 comctl32 user32 gdi32 advapi32
 
 C_SRCS = \
 	about.c \
@@ -30,15 +23,6 @@ C_SRCS = \
 	trayicon.c
 
 RC_SRCS = taskmgr.rc
-RC_BINSRC = taskmgr.rc
-RC_BINARIES = \
-	font.bmp \
-	taskmgr.ico \
-	trayicon.bmp \
-	traymask.bmp \
-	window.ico \
-	windowsm.ico
 
-@MAKE_PROG_RULES@
-
-### Dependencies:
+SVG_SRCS = \
+	taskmgr.svg

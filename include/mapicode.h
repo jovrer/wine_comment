@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef MAPICODE_H
@@ -28,6 +28,10 @@
 
 #define MAKE_MAPI_E(e) (MAKE_MAPI_SCODE(1,FACILITY_ITF,(e)))
 #define MAKE_MAPI_S(e) (MAKE_MAPI_SCODE(0,FACILITY_ITF,(e)))
+
+#ifndef SUCCESS_SUCCESS
+#define SUCCESS_SUCCESS     __MSABI_LONG(0)
+#endif
 
 /* Errors */
 #define MAPI_E_ACCOUNT_DISABLED            ((SCODE)0x80040124)

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -29,16 +29,14 @@
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
-#ifdef STATFS_DEFINED_BY_SYS_VFS
+#ifdef HAVE_SYS_VFS_H
 # include <sys/vfs.h>
-#else
-# ifdef STATFS_DEFINED_BY_SYS_MOUNT
-#  include <sys/mount.h>
-# else
-#  ifdef STATFS_DEFINED_BY_SYS_STATFS
-#   include <sys/statfs.h>
-#  endif
-# endif
+#endif
+#ifdef HAVE_SYS_MOUNT_H
+# include <sys/mount.h>
+#endif
+#ifdef HAVE_SYS_STATFS_H
+# include <sys/statfs.h>
 #endif
 
 int statvfs( const char *path, struct statvfs *buf )

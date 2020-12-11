@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -28,32 +28,19 @@
 #define NOIMAGE
 #define NOTAPE
 
-#define NONAMELESSUNION
 #include <windows.h>
-#include <windowsx.h>
-#include <commctrl.h>
 #include <commdlg.h>
 
 #ifdef UNICODE
 #define _UNICODE
 #endif
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <ctype.h>
 #include <locale.h>
 #include <time.h>
 
-#ifndef __WINE__
-#include <malloc.h> /* for alloca() */
-#endif
-
-#include <shellapi.h>   /* for ShellExecute() */
-#include <shlobj.h>     /* for SHFormatDrive() */
-
-#ifndef _NO_EXTENSIONS
-#define _SHELL_FOLDERS
-#endif /* _NO_EXTENSIONS */
+#include <shlwapi.h>
+#include <shellapi.h>   /* for ShellExecuteW() */
+#include <shlobj.h>
 
 #ifndef FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
 #define FILE_ATTRIBUTE_ENCRYPTED            0x00000040
@@ -97,23 +84,24 @@ enum IMAGE {
 
 #define COLOR_COMPRESSED    RGB(0,0,255)
 #define COLOR_SELECTION     RGB(0,0,128)
-
-#ifdef _NO_EXTENSIONS
-#define COLOR_SPLITBAR      WHITE_BRUSH
-#else
 #define COLOR_SPLITBAR      LTGRAY_BRUSH
-#endif
 
 #define FRM_CALC_CLIENT     0xBF83
-#define Frame_CalcFrameClient(hwnd, prt) ((BOOL)SNDMSG(hwnd, FRM_CALC_CLIENT, 0, (LPARAM)(PRECT)prt))
+#define Frame_CalcFrameClient(hwnd, prt) (SendMessageW(hwnd, FRM_CALC_CLIENT, 0, (LPARAM)(PRECT)prt))
 
+typedef struct
+{
+  int       start_x;
+  int       start_y;
+  int       width;
+  int       height;
+} windowOptions;
 
 typedef struct
 {
   HANDLE    hInstance;
   HACCEL    haccel;
   ATOM      hframeClass;
-  HWND      hwndParent;
 
   HWND      hMainWnd;
   HMENU     hMenuFrame;
@@ -127,40 +115,19 @@ typedef struct
   HWND      hdrivebar;
   HFONT     hfont;
 
-  TCHAR     num_sep;
+  WCHAR     num_sep;
   SIZE      spaceSize;
   HIMAGELIST himl;
 
-  TCHAR     drives[BUFFER_LEN];
+  WCHAR     drives[BUFFER_LEN];
   BOOL      prescan_node;   /*TODO*/
+  BOOL      saveSettings;
 
-#ifdef _SHELL_FOLDERS
   IShellFolder* iDesktop;
   IMalloc*      iMalloc;
   UINT          cfStrFName;
-#endif
 } WINEFILE_GLOBALS;
 
 extern WINEFILE_GLOBALS Globals;
 
-#ifdef __WINE__
-
-extern void WineLicense(HWND hwnd);
-extern void WineWarranty(HWND hwnd);
-
-
-#ifdef UNICODE
 extern void _wsplitpath(const WCHAR* path, WCHAR* drv, WCHAR* dir, WCHAR* name, WCHAR* ext);
-#define _tsplitpath _wsplitpath
-#define _stprintf msvcrt_swprintf
-#else
-extern void _splitpath(const CHAR* path, CHAR* drv, CHAR* dir, CHAR* name, CHAR* ext);
-#define _tsplitpath _splitpath
-#define _stprintf sprintf
-#endif
-
-#else
-
-#include <tchar.h>	/* for _tsplitpath() */
-
-#endif

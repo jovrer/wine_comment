@@ -15,33 +15,17 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_TIME_H
 #define __WINE_TIME_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
 
-#ifndef _WCHAR_T_DEFINED
-#define _WCHAR_T_DEFINED
-#ifndef __cplusplus
-typedef unsigned short wchar_t;
-#endif
-#endif
+#include <crtdefs.h>
 
-#ifndef _SIZE_T_DEFINED
-typedef unsigned int size_t;
-#define _SIZE_T_DEFINED
-#endif
-
-#ifndef _TIME_T_DEFINED
-typedef long time_t;
-#define _TIME_T_DEFINED
-#endif
+#include <pshpack8.h>
 
 #ifndef _CLOCK_T_DEFINED
-typedef long clock_t;
+typedef __msvcrt_long clock_t;
 #define _CLOCK_T_DEFINED
 #endif
 
@@ -76,43 +60,93 @@ struct tm {
 extern "C" {
 #endif
 
+#ifdef __i386__
 #define _daylight (*__p__daylight())
 #define _dstbias (*__p__dstbias())
 #define _timezone (*__p__timezone())
 #define _tzname (__p__tzname())
 
-int *__p__daylight(void);
-long *__p__dstbias(void);
-long *__p__timezone(void);
-char **__p__tzname(void);
+int *   __cdecl __p__daylight(void);
+__msvcrt_long *  __cdecl __p__dstbias(void);
+__msvcrt_long *  __cdecl __p__timezone(void);
+char ** __cdecl __p__tzname(void);
+#else
+extern int _daylight;
+extern __msvcrt_long _dstbias;
+extern __msvcrt_long _timezone;
+extern char *_tzname;
+#endif
 
-unsigned    _getsystime(struct tm*);
-unsigned    _setsystime(struct tm*,unsigned);
-char*       _strdate(char*);
-char*       _strtime(char*);
-void        _tzset(void);
+#ifdef _USE_32BIT_TIME_T
+#define _ctime32     ctime
+#define _difftime32  difftime
+#define _gmtime32    gmtime
+#define _localtime32 localtime
+#define _mktime32    mktime
+#define _time32      time
+#endif
 
-char*       asctime(const struct tm*);
-clock_t clock(void);
-char*       ctime(const time_t*);
-double      difftime(time_t,time_t);
-struct tm* gmtime(const time_t*);
-struct tm* localtime(const time_t*);
-time_t mktime(struct tm*);
-size_t      strftime(char*,size_t,const char*,const struct tm*);
-time_t time(time_t*);
+unsigned    __cdecl _getsystime(struct tm*);
+unsigned    __cdecl _setsystime(struct tm*,unsigned);
+char*       __cdecl _strdate(char*);
+errno_t     __cdecl _strdate_s(char*,size_t);
+char*       __cdecl _strtime(char*);
+errno_t     __cdecl _strtime_s(char*,size_t);
+void        __cdecl _tzset(void);
+
+char*       __cdecl asctime(const struct tm*);
+clock_t     __cdecl clock(void);
+char*       __cdecl _ctime32(const __time32_t*);
+char*       __cdecl _ctime64(const __time64_t*);
+double      __cdecl _difftime32(__time32_t,__time32_t);
+double      __cdecl _difftime64(__time64_t,__time64_t);
+struct tm*  __cdecl _gmtime32(const __time32_t*);
+struct tm*  __cdecl _gmtime64(const __time64_t*);
+struct tm*  __cdecl _localtime32(const __time32_t*);
+errno_t     __cdecl _localtime32_s(struct tm*, const __time64_t*);
+struct tm*  __cdecl _localtime64(const __time64_t*);
+errno_t     __cdecl _localtime64_s(struct tm*, const __time64_t*);
+__time32_t  __cdecl _mktime32(struct tm*);
+__time64_t  __cdecl _mktime64(struct tm*);
+size_t      __cdecl strftime(char*,size_t,const char*,const struct tm*);
+__time32_t  __cdecl _time32(__time32_t*);
+__time64_t  __cdecl _time64(__time64_t*);
+
+#ifndef _USE_32BIT_TIME_T
+static inline char* ctime(const time_t *t) { return _ctime64(t); }
+static inline double difftime(time_t t1, time_t t2) { return _difftime64(t1, t2); }
+static inline struct tm* gmtime(const time_t *t) { return _gmtime64(t); }
+static inline struct tm* localtime(const time_t *t) { return _localtime64(t); }
+static inline time_t mktime(struct tm *tm) { return _mktime64(tm); }
+static inline time_t time(time_t *t) { return _time64(t); }
+#endif
 
 #ifndef _WTIME_DEFINED
 #define _WTIME_DEFINED
-wchar_t* _wasctime(const struct tm*);
-size_t  wcsftime(wchar_t*,size_t,const wchar_t*,const struct tm*);
-wchar_t*_wctime(const time_t*);
-wchar_t*_wstrdate(wchar_t*);
-wchar_t*_wstrtime(wchar_t*);
+
+#ifdef _USE_32BIT_TIME_T
+#define _wctime32 _wctime
+#endif
+
+wchar_t* __cdecl _wasctime(const struct tm*);
+size_t   __cdecl wcsftime(wchar_t*,size_t,const wchar_t*,const struct tm*);
+wchar_t* __cdecl _wctime32(const __time32_t*);
+wchar_t* __cdecl _wctime64(const __time64_t*);
+wchar_t* __cdecl _wstrdate(wchar_t*);
+errno_t  __cdecl _wstrdate_s(wchar_t*,size_t);
+wchar_t* __cdecl _wstrtime(wchar_t*);
+errno_t  __cdecl _wstrtime_s(wchar_t*,size_t);
+
+#ifndef _USE_32BIT_TIME_T
+static inline wchar_t* _wctime(const time_t *t) { return _wctime64(t); }
+#endif
+
 #endif /* _WTIME_DEFINED */
 
 #ifdef __cplusplus
 }
 #endif
+
+#include <poppack.h>
 
 #endif /* __WINE_TIME_H */

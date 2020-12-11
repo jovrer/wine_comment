@@ -14,7 +14,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /*
@@ -35,7 +35,10 @@
 
 #include <stdarg.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
+#include "winternl.h"
 
 typedef struct
 {
@@ -55,7 +58,7 @@ static void byteReverse( unsigned char *buf, unsigned longs )
     unsigned int t;
 
     do {
-        t = (unsigned int)((unsigned)buf[3] << 8 | buf[2]) << 16 |
+        t = ((unsigned)buf[3] << 8 | buf[2]) << 16 |
             ((unsigned)buf[1] << 8 | buf[0]);
         *(unsigned int *)buf = t;
         buf += 4;
@@ -87,7 +90,7 @@ VOID WINAPI MD4Update( MD4_CTX *ctx, const unsigned char *buf, unsigned int len 
     /* Update bitcount */
     t = ctx->i[0];
 
-    if ((ctx->i[0] = t + ((unsigned int)len << 3)) < t)
+    if ((ctx->i[0] = t + (len << 3)) < t)
         ctx->i[1]++;        /* Carry from low to high */
 
     ctx->i[1] += len >> 29;
@@ -266,4 +269,58 @@ static void MD4Transform( unsigned int buf[4], const unsigned int in[16] )
     buf[1] += b;
     buf[2] += c;
     buf[3] += d;
+}
+
+/******************************************************************************
+ * SystemFunction007  [ADVAPI32.@]
+ *
+ * MD4 hash a unicode string
+ *
+ * PARAMS
+ *   string  [I] the string to hash
+ *   output  [O] the md4 hash of the string (16 bytes)
+ *
+ * RETURNS
+ *  Success: STATUS_SUCCESS
+ *  Failure: STATUS_UNSUCCESSFUL
+ *
+ */
+NTSTATUS WINAPI SystemFunction007(const UNICODE_STRING *string, LPBYTE hash)
+{
+    MD4_CTX ctx;
+
+    MD4Init( &ctx );
+    MD4Update( &ctx, (const BYTE *)string->Buffer, string->Length );
+    MD4Final( &ctx );
+    memcpy( hash, ctx.digest, 0x10 );
+
+    return STATUS_SUCCESS;
+}
+
+/******************************************************************************
+ * SystemFunction010  [ADVAPI32.@]
+ * SystemFunction011  [ADVAPI32.@]
+ *
+ * MD4 hashes 16 bytes of data
+ *
+ * PARAMS
+ *   unknown []  seems to have no effect on the output
+ *   data    [I] pointer to data to hash (16 bytes)
+ *   output  [O] the md4 hash of the data (16 bytes)
+ *
+ * RETURNS
+ *  Success: STATUS_SUCCESS
+ *  Failure: STATUS_UNSUCCESSFUL
+ *
+ */
+NTSTATUS WINAPI SystemFunction010(LPVOID unknown, const BYTE *data, LPBYTE hash)
+{
+    MD4_CTX ctx;
+
+    MD4Init( &ctx );
+    MD4Update( &ctx, data, 0x10 );
+    MD4Final( &ctx );
+    memcpy( hash, ctx.digest, 0x10 );
+
+    return STATUS_SUCCESS;
 }

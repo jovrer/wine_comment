@@ -1,5 +1,5 @@
 /*
- * Copyright 2002 Michael Günnewig
+ * Copyright 2002 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_EXTRACHUNK_H
@@ -35,18 +35,18 @@ typedef struct _EXTRACHUNKS {
 } EXTRACHUNKS, *LPEXTRACHUNKS;
 
 /* reads a chunk outof the extrachunk-structure */
-HRESULT ReadExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPVOID lp,LPLONG size);
+HRESULT ReadExtraChunk(const EXTRACHUNKS *extra,FOURCC ckid,LPVOID lp,LPLONG size) DECLSPEC_HIDDEN;
 
 /* writes a chunk into the extrachunk-structure */
-HRESULT WriteExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPVOID lp,LONG size);
+HRESULT WriteExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPCVOID lp,LONG size) DECLSPEC_HIDDEN;
 
-/* reads a chunk fomr the HMMIO into the extrachunk-structure */
-HRESULT ReadChunkIntoExtra(LPEXTRACHUNKS extra,HMMIO hmmio,MMCKINFO *lpck);
+/* reads a chunk from the HMMIO into the extrachunk-structure */
+HRESULT ReadChunkIntoExtra(LPEXTRACHUNKS extra,HMMIO hmmio,const MMCKINFO *lpck) DECLSPEC_HIDDEN;
 
 /* reads all non-junk chunks into the extrachunk-structure until it finds
  * the given chunk or the optional parent-chunk is at the end */
 HRESULT FindChunkAndKeepExtras(LPEXTRACHUNKS extra,HMMIO hmmio,
-			       MMCKINFO *lpck,MMCKINFO *lpckParent,UINT flags);
+			       MMCKINFO *lpck,MMCKINFO *lpckParent,UINT flags) DECLSPEC_HIDDEN;
 
 #ifdef __cplusplus
 }

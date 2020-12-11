@@ -13,12 +13,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 
 #ifndef _WINNETWK_H_
 #define _WINNETWK_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * Network types
@@ -142,6 +146,12 @@ DWORD WINAPI WNetCancelConnection2W(LPCWSTR,DWORD,BOOL);
 DWORD WINAPI WNetGetConnectionA(LPCSTR,LPSTR,LPDWORD);
 DWORD WINAPI WNetGetConnectionW(LPCWSTR,LPWSTR,LPDWORD);
 #define      WNetGetConnection WINELIB_NAME_AW(WNetGetConnection)
+DWORD WINAPI WNetGetLastErrorA(LPDWORD,LPSTR,DWORD,LPSTR,DWORD);
+DWORD WINAPI WNetGetLastErrorW(LPDWORD,LPWSTR,DWORD,LPWSTR,DWORD);
+#define      WNetGetLastError WINELIB_NAME_AW(WNetGetLastError)
+DWORD WINAPI WNetRestoreConnectionA(HWND,LPCSTR);
+DWORD WINAPI WNetRestoreConnectionW(HWND,LPCWSTR);
+#define      WNetRestoreConnection WINELIB_NAME_AW(WNetRestoreConnection)
 DWORD WINAPI WNetUseConnectionA(HWND,LPNETRESOURCEA,LPCSTR,LPCSTR,DWORD,LPSTR,LPDWORD,LPDWORD);
 DWORD WINAPI WNetUseConnectionW(HWND,LPNETRESOURCEW,LPCWSTR,LPCWSTR,DWORD,LPWSTR,LPDWORD,LPDWORD);
 #define      WNetUseConnection WINELIB_NAME_AW(WNetUseConnection)
@@ -302,10 +312,6 @@ DWORD WINAPI WNetGetNetworkInformationW(LPCWSTR,LPNETINFOSTRUCT);
  *  Status codes
  */
 
-DWORD WINAPI WNetGetLastErrorA(LPDWORD,LPSTR,DWORD,LPSTR,DWORD);
-DWORD WINAPI WNetGetLastErrorW(LPDWORD,LPWSTR,DWORD,LPWSTR,DWORD);
-#define      WNetGetLastError WINELIB_NAME_AW(WNetGetLastError)
-
 #define WN_SUCCESS                      NO_ERROR
 #define WN_NO_ERROR                     NO_ERROR
 #define WN_NOT_SUPPORTED                ERROR_NOT_SUPPORTED
@@ -395,5 +401,8 @@ UINT WINAPI WNetEnumCachedPasswords( LPSTR, WORD, BYTE, ENUMPASSWORDPROC, DWORD)
 DWORD WINAPI WNetGetCachedPassword( LPSTR, WORD, LPSTR, LPWORD, BYTE );
 DWORD WINAPI WNetCachePassword( LPSTR, WORD, LPSTR, WORD, BYTE, WORD );
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _WINNETWK_H_ */

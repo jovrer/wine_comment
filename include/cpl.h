@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _INC_CPL
@@ -36,7 +36,7 @@ typedef struct tagCPLINFO {
     int     idIcon;
     int     idName;
     int     idInfo;
-    LONG    lData;
+    LONG_PTR lData;
 } CPLINFO, *LPCPLINFO;
 
 typedef struct tagNEWCPLINFOA
@@ -44,7 +44,7 @@ typedef struct tagNEWCPLINFOA
     DWORD   dwSize;
     DWORD   dwFlags;
     DWORD   dwHelpContext;
-    LONG    lData;
+    LONG_PTR lData;
     HICON   hIcon;
     CHAR    szName[32];
     CHAR    szInfo[64];
@@ -56,7 +56,7 @@ typedef struct tagNEWCPLINFOW
     DWORD   dwSize;
     DWORD   dwFlags;
     DWORD   dwHelpContext;
-    LONG    lData;
+    LONG_PTR lData;
     HICON   hIcon;
     WCHAR   szName[32];
     WCHAR   szInfo[64];

@@ -16,26 +16,37 @@
  ***************************************************************************/
 
 /***************************************************************************
- *                                                                         *
- *   Copyright(C) Stuart Caie                                              *
- *                                                                         *
- *   This library is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU Lesser General Public License as        *
- *   published by the Free Software Foundation; either version 2.1 of the  *
- *   License, or (at your option) any later version.                       *
- *                                                                         *
+ *
+ *   Copyright(C) Stuart Caie
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ *
  ***************************************************************************/
 
 #include "lzx.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "windef.h"
+#include "winbase.h"
+
 /* sized types */
 typedef unsigned char  UBYTE; /* 8 bits exactly    */
 typedef unsigned short UWORD; /* 16 bits (or more) */
-typedef unsigned int   ULONG; /* 32 bits (or more) */
-typedef   signed int    LONG; /* 32 bits (or more) */
 
 /* some constants defined by the LZX specification */
 #define LZX_MIN_MATCH                (2)
@@ -169,10 +180,10 @@ struct LZXstate *LZXinit(int window)
     if (window < 15 || window > 21) return NULL;
 
     /* allocate state and associated window */
-    pState = malloc(sizeof(struct LZXstate));
-    if (!(pState->window = malloc(wndsize)))
+    pState = HeapAlloc(GetProcessHeap(), 0, sizeof(struct LZXstate));
+    if (!(pState->window = HeapAlloc(GetProcessHeap(), 0, wndsize)))
     {
-        free(pState);
+        HeapFree(GetProcessHeap(), 0, pState);
         return NULL;
     }
     pState->actual_size = wndsize;
@@ -208,9 +219,8 @@ void LZXteardown(struct LZXstate *pState)
 {
     if (pState)
     {
-        if (pState->window)
-            free(pState->window);
-        free(pState);
+        HeapFree(GetProcessHeap(), 0, pState->window);
+        HeapFree(GetProcessHeap(), 0, pState);
     }
 }
 

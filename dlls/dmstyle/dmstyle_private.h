@@ -2,19 +2,19 @@
  *
  * Copyright (C) 2003-2004 Rok Mandeljc
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Library General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DMSTYLE_PRIVATE_H
@@ -43,22 +43,15 @@
 #include "dmusics.h"
 
 /*****************************************************************************
- * Interfaces
- */
-typedef struct IDirectMusicStyle8Impl IDirectMusicStyle8Impl;
-
-typedef struct IDirectMusicAuditionTrack IDirectMusicAuditionTrack;
-typedef struct IDirectMusicChordTrack IDirectMusicChordTrack;
-typedef struct IDirectMusicCommandTrack IDirectMusicCommandTrack;
-typedef struct IDirectMusicMelodyFormulationTrack IDirectMusicMelodyFormulationTrack;
-typedef struct IDirectMusicMotifTrack IDirectMusicMotifTrack;
-typedef struct IDirectMusicMuteTrack IDirectMusicMuteTrack;
-typedef struct IDirectMusicStyleTrack IDirectMusicStyleTrack;
-	
-/*****************************************************************************
  * ClassFactory
  */
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicStyleImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
+extern HRESULT WINAPI create_dmstyle(REFIID lpcGUID, LPVOID* ppobj) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmauditiontrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmchordtrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmcommandtrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmmotiftrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmmutetrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmstyletrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 
 /*****************************************************************************
  * Auxiliary definitions
@@ -76,7 +69,7 @@ typedef struct _DMUS_PRIVATE_STYLE_PARTREF_ITEM {
 
 typedef struct _DMUS_PRIVATE_STYLE_MOTIF {
   struct list entry; /* for listing elements */
-  DWORD dwRythm;
+  DWORD dwRhythm;
   DMUS_IO_PATTERN pattern;
   DMUS_OBJECTDESC desc;
   /** optional for motifs */
@@ -92,88 +85,6 @@ typedef struct _DMUS_PRIVATE_STYLE_ITEM {
   IDirectMusicStyle8* pObject;
 } DMUS_PRIVATE_STYLE_ITEM, *LPDMUS_PRIVATE_STYLE_ITEM;
 
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicAuditionTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicChordTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicCommandTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicMelodyFormulationTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicMotifTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicMuteTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicStyleTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter);
-
-/*****************************************************************************
- * IDirectMusicStyle8Impl implementation structure
- */
-struct IDirectMusicStyle8Impl {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicStyle8Vtbl *StyleVtbl;
-  const IDirectMusicObjectVtbl *ObjectVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicStyle8Impl fields */
-  LPDMUS_OBJECTDESC pDesc;
-  DMUS_IO_STYLE style;
-
-  /* data */
-  struct list Motifs;
-  struct list Bands;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicStyle8Impl_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicStyle8Impl_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicStyle: */
-extern ULONG WINAPI   IDirectMusicStyle8Impl_IDirectMusicStyle8_AddRef (LPDIRECTMUSICSTYLE8 iface);
-/* IDirectMusicObject: */
-extern ULONG WINAPI   IDirectMusicStyle8Impl_IDirectMusicObject_AddRef (LPDIRECTMUSICOBJECT iface);
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicStyle8Impl_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
-/*****************************************************************************
- * IDirectMusicAuditionTrack implementation structure
- */
-struct IDirectMusicAuditionTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicAuditionTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicAuditionTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicAuditionTrack_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicAuditionTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface);
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicAuditionTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
-/*****************************************************************************
- * IDirectMusicChordTrack implementation structure
- */
-struct IDirectMusicChordTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicChordTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-  DWORD dwScale;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicChordTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicChordTrack_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicChordTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface);
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicChordTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface);
 
 typedef struct _DMUS_PRIVATE_COMMAND {
 	struct list entry; /* for listing elements */
@@ -181,124 +92,10 @@ typedef struct _DMUS_PRIVATE_COMMAND {
 	IDirectMusicCollection* ppReferenceCollection;
 } DMUS_PRIVATE_COMMAND, *LPDMUS_PRIVATE_COMMAND;
 
-/*****************************************************************************
- * IDirectMusicCommandTrack implementation structure
- */
-struct IDirectMusicCommandTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicCommandTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-  /* track data */
-  struct list Commands;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicCommandTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicCommandTrack_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicCommandTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface);
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicCommandTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
-/*****************************************************************************
- * IDirectMusicMelodyFormulationTrack implementation structure
- */
-struct IDirectMusicMelodyFormulationTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicMelodyFormulationTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicMelodyFormulationTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicMelodyFormulationTrack_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicMelodyFormulationTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface);
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicMelodyFormulationTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
-/*****************************************************************************
- * IDirectMusicMotifTrack implementation structure
- */
-struct IDirectMusicMotifTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicMotifTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicMotifTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicMotifTrack_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicMotifTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface);
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicMotifTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
-/*****************************************************************************
- * IDirectMusicMuteTrack implementation structure
- */
-struct IDirectMusicMuteTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicMuteTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicMuteTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicMuteTrack_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicMuteTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface);
-/* IPersistStream: */
-extern ULONG   WINAPI IDirectMusicMuteTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
-/*****************************************************************************
- * IDirectMusicStyleTrack implementation structure
- */
-struct IDirectMusicStyleTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicStyleTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-  
-  struct list Items;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicStyleTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj);
-extern ULONG WINAPI   IDirectMusicStyleTrack_IUnknown_AddRef (LPUNKNOWN iface);
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicStyleTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface);
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicStyleTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
 /**********************************************************************
  * Dll lifetime tracking declaration for dmstyle.dll
  */
-extern LONG DMSTYLE_refCount;
+extern LONG DMSTYLE_refCount DECLSPEC_HIDDEN;
 static inline void DMSTYLE_LockModule(void) { InterlockedIncrement( &DMSTYLE_refCount ); }
 static inline void DMSTYLE_UnlockModule(void) { InterlockedDecrement( &DMSTYLE_refCount ); }
 

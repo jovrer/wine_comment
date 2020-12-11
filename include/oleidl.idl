@@ -15,12 +15,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef DO_NO_IMPORTS
 import "objidl.idl";
+#endif
 
 interface IOleInPlaceActiveObject;
+
+cpp_quote("#include <winuser.h>")
 
 /*****************************************************************************
  * IOleTypes interface
@@ -331,7 +335,7 @@ interface IOleItemContainer : IOleContainer
 	OLECONTF_EMBEDDINGS = 1,
 	OLECONTF_LINKS = 2,
 	OLECONTF_OTHERS = 4,
-	OLECONTF_OLNYUSER = 8,
+	OLECONTF_ONLYUSER = 8,
 	OLECONTF_ONLYIFRUNNING = 16
     } OLECONTF;
 
@@ -951,4 +955,19 @@ interface IDropTarget : IUnknown
         [in] DWORD grfKeyState,
         [in] POINTL pt,
         [in, out] DWORD *pdwEffect);
+}
+
+/*****************************************************************************
+ * IDropSourceNotify interface
+ */
+[
+    object,
+    uuid(0000012b-0000-0000-c000-000000000046),
+    pointer_default(unique),
+    local
+]
+interface IDropSourceNotify : IUnknown
+{
+    HRESULT DragTargetEnter( [in] HWND hwnd );
+    HRESULT DragTargetLeave( void );
 }

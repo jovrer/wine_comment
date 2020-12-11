@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -62,13 +62,13 @@ void  output_spec_preamble (void)
  */
 void  output_spec_symbol (const parsed_symbol *sym)
 {
-  char ord_spec[16];
+  char ord_spec[20];
 
   assert (specfile);
   assert (sym && sym->symbol);
 
   if (sym->ordinal >= 0)
-    snprintf(ord_spec, 8, "%d", sym->ordinal);
+    snprintf(ord_spec, 12, "%d", sym->ordinal);
   else
   {
     ord_spec[0] = '@';
@@ -108,10 +108,11 @@ void  output_spec_symbol (const parsed_symbol *sym)
 
     if (sym->argc)
       fputc (' ', specfile);
-    fprintf (specfile, ") %s_%s", OUTPUT_UC_DLL_NAME, sym->function_name);
+    fputs (") ", specfile);
 
     if (sym->flags & SYM_THISCALL)
-      fputs (" # __thiscall", specfile);
+      fputs ("__thiscall_", specfile);
+    fprintf (specfile, "%s_%s", OUTPUT_UC_DLL_NAME, sym->function_name);
 
     fputc ('\n',specfile);
   }
@@ -138,15 +139,18 @@ static void output_spec_postamble (void)
  */
 void  output_header_preamble (void)
 {
+  if (!globals.do_code)
+      return;
+
   hfile = open_file (OUTPUT_DLL_NAME, "_dll.h", "w");
 
   atexit (output_header_postamble);
 
   fprintf (hfile,
            "/*\n * %s.dll\n *\n * Generated from %s.dll by winedump.\n *\n"
-           " * DO NOT SEND GENERATED DLLS FOR INCLUSION INTO WINE !\n * \n */"
-           "\n#ifndef __WINE_%s_DLL_H\n#define __WINE_%s_DLL_H\n\n#include "
-           "\"config.h\"\n#include \"windef.h\"\n#include \"wine/debug.h\"\n"
+           " * DO NOT SEND GENERATED DLLS FOR INCLUSION INTO WINE !\n *\n */"
+           "\n#ifndef __WINE_%s_DLL_H\n#define __WINE_%s_DLL_H\n\n"
+           "#include \"windef.h\"\n#include \"wine/debug.h\"\n"
            "#include \"winbase.h\"\n#include \"winnt.h\"\n\n\n",
            OUTPUT_DLL_NAME, OUTPUT_DLL_NAME, OUTPUT_UC_DLL_NAME,
            OUTPUT_UC_DLL_NAME);
@@ -160,6 +164,9 @@ void  output_header_preamble (void)
  */
 void  output_header_symbol (const parsed_symbol *sym)
 {
+  if (!globals.do_code)
+      return;
+
   assert (hfile);
   assert (sym && sym->symbol);
 
@@ -210,9 +217,15 @@ void  output_c_preamble (void)
 
   fprintf (cfile,
            "/*\n * %s.dll\n *\n * Generated from %s by winedump.\n *\n"
-           " * DO NOT SUBMIT GENERATED DLLS FOR INCLUSION INTO WINE!\n * \n */"
-           "\n\n#include \"%s_dll.h\"\n\nWINE_DEFAULT_DEBUG_CHANNEL(%s);\n\n",
-           OUTPUT_DLL_NAME, globals.input_name, OUTPUT_DLL_NAME,
+           " * DO NOT SUBMIT GENERATED DLLS FOR INCLUSION INTO WINE!\n *\n */"
+           "\n\n#include \"config.h\"\n\n#include <stdarg.h>\n\n"
+           "#include \"windef.h\"\n#include \"winbase.h\"\n",
+           OUTPUT_DLL_NAME, globals.input_name);
+
+  if (globals.do_code)
+    fprintf (cfile, "#include \"%s_dll.h\"\n", OUTPUT_DLL_NAME);
+
+  fprintf (cfile,"#include \"wine/debug.h\"\n\nWINE_DEFAULT_DEBUG_CHANNEL(%s);\n\n",
            OUTPUT_DLL_NAME);
 
   if (globals.forward_dll)
@@ -220,48 +233,44 @@ void  output_c_preamble (void)
     if (VERBOSE)
       puts ("Creating a forwarding DLL");
 
-    fputs ("\nHMODULE hDLL=0;\t/* DLL to call */\n\n", cfile);
+    fputs ("\nHMODULE hDLL=0;    /* DLL to call */\n\n", cfile);
   }
-
-  fputs ("#ifdef __i386__\n#define GET_THIS(t,p) t p;\\\n__asm__ __volatile__"
-         " (\"movl %%ecx, %0\" : \"=m\" (p))\n#endif\n\n\n", cfile);
 
   fprintf (cfile,
-           "BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID "
-           "lpvReserved)\n{\n\tTRACE(\"(0x%%p, %%ld, %%p)\\n\",hinstDLL,"
-           "fdwReason,lpvReserved);\n\n\t"
-           "if (fdwReason == DLL_PROCESS_ATTACH)\n\t{\n\t\t");
+           "BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void "
+           "*reserved)\n{\n"
+           "    TRACE(\"(%%p, %%u, %%p)\\n\", instance, reason, reserved);\n\n"
+           "    switch (reason)\n"
+           "    {\n"
+           "        case DLL_WINE_PREATTACH:\n"
+           "            return FALSE;    /* prefer native version */\n"
+           "        case DLL_PROCESS_ATTACH:\n");
 
   if (globals.forward_dll)
-  {
     fprintf (cfile,
-             "hDLL = LoadLibraryA( \"%s\" );\n\t\t"
-             "TRACE(\":Forwarding DLL (%s) loaded (%%ld)\\n\",(LONG)hDLL);",
-             globals.forward_dll, globals.forward_dll);
-  }
+           "            hDLL = LoadLibraryA(\"%s\");\n"
+           "            TRACE(\"Forwarding DLL (%s) loaded (%%p)\\n\", hDLL);\n",
+           globals.forward_dll, globals.forward_dll);
   else
-    fputs ("/* FIXME: Initialisation */", cfile);
+    fprintf (cfile,
+           "            DisableThreadLibraryCalls(instance);\n");
 
-  fputs ("\n\t}\n\telse if (fdwReason == DLL_PROCESS_DETACH)\n\t{\n\t\t",
-         cfile);
+  fprintf (cfile,
+           "            break;\n");
 
   if (globals.forward_dll)
-  {
     fprintf (cfile,
-             "FreeLibrary( hDLL );\n\t\tTRACE(\":Forwarding DLL (%s)"
-             " freed\\n\");", globals.forward_dll);
-  }
-  else
-    fputs ("/* FIXME: Cleanup */", cfile);
+           "        case DLL_PROCESS_DETACH:\n"
+           "            FreeLibrary(hDLL);\n"
+           "            TRACE(\"Forwarding DLL (%s) freed\\n\");\n"
+           "            break;\n",
+           globals.forward_dll);
 
-  fputs ("\n\t}\n\n\treturn TRUE;\n}\n\n\n", cfile);
+  fprintf (cfile,
+           "    }\n\n"
+           "    return TRUE;\n}\n");
 }
 
-
-#define CPP_END  if (sym->flags & SYM_THISCALL) \
-  fputs ("#endif\n", cfile); fputs ("\n\n", cfile)
-#define GET_THIS if (sym->flags & SYM_THISCALL) \
-  fprintf (cfile, "\tGET_THIS(%s,%s);\n", sym->arg_text[0],sym->arg_name[0])
 
 /*******************************************************************
  *         output_c_symbol
@@ -271,7 +280,8 @@ void  output_c_preamble (void)
 void  output_c_symbol (const parsed_symbol *sym)
 {
   unsigned int i, start = sym->flags & SYM_THISCALL ? 1 : 0;
-  int is_void;
+  BOOL is_void;
+  static BOOL has_thiscall = FALSE;
 
   assert (cfile);
   assert (sym && sym->symbol);
@@ -286,10 +296,30 @@ void  output_c_symbol (const parsed_symbol *sym)
     return;
   }
 
-  if (sym->flags & SYM_THISCALL)
-    fputs ("#ifdef __i386__\n", cfile);
+  if (sym->flags & SYM_THISCALL && !has_thiscall)
+  {
+    fputs ("#ifdef __i386__  /* thiscall functions are i386-specific */\n\n"
+           "#define THISCALL(func) __thiscall_ ## func\n"
+           "#define THISCALL_NAME(func) __ASM_NAME(\"__thiscall_\" #func)\n"
+           "#define DEFINE_THISCALL_WRAPPER(func) \\\n"
+           "\textern void THISCALL(func)(); \\\n"
+           "\t__ASM_GLOBAL_FUNC(__thiscall_ ## func, \\\n"
+           "\t\t\t\"popl %eax\\n\\t\" \\\n"
+           "\t\t\t\"pushl %ecx\\n\\t\" \\\n"
+           "\t\t\t\"pushl %eax\\n\\t\" \\\n"
+           "\t\t\t\"jmp \" __ASM_NAME(#func) )\n"
+           "#else /* __i386__ */\n\n"
+           "#define THISCALL(func) func\n"
+           "#define THISCALL_NAME(func) __ASM_NAME(#func)\n"
+           "#define DEFINE_THISCALL_WRAPPER(func) /* nothing */\n\n"
+           "#endif /* __i386__ */\n\n", cfile);
+    has_thiscall = TRUE;
+  }
 
   output_c_banner(sym);
+
+  if (sym->flags & SYM_THISCALL)
+    fprintf(cfile, "DEFINE_THISCALL_WRAPPER(%s)\n", sym->function_name);
 
   if (!sym->function_name)
   {
@@ -297,23 +327,20 @@ void  output_c_symbol (const parsed_symbol *sym)
     fprintf (cfile, "#if 0\n__%s %s_%s()\n{\n\t/* %s in .spec */\n}\n#endif\n",
              symbol_get_call_convention(sym), OUTPUT_UC_DLL_NAME, sym->symbol,
              globals.forward_dll ? "@forward" : "@stub");
-    CPP_END;
     return;
   }
 
-  is_void = !strcmp (sym->return_text, "void");
+  is_void = !strcasecmp (sym->return_text, "void");
 
   output_prototype (cfile, sym);
   fputs ("\n{\n", cfile);
 
   if (!globals.do_trace)
   {
-    GET_THIS;
     fputs ("\tFIXME(\":stub\\n\");\n", cfile);
     if (!is_void)
         fprintf (cfile, "\treturn (%s) 0;\n", sym->return_text);
     fputs ("}\n", cfile);
-    CPP_END;
     return;
   }
 
@@ -335,8 +362,6 @@ void  output_c_symbol (const parsed_symbol *sym)
 
     if (!is_void)
       fprintf (cfile, "\t%s retVal;\n", sym->return_text);
-
-    GET_THIS;
 
     fprintf (cfile, "\tpFunc=(void*)GetProcAddress(hDLL,\"%s\");\n",
              sym->symbol);
@@ -366,7 +391,6 @@ void  output_c_symbol (const parsed_symbol *sym)
     if (!is_void)
       fprintf (cfile, "\treturn (%s) 0;\n", sym->return_text);
     fputs ("}\n", cfile);
-    CPP_END;
     return;
   }
 
@@ -398,7 +422,6 @@ void  output_c_symbol (const parsed_symbol *sym)
     fputs (");\n", cfile);
 
   fputs ("}\n", cfile);
-  CPP_END;
 }
 
 
@@ -428,74 +451,18 @@ void  output_makefile (void)
     puts ("Creating makefile");
 
   fprintf (makefile,
-           "# Generated from %s by winedump.\nTOPSRCDIR = @top_srcdir@\n"
-           "TOPOBJDIR = ../..\nSRCDIR    = @srcdir@\nVPATH     = @srcdir@\n"
+           "# Generated from %s by winedump.\n"
            "MODULE    = %s.dll\n", globals.input_name, OUTPUT_DLL_NAME);
 
-  fprintf (makefile, "IMPORTS   = kernel32");
   if (globals.forward_dll)
-    fprintf (makefile, " %s", globals.forward_dll);
+    fprintf (makefile, "IMPORTS   = %s", globals.forward_dll);
 
-  fprintf (makefile,
-           "\n\nC_SRCS = \\\n\t%s_main.c\n\n@MAKE_DLL_RULES@\n\n### Dependencies:",
-           OUTPUT_DLL_NAME);
+  fprintf (makefile, "\n\nC_SRCS = \\\n\t%s_main.c\n", OUTPUT_DLL_NAME);
 
   if (globals.forward_dll)
     fprintf (specfile,"#import %s.dll\n", globals.forward_dll);
 
   fclose (makefile);
-}
-
-
-/*******************************************************************
- *         output_install_script
- *
- * Write a script to insert the DLL into Wine
- *
- * Rather than using diff/patch, several sed calls are generated
- * so the script can be re-run at any time without breaking.
- */
-void  output_install_script (void)
-{
-  char cmd[128];
-  FILE *install_file = open_file (OUTPUT_DLL_NAME, "_install", "w");
-
-  if (VERBOSE)
-    puts ("Creating install script");
-
-  fprintf (install_file,
-    "#!/bin/bash\n"
-    "# Generated from %s.dll by winedump.\n\n"
-    "if [ $# -ne 1 ] || [ ! -d $1 ] || [ ! -f $1/AUTHORS ]; then\n"
-    "\t[ $# -eq 1 ] && echo \"Invalid path\"\n"
-    "\techo \"Usage: $0 wine-base-dir\"\n"
-    "\texit 1\n"
-    "fi\n\n"
-    "if [ -d $1/dlls/%s ]; then\n"
-    "\techo \"DLL is already present\"\n"
-    "\texit 1\n"
-    "fi\n\n"
-    "echo Adding DLL %s to Wine build tree...\n\n"
-    "mkdir $1/dlls/%s\n"
-    "cp %s.spec $1/dlls/%s\n"
-    "cp %s_main.c $1/dlls/%s\n"
-    "cp %s_dll.h $1/dlls/%s\n"
-    "cp Makefile.in $1/dlls/%s/Makefile.in\n"
-    "echo Copied DLL files\n\n"
-    "cd $1\n\n"
-    "sed '/dlls\\/x11drv\\/Makefile/"
-        "{G;s/$/dlls\\/%s\\/Makefile/;}' configure.ac >t.tmp\n"
-    "mv -f t.tmp configure.ac\n"
-    "echo Patched configure.ac\n\n"
-    "cd $1/dlls && ./make_dlls\n\n"
-    "echo Run \\'autoconf\\', \\'./configure\\' then \\'make\\' to rebuild Wine\n\n",
-           OUTPUT_DLL_NAME, OUTPUT_DLL_NAME, OUTPUT_DLL_NAME, OUTPUT_DLL_NAME,
-           OUTPUT_DLL_NAME, OUTPUT_DLL_NAME, OUTPUT_DLL_NAME, OUTPUT_DLL_NAME,
-           OUTPUT_DLL_NAME, OUTPUT_DLL_NAME, OUTPUT_DLL_NAME, OUTPUT_DLL_NAME);
-
-  fclose (install_file);
-  snprintf (cmd, sizeof (cmd), "chmod a+x %s_install", OUTPUT_DLL_NAME);
-  system (cmd);
 }
 
 

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_MSI_QUERY_H
@@ -53,26 +53,34 @@
 #define EXPR_STRCMP   7
 #define EXPR_WILDCARD 9
 #define EXPR_COL_NUMBER_STRING 10
+#define EXPR_COL_NUMBER32 11
+#define EXPR_UNARY    12
 
 struct sql_str {
     LPCWSTR data;
     INT len;
 };
 
-typedef struct _column_info
-{
-    LPCWSTR table;
-    LPCWSTR column;
-    UINT   type;
-    struct expr *val;
-    struct _column_info *next;
-} column_info;
-
 struct complex_expr
 {
     UINT op;
     struct expr *left;
     struct expr *right;
+};
+
+struct tagJOINTABLE;
+union ext_column
+{
+    struct
+    {
+        LPCWSTR column;
+        LPCWSTR table;
+    } unparsed;
+    struct
+    {
+        UINT column;
+        struct tagJOINTABLE *table;
+    } parsed;
 };
 
 struct expr
@@ -84,38 +92,63 @@ struct expr
         INT   ival;
         UINT  uval;
         LPCWSTR sval;
-        LPCWSTR column;
-        UINT col_number;
+        union ext_column column;
     } u;
 };
 
-UINT MSI_ParseSQL( MSIDATABASE *db, LPCWSTR command, MSIVIEW **phview,
-                   struct list *mem );
+typedef struct
+{
+    MSIDATABASE *db;
+    LPCWSTR command;
+    DWORD n, len;
+    UINT r;
+    MSIVIEW **view;  /* View structure for the resulting query.  This value
+                      * tracks the view currently being created so we can free
+                      * this view on syntax error.
+                      */
+    struct list *mem;
+} SQL_input;
 
-UINT TABLE_CreateView( MSIDATABASE *db, LPCWSTR name, MSIVIEW **view );
+UINT MSI_ParseSQL( MSIDATABASE *db, LPCWSTR command, MSIVIEW **phview,
+                   struct list *mem ) DECLSPEC_HIDDEN;
+
+UINT TABLE_CreateView( MSIDATABASE *db, LPCWSTR name, MSIVIEW **view ) DECLSPEC_HIDDEN;
 
 UINT SELECT_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table,
-                        column_info *columns );
+                        const column_info *columns ) DECLSPEC_HIDDEN;
 
-UINT DISTINCT_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table );
+UINT DISTINCT_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table ) DECLSPEC_HIDDEN;
 
 UINT ORDER_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table,
-                       column_info *columns );
+                       column_info *columns ) DECLSPEC_HIDDEN;
 
-UINT WHERE_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table,
-                       struct expr *cond );
+UINT WHERE_CreateView( MSIDATABASE *db, MSIVIEW **view, LPWSTR tables,
+                       struct expr *cond ) DECLSPEC_HIDDEN;
 
-UINT CREATE_CreateView( MSIDATABASE *db, MSIVIEW **view, LPWSTR table,
-                        column_info *col_info, BOOL temp );
+UINT CREATE_CreateView( MSIDATABASE *db, MSIVIEW **view, LPCWSTR table,
+                        column_info *col_info, BOOL hold ) DECLSPEC_HIDDEN;
 
-UINT INSERT_CreateView( MSIDATABASE *db, MSIVIEW **view, LPWSTR table,
-                        column_info *columns, column_info *values, BOOL temp );
+UINT INSERT_CreateView( MSIDATABASE *db, MSIVIEW **view, LPCWSTR table,
+                        column_info *columns, column_info *values, BOOL temp ) DECLSPEC_HIDDEN;
 
-UINT UPDATE_CreateView( MSIDATABASE *db, MSIVIEW **, LPWSTR table,
-                        column_info *list, struct expr *expr );
+UINT UPDATE_CreateView( MSIDATABASE *db, MSIVIEW **view, LPWSTR table,
+                        column_info *list, struct expr *expr ) DECLSPEC_HIDDEN;
 
-UINT DELETE_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table );
+UINT DELETE_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table ) DECLSPEC_HIDDEN;
 
-int sqliteGetToken(const WCHAR *z, int *tokenType);
+UINT ALTER_CreateView( MSIDATABASE *db, MSIVIEW **view, LPCWSTR name, column_info *colinfo, int hold ) DECLSPEC_HIDDEN;
+
+UINT STREAMS_CreateView( MSIDATABASE *db, MSIVIEW **view ) DECLSPEC_HIDDEN;
+
+UINT STORAGES_CreateView( MSIDATABASE *db, MSIVIEW **view ) DECLSPEC_HIDDEN;
+
+UINT DROP_CreateView( MSIDATABASE *db, MSIVIEW **view, LPCWSTR name ) DECLSPEC_HIDDEN;
+
+int sqliteGetToken(const WCHAR *z, int *tokenType, int *skip) DECLSPEC_HIDDEN;
+
+MSIRECORD *msi_query_merge_record( UINT fields, const column_info *vl, MSIRECORD *rec ) DECLSPEC_HIDDEN;
+
+UINT msi_create_table( MSIDATABASE *db, LPCWSTR name, column_info *col_info,
+                       MSICONDITION persistent ) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_MSI_QUERY_H */

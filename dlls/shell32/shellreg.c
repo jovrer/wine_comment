@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -30,12 +30,10 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "shlobj.h"
-#include "winerror.h"
 #include "winreg.h"
-#include "winnls.h"
 
 #include "undocshell.h"
-#include "wine/winbase16.h"
+#include "shell32_main.h"
 
 #include "wine/debug.h"
 
@@ -65,6 +63,16 @@ HRESULT WINAPI SHRegOpenKeyW (
 {
 	WARN("%p %s %p\n",hkey,debugstr_w(lpszSubKey),retkey);
 	return RegOpenKeyW( hkey, lpszSubKey, retkey );
+}
+
+/*************************************************************************
+ * SHRegQueryValueA   [SHELL32.508]
+ *
+ */
+HRESULT WINAPI SHRegQueryValueA(HKEY hkey, LPSTR lpSubKey, LPSTR lpValue, LPDWORD lpcbValue)
+{
+	TRACE("(%p %s %p %p)\n", hkey, debugstr_a(lpSubKey), lpValue, lpcbValue);
+	return RegQueryValueA(hkey, lpSubKey, lpValue, (LONG*)lpcbValue);
 }
 
 /*************************************************************************
@@ -121,17 +129,6 @@ HRESULT WINAPI SHRegQueryValueExW (
 }
 
 /*************************************************************************
- * SHRegDeleteKeyA   [SHELL32.?]
- */
-HRESULT WINAPI SHRegDeleteKeyA(
-	HKEY hkey,
-	LPCSTR pszSubKey)
-{
-	FIXME("hkey=%p, %s\n", hkey, debugstr_a(pszSubKey));
-	return 0;
-}
-
-/*************************************************************************
  * SHRegDeleteKeyW   [SHELL32.512]
  */
 HRESULT WINAPI SHRegDeleteKeyW(
@@ -150,4 +147,33 @@ HRESULT WINAPI SHRegCloseKey (HKEY hkey)
 {
 	TRACE("%p\n",hkey);
 	return RegCloseKey( hkey );
+}
+
+/*************************************************************************
+ * SHCreateSessionKey                   [SHELL32.723]
+ *
+ */
+HRESULT WINAPI SHCreateSessionKey(REGSAM access, HKEY *hkey)
+{
+    static const WCHAR session_format[] = {
+                'S','o','f','t','w','a','r','e','\\','M','i','c','r','o','s','o','f','t','\\',
+                'W','i','n','d','o','w','s','\\','C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
+                'E','x','p','l','o','r','e','r','\\','S','e','s','s','i','o','n','I','n','f','o','\\','%','u',0};
+    DWORD session, ret;
+    WCHAR str[ARRAY_SIZE(session_format) + 16];
+
+    if (hkey)
+        *hkey = NULL;
+
+    if (!access)
+        return E_ACCESSDENIED;
+
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &session))
+        return E_INVALIDARG;
+
+    sprintfW(str, session_format, session);
+    TRACE("using session key %s\n", debugstr_w(str));
+
+    ret = RegCreateKeyExW(HKEY_CURRENT_USER, str, 0, NULL, REG_OPTION_VOLATILE, access, NULL, hkey, NULL);
+    return HRESULT_FROM_WIN32( ret );
 }

@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef _WINE_TYPELIB_H
 #define _WINE_TYPELIB_H
@@ -26,7 +26,6 @@
 #include "windef.h"
 #include "winbase.h"
 #include "oleauto.h"
-#include "wine/windef16.h"
 
 #define HELPDLLFLAG (0x0100)
 #define DO_NOT_SEEK (-1)
@@ -53,8 +52,11 @@
  * it is at the beginning of a type lib file
  *
  */
+
+#define MSFT_SIGNATURE 0x5446534D /* "MSFT" */
+
 typedef struct tagMSFT_Header {
-/*0x00*/INT magic1;       /* 0x5446534D "MSFT" */
+/*0x00*/INT   magic1;       /* 0x5446534D "MSFT" */
         INT   magic2;       /* 0x00010002 version nr? */
         INT   posguid;      /* position of libid in guid table  */
                             /* (should be,  else -1) */
@@ -79,7 +81,7 @@ typedef struct tagMSFT_Header {
         INT   res44;            /* unknown always: 0x20 (guid hash size?) */
         INT   res48;            /* unknown always: 0x80 (name hash size?) */
         INT   dispatchpos;      /* HREFTYPE to IDispatch, or -1 if no IDispatch */
-/*0x50*/INT   res50;            /* is zero becomes one when an interface is derived */
+/*0x50*/INT   nimpinfos;        /* number of impinfos */
 } MSFT_Header;
 
 /* segments in the type lib file have a structure like this: */
@@ -96,14 +98,14 @@ typedef struct tagMSFT_SegDir {
 /*1*/MSFT_pSeg pTypeInfoTab; /* each type info get an entry of 0x64 bytes */
                              /* (25 ints) */
 /*2*/MSFT_pSeg pImpInfo;     /* table with info for imported types */
-/*3*/MSFT_pSeg pImpFiles;    /* import libaries */
+/*3*/MSFT_pSeg pImpFiles;    /* import libraries */
 /*4*/MSFT_pSeg pRefTab;      /* References table */
-/*5*/MSFT_pSeg pLibtab;      /* always exists, alway same size (0x80) */
-                             /* hash table w offsets to guid????? */
+/*5*/MSFT_pSeg pGuidHashTab; /* always exists, always same size (0x80) */
+                             /* hash table with offsets to guid */
 /*6*/MSFT_pSeg pGuidTab;     /* all guids are stored here together with  */
                              /* offset in some table???? */
-/*7*/MSFT_pSeg res07;        /* always created, alway same size (0x200) */
-                             /* purpose largely unknown */
+/*7*/MSFT_pSeg pNameHashTab; /* always created, always same size (0x200) */
+                             /* hash table with offsets to names */
 /*8*/MSFT_pSeg pNametab;     /* name tables */
 /*9*/MSFT_pSeg pStringtab;   /* string table */
 /*A*/MSFT_pSeg pTypdescTab;  /* table with type descriptors */
@@ -120,10 +122,10 @@ typedef struct tagMSFT_SegDir {
 /* base type info data */
 typedef struct tagMSFT_TypeInfoBase {
 /*000*/ INT   typekind;             /*  it is the TKIND_xxx */
-                                    /* some byte alignment stuf */
+                                    /* some byte alignment stuff */
         INT     memoffset;          /* points past the file, if no elements */
         INT     res2;               /* zero if no element, N*0x40 */
-        INT     res3;               /* -1 if no lement, (N-1)*0x38 */
+        INT     res3;               /* -1 if no element, (N-1)*0x38 */
 /*010*/ INT     res4;               /* always? 3 */
         INT     res5;               /* always? zero */
         INT     cElement;           /* counts elements, HI=cVars, LO=cFuncs */
@@ -140,22 +142,21 @@ typedef struct tagMSFT_TypeInfoBase {
         INT     helpcontext;    /* */
         INT     oCustData;          /* offset in customer data table */
 #ifdef WORDS_BIGENDIAN
-        INT16   cbSizeVft;      /* virtual table size, not including inherits */
+        INT16   cbSizeVft;      /* virtual table size, including inherits */
         INT16   cImplTypes;     /* nr of implemented interfaces */
 #else
         INT16   cImplTypes;     /* nr of implemented interfaces */
-        INT16   cbSizeVft;      /* virtual table size, not including inherits */
+        INT16   cbSizeVft;      /* virtual table size, including inherits */
 #endif
 /*050*/ INT     size;           /* size in bytes, at least for structures */
         /* FIXME: name of this field */
         INT     datatype1;      /* position in type description table */
-                                /* or in base intefaces */
+                                /* or in base interfaces */
                                 /* if coclass: offset in reftable */
                                 /* if interface: reference to inherited if */
                                 /* if module: offset to dllname in name table */
-        INT     datatype2;      /* if 0x8000, entry above is valid */
-                                /* actually dunno */
-                                /* else it is zero? */
+        INT     datatype2;      /* for interfaces: hiword is num of inherited funcs */
+                                /*                 loword is num of inherited interfaces */
         INT     res18;          /* always? 0 */
 /*060*/ INT     res19;          /* always? -1 */
 } MSFT_TypeInfoBase;
@@ -174,7 +175,7 @@ typedef struct tagMSFT_ImpInfo {
 
 /* function description data */
 typedef struct {
-/*  INT   recsize;       record size including some xtra stuff */
+    INT   Info;         /* record size including some extra stuff */
     INT   DataType;     /* data type of the member, eg return of function */
     INT   Flags;        /* something to do with attribute flags (LOWORD) */
 #ifdef WORDS_BIGENDIAN
@@ -199,24 +200,22 @@ typedef struct {
     INT16 nrargs;       /* number of arguments (including optional ????) */
     INT16 nroargs;      /* nr of optional arguments */
 #endif
+
     /* optional attribute fields, the number of them is variable */
-    INT   OptAttr[1];
-/*
-0*  INT   helpcontext;
-1*  INT   oHelpString;
-2*  INT   oEntry;       // either offset in string table or numeric as it is //
-3*  INT   res9;         // unknown (-1) //
-4*  INT   resA;         // unknown (-1) //
-5*  INT   HelpStringContext;
-    // these are controlled by a bit set in the FKCCIC field  //
-6*  INT   oCustData;        // custom data for function //
-7*  INT   oArgCustData[1];  // custom data per argument //
-*/
+    INT   HelpContext;
+    INT   oHelpString;
+    INT   oEntry;       /* either offset in string table or numeric as it is */
+    INT   res9;         /* unknown (-1) */
+    INT   resA;         /* unknown (-1) */
+    INT   HelpStringContext;
+    /* these are controlled by a bit set in the FKCCIC field  */
+    INT   oCustData;        /* custom data for function */
+    INT   oArgCustData[1];  /* custom data per argument */
 } MSFT_FuncRecord;
 
 /* after this may follow an array with default value pointers if the
  * appropriate bit in the FKCCIC field has been set:
- * INT   oDefautlValue[nrargs];
+ * INT   oDefaultValue[nrargs];
  */
 
     /* Parameter info one per argument*/
@@ -228,7 +227,7 @@ typedef struct {
 
 /* Variable description data */
 typedef struct {
-/*  INT   recsize;      // record size including some xtra stuff */
+    INT   Info;         /* record size including some extra stuff */
     INT   DataType;     /* data type of the variable */
     INT   Flags;        /* VarFlags (LOWORD) */
 #ifdef WORDS_BIGENDIAN
@@ -243,11 +242,10 @@ typedef struct {
     /* optional attribute fields, the number of them is variable */
     /* controlled by record length */
     INT   HelpContext;
-    INT   oHelpString;
+    INT   HelpString;
     INT   res9;         /* unknown (-1) */
     INT   oCustData;        /* custom data for variable */
     INT   HelpStringContext;
-
 } MSFT_VarRecord;
 
 /* Structure of the reference data  */
@@ -281,11 +279,12 @@ typedef struct {
 			   to the typeinfo itself or to a member of
 			   the typeinfo */
     INT   next_hash;    /* offset to next name in the hash bucket */
-    INT   namelen;      /* only lower 8 bits are valid,
-			   lower-middle 8 bits are unknown (flags?),
-			   upper 16 bits are hash code */
+    INT   namelen;      /* only lower 8 bits are valid */
+                        /* 0x1000 if name is only used once as a variable name */
+                        /* 0x2000 if name is a variable in an enumeration */
+                        /* 0x3800 if name is typeinfo name */
 } MSFT_NameIntro;
-/* the custom data table directory has enties like this */
+/* the custom data table directory has entries like this */
 typedef struct {
     INT   GuidOffset;
     INT   DataOffset;
@@ -414,7 +413,7 @@ typedef struct {
 /*0e*/	DWORD res0e;		/* 0xffffffff */
 /*12*/	WORD major_version;	/* major version number */
 /*14*/  WORD minor_version;	/* minor version number */
-/*16*/	DWORD res16;	/* 0xfffe0000 */
+/*16*/	DWORD res16;	/* 0xfffe0000 or 0xfffc0000 (on dual interfaces?) */
 /*1a*/	BYTE typeflags1;/* 0x02 | top 5 bits hold l5sbs of TYPEFLAGS */
 /*1b*/	BYTE typeflags2;/* TYPEFLAGS >> 5 */
 /*1c*/	BYTE typeflags3;/* 0x02*/
@@ -428,28 +427,28 @@ typedef struct {
 /*00*/  WORD cFuncs;
 /*02*/  WORD cVars;
 /*04*/  WORD cImplTypes;
-/*06*/  WORD res06;
-/*08*/  WORD res08;
-/*0a*/  WORD res0a;
-/*0c*/  WORD res0c;
-/*0e*/  WORD res0e;
-/*10*/  WORD res10;
-/*12*/  WORD res12;
+/*06*/  WORD res06; /* always 0000 */
+/*08*/  WORD funcs_off; /* offset to functions (starting from the member header) */
+/*0a*/  WORD vars_off; /* offset to vars (starting from the member header) */
+/*0c*/  WORD impls_off; /* offset to implemented types (starting from the member header) */
+/*0e*/  WORD funcs_bytes; /* bytes used by function data */
+/*10*/  WORD vars_bytes; /* bytes used by var data */
+/*12*/  WORD impls_bytes; /* bytes used by implemented type data */
 /*14*/  WORD tdescalias_vt; /* for TKIND_ALIAS */
-/*16*/  WORD res16;
-/*18*/  WORD res18;
-/*1a*/  WORD res1a;
-/*1c*/  WORD res1c;
-/*1e*/  WORD res1e;
+/*16*/  WORD res16; /* always ffff */
+/*18*/  WORD res18; /* always 0000 */
+/*1a*/  WORD res1a; /* always 0000 */
+/*1c*/  WORD simple_alias; /* tdescalias_vt is a vt rather than an offset? */
+/*1e*/  WORD res1e; /* always 0000 */
 /*20*/  WORD cbSizeInstance;
 /*22*/  WORD cbAlignment;
 /*24*/  WORD res24;
 /*26*/  WORD res26;
 /*28*/  WORD cbSizeVft;
-/*2a*/  WORD res2a;
-/*2c*/  WORD res2c;
-/*2e*/  WORD res2e;
-/*30*/  WORD res30;
+/*2a*/  WORD res2a; /* always ffff */
+/*2c*/  WORD res2c; /* always ffff */
+/*2e*/  WORD res2e; /* always ffff */
+/*30*/  WORD res30; /* always ffff */
 /*32*/  WORD res32;
 /*34*/  WORD res34;
 } SLTG_TypeInfoTail;
@@ -477,15 +476,7 @@ typedef struct {
 #define SLTG_ENUMITEM_MAGIC 0x120a
 
 typedef struct {
-/*00*/	WORD vt;	/* vartype, 0xffff marks end. */
-/*02*/	WORD res02;	/* ?, 0xffff marks end */
-} SLTG_AliasItem;
-
-#define SLTG_ALIASITEM_MAGIC 0x001d
-
-
-typedef struct {
-	BYTE magic;	/* 0x4c or 0x6c */
+	BYTE magic;	/* 0x4c, 0xcb or 0x8b with optional SLTG_FUNCTION_FLAGS_PRESENT flag */
 	BYTE inv;	/* high nibble is INVOKE_KIND, low nibble = 2 */
 	WORD next;	/* byte offset from beginning of group to next fn */
 	WORD name;	/* Offset within name table to name */
@@ -499,7 +490,7 @@ typedef struct {
 			   middle 6 bits */
 	WORD rettype;	/* return type VT_?? or offset to ret type */
 	WORD vtblpos;	/* position in vtbl? */
-	WORD funcflags; /* present if magic == 0x6c */
+	WORD funcflags; /* present if magic & 0x20 */
 /* Param list starts, repeat next two as required */
 #if 0
 	WORD  name;	/* offset to 2nd letter of name */
@@ -507,8 +498,10 @@ typedef struct {
 #endif
 } SLTG_Function;
 
+#define SLTG_FUNCTION_FLAGS_PRESENT 0x20
 #define SLTG_FUNCTION_MAGIC 0x4c
-#define SLTG_FUNCTION_WITH_FLAGS_MAGIC 0x6c
+#define SLTG_DISPATCH_FUNCTION_MAGIC 0xcb
+#define SLTG_STATIC_FUNCTION_MAGIC 0x8b
 
 typedef struct {
 /*00*/	BYTE magic;		/* 0xdf */
@@ -579,17 +572,19 @@ typedef struct {
 
 typedef struct {
   BYTE magic; /* 0x0a */
-  BYTE typepos;
+  BYTE flags;
   WORD next;
   WORD name;
-  WORD byte_offs; /* pos in struct */
-  WORD type; /* if typepos == 0x02 this is the type, else offset to type */
+  WORD byte_offs; /* pos in struct, or offset to const type or const data (if flags & 0x08) */
+  WORD type; /* if flags & 0x02 this is the type, else offset to type */
   DWORD memid;
   WORD helpcontext; /* ?? */
   WORD helpstring; /* ?? */
-} SLTG_RecordItem;
+  WORD varflags; /* only present if magic & 0x02 */
+} SLTG_Variable;
 
-#define SLTG_RECORD_MAGIC 0x0a
+#define SLTG_VAR_MAGIC 0x0a
+#define SLTG_VAR_WITH_FLAGS_MAGIC 0x2a
 
 
 /* CARRAYs look like this
@@ -600,10 +595,13 @@ WORD typeofarray
 
 #include "poppack.h"
 
-extern DWORD _invoke(FARPROC func,CALLCONV callconv, int nrargs, DWORD *args);
-extern void dump_Variant(VARIANT * pvar);
-
-HRESULT TMARSHAL_DllGetClassObject(REFCLSID rclsid, REFIID iid,LPVOID *ppv);
+/* The OLE Automation ProxyStub Interface Class (aka Typelib Marshaler) */
+DEFINE_OLEGUID( CLSID_PSDispatch,    0x00020420, 0x0000, 0x0000 );
+DEFINE_OLEGUID( CLSID_PSEnumVariant, 0x00020421, 0x0000, 0x0000 );
+DEFINE_OLEGUID( CLSID_PSTypeInfo,    0x00020422, 0x0000, 0x0000 );
+DEFINE_OLEGUID( CLSID_PSTypeLib,     0x00020423, 0x0000, 0x0000 );
+DEFINE_OLEGUID( CLSID_PSOAInterface, 0x00020424, 0x0000, 0x0000 );
+DEFINE_OLEGUID( CLSID_PSTypeComp,    0x00020425, 0x0000, 0x0000 );
 
 /*---------------------------END--------------------------------------------*/
 #endif

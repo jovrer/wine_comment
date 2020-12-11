@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -24,168 +24,197 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d9);
 
-/* IDirect3DVolume9 IUnknown parts follow: */
-HRESULT WINAPI IDirect3DVolume9Impl_QueryInterface(LPDIRECT3DVOLUME9 iface, REFIID riid, LPVOID* ppobj) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
+static inline struct d3d9_volume *impl_from_IDirect3DVolume9(IDirect3DVolume9 *iface)
+{
+    return CONTAINING_RECORD(iface, struct d3d9_volume, IDirect3DVolume9_iface);
+}
 
-    if (IsEqualGUID(riid, &IID_IUnknown)
-        || IsEqualGUID(riid, &IID_IDirect3DVolume9)) {
-        IUnknown_AddRef(iface);
-        *ppobj = This;
-        return D3D_OK;
+static HRESULT WINAPI d3d9_volume_QueryInterface(IDirect3DVolume9 *iface, REFIID riid, void **out)
+{
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
+
+    if (IsEqualGUID(riid, &IID_IDirect3DVolume9)
+            || IsEqualGUID(riid, &IID_IUnknown))
+    {
+        IDirect3DVolume9_AddRef(iface);
+        *out = iface;
+        return S_OK;
     }
 
-    WARN("(%p)->(%s,%p),not found\n", This, debugstr_guid(riid), ppobj);
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(riid));
+
+    *out = NULL;
     return E_NOINTERFACE;
 }
 
-ULONG WINAPI IDirect3DVolume9Impl_AddRef(LPDIRECT3DVOLUME9 iface) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    ULONG ref = InterlockedIncrement(&This->ref);
+static ULONG WINAPI d3d9_volume_AddRef(IDirect3DVolume9 *iface)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
 
-    TRACE("(%p) : AddRef from %ld\n", This, ref - 1);
+    TRACE("iface %p.\n", iface);
+    TRACE("Forwarding to %p.\n", volume->texture);
 
-    return ref;
+    return IDirect3DBaseTexture9_AddRef(&volume->texture->IDirect3DBaseTexture9_iface);
 }
 
-ULONG WINAPI IDirect3DVolume9Impl_Release(LPDIRECT3DVOLUME9 iface) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    ULONG ref = InterlockedDecrement(&This->ref);
+static ULONG WINAPI d3d9_volume_Release(IDirect3DVolume9 *iface)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
 
-    TRACE("(%p) : ReleaseRef to %ld\n", This, ref);
+    TRACE("iface %p.\n", iface);
+    TRACE("Forwarding to %p.\n", volume->texture);
 
-    if (ref == 0) {
-        IWineD3DVolume_Release(This->wineD3DVolume);
-        HeapFree(GetProcessHeap(), 0, This);
-    }
-    return ref;
+    return IDirect3DBaseTexture9_Release(&volume->texture->IDirect3DBaseTexture9_iface);
 }
 
-/* IDirect3DVolume9 Interface follow: */
-HRESULT WINAPI IDirect3DVolume9Impl_GetDevice(LPDIRECT3DVOLUME9 iface, IDirect3DDevice9** ppDevice) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    IWineD3DDevice       *myDevice = NULL;
+static HRESULT WINAPI d3d9_volume_GetDevice(IDirect3DVolume9 *iface, IDirect3DDevice9 **device)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
 
-    IWineD3DVolume_GetDevice(This->wineD3DVolume, &myDevice);
-    IWineD3DDevice_GetParent(myDevice, (IUnknown **)ppDevice);
-    IWineD3DDevice_Release(myDevice);
+    TRACE("iface %p, device %p.\n", iface, device);
+
+    return IDirect3DBaseTexture9_GetDevice(&volume->texture->IDirect3DBaseTexture9_iface, device);
+}
+
+static HRESULT WINAPI d3d9_volume_SetPrivateData(IDirect3DVolume9 *iface, REFGUID guid,
+        const void *data, DWORD data_size, DWORD flags)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
+    TRACE("iface %p, guid %s, data %p, data_size %u, flags %#x.\n",
+            iface, debugstr_guid(guid), data, data_size, flags);
+
+    return d3d9_resource_set_private_data(&volume->resource, guid, data, data_size, flags);
+}
+
+static HRESULT WINAPI d3d9_volume_GetPrivateData(IDirect3DVolume9 *iface, REFGUID guid,
+        void *data, DWORD *data_size)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
+    TRACE("iface %p, guid %s, data %p, data_size %p.\n",
+            iface, debugstr_guid(guid), data, data_size);
+
+    return d3d9_resource_get_private_data(&volume->resource, guid, data, data_size);
+}
+
+static HRESULT WINAPI d3d9_volume_FreePrivateData(IDirect3DVolume9 *iface, REFGUID guid)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
+    TRACE("iface %p, guid %s.\n", iface, debugstr_guid(guid));
+
+    return d3d9_resource_free_private_data(&volume->resource, guid);
+}
+
+static HRESULT WINAPI d3d9_volume_GetContainer(IDirect3DVolume9 *iface, REFIID riid, void **container)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
+
+    TRACE("iface %p, riid %s, container %p.\n", iface, debugstr_guid(riid), container);
+
+    return IDirect3DBaseTexture9_QueryInterface(&volume->texture->IDirect3DBaseTexture9_iface, riid, container);
+}
+
+static HRESULT WINAPI d3d9_volume_GetDesc(IDirect3DVolume9 *iface, D3DVOLUME_DESC *desc)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
+    struct wined3d_sub_resource_desc wined3d_desc;
+
+    TRACE("iface %p, desc %p.\n", iface, desc);
+
+    wined3d_mutex_lock();
+    wined3d_texture_get_sub_resource_desc(volume->wined3d_texture, volume->sub_resource_idx, &wined3d_desc);
+    wined3d_mutex_unlock();
+
+    desc->Format = d3dformat_from_wined3dformat(wined3d_desc.format);
+    desc->Type = D3DRTYPE_VOLUME;
+    desc->Usage = d3dusage_from_wined3dusage(wined3d_desc.usage, wined3d_desc.bind_flags);
+    desc->Pool = d3dpool_from_wined3daccess(wined3d_desc.access, wined3d_desc.usage);
+    desc->Width = wined3d_desc.width;
+    desc->Height = wined3d_desc.height;
+    desc->Depth = wined3d_desc.depth;
+
     return D3D_OK;
 }
 
-HRESULT WINAPI IDirect3DVolume9Impl_SetPrivateData(LPDIRECT3DVOLUME9 iface, REFGUID refguid, CONST void* pData, DWORD SizeOfData, DWORD Flags) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
-    return IWineD3DVolume_SetPrivateData(This->wineD3DVolume, refguid, pData, SizeOfData, Flags);
+static HRESULT WINAPI d3d9_volume_LockBox(IDirect3DVolume9 *iface,
+        D3DLOCKED_BOX *locked_box, const D3DBOX *box, DWORD flags)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
+    struct wined3d_map_desc map_desc;
+    HRESULT hr;
+
+    TRACE("iface %p, locked_box %p, box %p, flags %#x.\n",
+            iface, locked_box, box, flags);
+
+    wined3d_mutex_lock();
+    if (FAILED(hr = wined3d_resource_map(wined3d_texture_get_resource(volume->wined3d_texture),
+            volume->sub_resource_idx, &map_desc, (const struct wined3d_box *)box,
+            wined3dmapflags_from_d3dmapflags(flags))))
+        map_desc.data = NULL;
+    wined3d_mutex_unlock();
+
+    locked_box->RowPitch = map_desc.row_pitch;
+    locked_box->SlicePitch = map_desc.slice_pitch;
+    locked_box->pBits = map_desc.data;
+
+    if (hr == E_INVALIDARG)
+        return D3DERR_INVALIDCALL;
+    return hr;
 }
 
-HRESULT WINAPI IDirect3DVolume9Impl_GetPrivateData(LPDIRECT3DVOLUME9 iface, REFGUID  refguid, void* pData, DWORD* pSizeOfData) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
-    return IWineD3DVolume_GetPrivateData(This->wineD3DVolume, refguid, pData, pSizeOfData);
+static HRESULT WINAPI d3d9_volume_UnlockBox(IDirect3DVolume9 *iface)
+{
+    struct d3d9_volume *volume = impl_from_IDirect3DVolume9(iface);
+    HRESULT hr;
+
+    TRACE("iface %p.\n", iface);
+
+    wined3d_mutex_lock();
+    hr = wined3d_resource_unmap(wined3d_texture_get_resource(volume->wined3d_texture), volume->sub_resource_idx);
+    wined3d_mutex_unlock();
+
+    if (hr == WINEDDERR_NOTLOCKED)
+        return D3DERR_INVALIDCALL;
+    return hr;
 }
 
-HRESULT WINAPI IDirect3DVolume9Impl_FreePrivateData(LPDIRECT3DVOLUME9 iface, REFGUID refguid) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    TRACE("(%p) Relay\n", This);
-    return IWineD3DVolume_FreePrivateData(This->wineD3DVolume, refguid);
-}
-
-HRESULT WINAPI IDirect3DVolume9Impl_GetContainer(LPDIRECT3DVOLUME9 iface, REFIID riid, void** ppContainer) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    HRESULT res;
-    IUnknown *IWineContainer = NULL;
-
-    TRACE("(%p) Relay\n", This);
-    res = IWineD3DVolume_GetContainer(This->wineD3DVolume, riid, (void **)&IWineContainer);
-
-    /* If this works, the only valid container is a child of resource (volumetexture) */
-    if (res == D3D_OK && NULL != ppContainer) {
-        IWineD3DResource_GetParent((IWineD3DResource *)IWineContainer, (IUnknown **)ppContainer);
-        IWineD3DResource_Release((IWineD3DResource *)IWineContainer);
-    }
-
-    return res;
-}
-
-HRESULT WINAPI IDirect3DVolume9Impl_GetDesc(LPDIRECT3DVOLUME9 iface, D3DVOLUME_DESC* pDesc) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    WINED3DVOLUME_DESC     wined3ddesc;
-    UINT                   tmpInt = -1;
-
-    TRACE("(%p) Relay\n", This);
-
-    /* As d3d8 and d3d9 structures differ, pass in ptrs to where data needs to go */
-    wined3ddesc.Format              = (WINED3DFORMAT *)&pDesc->Format;
-    wined3ddesc.Type                = &pDesc->Type;
-    wined3ddesc.Usage               = &pDesc->Usage;
-    wined3ddesc.Pool                = &pDesc->Pool;
-    wined3ddesc.Size                = &tmpInt;
-    wined3ddesc.Width               = &pDesc->Width;
-    wined3ddesc.Height              = &pDesc->Height;
-    wined3ddesc.Depth               = &pDesc->Depth;
-
-    return IWineD3DVolume_GetDesc(This->wineD3DVolume, &wined3ddesc);
-}
-
-HRESULT WINAPI IDirect3DVolume9Impl_LockBox(LPDIRECT3DVOLUME9 iface, D3DLOCKED_BOX* pLockedVolume, CONST D3DBOX* pBox, DWORD Flags) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    TRACE("(%p) relay %p %p %p %ld\n", This, This->wineD3DVolume, pLockedVolume, pBox, Flags);
-    return IWineD3DVolume_LockBox(This->wineD3DVolume, pLockedVolume, pBox, Flags);
-}
-
-HRESULT WINAPI IDirect3DVolume9Impl_UnlockBox(LPDIRECT3DVOLUME9 iface) {
-    IDirect3DVolume9Impl *This = (IDirect3DVolume9Impl *)iface;
-    TRACE("(%p) relay %p\n", This, This->wineD3DVolume);
-    return IWineD3DVolume_UnlockBox(This->wineD3DVolume);
-}
-
-const IDirect3DVolume9Vtbl Direct3DVolume9_Vtbl =
+static const struct IDirect3DVolume9Vtbl d3d9_volume_vtbl =
 {
     /* IUnknown */
-    IDirect3DVolume9Impl_QueryInterface,
-    IDirect3DVolume9Impl_AddRef,
-    IDirect3DVolume9Impl_Release,
+    d3d9_volume_QueryInterface,
+    d3d9_volume_AddRef,
+    d3d9_volume_Release,
     /* IDirect3DVolume9 */
-    IDirect3DVolume9Impl_GetDevice,
-    IDirect3DVolume9Impl_SetPrivateData,
-    IDirect3DVolume9Impl_GetPrivateData,
-    IDirect3DVolume9Impl_FreePrivateData,
-    IDirect3DVolume9Impl_GetContainer,
-    IDirect3DVolume9Impl_GetDesc,
-    IDirect3DVolume9Impl_LockBox,
-    IDirect3DVolume9Impl_UnlockBox
+    d3d9_volume_GetDevice,
+    d3d9_volume_SetPrivateData,
+    d3d9_volume_GetPrivateData,
+    d3d9_volume_FreePrivateData,
+    d3d9_volume_GetContainer,
+    d3d9_volume_GetDesc,
+    d3d9_volume_LockBox,
+    d3d9_volume_UnlockBox,
 };
 
+static void STDMETHODCALLTYPE volume_wined3d_object_destroyed(void *parent)
+{
+    struct d3d9_volume *volume = parent;
+    d3d9_resource_cleanup(&volume->resource);
+    heap_free(volume);
+}
 
-/* Internal function called back during the CreateVolumeTexture */
-HRESULT WINAPI D3D9CB_CreateVolume(IUnknown  *pDevice, UINT Width, UINT Height, UINT Depth, 
-                                   WINED3DFORMAT  Format, D3DPOOL Pool, DWORD Usage,
-                                   IWineD3DVolume **ppVolume, 
-                                   HANDLE   * pSharedHandle) {
-    IDirect3DVolume9Impl *object;
-    IDirect3DDevice9Impl *This = (IDirect3DDevice9Impl *)pDevice;
-    HRESULT hrc = D3D_OK;
-    
-    /* Allocate the storage for the device */
-    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirect3DVolume9Impl));
-    if (NULL == object) {
-        FIXME("Allocation of memory failed\n");
-        *ppVolume = NULL;
-        return D3DERR_OUTOFVIDEOMEMORY;
-    }
+static const struct wined3d_parent_ops d3d9_volume_wined3d_parent_ops =
+{
+    volume_wined3d_object_destroyed,
+};
 
-    object->lpVtbl = &Direct3DVolume9_Vtbl;
-    object->ref = 1;
-    hrc = IWineD3DDevice_CreateVolume(This->WineD3DDevice, Width, Height, Depth, Usage, Format, 
-                                       Pool, &object->wineD3DVolume, pSharedHandle, (IUnknown *)object);
-    if (hrc != D3D_OK) {
-        /* free up object */ 
-        FIXME("(%p) call to IWineD3DDevice_CreateVolume failed\n", This);
-        HeapFree(GetProcessHeap(), 0, object);
-        *ppVolume = NULL;
-    } else {
-        *ppVolume = (IWineD3DVolume *)object->wineD3DVolume;
-    }
-    TRACE("(%p) Created volume %p\n", This, *ppVolume);
-    return hrc;
+void volume_init(struct d3d9_volume *volume, struct wined3d_texture *wined3d_texture,
+        unsigned int sub_resource_idx, const struct wined3d_parent_ops **parent_ops)
+{
+    volume->IDirect3DVolume9_iface.lpVtbl = &d3d9_volume_vtbl;
+    d3d9_resource_init(&volume->resource);
+    volume->resource.refcount = 0;
+    volume->texture = wined3d_texture_get_parent(wined3d_texture);
+    volume->wined3d_texture = wined3d_texture;
+    volume->sub_resource_idx = sub_resource_idx;
+
+    *parent_ops = &d3d9_volume_wined3d_parent_ops;
 }

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __SQL_H
@@ -45,7 +45,7 @@ extern "C" {
 #define SQL_SUCCEEDED(rc) (((rc)&(~1))==0)
 
 #define SQL_NTS                   (-3)
-#define SQL_NTSL                  (-3L)
+#define SQL_NTSL                  (__MSABI_LONG(-3))
 
 #define SQL_MAX_MESSAGE_LENGTH   512
 
@@ -240,7 +240,7 @@ extern "C" {
 #endif
 
 #if (ODBCVER >= 0x0300)
-#define SQL_NULL_HANDLE     0L
+#define SQL_NULL_HANDLE     __MSABI_LONG(0)
 #endif
 
 #define SQL_SCOPE_CURROW    0
@@ -423,12 +423,12 @@ extern "C" {
 #endif
 
 #if (ODBCVER >= 0x0200)
-#define SQL_AT_ADD_COLUMN                   	0x00000001L
-#define SQL_AT_DROP_COLUMN                  	0x00000002L
+#define SQL_AT_ADD_COLUMN                   __MSABI_LONG(0x00000001)
+#define SQL_AT_DROP_COLUMN                  __MSABI_LONG(0x00000002)
 #endif
 
 #if (ODBCVER >= 0x0300)
-#define SQL_AT_ADD_CONSTRAINT               	0x00000008L
+#define SQL_AT_ADD_CONSTRAINT               __MSABI_LONG(0x00000008)
 
 #endif  /* ODBCVER >= 0x0300 */
 
@@ -443,15 +443,15 @@ extern "C" {
 #define SQL_CB_CLOSE                        1
 #define SQL_CB_PRESERVE                     2
 
-#define SQL_FD_FETCH_NEXT                   0x00000001L
-#define SQL_FD_FETCH_FIRST                  0x00000002L
-#define SQL_FD_FETCH_LAST                   0x00000004L
-#define SQL_FD_FETCH_PRIOR                  0x00000008L
-#define SQL_FD_FETCH_ABSOLUTE               0x00000010L
-#define SQL_FD_FETCH_RELATIVE               0x00000020L
+#define SQL_FD_FETCH_NEXT                   __MSABI_LONG(0x00000001)
+#define SQL_FD_FETCH_FIRST                  __MSABI_LONG(0x00000002)
+#define SQL_FD_FETCH_LAST                   __MSABI_LONG(0x00000004)
+#define SQL_FD_FETCH_PRIOR                  __MSABI_LONG(0x00000008)
+#define SQL_FD_FETCH_ABSOLUTE               __MSABI_LONG(0x00000010)
+#define SQL_FD_FETCH_RELATIVE               __MSABI_LONG(0x00000020)
 
-#define SQL_GD_ANY_COLUMN                   0x00000001L
-#define SQL_GD_ANY_ORDER                    0x00000002L
+#define SQL_GD_ANY_COLUMN                   __MSABI_LONG(0x00000001)
+#define SQL_GD_ANY_ORDER                    __MSABI_LONG(0x00000002)
 
 #define SQL_IC_UPPER                        1
 #define SQL_IC_LOWER                        2
@@ -459,19 +459,19 @@ extern "C" {
 #define SQL_IC_MIXED                        4
 
 #if (ODBCVER >= 0x0201)
-#define SQL_OJ_LEFT                         0x00000001L
-#define SQL_OJ_RIGHT                        0x00000002L
-#define SQL_OJ_FULL                         0x00000004L
-#define SQL_OJ_NESTED                       0x00000008L
-#define SQL_OJ_NOT_ORDERED                  0x00000010L
-#define SQL_OJ_INNER                        0x00000020L
-#define SQL_OJ_ALL_COMPARISON_OPS           0x00000040L
+#define SQL_OJ_LEFT                         __MSABI_LONG(0x00000001)
+#define SQL_OJ_RIGHT                        __MSABI_LONG(0x00000002)
+#define SQL_OJ_FULL                         __MSABI_LONG(0x00000004)
+#define SQL_OJ_NESTED                       __MSABI_LONG(0x00000008)
+#define SQL_OJ_NOT_ORDERED                  __MSABI_LONG(0x00000010)
+#define SQL_OJ_INNER                        __MSABI_LONG(0x00000020)
+#define SQL_OJ_ALL_COMPARISON_OPS           __MSABI_LONG(0x00000040)
 #endif
 
-#define SQL_SCCO_READ_ONLY                  0x00000001L
-#define SQL_SCCO_LOCK                       0x00000002L
-#define SQL_SCCO_OPT_ROWVER                 0x00000004L
-#define SQL_SCCO_OPT_VALUES                 0x00000008L
+#define SQL_SCCO_READ_ONLY                  __MSABI_LONG(0x00000001)
+#define SQL_SCCO_LOCK                       __MSABI_LONG(0x00000002)
+#define SQL_SCCO_OPT_ROWVER                 __MSABI_LONG(0x00000004)
+#define SQL_SCCO_OPT_VALUES                 __MSABI_LONG(0x00000008)
 
 #define SQL_TC_NONE                         0
 #define SQL_TC_DML                          1
@@ -479,13 +479,13 @@ extern "C" {
 #define SQL_TC_DDL_COMMIT                   3
 #define SQL_TC_DDL_IGNORE                   4
 
-#define SQL_TXN_READ_UNCOMMITTED            0x00000001L
+#define SQL_TXN_READ_UNCOMMITTED            __MSABI_LONG(0x00000001)
 #define SQL_TRANSACTION_READ_UNCOMMITTED	SQL_TXN_READ_UNCOMMITTED
-#define SQL_TXN_READ_COMMITTED              0x00000002L
+#define SQL_TXN_READ_COMMITTED              __MSABI_LONG(0x00000002)
 #define SQL_TRANSACTION_READ_COMMITTED		SQL_TXN_READ_COMMITTED
-#define SQL_TXN_REPEATABLE_READ             0x00000004L
+#define SQL_TXN_REPEATABLE_READ             __MSABI_LONG(0x00000004)
 #define SQL_TRANSACTION_REPEATABLE_READ		SQL_TXN_REPEATABLE_READ
-#define SQL_TXN_SERIALIZABLE                0x00000008L
+#define SQL_TXN_SERIALIZABLE                __MSABI_LONG(0x00000008)
 #define SQL_TRANSACTION_SERIALIZABLE		SQL_TXN_SERIALIZABLE
 
 #define SQL_NC_HIGH                         0
@@ -506,15 +506,15 @@ SQLRETURN WINAPI   SQLAllocStmt(SQLHDBC ConnectionHandle,
 
 SQLRETURN WINAPI   SQLBindCol(SQLHSTMT StatementHandle,
 		   SQLUSMALLINT ColumnNumber, SQLSMALLINT TargetType,
-		   SQLPOINTER TargetValue, SQLINTEGER BufferLength,
-	   	   SQLINTEGER *StrLen_or_Ind);
+		   SQLPOINTER TargetValue, SQLLEN BufferLength,
+		   SQLLEN *StrLen_or_Ind);
 
 #if (ODBCVER >= 0x0300)
 SQLRETURN WINAPI   SQLBindParam(SQLHSTMT StatementHandle,
            SQLUSMALLINT ParameterNumber, SQLSMALLINT ValueType,
-           SQLSMALLINT ParameterType, SQLUINTEGER LengthPrecision,
+           SQLSMALLINT ParameterType, SQLULEN LengthPrecision,
            SQLSMALLINT ParameterScale, SQLPOINTER ParameterValue,
-           SQLINTEGER *StrLen_or_Ind);
+           SQLLEN *StrLen_or_Ind);
 #endif
 
 SQLRETURN WINAPI   SQLCancel(SQLHSTMT StatementHandle);
@@ -525,7 +525,7 @@ SQLRETURN WINAPI   SQLCloseCursor(SQLHSTMT StatementHandle);
 SQLRETURN WINAPI   SQLColAttribute (SQLHSTMT StatementHandle,
            SQLUSMALLINT ColumnNumber, SQLUSMALLINT FieldIdentifier,
            SQLPOINTER CharacterAttribute, SQLSMALLINT BufferLength,
-           SQLSMALLINT *StringLength, SQLPOINTER NumericAttribute);
+           SQLSMALLINT *StringLength, SQLLEN *NumericAttribute);
 #endif
 
 
@@ -555,7 +555,7 @@ SQLRETURN WINAPI   SQLDataSources(SQLHENV EnvironmentHandle,
 SQLRETURN WINAPI   SQLDescribeCol(SQLHSTMT StatementHandle,
            SQLUSMALLINT ColumnNumber, SQLCHAR *ColumnName,
            SQLSMALLINT BufferLength, SQLSMALLINT *NameLength,
-           SQLSMALLINT *DataType, SQLUINTEGER *ColumnSize,
+           SQLSMALLINT *DataType, SQLULEN *ColumnSize,
            SQLSMALLINT *DecimalDigits, SQLSMALLINT *Nullable);
 
 SQLRETURN WINAPI   SQLDisconnect(SQLHDBC ConnectionHandle);
@@ -580,7 +580,7 @@ SQLRETURN WINAPI   SQLFetch(SQLHSTMT StatementHandle);
 
 #if (ODBCVER >= 0x0300)
 SQLRETURN WINAPI   SQLFetchScroll(SQLHSTMT StatementHandle,
-           SQLSMALLINT FetchOrientation, SQLINTEGER FetchOffset);
+           SQLSMALLINT FetchOrientation, SQLLEN FetchOffset);
 #endif
 
 SQLRETURN WINAPI   SQLFreeConnect(SQLHDBC ConnectionHandle);
@@ -609,8 +609,8 @@ SQLRETURN WINAPI   SQLGetCursorName(SQLHSTMT StatementHandle,
 
 SQLRETURN WINAPI   SQLGetData(SQLHSTMT StatementHandle,
            SQLUSMALLINT ColumnNumber, SQLSMALLINT TargetType,
-           SQLPOINTER TargetValue, SQLINTEGER BufferLength,
-           SQLINTEGER *StrLen_or_Ind);
+           SQLPOINTER TargetValue, SQLLEN BufferLength,
+           SQLLEN *StrLen_or_Ind);
 
 #if (ODBCVER >= 0x0300)
 SQLRETURN WINAPI   SQLGetDescField(SQLHDESC DescriptorHandle,
@@ -622,7 +622,7 @@ SQLRETURN WINAPI   SQLGetDescRec(SQLHDESC DescriptorHandle,
            SQLSMALLINT RecNumber, SQLCHAR *Name,
            SQLSMALLINT BufferLength, SQLSMALLINT *StringLength,
            SQLSMALLINT *Type, SQLSMALLINT *SubType,
-           SQLINTEGER *Length, SQLSMALLINT *Precision,
+           SQLLEN *Length, SQLSMALLINT *Precision,
            SQLSMALLINT *Scale, SQLSMALLINT *Nullable);
 
 SQLRETURN WINAPI   SQLGetDiagField(SQLSMALLINT HandleType, SQLHANDLE Handle,
@@ -669,10 +669,10 @@ SQLRETURN WINAPI   SQLPrepare(SQLHSTMT StatementHandle,
            SQLCHAR *StatementText, SQLINTEGER TextLength);
 
 SQLRETURN WINAPI   SQLPutData(SQLHSTMT StatementHandle,
-           SQLPOINTER Data, SQLINTEGER StrLen_or_Ind);
+           SQLPOINTER Data, SQLLEN StrLen_or_Ind);
 
 SQLRETURN WINAPI   SQLRowCount(SQLHSTMT StatementHandle,
-	   SQLINTEGER *RowCount);
+	   SQLLEN *RowCount);
 
 #if (ODBCVER >= 0x0300)
 SQLRETURN WINAPI   SQLSetConnectAttr(SQLHDBC ConnectionHandle,
@@ -681,7 +681,7 @@ SQLRETURN WINAPI   SQLSetConnectAttr(SQLHDBC ConnectionHandle,
 #endif
 
 SQLRETURN WINAPI   SQLSetConnectOption(SQLHDBC ConnectionHandle,
-           SQLUSMALLINT Option, SQLUINTEGER Value);
+           SQLUSMALLINT Option, SQLULEN Value);
 
 SQLRETURN WINAPI   SQLSetCursorName(SQLHSTMT StatementHandle,
            SQLCHAR *CursorName, SQLSMALLINT NameLength);
@@ -693,10 +693,10 @@ SQLRETURN WINAPI   SQLSetDescField(SQLHDESC DescriptorHandle,
 
 SQLRETURN WINAPI   SQLSetDescRec(SQLHDESC DescriptorHandle,
            SQLSMALLINT RecNumber, SQLSMALLINT Type,
-           SQLSMALLINT SubType, SQLINTEGER Length,
+           SQLSMALLINT SubType, SQLLEN Length,
            SQLSMALLINT Precision, SQLSMALLINT Scale,
-           SQLPOINTER Data, SQLINTEGER *StringLength,
-           SQLINTEGER *Indicator);
+           SQLPOINTER Data, SQLLEN *StringLength,
+           SQLLEN *Indicator);
 
 SQLRETURN WINAPI   SQLSetEnvAttr(SQLHENV EnvironmentHandle,
            SQLINTEGER Attribute, SQLPOINTER Value,
@@ -705,9 +705,9 @@ SQLRETURN WINAPI   SQLSetEnvAttr(SQLHENV EnvironmentHandle,
 
 SQLRETURN WINAPI   SQLSetParam(SQLHSTMT StatementHandle,
            SQLUSMALLINT ParameterNumber, SQLSMALLINT ValueType,
-           SQLSMALLINT ParameterType, SQLUINTEGER LengthPrecision,
+           SQLSMALLINT ParameterType, SQLULEN LengthPrecision,
            SQLSMALLINT ParameterScale, SQLPOINTER ParameterValue,
-           SQLINTEGER *StrLen_or_Ind);
+           SQLLEN *StrLen_or_Ind);
 
 #if (ODBCVER >= 0x0300)
 SQLRETURN WINAPI   SQLSetStmtAttr(SQLHSTMT StatementHandle,
@@ -716,7 +716,7 @@ SQLRETURN WINAPI   SQLSetStmtAttr(SQLHSTMT StatementHandle,
 #endif
 
 SQLRETURN WINAPI   SQLSetStmtOption(SQLHSTMT StatementHandle,
-           SQLUSMALLINT Option, SQLUINTEGER Value);
+           SQLUSMALLINT Option, SQLULEN Value);
 
 SQLRETURN WINAPI   SQLSpecialColumns(SQLHSTMT StatementHandle,
            SQLUSMALLINT IdentifierType, SQLCHAR *CatalogName,

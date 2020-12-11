@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINE_WINGDI16_H
@@ -172,7 +172,7 @@ typedef struct {
     DWORD  dfFace;
     DWORD  dfReserved;
     CHAR   szDeviceName[60]; /* FIXME: length unknown */
-    CHAR   szFaceName[60];   /* dito */
+    CHAR   szFaceName[60];   /* ditto */
 } FONTDIR16, *LPFONTDIR16;
 
 typedef struct
@@ -269,7 +269,6 @@ typedef struct
     FONTSIGNATURE       ntmFontSig;
 } NEWTEXTMETRICEX16,*LPNEWTEXTMETRICEX16;
 
-typedef BOOL16 (CALLBACK *DCHOOKPROC)(HDC16,WORD,DWORD,LPARAM);
 typedef INT16 (CALLBACK *FONTENUMPROC16)(SEGPTR,SEGPTR,UINT16,LPARAM);
 typedef VOID  (CALLBACK *LINEDDAPROC16)(INT16,INT16,LPARAM);
 typedef INT16 (CALLBACK *GOBJENUMPROC16)(SEGPTR,LPARAM);
@@ -342,13 +341,6 @@ struct PATH_INFO {
     LOGBRUSH16 Brush;
     DWORD BkColor;
 };
-
-/* DC hook codes */
-#define DCHC_INVALIDVISRGN      0x0001
-#define DCHC_DELETEDC           0x0002
-
-#define DCHF_INVALIDATEVISRGN   0x0001
-#define DCHF_VALIDATEVISRGN     0x0002
 
 /* RenderMode */
 #define RENDERMODE_NO_DISPLAY 0
@@ -577,7 +569,6 @@ COLORREF    WINAPI SetBkColor16(HDC16,COLORREF);
 INT16       WINAPI SetBkMode16(HDC16,INT16);
 UINT16      WINAPI SetBoundsRect16(HDC16,const RECT16*,UINT16);
 DWORD       WINAPI SetBrushOrg16(HDC16,INT16,INT16);
-BOOL        WINAPI SetDCHook(HDC,DCHOOKPROC,DWORD);
 BOOL16      WINAPI SetDCHook16(HDC16,FARPROC16,DWORD);
 DWORD       WINAPI SetDCOrg16(HDC16,INT16,INT16);
 VOID        WINAPI SetDCState16(HDC16,HDC16);

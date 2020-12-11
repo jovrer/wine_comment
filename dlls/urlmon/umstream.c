@@ -16,366 +16,345 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <stdarg.h>
+#include "urlmon_main.h"
 
-#define COBJMACROS
-
-#include "windef.h"
-#include "winbase.h"
 #include "winreg.h"
 #include "winternl.h"
-#include "winuser.h"
-#include "objbase.h"
-#include "wine/debug.h"
-#include "wine/unicode.h"
-#include "ole2.h"
-#include "urlmon.h"
 #include "wininet.h"
 #include "shlwapi.h"
-#include "urlmon_main.h"
+
+#include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(urlmon);
 
-static const IStreamVtbl stvt;
-
-HRESULT UMCreateStreamOnCacheFile(LPCWSTR pszURL,
-                                  DWORD dwSize,
-                                  LPWSTR pszFileName,
-                                  HANDLE *phfile,
-                                  IUMCacheStream **ppstr)
+typedef struct ProxyBindStatusCallback
 {
-    IUMCacheStream* ucstr;
-    HANDLE handle;
-    LPWSTR ext;
-    LPCWSTR c;
-    LPCWSTR eloc = 0;
-    HRESULT hr;
+    IBindStatusCallback IBindStatusCallback_iface;
 
-    for (c = pszURL; *c && *c != '#' && *c != '?'; ++c)
-    {
-        if (*c == '.')
-           eloc = c + 1;
-        else if (*c == '/' || *c == '\\')
-           eloc = 0;
-    }
+    IBindStatusCallback *pBSC;
+} ProxyBindStatusCallback;
 
-    if (!eloc)
-       eloc = c;
-
-    ext = HeapAlloc(GetProcessHeap(), 0, sizeof(WCHAR) * (c - eloc + 1));
-    memcpy(ext, eloc, sizeof(WCHAR) * (c - eloc));
-    ext[c - eloc] = 0;
-
-    if(!CreateUrlCacheEntryW(pszURL, dwSize, ext, pszFileName, 0))
-       hr = HRESULT_FROM_WIN32(GetLastError());
-    else
-       hr = 0;
-
-    HeapFree(GetProcessHeap(), 0, ext);
-
-    if (hr)
-       return hr;
-
-    TRACE("Opening %s\n", debugstr_w(pszFileName) );
-
-    handle = CreateFileW( pszFileName, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL );
-    if( handle == INVALID_HANDLE_VALUE )
-       return HRESULT_FROM_WIN32(GetLastError());
-
-    if (phfile)
-    {
-       /* Call CreateFileW again because we need a handle with its own file pointer, and DuplicateHandle will return
-        * a handle that shares its file pointer with the original.
-        */
-           *phfile = CreateFileW( pszFileName, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
-
-       if (*phfile == (HANDLE) HFILE_ERROR)
-       {
-           DWORD dwError = GetLastError();
-
-           CloseHandle(handle);
-           return HRESULT_FROM_WIN32(dwError);
-       }
-    }
-
-    ucstr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,sizeof(IUMCacheStream));
-    if(ucstr )
-    {
-       ucstr->pszURL = HeapAlloc(GetProcessHeap(),
-                                 HEAP_ZERO_MEMORY,
-                                 sizeof(WCHAR) * (lstrlenW(pszURL) + 1));
-       if (ucstr->pszURL)
-       {
-            ucstr->pszFileName = HeapAlloc(GetProcessHeap(),
-                                           HEAP_ZERO_MEMORY,
-                                           sizeof(WCHAR) * (lstrlenW(pszFileName) + 1));
-           if (ucstr->pszFileName)
-           {
-              ucstr->lpVtbl=&stvt;
-              ucstr->ref = 1;
-              ucstr->handle = handle;
-              ucstr->closed = 0;
-              lstrcpyW(ucstr->pszURL, pszURL);
-              lstrcpyW(ucstr->pszFileName, pszFileName);
-
-              *ppstr = ucstr;
-
-              return S_OK;
-           }
-           HeapFree(GetProcessHeap(), 0, ucstr->pszURL);
-       }
-       HeapFree(GetProcessHeap(), 0, ucstr);
-    }
-    CloseHandle(handle);
-    if (phfile)
-       CloseHandle(*phfile);
-    return E_OUTOFMEMORY;
+static inline ProxyBindStatusCallback *impl_from_IBindStatusCallback(IBindStatusCallback *iface)
+{
+    return CONTAINING_RECORD(iface, ProxyBindStatusCallback, IBindStatusCallback_iface);
 }
 
-void UMCloseCacheFileStream(IUMCacheStream *This)
+static HRESULT WINAPI ProxyBindStatusCallback_QueryInterface(IBindStatusCallback *iface, REFIID riid, void **ppv)
 {
-    if (!This->closed)
+    if (IsEqualGUID(&IID_IBindStatusCallback, riid) ||
+        IsEqualGUID(&IID_IUnknown, riid))
     {
-       FILETIME ftZero;
-
-       ftZero.dwLowDateTime = ftZero.dwHighDateTime = 0;
-
-       This->closed = 1;
-       CommitUrlCacheEntryW(This->pszURL,
-                            This->pszFileName,
-                            ftZero,
-                            ftZero,
-                            NORMAL_CACHE_ENTRY,
-                            0,
-                            0,
-                            0,
-                            0);
-    }
-}
-
-/**************************************************************************
-*  IStream_fnQueryInterface
-*/
-static HRESULT WINAPI IStream_fnQueryInterface(IStream *iface,
-                                               REFIID riid,
-                                               LPVOID *ppvObj)
-{
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-
-    TRACE("(%p)->(\n\tIID:\t%s,%p)\n",This,debugstr_guid(riid),ppvObj);
-
-    *ppvObj = NULL;
-
-    if(IsEqualIID(riid, &IID_IUnknown) ||
-       IsEqualIID(riid, &IID_IStream))
-    {
-      *ppvObj = This;
+        *ppv = iface;
+        IBindStatusCallback_AddRef(iface);
+        return S_OK;
     }
 
-    if(*ppvObj)
-    {
-      IStream_AddRef((IStream*)*ppvObj);
-      TRACE("-- Interface: (%p)->(%p)\n",ppvObj,*ppvObj);
-      return S_OK;
-    }
-    TRACE("-- Interface: E_NOINTERFACE\n");
+    *ppv = NULL;
     return E_NOINTERFACE;
 }
 
-/**************************************************************************
-*  IStream_fnAddRef
-*/
-static ULONG WINAPI IStream_fnAddRef(IStream *iface)
+static ULONG WINAPI ProxyBindStatusCallback_AddRef(IBindStatusCallback *iface)
 {
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-    ULONG refCount = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p)->(count=%lu)\n", This, refCount - 1);
-
-    return refCount;
+    return 2;
 }
 
-/**************************************************************************
-*  IStream_fnRelease
-*/
-static ULONG WINAPI IStream_fnRelease(IStream *iface)
+static ULONG WINAPI ProxyBindStatusCallback_Release(IBindStatusCallback *iface)
 {
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-    ULONG refCount = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p)->(count=%lu)\n", This, refCount + 1);
-
-    if (!refCount)
-    {
-       TRACE(" destroying UMCacheStream (%p)\n",This);
-       UMCloseCacheFileStream(This);
-       CloseHandle(This->handle);
-       HeapFree(GetProcessHeap(), 0, This->pszFileName);
-       HeapFree(GetProcessHeap(), 0, This->pszURL);
-       HeapFree(GetProcessHeap(),0,This);
-    }
-    return refCount;
+    return 1;
 }
 
-static HRESULT WINAPI IStream_fnRead (IStream * iface, 
-                                      void* pv,
-                                      ULONG cb,
-                                      ULONG* pcbRead)
+static HRESULT WINAPI ProxyBindStatusCallback_OnStartBinding(IBindStatusCallback *iface, DWORD dwReserved,
+                                               IBinding *pib)
 {
-    IUMCacheStream *This = (IUMCacheStream *)iface;
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
 
-    TRACE("(%p)->(%p,0x%08lx,%p)\n",This, pv, cb, pcbRead);
-
-    if ( !pv )
-       return STG_E_INVALIDPOINTER;
-
-    if ( ! ReadFile( This->handle, pv, cb, pcbRead, NULL ) )
-       return S_FALSE;
-
-    if (!*pcbRead)
-        return This->closed ? S_FALSE : E_PENDING;
-    return S_OK;
-}
-
-static HRESULT WINAPI IStream_fnWrite (IStream * iface,
-                                       const void* pv,
-                                       ULONG cb,
-                                       ULONG* pcbWritten)
-{
-    return E_NOTIMPL;
-}
-
-static HRESULT WINAPI IStream_fnSeek (       IStream * iface,
-                                   LARGE_INTEGER dlibMove,
-                                   DWORD dwOrigin,
-                                   ULARGE_INTEGER* plibNewPosition)
-{
-    DWORD pos, newposlo;
-    LONG newposhi;
-
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-
-    TRACE("(%p)\n",This);
-
-    pos = dlibMove.QuadPart; /* FIXME: truncates */
-    newposhi = 0;
-    newposlo = SetFilePointer( This->handle, pos, &newposhi, dwOrigin );
-    if( newposlo == INVALID_SET_FILE_POINTER && GetLastError())
-       return E_FAIL;
-
-    if (plibNewPosition)
-        plibNewPosition->QuadPart = newposlo | ( (LONGLONG)newposhi<<32);
+    if(This->pBSC)
+        return IBindStatusCallback_OnStartBinding(This->pBSC, dwReserved, pib);
 
     return S_OK;
 }
 
-static HRESULT WINAPI IStream_fnSetSize (IStream * iface,
-                                         ULARGE_INTEGER libNewSize)
+static HRESULT WINAPI ProxyBindStatusCallback_GetPriority(IBindStatusCallback *iface, LONG *pnPriority)
 {
-    IUMCacheStream *This = (IUMCacheStream *)iface;
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
 
-    TRACE("(%p)\n",This);
-
-    if( ! SetFilePointer( This->handle, libNewSize.QuadPart, NULL, FILE_BEGIN ) )
-       return E_FAIL;
-
-    if( ! SetEndOfFile( This->handle ) )
-       return E_FAIL;
+    if(This->pBSC)
+        return IBindStatusCallback_GetPriority(This->pBSC, pnPriority);
 
     return S_OK;
 }
 
-static HRESULT WINAPI IStream_fnCopyTo (IStream * iface,
-                                   IStream* pstm,
-                                   ULARGE_INTEGER cb,
-                                   ULARGE_INTEGER* pcbRead,
-                                   ULARGE_INTEGER* pcbWritten)
+static HRESULT WINAPI ProxyBindStatusCallback_OnLowResource(IBindStatusCallback *iface, DWORD reserved)
 {
-    IUMCacheStream *This = (IUMCacheStream *)iface;
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
 
-    TRACE("(%p)\n",This);
+    if(This->pBSC)
+        return IBindStatusCallback_OnLowResource(This->pBSC, reserved);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
-static HRESULT WINAPI IStream_fnCommit (IStream * iface,
-                                   DWORD grfCommitFlags)
+static HRESULT WINAPI ProxyBindStatusCallback_OnProgress(IBindStatusCallback *iface, ULONG ulProgress,
+                                           ULONG ulProgressMax, ULONG ulStatusCode, LPCWSTR szStatusText)
 {
-    IUMCacheStream *This = (IUMCacheStream *)iface;
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
 
-    TRACE("(%p)\n",This);
+    if(This->pBSC)
+        return IBindStatusCallback_OnProgress(This->pBSC, ulProgress,
+                                          ulProgressMax, ulStatusCode,
+                                          szStatusText);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
-static HRESULT WINAPI IStream_fnRevert (IStream * iface)
+static HRESULT WINAPI ProxyBindStatusCallback_OnStopBinding(IBindStatusCallback *iface, HRESULT hresult, LPCWSTR szError)
 {
-    IUMCacheStream *This = (IUMCacheStream *)iface;
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
 
-    TRACE("(%p)\n",This);
+    if(This->pBSC)
+        return IBindStatusCallback_OnStopBinding(This->pBSC, hresult, szError);
 
-    return E_NOTIMPL;
-}
-static HRESULT WINAPI IStream_fnLockRegion (IStream * iface,
-                                            ULARGE_INTEGER libOffset,
-                                            ULARGE_INTEGER cb,
-                                            DWORD dwLockType)
-{
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-
-    TRACE("(%p)\n",This);
-
-    return E_NOTIMPL;
-}
-static HRESULT WINAPI IStream_fnUnlockRegion (IStream * iface,
-                                              ULARGE_INTEGER libOffset,
-                                              ULARGE_INTEGER cb,
-                                              DWORD dwLockType)
-{
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-
-    TRACE("(%p)\n",This);
-
-    return E_NOTIMPL;
-}
-static HRESULT WINAPI IStream_fnStat (IStream * iface,
-                                      STATSTG*   pstatstg,
-                                      DWORD grfStatFlag)
-{
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-
-    TRACE("(%p)\n",This);
-
-    return E_NOTIMPL;
-}
-static HRESULT WINAPI IStream_fnClone (IStream * iface,
-                                       IStream** ppstm)
-{
-    IUMCacheStream *This = (IUMCacheStream *)iface;
-
-    TRACE("(%p)\n",This);
-
-    return E_NOTIMPL;
+    return S_OK;
 }
 
-static const IStreamVtbl stvt =
+static HRESULT WINAPI ProxyBindStatusCallback_GetBindInfo(IBindStatusCallback *iface, DWORD *grfBINDF, BINDINFO *pbindinfo)
 {
-    IStream_fnQueryInterface,
-    IStream_fnAddRef,
-    IStream_fnRelease,
-    IStream_fnRead,
-    IStream_fnWrite,
-    IStream_fnSeek,
-    IStream_fnSetSize,
-    IStream_fnCopyTo,
-    IStream_fnCommit,
-    IStream_fnRevert,
-    IStream_fnLockRegion,
-    IStream_fnUnlockRegion,
-    IStream_fnStat,
-    IStream_fnClone
+    DWORD size = pbindinfo->cbSize;
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
 
+    if(This->pBSC)
+        return IBindStatusCallback_GetBindInfo(This->pBSC, grfBINDF, pbindinfo);
+
+    memset(pbindinfo, 0, size);
+    pbindinfo->cbSize = size;
+
+    *grfBINDF = 0;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI ProxyBindStatusCallback_OnDataAvailable(IBindStatusCallback *iface, DWORD grfBSCF,
+                                                              DWORD dwSize, FORMATETC* pformatetc, STGMEDIUM* pstgmed)
+{
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
+
+    if(This->pBSC)
+        return IBindStatusCallback_OnDataAvailable(This->pBSC, grfBSCF, dwSize,
+                                               pformatetc, pstgmed);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI ProxyBindStatusCallback_OnObjectAvailable(IBindStatusCallback *iface, REFIID riid, IUnknown *punk)
+{
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
+
+    if(This->pBSC)
+        return IBindStatusCallback_OnObjectAvailable(This->pBSC, riid, punk);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI BlockingBindStatusCallback_OnDataAvailable(IBindStatusCallback *iface, DWORD grfBSCF,
+                                                                 DWORD dwSize, FORMATETC* pformatetc, STGMEDIUM* pstgmed)
+{
+    return S_OK;
+}
+
+static const IBindStatusCallbackVtbl BlockingBindStatusCallbackVtbl =
+{
+    ProxyBindStatusCallback_QueryInterface,
+    ProxyBindStatusCallback_AddRef,
+    ProxyBindStatusCallback_Release,
+    ProxyBindStatusCallback_OnStartBinding,
+    ProxyBindStatusCallback_GetPriority,
+    ProxyBindStatusCallback_OnLowResource,
+    ProxyBindStatusCallback_OnProgress,
+    ProxyBindStatusCallback_OnStopBinding,
+    ProxyBindStatusCallback_GetBindInfo,
+    BlockingBindStatusCallback_OnDataAvailable,
+    ProxyBindStatusCallback_OnObjectAvailable
 };
+
+static HRESULT WINAPI AsyncBindStatusCallback_GetBindInfo(IBindStatusCallback *iface, DWORD *grfBINDF, BINDINFO *pbindinfo)
+{
+    ProxyBindStatusCallback *This = impl_from_IBindStatusCallback(iface);
+    HRESULT hr = S_OK;
+
+    if(This->pBSC)
+        hr = IBindStatusCallback_GetBindInfo(This->pBSC, grfBINDF, pbindinfo);
+    else{
+        DWORD size = pbindinfo->cbSize;
+        memset(pbindinfo, 0, size);
+        pbindinfo->cbSize = size;
+
+        *grfBINDF = 0;
+    }
+
+    *grfBINDF |= BINDF_PULLDATA | BINDF_ASYNCHRONOUS | BINDF_ASYNCSTORAGE;
+
+    return hr;
+}
+
+static const IBindStatusCallbackVtbl AsyncBindStatusCallbackVtbl =
+{
+    ProxyBindStatusCallback_QueryInterface,
+    ProxyBindStatusCallback_AddRef,
+    ProxyBindStatusCallback_Release,
+    ProxyBindStatusCallback_OnStartBinding,
+    ProxyBindStatusCallback_GetPriority,
+    ProxyBindStatusCallback_OnLowResource,
+    ProxyBindStatusCallback_OnProgress,
+    ProxyBindStatusCallback_OnStopBinding,
+    AsyncBindStatusCallback_GetBindInfo,
+    ProxyBindStatusCallback_OnDataAvailable,
+    ProxyBindStatusCallback_OnObjectAvailable
+};
+
+static HRESULT URLStartDownload(LPCWSTR szURL, LPSTREAM *ppStream, IBindStatusCallback *pBSC)
+{
+    HRESULT hr;
+    IMoniker *pMoniker;
+    IBindCtx *pbc;
+
+    *ppStream = NULL;
+
+    hr = CreateURLMoniker(NULL, szURL, &pMoniker);
+    if (FAILED(hr))
+        return hr;
+
+    hr = CreateBindCtx(0, &pbc);
+    if (FAILED(hr))
+    {
+        IMoniker_Release(pMoniker);
+        return hr;
+    }
+
+    hr = RegisterBindStatusCallback(pbc, pBSC, NULL, 0);
+    if (FAILED(hr))
+    {
+        IBindCtx_Release(pbc);
+        IMoniker_Release(pMoniker);
+        return hr;
+    }
+
+    hr = IMoniker_BindToStorage(pMoniker, pbc, NULL, &IID_IStream, (void **)ppStream);
+
+    /* BindToStorage returning E_PENDING because it's asynchronous is not an error */
+    if (hr == E_PENDING) hr = S_OK;
+
+    IBindCtx_Release(pbc);
+    IMoniker_Release(pMoniker);
+
+    return hr;
+}
+
+/***********************************************************************
+ *		URLOpenBlockingStreamA (URLMON.@)
+ */
+HRESULT WINAPI URLOpenBlockingStreamA(LPUNKNOWN pCaller, LPCSTR szURL,
+                                      LPSTREAM *ppStream, DWORD dwReserved,
+                                      LPBINDSTATUSCALLBACK lpfnCB)
+{
+    LPWSTR szURLW;
+    int len;
+    HRESULT hr;
+
+    TRACE("(%p, %s, %p, 0x%x, %p)\n", pCaller, szURL, ppStream, dwReserved, lpfnCB);
+
+    if (!szURL || !ppStream)
+        return E_INVALIDARG;
+
+    len = MultiByteToWideChar(CP_ACP, 0, szURL, -1, NULL, 0);
+    szURLW = heap_alloc(len * sizeof(WCHAR));
+    if (!szURLW)
+    {
+        *ppStream = NULL;
+        return E_OUTOFMEMORY;
+    }
+    MultiByteToWideChar(CP_ACP, 0, szURL, -1, szURLW, len);
+
+    hr = URLOpenBlockingStreamW(pCaller, szURLW, ppStream, dwReserved, lpfnCB);
+
+    heap_free(szURLW);
+
+    return hr;
+}
+
+/***********************************************************************
+ *		URLOpenBlockingStreamW (URLMON.@)
+ */
+HRESULT WINAPI URLOpenBlockingStreamW(LPUNKNOWN pCaller, LPCWSTR szURL,
+                                      LPSTREAM *ppStream, DWORD dwReserved,
+                                      LPBINDSTATUSCALLBACK lpfnCB)
+{
+    ProxyBindStatusCallback blocking_bsc;
+
+    TRACE("(%p, %s, %p, 0x%x, %p)\n", pCaller, debugstr_w(szURL), ppStream,
+          dwReserved, lpfnCB);
+
+    if (!szURL || !ppStream)
+        return E_INVALIDARG;
+
+    blocking_bsc.IBindStatusCallback_iface.lpVtbl = &BlockingBindStatusCallbackVtbl;
+    blocking_bsc.pBSC = lpfnCB;
+
+    return URLStartDownload(szURL, ppStream, &blocking_bsc.IBindStatusCallback_iface);
+}
+
+/***********************************************************************
+ *		URLOpenStreamA (URLMON.@)
+ */
+HRESULT WINAPI URLOpenStreamA(LPUNKNOWN pCaller, LPCSTR szURL, DWORD dwReserved,
+                              LPBINDSTATUSCALLBACK lpfnCB)
+{
+    LPWSTR szURLW;
+    int len;
+    HRESULT hr;
+
+    TRACE("(%p, %s, 0x%x, %p)\n", pCaller, szURL, dwReserved, lpfnCB);
+
+    if (!szURL)
+        return E_INVALIDARG;
+
+    len = MultiByteToWideChar(CP_ACP, 0, szURL, -1, NULL, 0);
+    szURLW = heap_alloc(len * sizeof(WCHAR));
+    if (!szURLW)
+        return E_OUTOFMEMORY;
+    MultiByteToWideChar(CP_ACP, 0, szURL, -1, szURLW, len);
+
+    hr = URLOpenStreamW(pCaller, szURLW, dwReserved, lpfnCB);
+
+    heap_free(szURLW);
+
+    return hr;
+}
+
+/***********************************************************************
+ *		URLOpenStreamW (URLMON.@)
+ */
+HRESULT WINAPI URLOpenStreamW(LPUNKNOWN pCaller, LPCWSTR szURL, DWORD dwReserved,
+                              LPBINDSTATUSCALLBACK lpfnCB)
+{
+    HRESULT hr;
+    ProxyBindStatusCallback async_bsc;
+    IStream *pStream;
+
+    TRACE("(%p, %s, 0x%x, %p)\n", pCaller, debugstr_w(szURL), dwReserved,
+          lpfnCB);
+
+    if (!szURL)
+        return E_INVALIDARG;
+
+    async_bsc.IBindStatusCallback_iface.lpVtbl = &AsyncBindStatusCallbackVtbl;
+    async_bsc.pBSC = lpfnCB;
+
+    hr = URLStartDownload(szURL, &pStream, &async_bsc.IBindStatusCallback_iface);
+    if (SUCCEEDED(hr) && pStream)
+        IStream_Release(pStream);
+
+    return hr;
+}

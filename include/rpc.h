@@ -15,11 +15,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#if !defined(RPC_NO_WINDOWS_H) && !defined(__WINESRC__)
-#include <windows.h>
+#ifndef RPC_NO_WINDOWS_H
+# include <windows.h>
 #endif
 
 #ifndef __WINE_RPC_H
@@ -43,14 +43,31 @@
 #define __RPC_STUB __stdcall
 #define RPC_ENTRY  __stdcall
 #define RPCRTAPI
-typedef long RPC_STATUS;
+typedef LONG RPC_STATUS;
 
 typedef void* I_RPC_HANDLE;
 
 #include <rpcdce.h>
 /* #include <rpcnsi.h> */
 #include <rpcnterr.h>
+#include <excpt.h>
 #include <winerror.h>
+#ifndef RPC_NO_WINDOWS_H
+#include <rpcasync.h>
+#endif
+
+#ifdef USE_COMPILER_EXCEPTIONS
+
+#define RpcTryExcept __try {
+#define RpcExcept(expr) } __except (expr) {
+#define RpcEndExcept }
+#define RpcTryFinally __try {
+#define RpcFinally } __finally {
+#define RpcEndFinally }
+#define RpcExceptionCode() GetExceptionCode()
+#define RpcAbnormalTermination() AbnormalTermination()
+
+#else /* USE_COMPILER_EXCEPTIONS */
 
 /* ignore exception handling for now */
 #define RpcTryExcept if (1) {
@@ -61,5 +78,7 @@ typedef void* I_RPC_HANDLE;
 #define RpcEndFinally
 #define RpcExceptionCode() 0
 /* #define RpcAbnormalTermination() abort() */
+
+#endif /* USE_COMPILER_EXCEPTIONS */
 
 #endif /*__WINE_RPC_H */

@@ -1,13 +1,5 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = vwin32.vxd
-IMPORTS   = winedos kernel32
+IMPORTS   = kernel
 
 C_SRCS = \
 	vwin32.c
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

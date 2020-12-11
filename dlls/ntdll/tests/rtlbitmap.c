@@ -14,7 +14,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  * We use function pointers here as some of the bitmap functions exist only
@@ -40,6 +40,8 @@ static CCHAR (WINAPI *pRtlFindMostSignificantBit)(ULONGLONG);
 static CCHAR (WINAPI *pRtlFindLeastSignificantBit)(ULONGLONG);
 static ULONG (WINAPI *pRtlFindSetRuns)(PRTL_BITMAP,PRTL_BITMAP_RUN,ULONG,BOOLEAN);
 static ULONG (WINAPI *pRtlFindClearRuns)(PRTL_BITMAP,PRTL_BITMAP_RUN,ULONG,BOOLEAN);
+static ULONG (WINAPI *pRtlFindNextForwardRunSet)(PRTL_BITMAP,ULONG,PULONG);
+static ULONG (WINAPI *pRtlFindNextForwardRunClear)(PRTL_BITMAP,ULONG,PULONG);
 static ULONG (WINAPI *pRtlNumberOfSetBits)(PRTL_BITMAP);
 static ULONG (WINAPI *pRtlNumberOfClearBits)(PRTL_BITMAP);
 static ULONG (WINAPI *pRtlFindLongestRunSet)(PRTL_BITMAP,PULONG);
@@ -69,6 +71,8 @@ static void InitFunctionPtrs(void)
     pRtlFindLeastSignificantBit = (void *)GetProcAddress(hntdll, "RtlFindLeastSignificantBit");
     pRtlFindSetRuns = (void *)GetProcAddress(hntdll, "RtlFindSetRuns");
     pRtlFindClearRuns = (void *)GetProcAddress(hntdll, "RtlFindClearRuns");
+    pRtlFindNextForwardRunSet = (void *)GetProcAddress(hntdll, "RtlFindNextForwardRunSet");
+    pRtlFindNextForwardRunClear = (void *)GetProcAddress(hntdll, "RtlFindNextForwardRunClear");
     pRtlFindLongestRunSet = (void *)GetProcAddress(hntdll, "RtlFindLongestRunSet");
     pRtlFindLongestRunClear = (void *)GetProcAddress(hntdll, "RtlFindLongestRunClear");
   }
@@ -413,7 +417,7 @@ static void test_RtlFindClearBitsAndSet(void)
 static void test_RtlFindMostSignificantBit(void)
 {
   int i;
-  CCHAR cPos;
+  signed char cPos;
   ULONGLONG ulLong;
 
   if (!pRtlFindMostSignificantBit)
@@ -425,13 +429,15 @@ static void test_RtlFindMostSignificantBit(void)
     ulLong <<= i;
 
     cPos = pRtlFindMostSignificantBit(ulLong);
-    ok (cPos == i, "didn't find MSB %llx %d %d\n", ulLong, i, cPos);
+    ok (cPos == i, "didn't find MSB 0x%s %d %d\n",
+        wine_dbgstr_longlong(ulLong ), i, cPos);
 
     /* Set all bits lower than bit i */
     ulLong = ((ulLong - 1) << 1) | 1;
 
     cPos = pRtlFindMostSignificantBit(ulLong);
-    ok (cPos == i, "didn't find MSB %llx %d %d\n", ulLong, i, cPos);
+    ok (cPos == i, "didn't find MSB 0x%s %d %d\n",
+        wine_dbgstr_longlong(ulLong ), i, cPos);
   }
   cPos = pRtlFindMostSignificantBit(0);
   ok (cPos == -1, "found bit when not set\n");
@@ -440,7 +446,7 @@ static void test_RtlFindMostSignificantBit(void)
 static void test_RtlFindLeastSignificantBit(void)
 {
   int i;
-  CCHAR cPos;
+  signed char cPos;
   ULONGLONG ulLong;
 
   if (!pRtlFindLeastSignificantBit)
@@ -451,12 +457,14 @@ static void test_RtlFindLeastSignificantBit(void)
     ulLong = (ULONGLONG)1 << i;
 
     cPos = pRtlFindLeastSignificantBit(ulLong);
-    ok (cPos == i, "didn't find LSB %llx %d %d\n", ulLong, i, cPos);
+    ok (cPos == i, "didn't find LSB 0x%s %d %d\n",
+        wine_dbgstr_longlong(ulLong ), i, cPos);
 
     ulLong = ~((ULONGLONG)0) << i;
 
     cPos = pRtlFindLeastSignificantBit(ulLong);
-    ok (cPos == i, "didn't find LSB %llx %d %d\n", ulLong, i, cPos);
+    ok (cPos == i, "didn't find LSB 0x%s %d %d\n",
+        wine_dbgstr_longlong(ulLong ), i, cPos);
   }
   cPos = pRtlFindLeastSignificantBit(0);
   ok (cPos == -1, "found bit when not set\n");
@@ -493,6 +501,7 @@ static void test_RtlFindSetRuns(void)
 
   /* Get first 2 */
   ulCount = pRtlFindSetRuns(&bm, runs, 2, FALSE);
+  ok(ulCount == 2, "RtlFindClearRuns returned %d, expected 2\n", ulCount);
   ok (runs[0].StartingIndex == 7 || runs[0].StartingIndex == 101,"bad find\n");
   ok (runs[1].StartingIndex == 7 || runs[1].StartingIndex == 101,"bad find\n");
   ok (runs[0].NumberOfBits + runs[1].NumberOfBits == 19 + 3,"bad size\n");
@@ -502,6 +511,7 @@ static void test_RtlFindSetRuns(void)
   /* Get longest 3 */
   memset(runs, 0, sizeof(runs));
   ulCount = pRtlFindSetRuns(&bm, runs, 2, TRUE);
+  ok(ulCount == 2, "RtlFindClearRuns returned %d, expected 2\n", ulCount);
   ok (runs[0].StartingIndex == 7 || runs[0].StartingIndex == 1877,"bad find\n");
   ok (runs[1].StartingIndex == 7 || runs[1].StartingIndex == 1877,"bad find\n");
   ok (runs[0].NumberOfBits + runs[1].NumberOfBits == 33 + 19,"bad size\n");
@@ -511,6 +521,7 @@ static void test_RtlFindSetRuns(void)
   /* Get all 3 */
   memset(runs, 0, sizeof(runs));
   ulCount = pRtlFindSetRuns(&bm, runs, 3, TRUE);
+  ok(ulCount == 3, "RtlFindClearRuns returned %d, expected 3\n", ulCount);
   ok (runs[0].StartingIndex == 7 || runs[0].StartingIndex == 101 ||
       runs[0].StartingIndex == 1877,"bad find\n");
   ok (runs[1].StartingIndex == 7 || runs[1].StartingIndex == 101 ||
@@ -528,7 +539,7 @@ static void test_RtlFindSetRuns(void)
     ULONG ulStart = 0;
 
     ulCount = pRtlFindLongestRunSet(&bm, &ulStart);
-    ok(ulCount == 33 && ulStart == 1877,"didn't find longest %ld %ld\n",ulCount,ulStart);
+    ok(ulCount == 33 && ulStart == 1877,"didn't find longest %d %d\n",ulCount,ulStart);
 
     memset(buff, 0, sizeof(buff));
     ulCount = pRtlFindLongestRunSet(&bm, &ulStart);
@@ -567,6 +578,7 @@ static void test_RtlFindClearRuns(void)
 
   /* Get first 2 */
   ulCount = pRtlFindClearRuns(&bm, runs, 2, FALSE);
+  ok(ulCount == 2, "RtlFindClearRuns returned %d, expected 2\n", ulCount);
   ok (runs[0].StartingIndex == 7 || runs[0].StartingIndex == 101,"bad find\n");
   ok (runs[1].StartingIndex == 7 || runs[1].StartingIndex == 101,"bad find\n");
   ok (runs[0].NumberOfBits + runs[1].NumberOfBits == 19 + 3,"bad size\n");
@@ -576,6 +588,7 @@ static void test_RtlFindClearRuns(void)
   /* Get longest 3 */
   memset(runs, 0, sizeof(runs));
   ulCount = pRtlFindClearRuns(&bm, runs, 2, TRUE);
+  ok(ulCount == 2, "RtlFindClearRuns returned %d, expected 2\n", ulCount);
   ok (runs[0].StartingIndex == 7 || runs[0].StartingIndex == 1877,"bad find\n");
   ok (runs[1].StartingIndex == 7 || runs[1].StartingIndex == 1877,"bad find\n");
   ok (runs[0].NumberOfBits + runs[1].NumberOfBits == 33 + 19,"bad size\n");
@@ -585,6 +598,7 @@ static void test_RtlFindClearRuns(void)
   /* Get all 3 */
   memset(runs, 0, sizeof(runs));
   ulCount = pRtlFindClearRuns(&bm, runs, 3, TRUE);
+  ok(ulCount == 3, "RtlFindClearRuns returned %d, expected 3\n", ulCount);
   ok (runs[0].StartingIndex == 7 || runs[0].StartingIndex == 101 ||
       runs[0].StartingIndex == 1877,"bad find\n");
   ok (runs[1].StartingIndex == 7 || runs[1].StartingIndex == 101 ||
@@ -610,6 +624,35 @@ static void test_RtlFindClearRuns(void)
   }
 
 }
+
+static void test_RtlFindNextForwardRunSet(void)
+{
+  BYTE mask[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff };
+  ULONG ulStart = 0;
+  ULONG ulCount, lpPos;
+  if (!pRtlFindNextForwardRunSet)
+    return;
+
+  pRtlInitializeBitMap(&bm, mask, 62);
+  ulCount = pRtlFindNextForwardRunSet(&bm, ulStart, &lpPos);
+  ok(ulCount == 6, "Invalid length of found set run: %d, expected 6\n", ulCount);
+  ok(lpPos == 56, "Invalid position of found set run: %d, expected 56\n", lpPos);
+}
+
+static void test_RtlFindNextForwardRunClear(void)
+{
+  BYTE mask[8] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 };
+  ULONG ulStart = 0;
+  ULONG ulCount, lpPos;
+  if (!pRtlFindNextForwardRunClear)
+    return;
+
+  pRtlInitializeBitMap(&bm, mask, 62);
+  ulCount = pRtlFindNextForwardRunClear(&bm, ulStart, &lpPos);
+  ok(ulCount == 6, "Invalid length of found clear run: %d, expected 6\n", ulCount);
+  ok(lpPos == 56, "Invalid position of found clear run: %d, expected 56\n", lpPos);
+}
+
 #endif
 
 START_TEST(rtlbitmap)
@@ -635,6 +678,8 @@ START_TEST(rtlbitmap)
     test_RtlFindLeastSignificantBit();
     test_RtlFindSetRuns();
     test_RtlFindClearRuns();
+    test_RtlFindNextForwardRunSet();
+    test_RtlFindNextForwardRunClear();
   }
 #endif
 }

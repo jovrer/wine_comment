@@ -15,19 +15,18 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define IDD_UNINSTALLER                 101
-#define IDC_FILTER                      1001
-#define IDC_LIST                        1002
-#define IDC_UNINSTALL                   1003
-#define IDC_ABOUT                       1004
-#define IDC_EXIT                        1005
-#define IDC_PLEASESELECT                1006
-#define IDS_APPNAME                     1007
-#define IDS_ABOUT                       1008
-#define IDS_ABOUTTITLE                  1009
-#define IDS_REGISTRYKEYNOTAVAILABLE     1010
-#define IDS_UNINSTALLFAILED             1011
+#include <windef.h>
+
+#define IDS_APPNAME                     1000
+#define IDS_UNINSTALLFAILED             1001
+
+#define STRING_NO_APP_MATCH             2000
+#define STRING_PARAMETER_REQUIRED       2001
+#define STRING_INVALID_OPTION           2002
+#define STRING_HEADER                   2003
+#define STRING_USAGE                    2004
+
 #define MAX_STRING_LEN                  255

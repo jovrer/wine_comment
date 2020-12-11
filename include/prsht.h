@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_PRSHT_H
@@ -44,7 +44,10 @@ static const WCHAR WC_PROPSHEETW[] = { 'S','y','s',
 struct _PROPSHEETPAGEA;  /** need to forward declare those structs **/
 struct _PROPSHEETPAGEW;
 struct _PSP;
+#ifndef _HPROPSHEETPAGE_DEFINED
+#define _HPROPSHEETPAGE_DEFINED
 typedef struct _PSP *HPROPSHEETPAGE;
+#endif /* _HPROPSHEETPAGE_DEFINED */
 
 
 typedef UINT (CALLBACK *LPFNPSPCALLBACKA)(HWND, UINT, struct _PROPSHEETPAGEA*);
@@ -56,57 +59,84 @@ typedef BOOL (CALLBACK *LPFNADDPROPSHEETPAGES)(LPVOID, LPFNADDPROPSHEETPAGE, LPA
 /*
  * Property sheet support (structures)
  */
+
+typedef LPCDLGTEMPLATEA PROPSHEETPAGE_RESOURCEA;
+typedef LPCDLGTEMPLATEW PROPSHEETPAGE_RESOURCEW;
+DECL_WINELIB_TYPE_AW(PROPSHEETPAGE_RESOURCE)
+
 typedef struct _PROPSHEETPAGEA
 {
     DWORD              dwSize;
     DWORD              dwFlags;
-    HINSTANCE        hInstance;
+    HINSTANCE          hInstance;
     union
     {
-        LPCSTR           pszTemplate;
-        LPCDLGTEMPLATEA  pResource;
-    }DUMMYUNIONNAME;
+        LPCSTR         pszTemplate;
+        PROPSHEETPAGE_RESOURCEA pResource;
+    } DUMMYUNIONNAME;
     union
     {
         HICON          hIcon;
-        LPCSTR           pszIcon;
-    }DUMMYUNIONNAME2;
+        LPCSTR         pszIcon;
+    } DUMMYUNIONNAME2;
     LPCSTR             pszTitle;
-    DLGPROC          pfnDlgProc;
+    DLGPROC            pfnDlgProc;
     LPARAM             lParam;
-    LPFNPSPCALLBACKA pfnCallback;
-    UINT*            pcRefParent;
+    LPFNPSPCALLBACKA   pfnCallback;
+    UINT*              pcRefParent;
     LPCSTR             pszHeaderTitle;
     LPCSTR             pszHeaderSubTitle;
-} PROPSHEETPAGEA, *LPPROPSHEETPAGEA;
+    HANDLE             hActCtx;
+    union
+    {
+        HBITMAP        hbmHeader;
+        LPCSTR         pszbmHeader;
+    } DUMMYUNIONNAME3;
+} PROPSHEETPAGEA, *LPPROPSHEETPAGEA,
+  PROPSHEETPAGEA_LATEST, *LPPROPSHEETPAGEA_LATEST;
 
-typedef const PROPSHEETPAGEA *LPCPROPSHEETPAGEA;
+typedef const PROPSHEETPAGEA *LPCPROPSHEETPAGEA, *LPCPROPSHEETPAGEA_LATEST;
+#define PROPSHEETPAGEA_V1_SIZE CCSIZEOF_STRUCT(PROPSHEETPAGEA, pcRefParent)
+#define PROPSHEETPAGEA_V2_SIZE CCSIZEOF_STRUCT(PROPSHEETPAGEA, pszHeaderSubTitle)
+#define PROPSHEETPAGEA_V3_SIZE CCSIZEOF_STRUCT(PROPSHEETPAGEA, hActCtx)
+#define PROPSHEETPAGEA_V4_SIZE sizeof(PROPSHEETPAGEA)
 
 typedef struct _PROPSHEETPAGEW
 {
-    DWORD               dwSize;
-    DWORD               dwFlags;
-    HINSTANCE         hInstance;
+    DWORD              dwSize;
+    DWORD              dwFlags;
+    HINSTANCE          hInstance;
     union
     {
-        LPCWSTR          pszTemplate;
-        LPCDLGTEMPLATEW  pResource;
-    }DUMMYUNIONNAME;
+        LPCWSTR        pszTemplate;
+        PROPSHEETPAGE_RESOURCEW pResource;
+    } DUMMYUNIONNAME;
     union
     {
         HICON          hIcon;
-        LPCWSTR          pszIcon;
-    }DUMMYUNIONNAME2;
+        LPCWSTR        pszIcon;
+    } DUMMYUNIONNAME2;
     LPCWSTR            pszTitle;
-    DLGPROC          pfnDlgProc;
+    DLGPROC            pfnDlgProc;
     LPARAM             lParam;
-    LPFNPSPCALLBACKW pfnCallback;
-    UINT*            pcRefParent;
+    LPFNPSPCALLBACKW   pfnCallback;
+    UINT*              pcRefParent;
     LPCWSTR            pszHeaderTitle;
     LPCWSTR            pszHeaderSubTitle;
-} PROPSHEETPAGEW, *LPPROPSHEETPAGEW;
+    HANDLE             hActCtx;
+    union
+    {
+        HBITMAP        hbmHeader;
+        LPCWSTR        pszbmHeader;
+    } DUMMYUNIONNAME3;
+} PROPSHEETPAGEW, *LPPROPSHEETPAGEW,
+  PROPSHEETPAGEW_LATEST, *LPPROPSHEETPAGEW_LATEST;
 
-typedef const PROPSHEETPAGEW *LPCPROPSHEETPAGEW;
+typedef const PROPSHEETPAGEW *LPCPROPSHEETPAGEW, *LPCPROPSHEETPAGEW_LATEST;
+#define PROPSHEETPAGEW_V1_SIZE CCSIZEOF_STRUCT(PROPSHEETPAGEW, pcRefParent)
+#define PROPSHEETPAGEW_V2_SIZE CCSIZEOF_STRUCT(PROPSHEETPAGEW, pszHeaderSubTitle)
+#define PROPSHEETPAGEW_V3_SIZE CCSIZEOF_STRUCT(PROPSHEETPAGEW, hActCtx)
+#define PROPSHEETPAGEW_V4_SIZE sizeof(PROPSHEETPAGEW)
 
 
 typedef struct _PROPSHEETHEADERA
@@ -147,6 +177,8 @@ typedef struct _PROPSHEETHEADERA
 } PROPSHEETHEADERA, *LPPROPSHEETHEADERA;
 
 typedef const PROPSHEETHEADERA *LPCPROPSHEETHEADERA;
+#define PROPSHEETHEADERA_V1_SIZE CCSIZEOF_STRUCT(PROPSHEETHEADERA, pfnCallback)
+#define PROPSHEETHEADERA_V2_SIZE sizeof(PROPSHEETHEADERA)
 
 typedef struct _PROPSHEETHEADERW
 {
@@ -186,6 +218,8 @@ typedef struct _PROPSHEETHEADERW
 } PROPSHEETHEADERW, *LPPROPSHEETHEADERW;
 
 typedef const PROPSHEETHEADERW *LPCPROPSHEETHEADERW;
+#define PROPSHEETHEADERW_V1_SIZE CCSIZEOF_STRUCT(PROPSHEETHEADERW, pfnCallback)
+#define PROPSHEETHEADERW_V2_SIZE sizeof(PROPSHEETHEADERW)
 
 
 /*
@@ -211,6 +245,32 @@ DECL_WINELIB_TYPE_AW(LPPROPSHEETHEADER)
 DECL_WINELIB_TYPE_AW(LPCPROPSHEETHEADER)
 DECL_WINELIB_TYPE_AW(LPFNPSPCALLBACK)
 
+#ifdef WINE_NO_UNICODE_MACROS
+# define PRSHT_NAME_AW(base, suffix)                  \
+    base##_##suffix##_must_use_W_or_A_in_this_context \
+    base##_##suffix##_must_use_W_or_A_in_this_context
+# define DECL_PRSHT_TYPE_AW(base, suffix)  /* nothing */
+#else  /* WINE_NO_UNICODE_MACROS */
+# ifdef UNICODE
+#  define PRSHT_NAME_AW(base, suffix) base##W_##suffix
+# else
+#  define PRSHT_NAME_AW(base, suffix) base##A_##suffix
+# endif
+# define DECL_PRSHT_TYPE_AW(base, suffix)  typedef PRSHT_NAME_AW(base, suffix) base##_##suffix;
+#endif  /* WINE_NO_UNICODE_MACROS */
+
+DECL_PRSHT_TYPE_AW(PROPSHEETPAGE, LATEST)
+DECL_PRSHT_TYPE_AW(LPPROPSHEETPAGE, LATEST)
+DECL_PRSHT_TYPE_AW(LPCPROPSHEETPAGE, LATEST)
+#define PROPSHEETPAGE_V1_SIZE    PRSHT_NAME_AW(PROPSHEETPAGE, V1_SIZE)
+#define PROPSHEETPAGE_V2_SIZE    PRSHT_NAME_AW(PROPSHEETPAGE, V2_SIZE)
+#define PROPSHEETPAGE_V3_SIZE    PRSHT_NAME_AW(PROPSHEETPAGE, V3_SIZE)
+#define PROPSHEETPAGE_V4_SIZE    PRSHT_NAME_AW(PROPSHEETPAGE, V4_SIZE)
+#define PROPSHEETHEADER_V1_SIZE  PRSHT_NAME_AW(PROPSHEETHEADER, V1_SIZE)
+#define PROPSHEETHEADER_V2_SIZE  PRSHT_NAME_AW(PROPSHEETHEADER, V2_SIZE)
+
+#undef PRSHT_NAME_AW
+#undef DECL_PRSHT_TYPE_AW
 
 /*
  * Property sheet support (defines)
@@ -230,7 +290,10 @@ DECL_WINELIB_TYPE_AW(LPFNPSPCALLBACK)
 #define PSP_HIDEHEADER          0x00000800
 #define PSP_USEHEADERTITLE      0x00001000
 #define PSP_USEHEADERSUBTITLE   0x00002000
+#define PSP_USEFUSIONCONTEXT    0x00004000
+#define PSP_COMMANDLINKS        0x00040000
 
+#define PSPCB_ADDREF            0
 #define PSPCB_RELEASE           1
 #define PSPCB_CREATE            2
 
@@ -250,6 +313,7 @@ DECL_WINELIB_TYPE_AW(LPFNPSPCALLBACK)
 #define PSH_WIZARDCONTEXTHELP   0x00001000
 
 #define PSH_WIZARD97_OLD        0x00002000 /* for IE < 5 */
+#define PSH_AEROWIZARD          0x00004000
 #define PSH_WATERMARK           0x00008000
 #define PSH_USEHBMWATERMARK     0x00010000
 #define PSH_USEHPLWATERMARK     0x00020000
@@ -260,8 +324,11 @@ DECL_WINELIB_TYPE_AW(LPFNPSPCALLBACK)
 #define PSH_WIZARD_LITE         0x00400000
 #define PSH_WIZARD97_NEW        0x01000000 /* for IE >= 5 */
 #define PSH_NOCONTEXTHELP       0x02000000
+#define PSH_RESIZABLE           0x04000000
+#define PSH_HEADERBITMAP        0x08000000
+#define PSH_NOMARGIN            0x10000000
 #ifndef __WINESRC__
-# if _WIN32_IE < 0x0500
+# if defined(_WIN32_IE) && (_WIN32_IE < 0x0500)
 #  define PSH_WIZARD97          PSH_WIZARD97_OLD
 # else
 #  define PSH_WIZARD97          PSH_WIZARD97_NEW
@@ -388,25 +455,25 @@ typedef struct _PSHNOTIFY
 	SNDMSG(hDlg, PSM_ADDPAGE, 0, (LPARAM)hpage)
 
 #define PropSheet_Changed(hDlg, hwnd) \
-	SNDMSG(hDlg, PSM_CHANGED, (WPARAM)hwnd, 0L)
+        SNDMSG(hDlg, PSM_CHANGED, (WPARAM)hwnd, 0)
 
 #define PropSheet_RestartWindows(hDlg) \
-	SNDMSG(hDlg, PSM_RESTARTWINDOWS, 0, 0L)
+        SNDMSG(hDlg, PSM_RESTARTWINDOWS, 0, 0)
 
 #define PropSheet_RebootSystem(hDlg) \
-	SNDMSG(hDlg, PSM_REBOOTSYSTEM, 0, 0L)
+        SNDMSG(hDlg, PSM_REBOOTSYSTEM, 0, 0)
 
 #define PropSheet_CancelToClose(hDlg) \
-	PostMessage(hDlg, PSM_CANCELTOCLOSE, 0, 0L)
+        PostMessage(hDlg, PSM_CANCELTOCLOSE, 0, 0)
 
 #define PropSheet_QuerySiblings(hDlg, wParam, lParam) \
 	SNDMSG(hDlg, PSM_QUERYSIBLINGS, wParam, lParam)
 
 #define PropSheet_UnChanged(hDlg, hwnd) \
-	SNDMSG(hDlg, PSM_UNCHANGED, (WPARAM)hwnd, 0L)
+        SNDMSG(hDlg, PSM_UNCHANGED, (WPARAM)hwnd, 0)
 
 #define PropSheet_Apply(hDlg) \
-	SNDMSG(hDlg, PSM_APPLY, 0, 0L)
+        SNDMSG(hDlg, PSM_APPLY, 0, 0)
 
 #define PropSheet_SetTitle(hDlg, wStyle, lpszText)\
 	SNDMSG(hDlg, PSM_SETTITLE, wStyle, (LPARAM)(LPCTSTR)lpszText)
@@ -430,7 +497,7 @@ typedef struct _PSHNOTIFY
 	(BOOL)SNDMSG(hDlg, PSM_ISDIALOGMESSAGE, 0, (LPARAM)pMsg)
 
 #define PropSheet_GetCurrentPageHwnd(hDlg) \
-	(HWND)SNDMSG(hDlg, PSM_GETCURRENTPAGEHWND, 0, 0L)
+        (HWND)SNDMSG(hDlg, PSM_GETCURRENTPAGEHWND, 0, 0)
 
 #define PropSheet_InsertPage(hDlg, index, hpage) \
         SNDMSG(hDlg, PSM_INSERTPAGE, (WPARAM)(index), (LPARAM)(hpage))

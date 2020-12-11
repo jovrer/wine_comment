@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WMC_UTILS_H
@@ -33,10 +33,12 @@ char *xstrdup(const char *str);
 #define __attribute__(X)
 #endif
 
-int yyerror(const char *s, ...) __attribute__((format (printf, 1, 2)));
+char *strmake(const char* fmt, ...) __attribute__((__format__ (__printf__, 1, 2 )));
+int mcy_error(const char *s, ...) __attribute__((format (printf, 1, 2)));
 int xyyerror(const char *s, ...) __attribute__((format (printf, 1, 2)));
-int yywarning(const char *s, ...) __attribute__((format (printf, 1, 2)));
+int mcy_warning(const char *s, ...) __attribute__((format (printf, 1, 2)));
 void internal_error(const char *file, int line, const char *s, ...) __attribute__((format (printf, 3, 4)));
+void fatal_perror( const char *msg, ... ) __attribute__((format (printf, 1, 2), noreturn));
 void error(const char *s, ...) __attribute__((format (printf, 1, 2)));
 void warning(const char *s, ...) __attribute__((format (printf, 1, 2)));
 
@@ -47,5 +49,20 @@ WCHAR *unistrcpy(WCHAR *dst, const WCHAR *src);
 int unistrlen(const WCHAR *s);
 int unistricmp(const WCHAR *s1, const WCHAR *s2);
 int unistrcmp(const WCHAR *s1, const WCHAR *s2);
+
+/* buffer management */
+
+extern int byte_swapped;
+extern unsigned char *output_buffer;
+extern size_t output_buffer_pos;
+extern size_t output_buffer_size;
+
+extern void init_output_buffer(void);
+extern void flush_output_buffer( const char *name );
+extern void put_data( const void *data, size_t size );
+extern void put_byte( unsigned char val );
+extern void put_word( unsigned short val );
+extern void put_dword( unsigned int val );
+extern void align_output( unsigned int align );
 
 #endif

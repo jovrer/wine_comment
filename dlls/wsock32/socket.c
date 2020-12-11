@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 
@@ -108,7 +108,7 @@ DWORD WINAPI WsControl(DWORD protocol,
 
    /* Get the command structure into a pointer we can use,
       rather than void */
-   TDIObjectID *pcommand = (TDIObjectID *)pRequestInfo;
+   TDIObjectID *pcommand = pRequestInfo;
 
    /* validate input parameters.  Error codes are from winerror.h, not from
     * winsock.h.  pcbResponseInfoLen is apparently allowed to be NULL for some
@@ -149,7 +149,7 @@ DWORD WINAPI WsControl(DWORD protocol,
          */
          case ENTITY_LIST_ID:
          {
-            TDIEntityID *baseptr = (TDIEntityID *)pResponseInfo;
+            TDIEntityID *baseptr = pResponseInfo;
             DWORD numInt, i, ifTable, spaceNeeded;
             PMIB_IFTABLE table;
 
@@ -170,7 +170,7 @@ DWORD WINAPI WsControl(DWORD protocol,
 
             ifTable = 0;
             GetIfTable(NULL, &ifTable, FALSE);
-            table = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, ifTable );
+            table = HeapAlloc( GetProcessHeap(), 0, ifTable );
             if (!table)
                return ERROR_NOT_ENOUGH_MEMORY;
             GetIfTable(table, &ifTable, FALSE);
@@ -252,7 +252,7 @@ DWORD WINAPI WsControl(DWORD protocol,
                       */
                      if (index == 1)
                         return NO_ERROR;
-                     ERR ("Error retrieving data for interface index %lu\n",
+                     ERR ("Error retrieving data for interface index %u\n",
                       index);
                      return ret;
                   }
@@ -280,14 +280,14 @@ DWORD WINAPI WsControl(DWORD protocol,
                {
                   PMIB_IPNETTABLE table;
                   DWORD size;
-                  PULONG output = (PULONG)pResponseInfo;
+                  PULONG output = pResponseInfo;
 
                   if (!pcbResponseInfoLen)
                      return ERROR_BAD_ENVIRONMENT;
                   if (*pcbResponseInfoLen < sizeof(ULONG) * 2)
                      return (ERROR_LOCK_VIOLATION);
                   GetIpNetTable(NULL, &size, FALSE);
-                  table = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, size );
+                  table = HeapAlloc( GetProcessHeap(), 0, size );
                   if (!table)
                      return ERROR_NOT_ENOUGH_MEMORY;
                   GetIpNetTable(table, &size, FALSE);
@@ -323,7 +323,7 @@ DWORD WINAPI WsControl(DWORD protocol,
                      return ERROR_BAD_ENVIRONMENT;
                   if (*pcbResponseInfoLen < sizeof(MIB_IPSTATS))
                      return ERROR_LOCK_VIOLATION;
-                  GetIpStatistics((PMIB_IPSTATS)pResponseInfo);
+                  GetIpStatistics(pResponseInfo);
 
                   *pcbResponseInfoLen = sizeof(MIB_IPSTATS);
                }
@@ -346,7 +346,7 @@ DWORD WINAPI WsControl(DWORD protocol,
                      return ERROR_BAD_ENVIRONMENT;
                   if (*pcbResponseInfoLen < sizeof(MIB_UDPSTATS))
                      return ERROR_LOCK_VIOLATION;
-                  GetUdpStatistics((PMIB_UDPSTATS)pResponseInfo);
+                  GetUdpStatistics(pResponseInfo);
                   *pcbResponseInfoLen = sizeof(MIB_UDPSTATS);
                }
                break;
@@ -368,7 +368,7 @@ DWORD WINAPI WsControl(DWORD protocol,
                      return ERROR_BAD_ENVIRONMENT;
                   if (*pcbResponseInfoLen < sizeof(MIB_TCPSTATS))
                      return ERROR_LOCK_VIOLATION;
-                  GetTcpStatistics((PMIB_TCPSTATS)pResponseInfo);
+                  GetTcpStatistics(pResponseInfo);
                   *pcbResponseInfoLen = sizeof(MIB_TCPSTATS);
                }
                break;
@@ -386,7 +386,7 @@ DWORD WINAPI WsControl(DWORD protocol,
          case IP_MIB_ADDRTABLE_ENTRY_ID:
          {
             DWORD index = pcommand->toi_entity.tei_instance;
-            PMIB_IPADDRROW baseIPInfo = (PMIB_IPADDRROW) pResponseInfo;
+            PMIB_IPADDRROW baseIPInfo = pResponseInfo;
             PMIB_IPADDRTABLE table;
             DWORD tableSize, i;
 
@@ -399,7 +399,7 @@ DWORD WINAPI WsControl(DWORD protocol,
                gets just one entry. */
             tableSize = 0;
             GetIpAddrTable(NULL, &tableSize, FALSE);
-            table = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, tableSize );
+            table = HeapAlloc( GetProcessHeap(), 0, tableSize );
             if (!table)
                return ERROR_NOT_ENOUGH_MEMORY;
             GetIpAddrTable(table, &tableSize, FALSE);
@@ -407,10 +407,10 @@ DWORD WINAPI WsControl(DWORD protocol,
             {
                if (table->table[i].dwIndex == index)
                {
-                  TRACE("Found IP info for tei_instance 0x%lx:\n", index);
-                  TRACE("IP 0x%08lx, mask 0x%08lx\n", table->table[i].dwAddr,
+                  TRACE("Found IP info for tei_instance 0x%x:\n", index);
+                  TRACE("IP 0x%08x, mask 0x%08x\n", table->table[i].dwAddr,
                    table->table[i].dwMask);
-                  memcpy(baseIPInfo, &table->table[i], sizeof(MIB_IPADDRROW));
+                  *baseIPInfo = table->table[i];
                   break;
                }
             }
@@ -437,16 +437,18 @@ DWORD WINAPI WsControl(DWORD protocol,
                {
                   DWORD routeTableSize, numRoutes, ndx, ret;
                   PMIB_IPFORWARDTABLE table;
-                  IPRouteEntry *winRouteTable  = (IPRouteEntry *) pResponseInfo;
+                  IPRouteEntry *winRouteTable  = pResponseInfo;
 
                   if (!pcbResponseInfoLen)
                      return ERROR_BAD_ENVIRONMENT;
-                  GetIpForwardTable(NULL, &routeTableSize, FALSE);
-                  numRoutes = min(routeTableSize - sizeof(MIB_IPFORWARDTABLE),
-                   0) / sizeof(MIB_IPFORWARDROW) + 1;
+                  ret = GetIpForwardTable(NULL, &routeTableSize, FALSE);
+                  if (ret != ERROR_INSUFFICIENT_BUFFER)
+                      return ret;
+                  numRoutes = (routeTableSize - sizeof(MIB_IPFORWARDTABLE))
+                   / sizeof(MIB_IPFORWARDROW) + 1;
                   if (*pcbResponseInfoLen < sizeof(IPRouteEntry) * numRoutes)
                      return (ERROR_LOCK_VIOLATION);
-                  table = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, routeTableSize );
+                  table = HeapAlloc( GetProcessHeap(), 0, routeTableSize );
                   if (!table)
                      return ERROR_NOT_ENOUGH_MEMORY;
                   ret = GetIpForwardTable(table, &routeTableSize, FALSE);
@@ -490,12 +492,14 @@ DWORD WINAPI WsControl(DWORD protocol,
 
                   if (!pcbResponseInfoLen)
                      return ERROR_BAD_ENVIRONMENT;
-                  GetIpNetTable(NULL, &arpTableSize, FALSE);
-                  numEntries = min(arpTableSize - sizeof(MIB_IPNETTABLE),
-                   0) / sizeof(MIB_IPNETROW) + 1;
+                  ret = GetIpNetTable(NULL, &arpTableSize, FALSE);
+                  if (ret != ERROR_INSUFFICIENT_BUFFER)
+                      return ret;
+                  numEntries = (arpTableSize - sizeof(MIB_IPNETTABLE))
+                   / sizeof(MIB_IPNETROW) + 1;
                   if (*pcbResponseInfoLen < sizeof(MIB_IPNETROW) * numEntries)
                      return (ERROR_LOCK_VIOLATION);
-                  table = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, arpTableSize );
+                  table = HeapAlloc( GetProcessHeap(), 0, arpTableSize );
                   if (!table)
                      return ERROR_NOT_ENOUGH_MEMORY;
                   ret = GetIpNetTable(table, &arpTableSize, FALSE);
@@ -528,12 +532,14 @@ DWORD WINAPI WsControl(DWORD protocol,
 
                   if (!pcbResponseInfoLen)
                      return ERROR_BAD_ENVIRONMENT;
-                  GetTcpTable(NULL, &tcpTableSize, FALSE);
-                  numEntries = min(tcpTableSize - sizeof(MIB_TCPTABLE),
-                   0) / sizeof(MIB_TCPROW) + 1;
+                  ret = GetTcpTable(NULL, &tcpTableSize, FALSE);
+                  if (ret != ERROR_INSUFFICIENT_BUFFER)
+                      return ret;
+                  numEntries = (tcpTableSize - sizeof(MIB_TCPTABLE))
+                   / sizeof(MIB_TCPROW) + 1;
                   if (*pcbResponseInfoLen < sizeof(MIB_TCPROW) * numEntries)
                      return (ERROR_LOCK_VIOLATION);
-                  table = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, tcpTableSize );
+                  table = HeapAlloc( GetProcessHeap(), 0, tcpTableSize );
                   if (!table)
                      return ERROR_NOT_ENOUGH_MEMORY;
                   ret = GetTcpTable(table, &tcpTableSize, FALSE);
@@ -606,12 +612,12 @@ DWORD WINAPI WsControl(DWORD protocol,
          char type= *(unsigned char*)(inbuf+15); /* 0x2: don't fragment*/
 #endif
 
-      FIXME("(ICMP_ECHO) to 0x%08x stub \n", addr);
+      FIXME("(ICMP_ECHO) to 0x%08x stub\n", addr);
       break;
    }
 
    default:
-      FIXME("Protocol Not Supported -> protocol=0x%lx, action=0x%lx, Request=%p, RequestLen=%p, Response=%p, ResponseLen=%p\n",
+      FIXME("Protocol Not Supported -> protocol=0x%x, action=0x%x, Request=%p, RequestLen=%p, Response=%p, ResponseLen=%p\n",
        protocol, action, pRequestInfo, pcbRequestInfoLen, pResponseInfo, pcbResponseInfoLen);
 
       return (WSAEOPNOTSUPP);
@@ -635,7 +641,7 @@ DWORD WINAPI WsControl(DWORD protocol,
  */
 INT WINAPI WSARecvEx(SOCKET s, char *buf, INT len, INT *flags)
 {
-    FIXME("(WSARecvEx) partial packet return value not set \n");
+    FIXME("(WSARecvEx) partial packet return value not set\n");
     return recv(s, buf, len, *flags);
 }
 

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WRC_WRCTYPES_H
@@ -83,6 +83,13 @@
 #define BYTESWAP_WORD(w)	((WORD)(((WORD)WRC_LOBYTE(w) << 8) + (WORD)WRC_HIBYTE(w)))
 #define BYTESWAP_DWORD(d)	((DWORD)(((DWORD)BYTESWAP_WORD(WRC_LOWORD(d)) << 16) + ((DWORD)BYTESWAP_WORD(WRC_HIWORD(d)))))
 
+typedef struct
+{
+    const char *file;
+    int         line;
+    int         col;
+} location_t;
+
 /* Binary resource structure */
 #define RES_BLOCKSIZE	512
 
@@ -90,7 +97,7 @@ typedef struct res {
 	unsigned int	allocsize;	/* Allocated datablock size */
 	unsigned int	size;		/* Actual size of data */
 	unsigned int	dataidx;	/* Tag behind the resource-header */
-	char		*data;
+	unsigned char	*data;
 } res_t;
 
 /* Resource strings are slightly more complex because they include '\0' */
@@ -103,6 +110,7 @@ typedef struct string {
 		char *cstr;
 		WCHAR *wstr;
 	} str;
+	location_t loc;
 } string_t;
 
 /* Resources are identified either by name or by number */
@@ -168,7 +176,7 @@ enum res_e {
 	res_rdt,
 	res_msg,
 	res_curg,
-	res_13,		/* Hm, wonder why its not used... */
+	res_13,         /* Hm, wonder why it's not used... */
 	res_icog,
 	res_15,
 	res_ver,
@@ -183,9 +191,7 @@ enum res_e {
 	res_dlginit = WRC_RT_DLGINIT,	/* 240 */
 	res_toolbar = WRC_RT_TOOLBAR,	/* 241 */
 
-	res_menex = 256 + 4,
-	res_dlgex,
-	res_usr
+	res_usr = 256 + 6
 };
 
 /* Raw bytes in a row... */
@@ -223,8 +229,11 @@ typedef struct dialog {
 	int		height;
 	style_t		*style;		/* Style */
 	style_t		*exstyle;
+	DWORD		helpid;		/* EX: */
 	int		gotstyle;	/* Used to determine whether the default */
 	int		gotexstyle;	/* styles must be set */
+	int		gothelpid;
+	int		is_ex;
 	name_id_t	*menu;
 	name_id_t	*dlgclass;
 	string_t	*title;
@@ -233,48 +242,11 @@ typedef struct dialog {
 	control_t	*controls;
 } dialog_t;
 
-/* DialogEx structures */
-typedef struct dialogex {
-	DWORD		memopt;
-	int		x;		/* Position */
-	int		y;
-	int		width;		/* Size */
-	int		height;
-	style_t		*style;		/* Style */
-	style_t		*exstyle;
-	DWORD		helpid;		/* EX: */
-	int		gotstyle;	/* Used to determine whether the default */
-	int		gotexstyle;	/* styles must be set */
-	int		gothelpid;
-	name_id_t	*menu;
-	name_id_t	*dlgclass;
-	string_t	*title;
-	font_id_t	*font;
-	lvc_t		lvc;
-	control_t	*controls;
-} dialogex_t;
-
 /* Menu structures */
 typedef struct menu_item {
 	struct menu_item *next;
 	struct menu_item *prev;
 	struct menu_item *popup;
-	int		id;
-	DWORD		state;
-	string_t	*name;
-} menu_item_t;
-
-typedef struct menu {
-	DWORD		memopt;
-	lvc_t		lvc;
-	menu_item_t	*items;
-} menu_t;
-
-/* MenuEx structures */
-typedef struct menuex_item {
-	struct menuex_item *next;
-	struct menuex_item *prev;
-	struct menuex_item *popup;
 	int		id;
 	DWORD		type;
 	DWORD		state;
@@ -284,13 +256,14 @@ typedef struct menuex_item {
 	int		gottype;
 	int		gotstate;
 	int		gothelpid;
-} menuex_item_t;
+} menu_item_t;
 
-typedef struct menuex {
+typedef struct menu {
 	DWORD		memopt;
 	lvc_t		lvc;
-	menuex_item_t	*items;
-} menuex_t;
+	int		is_ex;
+	menu_item_t	*items;
+} menu_t;
 
 typedef struct itemex_opt
 {
@@ -564,6 +537,7 @@ typedef struct versioninfo {
 typedef struct event {
 	struct event	*next;
 	struct event	*prev;
+	string_t	*str;
 	int		flags;
 	int		key;
 	int		id;
@@ -611,14 +585,12 @@ typedef struct resource {
 		cursor_t	*cur;
 		cursor_group_t	*curg;
 		dialog_t	*dlg;
-		dialogex_t	*dlgex;
 		dlginit_t       *dlgi;
 		font_t		*fnt;
 		fontdir_t	*fnd;
 		icon_t		*ico;
 		icon_group_t	*icog;
 		menu_t		*men;
-		menuex_t	*menex;
 		messagetable_t	*msg;
 		html_t		*html;
 		rcdata_t	*rdt;

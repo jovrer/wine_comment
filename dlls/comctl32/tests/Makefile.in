@@ -1,22 +1,35 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = comctl32.dll
-IMPORTS   = comctl32 ole32 shlwapi user32 gdi32 advapi32 kernel32
+IMPORTS   = ole32 user32 gdi32 advapi32
 
-CTESTS = \
-	comboex.c \
+C_SRCS = \
+	animate.c \
+	button.c \
+	combo.c \
+	datetime.c \
 	dpa.c \
+	edit.c \
+	header.c \
 	imagelist.c \
+	ipaddress.c \
+	listbox.c \
+	listview.c \
+	misc.c \
+	monthcal.c \
 	mru.c \
+	pager.c \
 	progress.c \
+	propsheet.c \
+	rebar.c \
+	static.c \
+	status.c \
 	subclass.c \
+	syslink.c \
 	tab.c \
+	taskdialog.c \
 	toolbar.c \
+	tooltips.c \
+	trackbar.c \
 	treeview.c \
 	updown.c
 
-@MAKE_TEST_RULES@
-
-### Dependencies:
+RC_SRCS = rsrc.rc

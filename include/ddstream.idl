@@ -13,13 +13,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 import "unknwn.idl";
 import "mmstream.idl";
 
-cpp_quote("#ifndef __WINE_DDRAW_H")
+cpp_quote("#ifndef __DDRAW_INCLUDED__")
 typedef void * LPDDSURFACEDESC;
 typedef struct tDDSURFACEDESC DDSURFACEDESC;
 interface IDirectDraw;
@@ -44,14 +44,14 @@ pointer_default(unique)
 interface IDirectDrawMediaStream : IMediaStream
 {
 	HRESULT GetFormat(
-		[out, optional] DDSURFACEDESC *pDDSDCurrent,
-		[out, optional] IDirectDrawPalette **ppDirectDrawPalette,
-		[out, optional] DDSURFACEDESC *pDDSDDesired,
-		[out, optional] DWORD *pdwFlags);
+		[out] DDSURFACEDESC *pDDSDCurrent,
+		[out] IDirectDrawPalette **ppDirectDrawPalette,
+		[out] DDSURFACEDESC *pDDSDDesired,
+		[out] DWORD *pdwFlags);
 
 	HRESULT SetFormat(
 		[in] const DDSURFACEDESC *pDDSurfaceDesc,
-		[in, optional] IDirectDrawPalette *pDirectDrawPalette);
+		[in] IDirectDrawPalette *pDirectDrawPalette);
 
 	HRESULT GetDirectDraw(
 		[out] IDirectDraw **ppDirectDraw);
@@ -60,14 +60,14 @@ interface IDirectDrawMediaStream : IMediaStream
 		[in] IDirectDraw *pDirectDraw);
 
 	HRESULT CreateSample(
-		[in, optional] IDirectDrawSurface *pSurface,
-		[in, optional] const RECT *pRect,
+		[in] IDirectDrawSurface *pSurface,
+		[in] const RECT *pRect,
 		[in] DWORD dwFlags,
 		[out] IDirectDrawStreamSample **ppSample);
 
 	HRESULT GetTimePerFrame(
 		[out] STREAM_TIME *pFrameTime);
-};
+}
 
 
 [
@@ -79,10 +79,10 @@ pointer_default(unique)
 interface IDirectDrawStreamSample : IStreamSample
 {
 	HRESULT GetSurface(
-		[out, optional] IDirectDrawSurface ** ppDirectDrawSurface,
-		[out, optional] RECT * pRect);
+		[out] IDirectDrawSurface ** ppDirectDrawSurface,
+		[out] RECT * pRect);
 
 	HRESULT SetRect(
 		[in] const RECT * pRect);
 
-};
+}

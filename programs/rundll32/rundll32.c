@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
@@ -53,33 +53,35 @@ typedef void (WINAPI *EntryPointA)(HWND hWnd, HINSTANCE hInst, LPSTR lpszCmdLine
  * Control_RunDLL needs to have a window. So lets make us a very
  * simple window class.
  */
-static const TCHAR  *szTitle = "rundll32";
-static const TCHAR  *szWindowClass = "class_rundll32";
+static const WCHAR szTitle[] = {'r','u','n','d','l','l','3','2',0};
+static const WCHAR szWindowClass[] = {'c','l','a','s','s','_','r','u','n','d','l','l','3','2',0};
+static const WCHAR kernel32[] = {'k','e','r','n','e','l','3','2','.','d','l','l',0};
+static const WCHAR shell32[] = {'s','h','e','l','l','3','2','.','d','l','l',0};
 
 static HINSTANCE16 (WINAPI *pLoadLibrary16)(LPCSTR libname);
 static FARPROC16 (WINAPI *pGetProcAddress16)(HMODULE16 hModule, LPCSTR name);
 static void (WINAPI *pRunDLL_CallEntry16)( FARPROC proc, HWND hwnd, HINSTANCE inst,
                                            LPCSTR cmdline, INT cmdshow );
 
-static ATOM MyRegisterClass(HINSTANCE hInstance)
+static ATOM register_class(void)
 {
-    WNDCLASSEX wcex;
+    WNDCLASSEXW wcex;
 
-    wcex.cbSize = sizeof(WNDCLASSEX);
+    wcex.cbSize = sizeof(WNDCLASSEXW);
 
     wcex.style          = CS_HREDRAW | CS_VREDRAW;
-    wcex.lpfnWndProc    = DefWindowProc;
+    wcex.lpfnWndProc    = DefWindowProcW;
     wcex.cbClsExtra     = 0;
     wcex.cbWndExtra     = 0;
-    wcex.hInstance      = hInstance;
+    wcex.hInstance      = NULL;
     wcex.hIcon          = NULL;
-    wcex.hCursor        = LoadCursor(NULL, IDC_ARROW);
+    wcex.hCursor        = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
     wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
     wcex.lpszMenuName   = NULL;
     wcex.lpszClassName  = szWindowClass;
     wcex.hIconSm        = NULL;
 
-    return RegisterClassEx(&wcex);
+    return RegisterClassExW(&wcex);
 }
 
 static HINSTANCE16 load_dll16( LPCWSTR dll )
@@ -87,10 +89,14 @@ static HINSTANCE16 load_dll16( LPCWSTR dll )
     HINSTANCE16 ret = 0;
     DWORD len = WideCharToMultiByte( CP_ACP, 0, dll, -1, NULL, 0, NULL, NULL );
     char *dllA = HeapAlloc( GetProcessHeap(), 0, len );
-    WideCharToMultiByte( CP_ACP, 0, dll, -1, dllA, len, NULL, NULL );
-    pLoadLibrary16 = (void *)GetProcAddress( GetModuleHandleA("kernel32.dll"), "LoadLibrary16" );
-    if (pLoadLibrary16) ret = pLoadLibrary16( dllA );
-    HeapFree( GetProcessHeap(), 0, dllA );
+
+    if (dllA)
+    {
+        WideCharToMultiByte( CP_ACP, 0, dll, -1, dllA, len, NULL, NULL );
+        pLoadLibrary16 = (void *)GetProcAddress( GetModuleHandleW(kernel32), (LPCSTR)35 );
+        if (pLoadLibrary16) ret = pLoadLibrary16( dllA );
+        HeapFree( GetProcessHeap(), 0, dllA );
+    }
     return ret;
 }
 
@@ -99,48 +105,71 @@ static FARPROC16 get_entry_point16( HINSTANCE16 inst, LPCWSTR entry )
     FARPROC16 ret = 0;
     DWORD len = WideCharToMultiByte( CP_ACP, 0, entry, -1, NULL, 0, NULL, NULL );
     char *entryA = HeapAlloc( GetProcessHeap(), 0, len );
-    WideCharToMultiByte( CP_ACP, 0, entry, -1, entryA, len, NULL, NULL );
-    pGetProcAddress16 = (void *)GetProcAddress( GetModuleHandleA("kernel32.dll"), "GetProcAddress16" );
-    if (pGetProcAddress16) ret = pGetProcAddress16( inst, entryA );
-    HeapFree( GetProcessHeap(), 0, entryA );
+
+    if (entryA)
+    {
+        WideCharToMultiByte( CP_ACP, 0, entry, -1, entryA, len, NULL, NULL );
+        pGetProcAddress16 = (void *)GetProcAddress( GetModuleHandleW(kernel32), (LPCSTR)37 );
+        if (pGetProcAddress16) ret = pGetProcAddress16( inst, entryA );
+        HeapFree( GetProcessHeap(), 0, entryA );
+    }
     return ret;
 }
 
 static void *get_entry_point32( HMODULE module, LPCWSTR entry, BOOL *unicode )
 {
     void *ret;
-    DWORD len = WideCharToMultiByte( CP_ACP, 0, entry, -1, NULL, 0, NULL, NULL );
-    char *entryA = HeapAlloc( GetProcessHeap(), 0, len + 1 );
-    WideCharToMultiByte( CP_ACP, 0, entry, -1, entryA, len, NULL, NULL );
 
-    /* first try the W version */
-    *unicode = TRUE;
-    strcat( entryA, "W" );
-    if (!(ret = GetProcAddress( module, entryA )))
+    /* determine if the entry point is an ordinal */
+    if (entry[0] == '#')
     {
-        /* now the A version */
-        *unicode = FALSE;
-        entryA[strlen(entryA)-1] = 'A';
+        INT_PTR ordinal = atoiW( entry + 1 );
+        if (ordinal <= 0)
+            return NULL;
+
+        *unicode = TRUE;
+        ret = GetProcAddress( module, (LPCSTR)ordinal );
+    }
+    else
+    {
+        DWORD len = WideCharToMultiByte( CP_ACP, 0, entry, -1, NULL, 0, NULL, NULL );
+        char *entryA = HeapAlloc( GetProcessHeap(), 0, len + 1 );
+
+        if (!entryA)
+            return NULL;
+
+        WideCharToMultiByte( CP_ACP, 0, entry, -1, entryA, len, NULL, NULL );
+
+        /* first try the W version */
+        *unicode = TRUE;
+        strcat( entryA, "W" );
         if (!(ret = GetProcAddress( module, entryA )))
         {
-            /* now the version without suffix */
-            entryA[strlen(entryA)-1] = 0;
-            ret = GetProcAddress( module, entryA );
+            /* now the A version */
+            *unicode = FALSE;
+            entryA[strlen(entryA)-1] = 'A';
+            if (!(ret = GetProcAddress( module, entryA )))
+            {
+                /* now the version without suffix */
+                entryA[strlen(entryA)-1] = 0;
+                ret = GetProcAddress( module, entryA );
+            }
         }
+        HeapFree( GetProcessHeap(), 0, entryA );
     }
-    HeapFree( GetProcessHeap(), 0, entryA );
     return ret;
 }
 
-static LPWSTR GetNextArg(LPWSTR *cmdline)
+static LPWSTR get_next_arg(LPWSTR *cmdline)
 {
     LPWSTR s;
     LPWSTR arg,d;
-    int in_quotes,bcount,len=0;
+    BOOL in_quotes;
+    int bcount,len=0;
 
     /* count the chars */
     bcount=0;
-    in_quotes=0;
+    in_quotes=FALSE;
     s=*cmdline;
     while (1) {
         if (*s==0 || ((*s=='\t' || *s==' ') && !in_quotes)) {
@@ -165,7 +194,7 @@ static LPWSTR GetNextArg(LPWSTR *cmdline)
         return NULL;
 
     bcount=0;
-    in_quotes=0;
+    in_quotes=FALSE;
     d=arg;
     s=*cmdline;
     while (*s) {
@@ -211,43 +240,35 @@ static LPWSTR GetNextArg(LPWSTR *cmdline)
     return arg;
 }
 
-int main(int argc, char* argv[])
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE hOldInstance, LPWSTR szCmdLine, int nCmdShow)
 {
     HWND hWnd;
-    LPWSTR szCmdLine;
     LPWSTR szDllName,szEntryPoint;
     void *entry_point;
-    BOOL unicode, win16;
+    BOOL unicode = FALSE, win16;
     STARTUPINFOW info;
-    HMODULE hDll, instance;
+    HMODULE hDll;
 
     hWnd=NULL;
     hDll=NULL;
     szDllName=NULL;
 
     /* Initialize the rundll32 class */
-    MyRegisterClass( NULL );
-    hWnd = CreateWindow(szWindowClass, szTitle,
+    register_class();
+    hWnd = CreateWindowW(szWindowClass, szTitle,
           WS_OVERLAPPEDWINDOW|WS_VISIBLE,
           CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, NULL, NULL, NULL, NULL);
 
-    /* Skip the rundll32.exe path */
-    szCmdLine=GetCommandLineW();
-    WINE_TRACE("CmdLine=%s\n",wine_dbgstr_w(szCmdLine));
-    szDllName=GetNextArg(&szCmdLine);
-    if (!szDllName || *szDllName==0)
-        goto CLEANUP;
-    HeapFree(GetProcessHeap(),0,szDllName);
-
     /* Get the dll name and API EntryPoint */
-    szDllName=GetNextArg(&szCmdLine);
+    WINE_TRACE("CmdLine=%s\n",wine_dbgstr_w(szCmdLine));
+    szDllName = get_next_arg(&szCmdLine);
     if (!szDllName || *szDllName==0)
         goto CLEANUP;
     WINE_TRACE("DllName=%s\n",wine_dbgstr_w(szDllName));
     if ((szEntryPoint = strchrW(szDllName, ',' )))
         *szEntryPoint++=0;
     else
-        szEntryPoint = GetNextArg(&szCmdLine);
+        szEntryPoint = get_next_arg(&szCmdLine);
     WINE_TRACE("EntryPoint=%s\n",wine_dbgstr_w(szEntryPoint));
 
     /* Load the library */
@@ -281,7 +302,6 @@ int main(int argc, char* argv[])
 
     GetStartupInfoW( &info );
     if (!(info.dwFlags & STARTF_USESHOWWINDOW)) info.wShowWindow = SW_SHOWDEFAULT;
-    instance = GetModuleHandleW(NULL);  /* Windows always uses that, not hDll */
 
     if (unicode)
     {
@@ -296,6 +316,10 @@ int main(int argc, char* argv[])
     {
         DWORD len = WideCharToMultiByte( CP_ACP, 0, szCmdLine, -1, NULL, 0, NULL, NULL );
         char *cmdline = HeapAlloc( GetProcessHeap(), 0, len );
+
+        if (!cmdline)
+            goto CLEANUP;
+
         WideCharToMultiByte( CP_ACP, 0, szCmdLine, -1, cmdline, len, NULL, NULL );
 
         WINE_TRACE( "Calling %s (%p,%p,%s,%d)\n", wine_dbgstr_w(szEntryPoint),
@@ -303,7 +327,7 @@ int main(int argc, char* argv[])
 
         if (win16)
         {
-            HMODULE shell = LoadLibraryA( "shell32.dll" );
+            HMODULE shell = LoadLibraryW( shell32 );
             if (shell) pRunDLL_CallEntry16 = (void *)GetProcAddress( shell, (LPCSTR)122 );
             if (pRunDLL_CallEntry16)
                 pRunDLL_CallEntry16( entry_point, hWnd, instance, cmdline, info.wShowWindow );

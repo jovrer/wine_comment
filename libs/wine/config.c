@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -36,18 +36,30 @@
 #include "wine/library.h"
 
 static const char server_config_dir[] = "/.wine";        /* config dir relative to $HOME */
-static const char server_root_prefix[] = "/tmp/.wine-";  /* prefix for server root dir */
+static const char server_root_prefix[] = "/tmp/.wine";   /* prefix for server root dir */
 static const char server_dir_prefix[] = "/server-";      /* prefix for server dir */
 
+static char *bindir;
+static char *dlldir;
+static char *datadir;
 static char *config_dir;
 static char *server_dir;
+static char *build_dir;
 static char *user_name;
-static char *argv0_path;
 static char *argv0_name;
+static char *wineserver64;
 
 #ifdef __GNUC__
 static void fatal_error( const char *err, ... )  __attribute__((noreturn,format(printf,1,2)));
 static void fatal_perror( const char *err, ... )  __attribute__((noreturn,format(printf,1,2)));
+#endif
+
+#if defined(__linux__) || defined(__FreeBSD_kernel__ )
+static const char exe_link[] = "/proc/self/exe";
+#elif defined (__FreeBSD__) || defined(__DragonFly__)
+static const char exe_link[] = "/proc/curproc/file";
+#else
+static const char exe_link[] = "";
 #endif
 
 /* die on a fatal error */
@@ -94,37 +106,168 @@ static char *xstrdup( const char *str )
     return res;
 }
 
+/* check if a string ends in a given substring */
+static inline int strendswith( const char* str, const char* end )
+{
+    size_t len = strlen( str );
+    size_t tail = strlen( end );
+    return len >= tail && !strcmp( str + len - tail, end );
+}
+
 /* remove all trailing slashes from a path name */
-inline static void remove_trailing_slashes( char *path )
+static inline void remove_trailing_slashes( char *path )
 {
     int len = strlen( path );
     while (len > 1 && path[len-1] == '/') path[--len] = 0;
 }
 
+/* build a path from the specified dir and name */
+static char *build_path( const char *dir, const char *name )
+{
+    size_t len = strlen(dir);
+    char *ret = xmalloc( len + strlen(name) + 2 );
+
+    memcpy( ret, dir, len );
+    if (len && ret[len-1] != '/') ret[len++] = '/';
+    strcpy( ret + len, name );
+    return ret;
+}
+
+/* return the directory that contains the library at run-time */
+static char *get_runtime_libdir(void)
+{
+#ifdef HAVE_DLADDR
+    Dl_info info;
+    char *libdir;
+
+    if (dladdr( get_runtime_libdir, &info ) && info.dli_fname[0] == '/')
+    {
+        const char *p = strrchr( info.dli_fname, '/' );
+        unsigned int len = p - info.dli_fname;
+        if (!len) len++;  /* include initial slash */
+        libdir = xmalloc( len + 1 );
+        memcpy( libdir, info.dli_fname, len );
+        libdir[len] = 0;
+        return libdir;
+    }
+#endif /* HAVE_DLADDR */
+    return NULL;
+}
+
+/* read a symlink and return its directory */
+static char *symlink_dirname( const char *name )
+{
+    char *p, *buffer, *absdir = NULL;
+    int ret, size;
+
+    for (size = 256; ; size *= 2)
+    {
+        if (!(buffer = malloc( size ))) return NULL;
+        if ((ret = readlink( name, buffer, size )) == -1) break;
+        if (ret != size)
+        {
+            buffer[ret] = 0;
+            if (!(p = strrchr( buffer, '/' ))) break;
+            if (p == buffer) p++;
+            *p = 0;
+            if (buffer[0] == '/') return buffer;
+            /* make it absolute */
+            absdir = xmalloc( strlen(name) + strlen(buffer) + 1 );
+            strcpy( absdir, name );
+            if (!(p = strrchr( absdir, '/' ))) break;
+            strcpy( p + 1, buffer );
+            free( buffer );
+            return absdir;
+        }
+        free( buffer );
+    }
+    free( buffer );
+    free( absdir );
+    return NULL;
+}
+
+/* return the directory that contains the main exe at run-time */
+static char *get_runtime_exedir(void)
+{
+    if (exe_link[0]) return symlink_dirname( exe_link );
+    return NULL;
+}
+
+/* return the base directory from argv0 */
+static char *get_runtime_argvdir( const char *argv0 )
+{
+    char *p, *bindir, *cwd;
+    int len, size;
+
+    if (!(p = strrchr( argv0, '/' ))) return NULL;
+
+    len = p - argv0;
+    if (!len) len++;  /* include leading slash */
+
+    if (argv0[0] == '/')  /* absolute path */
+    {
+        bindir = xmalloc( len + 1 );
+        memcpy( bindir, argv0, len );
+        bindir[len] = 0;
+    }
+    else
+    {
+        /* relative path, make it absolute */
+        for (size = 256 + len; ; size *= 2)
+        {
+            if (!(cwd = malloc( size ))) return NULL;
+            if (getcwd( cwd, size - len ))
+            {
+                bindir = cwd;
+                cwd += strlen(cwd);
+                *cwd++ = '/';
+                memcpy( cwd, argv0, len );
+                cwd[len] = 0;
+                break;
+            }
+            free( cwd );
+            if (errno != ERANGE) return NULL;
+        }
+    }
+    return bindir;
+}
+
 /* initialize the server directory value */
 static void init_server_dir( dev_t dev, ino_t ino )
 {
-    char *p;
-#ifdef HAVE_GETUID
-    const unsigned int uid = getuid();
+    char *p, *root;
+
+#ifdef __ANDROID__  /* there's no /tmp dir on Android */
+    root = build_path( config_dir, ".wineserver" );
+#elif defined(HAVE_GETUID)
+    root = xmalloc( sizeof(server_root_prefix) + 12 );
+    sprintf( root, "%s-%u", server_root_prefix, getuid() );
 #else
-    const unsigned int uid = 0;
+    root = xstrdup( server_root_prefix );
 #endif
 
-    server_dir = xmalloc( sizeof(server_root_prefix) + 32 + sizeof(server_dir_prefix) +
-                          2*sizeof(dev) + 2*sizeof(ino) );
-    sprintf( server_dir, "%s%u%s", server_root_prefix, uid, server_dir_prefix );
+    server_dir = xmalloc( strlen(root) + sizeof(server_dir_prefix) + 2*sizeof(dev) + 2*sizeof(ino) + 2 );
+    strcpy( server_dir, root );
+    strcat( server_dir, server_dir_prefix );
     p = server_dir + strlen(server_dir);
 
-    if (sizeof(dev) > sizeof(unsigned long) && dev > ~0UL)
-        p += sprintf( p, "%lx%08lx-", (unsigned long)(dev >> 32), (unsigned long)dev );
+    if (dev != (unsigned long)dev)
+        p += sprintf( p, "%lx%08lx-", (unsigned long)((unsigned long long)dev >> 32), (unsigned long)dev );
     else
         p += sprintf( p, "%lx-", (unsigned long)dev );
 
-    if (sizeof(ino) > sizeof(unsigned long) && ino > ~0UL)
-        sprintf( p, "%lx%08lx", (unsigned long)(ino >> 32), (unsigned long)ino );
+    if (ino != (unsigned long)ino)
+        sprintf( p, "%lx%08lx", (unsigned long)((unsigned long long)ino >> 32), (unsigned long)ino );
     else
         sprintf( p, "%lx", (unsigned long)ino );
+    free( root );
+}
+
+/* retrieve the default dll dir */
+const char *get_dlldir( const char **default_dlldir )
+{
+    *default_dlldir = DLLDIR;
+    return dlldir;
 }
 
 /* initialize all the paths values */
@@ -147,7 +290,7 @@ static void init_paths(void)
     }
     if (!user)
     {
-        sprintf( uid_str, "%u", getuid() );
+        sprintf( uid_str, "%lu", (unsigned long)getuid() );
         user = uid_str;
     }
 #else  /* HAVE_GETPWUID */
@@ -160,16 +303,14 @@ static void init_paths(void)
 
     if (prefix)
     {
-        if (!(config_dir = strdup( prefix ))) fatal_error( "virtual memory exhausted\n");
+        config_dir = xstrdup( prefix );
         remove_trailing_slashes( config_dir );
         if (config_dir[0] != '/')
             fatal_error( "invalid directory %s in WINEPREFIX: not an absolute path\n", prefix );
         if (stat( config_dir, &st ) == -1)
         {
-            if (errno != ENOENT)
-                fatal_perror( "cannot open %s as specified in WINEPREFIX", config_dir );
-            fatal_error( "the '%s' directory specified in WINEPREFIX doesn't exist.\n"
-                         "You may want to create it by running 'wineprefixcreate'.\n", config_dir );
+            if (errno == ENOENT) return;  /* will be created later on */
+            fatal_perror( "cannot open %s as specified in WINEPREFIX", config_dir );
         }
     }
     else
@@ -187,48 +328,148 @@ static void init_paths(void)
         }
     }
     if (!S_ISDIR(st.st_mode)) fatal_error( "%s is not a directory\n", config_dir );
+#ifdef HAVE_GETUID
+    if (st.st_uid != getuid()) fatal_error( "%s is not owned by you\n", config_dir );
+#endif
 
     init_server_dir( st.st_dev, st.st_ino );
+}
+
+/* check if bindir is valid by checking for wineserver */
+static int is_valid_bindir( const char *bindir )
+{
+    struct stat st;
+    char *path = build_path( bindir, "wineserver" );
+    int ret = (stat( path, &st ) != -1);
+    free( path );
+    return ret;
+}
+
+/* check if dlldir is valid by checking for ntdll */
+static int is_valid_dlldir( const char *dlldir )
+{
+    struct stat st;
+    char *path = build_path( dlldir, "ntdll.dll.so" );
+    int ret = (stat( path, &st ) != -1);
+    free( path );
+    return ret;
+}
+
+/* check if basedir is a valid build dir by checking for wineserver and ntdll */
+/* helper for running_from_build_dir */
+static inline int is_valid_build_dir( char *basedir, int baselen )
+{
+    struct stat st;
+
+    strcpy( basedir + baselen, "/server/wineserver" );
+    if (stat( basedir, &st ) == -1) return 0;  /* no wineserver found */
+    /* check for ntdll too to make sure */
+    strcpy( basedir + baselen, "/dlls/ntdll/ntdll.dll.so" );
+    if (stat( basedir, &st ) == -1) return 0;  /* no ntdll found */
+
+    basedir[baselen] = 0;
+    return 1;
+}
+
+/* check if we are running from the build directory */
+static char *running_from_build_dir( const char *basedir )
+{
+    const char *p;
+    char *path;
+
+    /* remove last component from basedir */
+    p = basedir + strlen(basedir) - 1;
+    while (p > basedir && *p == '/') p--;
+    while (p > basedir && *p != '/') p--;
+    if (p == basedir) return NULL;
+    path = xmalloc( p - basedir + sizeof("/dlls/ntdll/ntdll.dll.so") );
+    memcpy( path, basedir, p - basedir );
+
+    if (!is_valid_build_dir( path, p - basedir ))
+    {
+        /* remove another component */
+        while (p > basedir && *p == '/') p--;
+        while (p > basedir && *p != '/') p--;
+        if (p == basedir || !is_valid_build_dir( path, p - basedir ))
+        {
+            free( path );
+            return NULL;
+        }
+    }
+    return path;
+}
+
+/* try to set the specified directory as bindir, or set build_dir if it's inside the build directory */
+static int set_bindir( char *dir )
+{
+    if (!dir) return 0;
+    if (is_valid_bindir( dir ))
+    {
+        bindir = dir;
+        dlldir = build_path( bindir, BIN_TO_DLLDIR );
+    }
+    else
+    {
+        build_dir = running_from_build_dir( dir );
+        free( dir );
+    }
+    return bindir || build_dir;
+}
+
+/* try to set the specified directory as dlldir, or set build_dir if it's inside the build directory */
+static int set_dlldir( char *libdir )
+{
+    char *path;
+
+    if (!libdir) return 0;
+
+    path = build_path( libdir, LIB_TO_DLLDIR );
+    if (is_valid_dlldir( path ))
+    {
+        dlldir = path;
+        bindir = build_path( libdir, LIB_TO_BINDIR );
+    }
+    else
+    {
+        build_dir = running_from_build_dir( libdir );
+        free( path );
+    }
+    free( libdir );
+    return dlldir || build_dir;
 }
 
 /* initialize the argv0 path */
 void wine_init_argv0_path( const char *argv0 )
 {
-    size_t size, len;
-    const char *p;
-    char *cwd;
+    const char *basename, *wineloader;
 
-    if (!(p = strrchr( argv0, '/' )))
-    {
-        argv0_name = xstrdup( argv0 );
-        return;  /* if argv0 doesn't contain a path, don't store any path */
-    }
-    else argv0_name = xstrdup( p + 1 );
+    if (!(basename = strrchr( argv0, '/' ))) basename = argv0;
+    else basename++;
 
-    len = p - argv0 + 1;
-    if (argv0[0] == '/')  /* absolute path */
-    {
-        argv0_path = xmalloc( len + 1 );
-        memcpy( argv0_path, argv0, len );
-        argv0_path[len] = 0;
-        return;
-    }
+    if (set_bindir( get_runtime_exedir() )) goto done;
+    if (set_dlldir( get_runtime_libdir() )) goto done;
+    if (set_bindir( get_runtime_argvdir( argv0 ))) goto done;
+    if ((wineloader = getenv( "WINELOADER" ))) set_bindir( get_runtime_argvdir( wineloader ));
 
-    /* relative path, make it absolute */
-    for (size = 256 + len; ; size *= 2)
+done:
+    if (build_dir)
     {
-        if (!(cwd = malloc( size ))) break;
-        if (getcwd( cwd, size - len ))
+        argv0_name = build_path( "loader/", basename );
+        if (sizeof(int) == sizeof(void *))
         {
-            argv0_path = cwd;
-            cwd += strlen(cwd);
-            *cwd++ = '/';
-            memcpy( cwd, argv0, len );
-            cwd[len] = 0;
-            return;
+            char *loader, *linkname = build_path( build_dir, "loader/wine64" );
+            if ((loader = symlink_dirname( linkname )))
+            {
+                wineserver64 = build_path( loader, "../server/wineserver" );
+                free( loader );
+            }
+            free( linkname );
         }
-        free( cwd );
-        if (errno != ERANGE) break;
+    }
+    else
+    {
+        if (bindir) datadir = build_path( bindir, BIN_TO_DATADIR );
+        argv0_name = xstrdup( basename );
     }
 }
 
@@ -237,6 +478,18 @@ const char *wine_get_config_dir(void)
 {
     if (!config_dir) init_paths();
     return config_dir;
+}
+
+/* retrieve the wine data dir */
+const char *wine_get_data_dir(void)
+{
+    return datadir;
+}
+
+/* retrieve the wine build dir (if we are running from there) */
+const char *wine_get_build_dir(void)
+{
+    return build_dir;
 }
 
 /* return the full name of the server directory (the one containing the socket) */
@@ -267,67 +520,93 @@ const char *wine_get_user_name(void)
     return user_name;
 }
 
-/* exec a binary using the preloader if requested; helper for wine_exec_wine_binary */
-static void preloader_exec( char **argv, char **envp, int use_preloader )
+/* return the standard version string */
+const char *wine_get_version(void)
 {
-#ifdef linux
+    return PACKAGE_VERSION;
+}
+
+/* return the build id string */
+const char *wine_get_build_id(void)
+{
+    extern const char wine_build[];
+    return wine_build;
+}
+
+/* exec a binary using the preloader if requested; helper for wine_exec_wine_binary */
+static void preloader_exec( char **argv, int use_preloader )
+{
     if (use_preloader)
     {
         static const char preloader[] = "wine-preloader";
+        static const char preloader64[] = "wine64-preloader";
         char *p, *full_name;
         char **last_arg = argv, **new_argv;
 
         if (!(p = strrchr( argv[0], '/' ))) p = argv[0];
         else p++;
 
-        full_name = xmalloc( p - argv[0] + sizeof(preloader) );
+        full_name = xmalloc( p - argv[0] + sizeof(preloader64) );
         memcpy( full_name, argv[0], p - argv[0] );
-        memcpy( full_name + (p - argv[0]), preloader, sizeof(preloader) );
+        if (strendswith( p, "64" ))
+            memcpy( full_name + (p - argv[0]), preloader64, sizeof(preloader64) );
+        else
+            memcpy( full_name + (p - argv[0]), preloader, sizeof(preloader) );
 
         /* make a copy of argv */
         while (*last_arg) last_arg++;
         new_argv = xmalloc( (last_arg - argv + 2) * sizeof(*argv) );
         memcpy( new_argv + 1, argv, (last_arg - argv + 1) * sizeof(*argv) );
         new_argv[0] = full_name;
-        if (envp) execve( full_name, new_argv, envp );
-        else execv( full_name, new_argv );
+        execv( full_name, new_argv );
         free( new_argv );
         free( full_name );
-        return;
     }
-#endif
-    if (envp) execve( argv[0], argv, envp );
-    else execv( argv[0], argv );
+    execv( argv[0], argv );
 }
 
 /* exec a wine internal binary (either the wine loader or the wine server) */
-void wine_exec_wine_binary( const char *name, char **argv, char **envp, int use_preloader )
+void wine_exec_wine_binary( const char *name, char **argv, const char *env_var )
 {
     const char *path, *pos, *ptr;
+    int use_preloader;
 
-    if (name && strchr( name, '/' ))
+    if (!name) name = argv0_name;  /* no name means default loader */
+
+#if defined(linux) || defined(__APPLE__)
+    use_preloader = !strendswith( name, "wineserver" );
+#else
+    use_preloader = 0;
+#endif
+
+    if ((ptr = strrchr( name, '/' )))
     {
-        argv[0] = (char *)name;
-        preloader_exec( argv, envp, use_preloader );
-        return;
+        /* if we are in build dir and name contains a path, try that */
+        if (build_dir)
+        {
+            if (wineserver64 && !strcmp( name, "server/wineserver" ))
+                argv[0] = xstrdup( wineserver64 );
+            else
+                argv[0] = build_path( build_dir, name );
+            preloader_exec( argv, use_preloader );
+            free( argv[0] );
+        }
+        name = ptr + 1;  /* get rid of path */
     }
-    else if (!name) name = argv0_name;
 
-    /* first, try bin directory */
-    argv[0] = xmalloc( sizeof(BINDIR "/") + strlen(name) );
-    strcpy( argv[0], BINDIR "/" );
-    strcat( argv[0], name );
-    preloader_exec( argv, envp, use_preloader );
-    free( argv[0] );
-
-    /* now try the path of argv0 of the current binary */
-    if (argv0_path)
+    /* first, bin directory from the current libdir or argv0 */
+    if (bindir)
     {
-        argv[0] = xmalloc( strlen(argv0_path) + strlen(name) + 1 );
-        strcpy( argv[0], argv0_path );
-        strcat( argv[0], name );
-        preloader_exec( argv, envp, use_preloader );
+        argv[0] = build_path( bindir, name );
+        preloader_exec( argv, use_preloader );
         free( argv[0] );
+    }
+
+    /* then specified environment variable */
+    if (env_var)
+    {
+        argv[0] = (char *)env_var;
+        preloader_exec( argv, use_preloader );
     }
 
     /* now search in the Unix path */
@@ -343,9 +622,14 @@ void wine_exec_wine_binary( const char *name, char **argv, char **envp, int use_
             memcpy( argv[0], pos, ptr - pos );
             strcpy( argv[0] + (ptr - pos), "/" );
             strcat( argv[0] + (ptr - pos), name );
-            preloader_exec( argv, envp, use_preloader );
+            preloader_exec( argv, use_preloader );
             pos = ptr;
         }
         free( argv[0] );
     }
+
+    /* and finally try BINDIR */
+    argv[0] = build_path( BINDIR, name );
+    preloader_exec( argv, use_preloader );
+    free( argv[0] );
 }

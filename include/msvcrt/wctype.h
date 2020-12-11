@@ -15,20 +15,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_WCTYPE_H
 #define __WINE_WCTYPE_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
 
-#ifndef _WCHAR_T_DEFINED
-#define _WCHAR_T_DEFINED
-#ifndef __cplusplus
-typedef unsigned short wchar_t;
-#endif
-#endif
+#include <crtdefs.h>
+
+#include <pshpack8.h>
 
 /* ASCII char classification table - binary compatible */
 #define _UPPER        0x0001  /* C1_UPPER */
@@ -46,12 +40,6 @@ typedef unsigned short wchar_t;
 #define WEOF        (wint_t)(0xFFFF)
 #endif
 
-#ifndef _WCTYPE_T_DEFINED
-typedef unsigned short  wint_t;
-typedef unsigned short  wctype_t;
-#define _WCTYPE_T_DEFINED
-#endif
-
 /* FIXME: there's something to do with __p__pctype and __p__pwctype */
 
 
@@ -61,27 +49,34 @@ extern "C" {
 
 #ifndef _WCTYPE_DEFINED
 #define _WCTYPE_DEFINED
-int is_wctype(wint_t,wctype_t);
-int isleadbyte(int);
-int iswalnum(wint_t);
-int iswalpha(wint_t);
-int iswascii(wint_t);
-int iswcntrl(wint_t);
-int iswctype(wint_t,wctype_t);
-int iswdigit(wint_t);
-int iswgraph(wint_t);
-int iswlower(wint_t);
-int iswprint(wint_t);
-int iswpunct(wint_t);
-int iswspace(wint_t);
-int iswupper(wint_t);
-int iswxdigit(wint_t);
-wchar_t towlower(wchar_t);
-wchar_t towupper(wchar_t);
+int __cdecl is_wctype(wint_t,wctype_t);
+int __cdecl isleadbyte(int);
+int __cdecl iswalnum(wint_t);
+int __cdecl iswalpha(wint_t);
+int __cdecl iswascii(wint_t);
+int __cdecl iswcntrl(wint_t);
+int __cdecl iswctype(wint_t,wctype_t);
+int __cdecl iswdigit(wint_t);
+int __cdecl iswgraph(wint_t);
+int __cdecl iswlower(wint_t);
+int __cdecl iswprint(wint_t);
+int __cdecl iswpunct(wint_t);
+int __cdecl iswspace(wint_t);
+int __cdecl iswupper(wint_t);
+int __cdecl iswxdigit(wint_t);
+wchar_t __cdecl towlower(wchar_t);
+wchar_t __cdecl towupper(wchar_t);
 #endif /* _WCTYPE_DEFINED */
+
+typedef wchar_t wctrans_t;
+wint_t __cdecl towctrans(wint_t,wctrans_t);
+wctrans_t __cdecl wctrans(const char *);
+wctype_t __cdecl wctype(const char *);
 
 #ifdef __cplusplus
 }
 #endif
+
+#include <poppack.h>
 
 #endif /* __WINE_WCTYPE_H */

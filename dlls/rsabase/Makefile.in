@@ -1,14 +1,4 @@
-EXTRADEFS = -DCOM_NO_WINDOWS_H
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = rsabase.dll
-IMPORTLIB = librsabase.$(IMPLIBEXT)
-IMPORTS   = rsaenh kernel32
+IMPORTS   = rsaenh
 
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = version.rc

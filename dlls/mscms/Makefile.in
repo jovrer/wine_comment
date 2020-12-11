@@ -1,11 +1,8 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = mscms.dll
-IMPORTLIB = libmscms.$(IMPLIBEXT)
-IMPORTS   = kernel32 ntdll
-EXTRALIBS = @LCMSLIBS@
+IMPORTLIB = mscms
+IMPORTS   = shlwapi advapi32
+EXTRAINCL = $(LCMS2_CFLAGS)
+EXTRALIBS = $(LCMS2_LIBS)
 
 C_SRCS = \
 	handle.c \
@@ -16,9 +13,3 @@ C_SRCS = \
 	transform.c
 
 RC_SRCS = version.rc
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

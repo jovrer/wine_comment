@@ -7,9 +7,10 @@
  */
 #ifndef __WINE_DOS_H
 #define __WINE_DOS_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
+
+#include <pshpack8.h>
 
 /* The following are also defined in io.h */
 #define _A_NORMAL 0x00000000
@@ -35,7 +36,7 @@ struct _diskfree_t {
 extern "C" {
 #endif
 
-unsigned int _getdiskfree(unsigned int, struct _diskfree_t *);
+unsigned int __cdecl _getdiskfree(unsigned int, struct _diskfree_t *);
 
 #ifdef __cplusplus
 }
@@ -43,5 +44,7 @@ unsigned int _getdiskfree(unsigned int, struct _diskfree_t *);
 
 
 #define diskfree_t _diskfree_t
+
+#include <poppack.h>
 
 #endif /* __WINE_DOS_H */

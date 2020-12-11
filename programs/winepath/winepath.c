@@ -17,8 +17,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#define WIN32_LEAN_AND_MEAN
 
 #include "config.h"
 
@@ -32,7 +34,8 @@ enum {
     SHORTFORMAT   = 1,
     LONGFORMAT    = 2,
     UNIXFORMAT    = 4,
-    WINDOWSFORMAT = 8
+    WINDOWSFORMAT = 8,
+    PRINT0        = 16,
 };
 
 static const char progname[] = "winepath";
@@ -47,8 +50,11 @@ static int option(int shortopt, const WCHAR *longopt)
     "\n"
     "  -u, --unix    converts a Windows path to a Unix path\n"
     "  -w, --windows converts a Unix path to a long Windows path\n"
-    "  -l, --long    converts a short Windows path to the long format\n"
-    "  -s, --short   converts a long Windows path to the short format\n"
+    "  -l, --long    converts the short Windows path of an existing file or\n"
+    "                directory to the long format\n"
+    "  -s, --short   converts the long Windows path of an existing file or\n"
+    "                directory to the short format\n"
+    "  -0            separate output with \\0 character, instead of a newline\n"
     "  -h, --help    output this help message and exit\n"
     "  -v, --version output version information and exit\n"
     "\n"
@@ -72,6 +78,8 @@ static int option(int shortopt, const WCHAR *longopt)
             return UNIXFORMAT;
         case 'w':
             return WINDOWSFORMAT;
+        case '0':
+            return PRINT0;
     }
 
     fprintf(stderr, "%s: invalid option ", progname);
@@ -86,7 +94,7 @@ static int option(int shortopt, const WCHAR *longopt)
 /*
  * Parse command line options
  */
-static int parse_options(const WCHAR *argv[])
+static int parse_options(WCHAR *argv[])
 {
     static const WCHAR longW[] = { 'l','o','n','g',0 };
     static const WCHAR shortW[] = { 's','h','o','r','t',0 };
@@ -97,7 +105,7 @@ static int parse_options(const WCHAR *argv[])
     static const WCHAR nullW[] = { 0 };
     static const WCHAR *longopts[] = { longW, shortW, unixW, windowsW, helpW, versionW, nullW };
     int outputformats = 0;
-    int done = 0;
+    BOOL done = FALSE;
     int i, j;
 
     for (i = 1; argv[i] && !done; )
@@ -111,7 +119,7 @@ static int parse_options(const WCHAR *argv[])
         if (argv[i][1] == '-') {
             if (argv[i][2] == 0) {
                 /* '--' end of options */
-                done = 1;
+                done = TRUE;
             } else {
                 /* long option */
                 for (j = 0; longopts[j][0]; j++)
@@ -136,22 +144,32 @@ static int parse_options(const WCHAR *argv[])
 /*
  * Main function
  */
-int wmain(int argc, const WCHAR *argv[])
+int wmain(int argc, WCHAR *argv[])
 {
-    LPSTR (*wine_get_unix_file_name_ptr)(LPCWSTR) = NULL;
-    LPWSTR (*wine_get_dos_file_name_ptr)(LPCSTR) = NULL;
+    LPSTR (*CDECL wine_get_unix_file_name_ptr)(LPCWSTR) = NULL;
+    LPWSTR (*CDECL wine_get_dos_file_name_ptr)(LPCSTR) = NULL;
     WCHAR dos_pathW[MAX_PATH];
     char path[MAX_PATH];
     int outputformats;
     int i;
+    int separator;
 
     outputformats = parse_options(argv);
+
+    if (outputformats & PRINT0)
+    {
+        separator = '\0';
+        outputformats ^= PRINT0;
+    }
+    else
+        separator = '\n';
+
     if (outputformats == 0)
         outputformats = UNIXFORMAT;
 
     if (outputformats & UNIXFORMAT) {
         wine_get_unix_file_name_ptr = (void*)
-            GetProcAddress(GetModuleHandle("KERNEL32"),
+            GetProcAddress(GetModuleHandleA("KERNEL32"),
                            "wine_get_unix_file_name");
         if (wine_get_unix_file_name_ptr == NULL) {
             fprintf(stderr, "%s: cannot get the address of "
@@ -162,7 +180,7 @@ int wmain(int argc, const WCHAR *argv[])
 
     if (outputformats & WINDOWSFORMAT) {
         wine_get_dos_file_name_ptr = (void*)
-            GetProcAddress(GetModuleHandle("KERNEL32"),
+            GetProcAddress(GetModuleHandleA("KERNEL32"),
                            "wine_get_dos_file_name");
         if (wine_get_dos_file_name_ptr == NULL) {
             fprintf(stderr, "%s: cannot get the address of "
@@ -175,24 +193,71 @@ int wmain(int argc, const WCHAR *argv[])
     {
         *path='\0';
         if (outputformats & LONGFORMAT) {
-            if (GetFullPathNameW(argv[i], MAX_PATH, dos_pathW, NULL))
+            if (GetLongPathNameW(argv[i], dos_pathW, MAX_PATH))
                 WideCharToMultiByte(CP_UNIXCP, 0, dos_pathW, -1, path, MAX_PATH, NULL, NULL);
-            printf("%s\n", path);
+            printf("%s%c", path, separator);
         }
         if (outputformats & SHORTFORMAT) {
             if (GetShortPathNameW(argv[i], dos_pathW, MAX_PATH))
                 WideCharToMultiByte(CP_UNIXCP, 0, dos_pathW, -1, path, MAX_PATH, NULL, NULL);
-            printf("%s\n", path);
+            printf("%s%c", path, separator);
         }
         if (outputformats & UNIXFORMAT) {
-            char *unix_name;
-
-            if ((unix_name = wine_get_unix_file_name_ptr(argv[i])))
+            WCHAR *ntpath, *tail;
+            int ntpathlen=lstrlenW(argv[i]);
+            ntpath=HeapAlloc(GetProcessHeap(), 0, sizeof(*ntpath)*(ntpathlen+1));
+            lstrcpyW(ntpath, argv[i]);
+            tail=NULL;
+            while (1)
             {
-                printf("%s\n", unix_name);
-                HeapFree( GetProcessHeap(), 0, unix_name );
+                char *unix_name;
+                WCHAR *slash, *c;
+
+                unix_name = wine_get_unix_file_name_ptr(ntpath);
+                if (unix_name)
+                {
+                    if (tail)
+                    {
+                        WideCharToMultiByte(CP_UNIXCP, 0, tail+1, -1, path, MAX_PATH, NULL, NULL);
+                        printf("%s/%s%c", unix_name, path, separator);
+                    }
+                    else
+                    {
+                        printf("%s%c", unix_name, separator);
+                    }
+                    HeapFree( GetProcessHeap(), 0, unix_name );
+                    break;
+                }
+
+                slash=(tail ? tail : ntpath+ntpathlen);
+                while (slash != ntpath && *slash != '/' && *slash != '\\')
+                    slash--;
+                if (slash == ntpath)
+                {
+                    /* This is a complete path conversion failure.
+                     * It would typically happen if ntpath == "".
+                     */
+                    printf("%c", separator);
+                    break;
+                }
+                c=slash+1;
+                while (*c != '\0' && *c != '*' && *c != '?' &&
+                       *c != '<' && *c != '>' && *c != '|' && *c != '"')
+                    c++;
+                if (*c != '\0')
+                {
+                    /* If this is not a valid NT path to start with,
+                     * then obviously we cannot convert it.
+                     */
+                    printf("%c", separator);
+                    break;
+                }
+                if (tail)
+                    *tail='/';
+                tail=slash;
+                *tail='\0';
             }
-            else printf( "\n" );
+            HeapFree(GetProcessHeap(), 0, ntpath);
         }
         if (outputformats & WINDOWSFORMAT) {
             WCHAR* windows_name;
@@ -206,10 +271,10 @@ int wmain(int argc, const WCHAR *argv[])
             if ((windows_name = wine_get_dos_file_name_ptr(unix_name)))
             {
                 WideCharToMultiByte(CP_UNIXCP, 0, windows_name, -1, path, MAX_PATH, NULL, NULL);
-                printf("%s\n", path);
+                printf("%s%c", path, separator);
                 HeapFree( GetProcessHeap(), 0, windows_name );
             }
-            else printf( "\n" );
+            else printf("%c", separator);
             HeapFree( GetProcessHeap(), 0, unix_name );
         }
     }

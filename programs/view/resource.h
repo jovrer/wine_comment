@@ -13,14 +13,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define IDS_APPNAME                     1
+#include <windef.h>
+
 #define IDS_DESCRIPTION                 2
 #define IDI_APPICON                     101
 #define IDM_EXIT                        1000
-#define IDM_HELLO                       501
 #define IDM_OPEN                        502
 #define IDM_SET_EXT_TO_WIN              503
 #define IDM_LEFT                        601

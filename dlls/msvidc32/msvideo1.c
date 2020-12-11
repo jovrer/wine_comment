@@ -7,7 +7,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
@@ -31,26 +31,29 @@
  * if it's present, then the data is PAL8; RGB555 otherwise.
  */
 
-#include <stdarg.h> 
+#include <stdarg.h>
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h" 
 #include "commdlg.h"
 #include "vfw.h"
- 
 #include "mmsystem.h"
+#include "msvidc32_private.h"
  
 #include "wine/debug.h"
  
 WINE_DEFAULT_DEBUG_CHANNEL(msvidc32); 
 
+static HINSTANCE MSVIDC32_hModule;
+
 #define CRAM_MAGIC mmioFOURCC('C', 'R', 'A', 'M')
 #define MSVC_MAGIC mmioFOURCC('M', 'S', 'V', 'C')
 #define WHAM_MAGIC mmioFOURCC('W', 'H', 'A', 'M')
+#define compare_fourcc(fcc1, fcc2) (((fcc1)^(fcc2))&~0x20202020)
 
 #define PALETTE_COUNT 256
-#define LE_16(x)  ((((uint8_t*)(x))[1] << 8) | ((uint8_t*)(x))[0])
+#define LE_16(x)  ((((const uint8_t *)(x))[1] << 8) | ((const uint8_t *)(x))[0])
 
 /* FIXME - check the stream size */
 #define CHECK_STREAM_PTR(n) \
@@ -64,11 +67,11 @@ typedef BYTE uint8_t;
 
 typedef struct Msvideo1Context {
     DWORD dwMagic;
-    int mode_8bit;  /* if it's not 8-bit, it's 16-bit */
+    BOOL mode_8bit;  /* if it's not 8-bit, it's 16-bit */
 } Msvideo1Context;
 
 static void 
-msvideo1_decode_8bit( int width, int height, unsigned char *buf, int buf_size,
+msvideo1_decode_8bit( int width, int height, const unsigned char *buf, int buf_size,
                       unsigned char *pixels, int stride)
 {
     int block_ptr, pixel_ptr;
@@ -92,10 +95,18 @@ msvideo1_decode_8bit( int width, int height, unsigned char *buf, int buf_size,
     blocks_high = height / 4;
     total_blocks = blocks_wide * blocks_high;
     block_inc = 4;
+#ifdef ORIGINAL
     row_dec = stride + 4;
+#else
+    row_dec = - (stride - 4); /* such that -row_dec > 0 */
+#endif
 
     for (block_y = blocks_high; block_y > 0; block_y--) {
+#ifdef ORIGINAL
         block_ptr = ((block_y * 4) - 1) * stride;
+#else
+        block_ptr = ((blocks_high - block_y) * 4) * stride;
+#endif
         for (block_x = blocks_wide; block_x > 0; block_x--) {
             /* check if this block should be skipped */
             if (skip_blocks) {
@@ -128,16 +139,7 @@ msvideo1_decode_8bit( int width, int height, unsigned char *buf, int buf_size,
 
                 for (pixel_y = 0; pixel_y < 4; pixel_y++) {
                     for (pixel_x = 0; pixel_x < 4; pixel_x++, flags >>= 1)
-                    {
-#if ORIGINAL
                         pixels[pixel_ptr++] = colors[(flags & 0x1) ^ 1];
-#else
-                        pixels[width*(height-(pixel_ptr/width)-1) + 
-                               pixel_ptr%width] = 
-                               colors[(flags & 0x1) ^ 1];
-                        pixel_ptr++;
-#endif
-                    }
                     pixel_ptr -= row_dec;
                 }
             } else if (byte_b >= 0x90) {
@@ -150,19 +152,9 @@ msvideo1_decode_8bit( int width, int height, unsigned char *buf, int buf_size,
 
                 for (pixel_y = 0; pixel_y < 4; pixel_y++) {
                     for (pixel_x = 0; pixel_x < 4; pixel_x++, flags >>= 1)
-                    {
-#if ORIGINAL
-                        pixels[pixel_ptr++] = 
-                            colors[((pixel_y & 0x2) << 1) + 
+                        pixels[pixel_ptr++] =
+                            colors[((pixel_y & 0x2) << 1) +
                                 (pixel_x & 0x2) + ((flags & 0x1) ^ 1)];
-#else
-                        pixels[width*(height-(pixel_ptr/width)-1) + 
-                               pixel_ptr%width] = 
-                            colors[((pixel_y & 0x2) << 1) + 
-                                (pixel_x & 0x2) + ((flags & 0x1) ^ 1)];
-                        pixel_ptr++;
-#endif
-                    }
                     pixel_ptr -= row_dec;
                 }
             } else {
@@ -171,15 +163,7 @@ msvideo1_decode_8bit( int width, int height, unsigned char *buf, int buf_size,
 
                 for (pixel_y = 0; pixel_y < 4; pixel_y++) {
                     for (pixel_x = 0; pixel_x < 4; pixel_x++)
-                    {
-#if ORIGINAL
                         pixels[pixel_ptr++] = colors[0];
-#else
-                        pixels[width*(height-(pixel_ptr/width)-1) + 
-                               pixel_ptr%width] = colors[0];
-                        pixel_ptr++;
-#endif
-                    }
                     pixel_ptr -= row_dec;
                 }
             }
@@ -191,7 +175,7 @@ msvideo1_decode_8bit( int width, int height, unsigned char *buf, int buf_size,
 }
 
 static void
-msvideo1_decode_16bit( int width, int height, unsigned char *buf, int buf_size,
+msvideo1_decode_16bit( int width, int height, const unsigned char *buf, int buf_size,
                        unsigned short *pixels, int stride)
 {
     int block_ptr, pixel_ptr;
@@ -215,10 +199,18 @@ msvideo1_decode_16bit( int width, int height, unsigned char *buf, int buf_size,
     blocks_high = height / 4;
     total_blocks = blocks_wide * blocks_high;
     block_inc = 4;
+#ifdef ORIGINAL
     row_dec = stride + 4;
+#else
+    row_dec = - (stride - 4); /* such that -row_dec > 0 */
+#endif
 
     for (block_y = blocks_high; block_y > 0; block_y--) {
+#ifdef ORIGINAL
         block_ptr = ((block_y * 4) - 1) * stride;
+#else
+        block_ptr = ((blocks_high - block_y) * 4) * stride;
+#endif
         for (block_x = blocks_wide; block_x > 0; block_x--) {
             /* check if this block should be skipped */
             if (skip_blocks) {
@@ -269,8 +261,8 @@ msvideo1_decode_16bit( int width, int height, unsigned char *buf, int buf_size,
 
                     for (pixel_y = 0; pixel_y < 4; pixel_y++) {
                         for (pixel_x = 0; pixel_x < 4; pixel_x++, flags >>= 1)
-                            pixels[pixel_ptr++] = 
-                                colors[((pixel_y & 0x2) << 1) + 
+                            pixels[pixel_ptr++] =
+                                colors[((pixel_y & 0x2) << 1) +
                                     (pixel_x & 0x2) + ((flags & 0x1) ^ 1)];
                         pixel_ptr -= row_dec;
                     }
@@ -307,39 +299,45 @@ CRAM_DecompressQuery( Msvideo1Context *info, LPBITMAPINFO in, LPBITMAPINFO out )
     if( (info==NULL) || (info->dwMagic!=CRAM_MAGIC) )
         return ICERR_BADPARAM;
 
-    TRACE("planes = %d\n", in->bmiHeader.biPlanes );
-    TRACE("bpp    = %d\n", in->bmiHeader.biBitCount );
-    TRACE("height = %ld\n", in->bmiHeader.biHeight );
-    TRACE("width  = %ld\n", in->bmiHeader.biWidth );
-    TRACE("compr  = %lx\n", in->bmiHeader.biCompression );
+    TRACE("in->planes  = %d\n", in->bmiHeader.biPlanes );
+    TRACE("in->bpp     = %d\n", in->bmiHeader.biBitCount );
+    TRACE("in->height  = %d\n", in->bmiHeader.biHeight );
+    TRACE("in->width   = %d\n", in->bmiHeader.biWidth );
+    TRACE("in->compr   = 0x%x\n", in->bmiHeader.biCompression );
 
     if( ( in->bmiHeader.biCompression != CRAM_MAGIC ) &&
         ( in->bmiHeader.biCompression != MSVC_MAGIC ) &&
         ( in->bmiHeader.biCompression != WHAM_MAGIC ) )
-        return ICERR_UNSUPPORTED;
+    {
+        TRACE("can't do 0x%x compression\n", in->bmiHeader.biCompression);
+        return ICERR_BADFORMAT;
+    }
 
     if( ( in->bmiHeader.biBitCount != 16 ) &&
         ( in->bmiHeader.biBitCount != 8 ) )
     {
         TRACE("can't do %d bpp\n", in->bmiHeader.biBitCount );
-        return ICERR_UNSUPPORTED;
+        return ICERR_BADFORMAT;
     }
 
     /* output must be same dimensions as input */
     if( out )
     {
-        if( in->bmiHeader.biBitCount != out->bmiHeader.biBitCount )
-            return ICERR_UNSUPPORTED;
-        if( in->bmiHeader.biPlanes != out->bmiHeader.biPlanes )
-            return ICERR_UNSUPPORTED;
-        if( in->bmiHeader.biHeight != out->bmiHeader.biHeight )
-            return ICERR_UNSUPPORTED;
-        if( in->bmiHeader.biWidth != out->bmiHeader.biWidth )
-            return ICERR_UNSUPPORTED;
+        TRACE("out->planes = %d\n", out->bmiHeader.biPlanes );
+        TRACE("out->bpp    = %d\n", out->bmiHeader.biBitCount );
+        TRACE("out->height = %d\n", out->bmiHeader.biHeight );
+        TRACE("out->width  = %d\n", out->bmiHeader.biWidth );
+        if(( in->bmiHeader.biBitCount != out->bmiHeader.biBitCount ) ||
+          ( in->bmiHeader.biPlanes != out->bmiHeader.biPlanes ) ||
+          ( in->bmiHeader.biHeight != out->bmiHeader.biHeight ) ||
+          ( in->bmiHeader.biWidth != out->bmiHeader.biWidth ))
+        {
+            TRACE("incompatible output requested\n");
+            return ICERR_BADFORMAT;
+        }
     }
 
     TRACE("OK!\n");
-
     return ICERR_OK;
 }
 
@@ -378,13 +376,13 @@ static LRESULT CRAM_DecompressBegin( Msvideo1Context *info, LPBITMAPINFO in, LPB
 
     TRACE("bitmap is %d bpp\n", in->bmiHeader.biBitCount);
     if( in->bmiHeader.biBitCount == 8 )
-        info->mode_8bit = 1;
+        info->mode_8bit = TRUE;
     else if( in->bmiHeader.biBitCount == 16 )
-        info->mode_8bit = 0;
+        info->mode_8bit = FALSE;
     else
     {
-        ERR("Bad output format\n");
-        return ICERR_BADPARAM;
+        info->mode_8bit = FALSE;
+        FIXME("Unsupported output format %i\n", in->bmiHeader.biBitCount);
     }
 
     return ICERR_OK;
@@ -393,9 +391,8 @@ static LRESULT CRAM_DecompressBegin( Msvideo1Context *info, LPBITMAPINFO in, LPB
 static LRESULT CRAM_Decompress( Msvideo1Context *info, ICDECOMPRESS *icd, DWORD size )
 {
     LONG width, height, stride, sz;
-    WORD bit_per_pixel;
 
-    TRACE("ICM_DECOMPRESS %p %p %ld\n", info, icd, size);
+    TRACE("ICM_DECOMPRESS %p %p %d\n", info, icd, size);
 
     if( (info==NULL) || (info->dwMagic!=CRAM_MAGIC) )
         return ICERR_BADPARAM;
@@ -404,8 +401,7 @@ static LRESULT CRAM_Decompress( Msvideo1Context *info, ICDECOMPRESS *icd, DWORD 
 
     width  = icd->lpbiInput->biWidth;
     height = icd->lpbiInput->biHeight;
-    bit_per_pixel = icd->lpbiInput->biBitCount;
-    stride = width*bit_per_pixel/8;
+    stride = width; /* in bytes or 16bit words */
     sz = icd->lpbiInput->biSizeImage;
 
     if (info->mode_8bit)
@@ -425,9 +421,8 @@ static LRESULT CRAM_Decompress( Msvideo1Context *info, ICDECOMPRESS *icd, DWORD 
 static LRESULT CRAM_DecompressEx( Msvideo1Context *info, ICDECOMPRESSEX *icd, DWORD size )
 {
     LONG width, height, stride, sz;
-    WORD bit_per_pixel;
 
-    TRACE("ICM_DECOMPRESSEX %p %p %ld\n", info, icd, size);
+    TRACE("ICM_DECOMPRESSEX %p %p %d\n", info, icd, size);
 
     if( (info==NULL) || (info->dwMagic!=CRAM_MAGIC) )
         return ICERR_BADPARAM;
@@ -436,8 +431,7 @@ static LRESULT CRAM_DecompressEx( Msvideo1Context *info, ICDECOMPRESSEX *icd, DW
 
     width  = icd->lpbiSrc->biWidth;
     height = icd->lpbiSrc->biHeight;
-    bit_per_pixel = icd->lpbiSrc->biBitCount;
-    stride = width*bit_per_pixel/8;
+    stride = width;
     sz = icd->lpbiSrc->biSizeImage;
 
     if (info->mode_8bit)
@@ -454,16 +448,35 @@ static LRESULT CRAM_DecompressEx( Msvideo1Context *info, ICDECOMPRESSEX *icd, DW
     return ICERR_OK;
 }
 
+static LRESULT CRAM_GetInfo( const Msvideo1Context *info, ICINFO *icinfo, DWORD dwSize )
+{
+    if (!icinfo) return sizeof(ICINFO);
+    if (dwSize < sizeof(ICINFO)) return 0;
+
+    icinfo->dwSize = sizeof(ICINFO);
+    icinfo->fccType = ICTYPE_VIDEO;
+    icinfo->fccHandler = info ? info->dwMagic : CRAM_MAGIC;
+    icinfo->dwFlags = 0;
+    icinfo->dwVersion = ICVERSION;
+    icinfo->dwVersionICM = ICVERSION;
+
+    LoadStringW(MSVIDC32_hModule, IDS_NAME, icinfo->szName, ARRAY_SIZE(icinfo->szName));
+    LoadStringW(MSVIDC32_hModule, IDS_DESCRIPTION, icinfo->szDescription, ARRAY_SIZE(icinfo->szDescription));
+    /* msvfw32 will fill icinfo->szDriver for us */
+
+    return sizeof(ICINFO);
+}
+
 /***********************************************************************
  *		DriverProc (MSVIDC32.@)
  */
-LRESULT WINAPI CRAM_DriverProc( DWORD dwDriverId, HDRVR hdrvr, UINT msg,
-                                  LONG lParam1, LONG lParam2)
+LRESULT WINAPI CRAM_DriverProc( DWORD_PTR dwDriverId, HDRVR hdrvr, UINT msg,
+                                LPARAM lParam1, LPARAM lParam2 )
 {
     Msvideo1Context *info = (Msvideo1Context *) dwDriverId;
-    LRESULT r = 0;
+    LRESULT r = ICERR_UNSUPPORTED;
 
-    TRACE("%ld %p %d %ld %ld\n", dwDriverId, hdrvr, msg, lParam1, lParam2);
+    TRACE("%ld %p %04x %08lx %08lx\n", dwDriverId, hdrvr, msg, lParam1, lParam2);
 
     switch( msg )
     {
@@ -476,14 +489,35 @@ LRESULT WINAPI CRAM_DriverProc( DWORD dwDriverId, HDRVR hdrvr, UINT msg,
         break;
 
     case DRV_OPEN:
+    {
+        ICINFO *icinfo = (ICINFO *)lParam2;
+
         TRACE("Opened\n");
+
+        if (icinfo && compare_fourcc(icinfo->fccType, ICTYPE_VIDEO)) return 0;
+
         info = HeapAlloc( GetProcessHeap(), 0, sizeof (Msvideo1Context) );
         if( info )
         {
-            memset( info, 0, sizeof info );
+            memset( info, 0, sizeof *info );
             info->dwMagic = CRAM_MAGIC;
         }
         r = (LRESULT) info;
+        break;
+    }
+
+    case DRV_CLOSE:
+        HeapFree( GetProcessHeap(), 0, info );
+        break;
+
+    case DRV_DISABLE:
+        break;
+
+    case DRV_FREE:
+        break;
+
+    case ICM_GETINFO:
+        r = CRAM_GetInfo( info, (ICINFO *)lParam1, (DWORD)lParam2 );
         break;
 
     case ICM_DECOMPRESS_QUERY:
@@ -519,14 +553,20 @@ LRESULT WINAPI CRAM_DriverProc( DWORD dwDriverId, HDRVR hdrvr, UINT msg,
                                   (DWORD) lParam2 );
         break;
 
-    case DRV_CLOSE:
-        HeapFree( GetProcessHeap(), 0, info );
+    case ICM_DECOMPRESS_END:
+        r = ICERR_OK;
         break;
 
-    case DRV_DISABLE:
+    case ICM_COMPRESS_QUERY:
+        r = ICERR_BADFORMAT;
+        /* fall through */
+    case ICM_COMPRESS_GET_FORMAT:
+    case ICM_COMPRESS_END:
+    case ICM_COMPRESS:
+        FIXME("compression not implemented\n");
         break;
 
-    case DRV_FREE:
+    case ICM_CONFIGURE:
         break;
 
     default:
@@ -534,4 +574,21 @@ LRESULT WINAPI CRAM_DriverProc( DWORD dwDriverId, HDRVR hdrvr, UINT msg,
     }
 
     return r;
+}
+
+/***********************************************************************
+ *		DllMain
+ */
+BOOL WINAPI DllMain(HINSTANCE hModule, DWORD dwReason, LPVOID lpReserved)
+{
+    TRACE("(%p,%d,%p)\n", hModule, dwReason, lpReserved);
+
+    switch (dwReason)
+    {
+    case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls(hModule);
+        MSVIDC32_hModule = hModule;
+        break;
+    }
+    return TRUE;
 }

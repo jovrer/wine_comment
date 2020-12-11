@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package make_parser;
@@ -95,9 +95,7 @@ sub make_output($$) {
     $file = "";
     $message = "";
 
-    if(0) {
-	# Nothing
-    } elsif(/^\*\*\* \[(.*?)\] Error (\d+)$/) {
+    if(/^\*\*\* \[(.*?)\] Error (\d+)$/) {
 	# Nothing
     } elsif(/^\*\*\* Error code (\d+)$/) {
 	# Nothing
@@ -294,9 +292,7 @@ sub gcc_output($$) {
 	if(s/^warning:\s+//) {
 	    my $suppress = 0;
 
-	    if(0) {
-		# Nothing
-	    } elsif(/^((?:signed |unsigned )?(?:int|long)) format, (different type|\S+) arg \(arg (\d+)\)$/) {
+	    if(/^((?:signed |unsigned )?(?:int|long)) format, (different type|\S+) arg \(arg (\d+)\)$/) {
 		my $type = $2;
 		if($type =~ /^(?:
 		   HACCEL|HACMDRIVER|HANDLE|HBITMAP|HBRUSH|HCALL|HCURSOR|HDC|HDRVR|HDESK|HDRAWDIB
@@ -351,13 +347,7 @@ sub gcc_output($$) {
 	    } elsif(/^ordered comparison of pointer with integer zero$/) {
 		$suppress = 0;
 	    } elsif(/^passing arg (\d+) of (?:pointer to function|\`(\S+)\') from incompatible pointer type$/) {
-		my $arg = $1;
-		my $name = $2;
-		if(defined($name) && $name =~ /^GDI_AllocObject$/) {
-		    $suppress = 1;
-		} else {
-		    $suppress = 0;
-		}
+		$suppress = 0;
 	    } elsif(/^passing arg (\d+) of (?:pointer to function|\`(\S+)\') makes integer from pointer without a cast$/) {
 		$suppress = 0;
 	    } elsif(/^passing arg (\d+) of (?:pointer to function|\`(\S+)\') makes pointer from integer without a cast$/) {
@@ -451,9 +441,7 @@ sub ld_output($$) {
     $file = shift;
     local $_ = shift;
 
-    if(0) {
-	# Nothing
-    } elsif(/^In function \`(.*?)\':$/) {
+    if(/^In function \`(.*?)\':$/) {
 	$function = $1;
     } elsif(/^more undefined references to \`(.*?)\' follow$/) {
 	# Nothing

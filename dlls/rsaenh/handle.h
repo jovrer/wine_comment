@@ -18,11 +18,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_HANDLE_H
 #define __WINE_HANDLE_H
+
+#include "wincrypt.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,37 +38,33 @@ typedef void (*DESTRUCTOR)(OBJECTHDR *object);
 struct tagOBJECTHDR
 {
     DWORD       dwType;
-    UINT        refcount;
+    LONG        refcount;
     DESTRUCTOR  destructor;
 };
 
-typedef struct tagHANDLETABLEENTRY
+struct handle_table_entry
 {
     OBJECTHDR    *pObject;
     unsigned int iNextFree;
-} HANDLETABLEENTRY;
+};
 
-typedef struct tagHANDLETABLE
+struct handle_table
 {
     unsigned int     iEntries;
     unsigned int     iFirstFree;
-    HANDLETABLEENTRY *paEntries;
+    struct handle_table_entry *paEntries;
     CRITICAL_SECTION mutex;
-} HANDLETABLE;
+};
 
-int  alloc_handle_table  (HANDLETABLE **lplpTable);
-void init_handle_table   (HANDLETABLE *lpTable);
-void release_all_handles (HANDLETABLE *lpTable);
-int  release_handle_table(HANDLETABLE *lpTable);
-void destroy_handle_table(HANDLETABLE *lpTable);
-int  alloc_handle        (HANDLETABLE *lpTable, OBJECTHDR *lpObject, unsigned int *lpHandle);
-int  release_handle      (HANDLETABLE *lpTable, unsigned int handle, DWORD dwType);
-int  copy_handle         (HANDLETABLE *lpTable, unsigned int handle, DWORD dwType, unsigned int *copy);
-int  lookup_handle       (HANDLETABLE *lpTable, unsigned int handle, DWORD dwType, OBJECTHDR **lplpObject);
-int  is_valid_handle     (HANDLETABLE *lpTable, unsigned int handle, DWORD dwType);
+void init_handle_table   (struct handle_table *lpTable) DECLSPEC_HIDDEN;
+void destroy_handle_table(struct handle_table *lpTable) DECLSPEC_HIDDEN;
+BOOL release_handle      (struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType) DECLSPEC_HIDDEN;
+BOOL copy_handle         (struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType, HCRYPTKEY *copy) DECLSPEC_HIDDEN;
+BOOL lookup_handle       (struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType, OBJECTHDR **lplpObject) DECLSPEC_HIDDEN;
+BOOL is_valid_handle     (struct handle_table *lpTable, HCRYPTKEY handle, DWORD dwType) DECLSPEC_HIDDEN;
 
-unsigned int new_object   (HANDLETABLE *lpTable, size_t cbSize, DWORD dwType, DESTRUCTOR destructor,
-                           OBJECTHDR **ppObject);
+HCRYPTKEY new_object     (struct handle_table *lpTable, size_t cbSize, DWORD dwType, DESTRUCTOR destructor,
+                           OBJECTHDR **ppObject) DECLSPEC_HIDDEN;
         
 #ifdef __cplusplus
 }

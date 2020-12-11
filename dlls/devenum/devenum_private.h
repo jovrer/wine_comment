@@ -16,13 +16,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES ON FILE:
  * - Private file where devenum globals are declared
  */
 
+#ifndef RC_INVOKED
 #include <stdarg.h>
+#endif
 
 #include "windef.h"
 #include "winbase.h"
@@ -32,80 +34,62 @@
 #include "winerror.h"
 
 #define COBJMACROS
-#define COM_NO_WINDOWS_H
 
 #include "ole2.h"
 #include "strmif.h"
 #include "olectl.h"
-#include "wine/unicode.h"
 #include "uuids.h"
+
+#ifndef RC_INVOKED
+#include "wine/unicode.h"
+#endif
 
 /**********************************************************************
  * Dll lifetime tracking declaration for devenum.dll
  */
-extern LONG dll_refs;
+extern LONG dll_refs DECLSPEC_HIDDEN;
 static inline void DEVENUM_LockModule(void) { InterlockedIncrement(&dll_refs); }
 static inline void DEVENUM_UnlockModule(void) { InterlockedDecrement(&dll_refs); }
 
-
-/**********************************************************************
- * ClassFactory declaration for devenum.dll
- */
-typedef struct
+enum device_type
 {
-    const IClassFactoryVtbl *lpVtbl;
-} ClassFactoryImpl;
+    DEVICE_FILTER,
+    DEVICE_CODEC,
+    DEVICE_DMO,
+};
 
 typedef struct
 {
-    const ICreateDevEnumVtbl *lpVtbl;
-} CreateDevEnumImpl;
-
-typedef struct
-{
-    const IParseDisplayNameVtbl *lpVtbl;
-} ParseDisplayNameImpl;
-
-typedef struct
-{
-    const IEnumMonikerVtbl *lpVtbl;
+    IMoniker IMoniker_iface;
     LONG ref;
-    DWORD index;
-    HKEY hkey;
-} EnumMonikerImpl;
-
-typedef struct
-{
-    const IMonikerVtbl *lpVtbl;
-    LONG ref;
-    HKEY hkey;
+    CLSID class;
+    BOOL has_class;
+    enum device_type type;
+    union
+    {
+        WCHAR *name;    /* for filters and codecs */
+        CLSID clsid;    /* for DMOs */
+    };
 } MediaCatMoniker;
 
-MediaCatMoniker * DEVENUM_IMediaCatMoniker_Construct(void);
-HRESULT DEVENUM_IEnumMoniker_Construct(HKEY hkey, IEnumMoniker ** ppEnumMoniker);
-HRESULT WINAPI DEVENUM_ICreateDevEnum_CreateClassEnumerator(
-    ICreateDevEnum * iface,
-    REFCLSID clsidDeviceClass,
-    IEnumMoniker **ppEnumMoniker,
-    DWORD dwFlags);
+MediaCatMoniker * DEVENUM_IMediaCatMoniker_Construct(void) DECLSPEC_HIDDEN;
+HRESULT create_EnumMoniker(REFCLSID class, IEnumMoniker **enum_mon) DECLSPEC_HIDDEN;
 
-extern ClassFactoryImpl DEVENUM_ClassFactory;
-extern CreateDevEnumImpl DEVENUM_CreateDevEnum;
-extern ParseDisplayNameImpl DEVENUM_ParseDisplayName;
+extern ICreateDevEnum DEVENUM_CreateDevEnum DECLSPEC_HIDDEN;
+extern IParseDisplayName DEVENUM_ParseDisplayName DECLSPEC_HIDDEN;
 
 /**********************************************************************
  * Global string constant declarations
  */
-extern const WCHAR clsid_keyname[6];
-extern const WCHAR wszInstanceKeyName[];
-#define CLSID_STR_LEN (sizeof(clsid_keyname) / sizeof(WCHAR))
 
-/**********************************************************************
- * Resource IDs
- */
-#define IDS_DEVENUM_DSDEFAULT 7
-#define IDS_DEVENUM_DS        8
-#define IDS_DEVENUM_WODEFAULT 9
-#define IDS_DEVENUM_MIDEFAULT 10
-#define IDS_DEVENUM_KSDEFAULT 11
-#define IDS_DEVENUM_KS        12
+static const WCHAR backslashW[] = {'\\',0};
+static const WCHAR clsidW[] = {'C','L','S','I','D',0};
+static const WCHAR instanceW[] = {'\\','I','n','s','t','a','n','c','e',0};
+static const WCHAR wszActiveMovieKey[] = {'S','o','f','t','w','a','r','e','\\',
+                                          'M','i','c','r','o','s','o','f','t','\\',
+                                          'A','c','t','i','v','e','M','o','v','i','e','\\',
+                                          'd','e','v','e','n','u','m','\\',0};
+static const WCHAR deviceW[] = {'@','d','e','v','i','c','e',':',0};
+static const WCHAR dmoW[] = {'d','m','o',':',0};
+static const WCHAR swW[] = {'s','w',':',0};
+static const WCHAR cmW[] = {'c','m',':',0};

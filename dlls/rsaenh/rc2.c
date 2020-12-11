@@ -6,7 +6,7 @@
  * Based on public domain code by Tom St Denis (tomstdenis@iahu.ca)
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public 
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /*
@@ -70,7 +70,7 @@ int rc2_setup(const unsigned char *key, int keylen, int bits, int rounds, rc2_ke
      * key schedule.  One which is normal, and anther which has a hook to
      * use a reduced key length.
      * BSAFE uses the 'retarded' version.  What I previously shipped is
-     * the same as specifying 1024 for the 'bits' parameter.  Bsafe uses
+     * the same as specifying 1024 for the 'bits' parameter.  BSAFE uses
      * a version where the bits parameter is the same as len*8 */
     /* Seems like MS uses the 'retarded' version, too.
      * Adjust effective keylen bits */

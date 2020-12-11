@@ -1,11 +1,8 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = wldap32.dll
-IMPORTLIB = libwldap32.$(IMPLIBEXT)
-IMPORTS   = user32 kernel32
-EXTRALIBS = @LDAPLIBS@
+IMPORTLIB = wldap32
+IMPORTS   = user32
+EXTRAINCL = $(LDAP_CFLAGS)
+EXTRALIBS = $(LDAP_LIBS)
 
 C_SRCS = \
 	add.c \
@@ -23,12 +20,10 @@ C_SRCS = \
 	modify.c \
 	modrdn.c \
 	option.c \
+	page.c \
+	parse.c \
 	rename.c \
 	search.c \
 	value.c
 
 RC_SRCS = wldap32.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

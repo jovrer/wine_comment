@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -38,7 +38,7 @@ INT WINAPI GetAddressByNameA(DWORD dwNameSpace, LPGUID lpServiceType, LPSTR lpSe
     LPVOID lpCsaddrBuffer, LPDWORD lpdwBufferLength, LPSTR lpAliasBuffer,
     LPDWORD lpdwAliasBufferLength)
 {
-    FIXME("(0x%08lx, %s, %s, %p, 0x%08lx, %p, %p, %p, %p, %p) stub\n", dwNameSpace,
+    FIXME("(0x%08x, %s, %s, %p, 0x%08x, %p, %p, %p, %p, %p) stub\n", dwNameSpace,
           debugstr_guid(lpServiceType), debugstr_a(lpServiceName), lpiProtocols,
           dwResolution, lpServiceAsyncInfo, lpCsaddrBuffer, lpdwBufferLength,
           lpAliasBuffer, lpdwAliasBufferLength);
@@ -52,7 +52,7 @@ INT WINAPI GetAddressByNameW(DWORD dwNameSpace, LPGUID lpServiceType, LPWSTR lpS
     LPVOID lpCsaddrBuffer, LPDWORD lpdwBufferLength, LPWSTR lpAliasBuffer,
     LPDWORD lpdwAliasBufferLength)
 {
-    FIXME("(0x%08lx, %s, %s, %p, 0x%08lx, %p, %p, %p, %p, %p) stub\n", dwNameSpace,
+    FIXME("(0x%08x, %s, %s, %p, 0x%08x, %p, %p, %p, %p, %p) stub\n", dwNameSpace,
           debugstr_guid(lpServiceType), debugstr_w(lpServiceName), lpiProtocols,
           dwResolution, lpServiceAsyncInfo, lpCsaddrBuffer, lpdwBufferLength,
           lpAliasBuffer, lpdwAliasBufferLength);
@@ -135,7 +135,7 @@ INT WINAPI SetServiceA(DWORD dwNameSpace, DWORD dwOperation, DWORD dwFlags, LPSE
                        LPSERVICE_ASYNC_INFO lpServiceAsyncInfo, LPDWORD lpdwStatusFlags)
 {
    /* tell the user they've got a substandard implementation */
-   FIXME("wsock32: SetServiceA(%lu, %lu, %lu, %p, %p, %p): stub\n", dwNameSpace, dwOperation, dwFlags,
+   FIXME("wsock32: SetServiceA(%u, %u, %u, %p, %p, %p): stub\n", dwNameSpace, dwOperation, dwFlags,
            lpServiceInfo, lpServiceAsyncInfo, lpdwStatusFlags);
     
    /* some programs may be able to compensate if they know what happened */
@@ -152,10 +152,69 @@ INT WINAPI SetServiceW(DWORD dwNameSpace, DWORD dwOperation, DWORD dwFlags, LPSE
                        LPSERVICE_ASYNC_INFO lpServiceAsyncInfo, LPDWORD lpdwStatusFlags)
 {
    /* tell the user they've got a substandard implementation */
-   FIXME("wsock32: SetServiceW(%lu, %lu, %lu, %p, %p, %p): stub\n", dwNameSpace, dwOperation, dwFlags,
+   FIXME("wsock32: SetServiceW(%u, %u, %u, %p, %p, %p): stub\n", dwNameSpace, dwOperation, dwFlags,
            lpServiceInfo, lpServiceAsyncInfo, lpdwStatusFlags);
     
    /* some programs may be able to compensate if they know what happened */
    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
    return SOCKET_ERROR; /* error value */ 
+}
+
+/******************************************************************************
+ *          GetServiceA     [WSOCK32.1119]
+ *
+ * Get information about a network service.
+ *
+ * PARAMETERS
+ *      dwNameSpace        [I] Name space or set of name spaces within which the function 
+ *                             will operate.
+ *      lpGuid             [I] Pointer to GUID of network service type.
+ *      lpServiceName      [I] NUL-terminated ASCII string that uniquely represents the name 
+ *                             of the service.
+ *      dwProperties       [I] Flags specifying which information to return in lpBuffer.
+ *      lpBuffer           [O] Pointer to buffer where the function returns an array
+ *                             of NS_SERVICE_INFO.
+ *      lpdwBufferSize     [I/O] Size of lpBuffer.  A greater number on output
+ *                               indicates an error.
+ *      lpServiceAsyncInfo [O] Reserved.  Set to NULL.
+ *
+ * RETURNS
+ *      Success: 0.
+ *      Failure: SOCKET_ERROR. GetLastError() returns ERROR_INSUFFICIENT_BUFFER
+ *               or ERROR_SERVICE_NOT_FOUND.
+ *
+ * NOTES
+ *      Obsolete Microsoft-specific extension to Winsock 1.1,
+ *      Protocol-independent name resolution provides equivalent functionality in Winsock 2.
+ *
+ * BUGS
+ *      Unimplemented.
+ */
+INT WINAPI GetServiceA(DWORD dwNameSpace, LPGUID lpGuid, LPSTR lpServiceName,
+                       DWORD dwProperties, LPVOID lpBuffer, LPDWORD lpdwBufferSize,
+                       LPSERVICE_ASYNC_INFO lpServiceAsyncInfo)
+{
+   FIXME("(%u, %p, %s, %u, %p, %p, %p): stub\n", dwNameSpace,
+         lpGuid, lpServiceName, dwProperties, lpBuffer, lpdwBufferSize, lpServiceAsyncInfo);
+
+   /* some programs may be able to compensate if they know what happened */
+   SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+   return SOCKET_ERROR;
+}
+
+/******************************************************************************
+ *          GetServiceW     [WSOCK32.1120]
+ *
+ * See GetServiceA.
+ */
+INT WINAPI GetServiceW(DWORD dwNameSpace, LPGUID lpGuid, LPSTR lpServiceName,
+                       DWORD dwProperties, LPVOID lpBuffer, LPDWORD lpdwBufferSize,
+                       LPSERVICE_ASYNC_INFO lpServiceAsyncInfo)
+{
+   FIXME("(%u, %p, %s, %u, %p, %p, %p): stub\n", dwNameSpace,
+         lpGuid, lpServiceName, dwProperties, lpBuffer, lpdwBufferSize, lpServiceAsyncInfo);
+
+   /* some programs may be able to compensate if they know what happened */
+   SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+   return SOCKET_ERROR;
 }

@@ -15,8 +15,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include <windef.h>
+#include <winuser.h>
 
 #define ID_REGISTRY_MENU                0
 #define ID_EDIT_MENU                    1
@@ -29,16 +32,14 @@
 #define IDS_LIST_COLUMN_TYPE            92
 #define IDS_LIST_COLUMN_DATA            93
 #define IDS_LIST_COLUMN_LAST            93
-#define IDD_ABOUTBOX                    103
 #define IDS_APP_TITLE                   103
 #define IDI_REGEDIT                     100
 #define IDI_SMALL                       108
 #define IDC_REGEDIT                     109
 #define IDC_REGEDIT_FRAME               110
 #define IDR_REGEDIT_MENU                130
-#define IDD_DIALOG1                     131
+#define IDD_EXPORT_TEMPLATE             131
 #define IDI_OPEN_FILE                   132
-#define IDD_DIALOG2                     132
 #define IDI_CLOSED_FILE                 133
 #define IDD_ADDFAVORITE                 133
 #define IDI_ROOT                        134
@@ -47,6 +48,16 @@
 #define IDD_FIND                        135
 #define IDI_BIN                         136
 #define IDR_POPUP_MENUS                 137
+#define IDS_FILEDIALOG_IMPORT_TITLE     144
+#define IDS_FILEDIALOG_EXPORT_TITLE     145
+#define IDS_FILEDIALOG_FILTER_REG       146
+#define IDS_FILEDIALOG_FILTER_REG4      147
+#define IDS_FILEDIALOG_FILTER_ALL       148
+#define IDS_REGISTRY_ROOT_NAME          160
+#define IDS_REGISTRY_DEFAULT_VALUE      161
+#define IDS_REGISTRY_VALUE_NOT_SET      162
+#define IDS_REGISTRY_VALUE_CANT_DISPLAY 164
+#define IDS_REGISTRY_UNKNOWN_TYPE       165
 #define IDC_LICENSE_EDIT                1029
 #define ID_REGISTRY_EXIT                32770
 #define ID_FAVORITES_ADDTOFAVORITES     32772
@@ -66,8 +77,6 @@
 #define ID_EDIT_NEW_DWORDVALUE          32788
 #define ID_REGISTRY_IMPORTREGISTRYFILE  32789
 #define ID_REGISTRY_EXPORTREGISTRYFILE  32790
-#define ID_REGISTRY_CONNECTNETWORKREGISTRY 32791
-#define ID_REGISTRY_DISCONNECTNETWORKREGISTRY 32792
 #define ID_REGISTRY_PRINT               32793
 #define ID_HELP_HELPTOPICS              32794
 #define ID_HELP_ABOUT                   32795
@@ -112,9 +121,10 @@
 #define IDS_BAD_VALUE			32837
 #define IDS_UNSUPPORTED_TYPE		32838
 #define IDS_TOO_BIG_VALUE		32839
-#define IDS_DELETE_BOX_TITLE		32840
-#define IDS_DELETE_BOX_TEXT		32841
+#define IDS_DELETE_VALUE_TITLE		32840
+#define IDS_DELETE_VALUE_TEXT		32841
 #define IDS_NOTFOUND    		32842
+#define IDS_DELETE_VALUE_TEXT_MULTIPLE	32843
 #define IDD_EDIT_DWORD			32850
 #define IDC_DWORD_BASE			32852
 #define IDC_DWORD_HEX			32853
@@ -126,6 +136,16 @@
 #define ID_SWITCH_PANELS                32871
 #define ID_FAVORITE_FIRST               33000
 #define ID_FAVORITE_LAST                33099
+#define ID_EDIT_NEW_MULTI_STRINGVALUE   33100
+#define ID_EDIT_EXPORT                  33101
+#define ID_EDIT_NEW_EXPANDVALUE         33102
+#define IDS_DELETE_KEY_TITLE            33103
+#define IDS_DELETE_KEY_TEXT             33104
+#define ID_TREE_EXPAND_COLLAPSE         33105
+#define IDS_EXPAND                      33106
+#define IDS_COLLAPSE                    33107
+#define IDS_EDIT_MODIFY                 33108
+#define IDS_EDIT_MODIFY_BIN             33109
 
 #define IDD_EDIT_STRING			2000
 #define IDC_VALUE_NAME			2001
@@ -136,5 +156,48 @@
 #define IDC_FIND_VALUES                 2006
 #define IDC_FIND_CONTENT                2007
 #define IDC_FIND_WHOLE                  2008
+#define IDD_EDIT_MULTI_STRING           2009
+
+#define IDS_SET_VALUE_FAILED            2010
+#define IDS_CREATE_KEY_FAILED           2011
+#define IDS_CREATE_VALUE_FAILED         2012
+#define IDS_KEY_EXISTS                  2013
+#define IDS_VALUE_EXISTS                2014
+#define IDS_DELETE_KEY_FAILED           2015
+#define IDS_RENAME_KEY_FAILED           2016
+#define IDS_RENAME_VALUE_FAILED         2017
+#define IDS_IMPORT_SUCCESSFUL           2018
+#define IDS_IMPORT_FAILED               2019
+
+#define IDC_EXPORT_BASE                 100
+#define IDC_EXPORT_ALL                  101
+#define IDC_EXPORT_SELECTED             102
+#define IDC_EXPORT_PATH                 103
 
 #define IDC_STATIC                      -1
+
+/* Command-line strings */
+#define STRING_USAGE                    3001
+#define STRING_INVALID_SWITCH           3002
+#define STRING_HELP                     3003
+#define STRING_NO_FILENAME              3004
+#define STRING_NO_REG_KEY               3005
+#define STRING_FILE_NOT_FOUND           3006
+#define STRING_CANNOT_OPEN_FILE         3007
+#define STRING_UNHANDLED_ACTION         3008
+#define STRING_OUT_OF_MEMORY            3009
+#define STRING_INVALID_HEX              3010
+#define STRING_CSV_HEX_ERROR            3011
+#define STRING_ESCAPE_SEQUENCE          3012
+#define STRING_UNKNOWN_DATA_FORMAT      3013
+#define STRING_UNEXPECTED_EOL           3014
+#define STRING_UNRECOGNIZED_LINE        3015
+#define STRING_SETVALUE_FAILED          3016
+#define STRING_OPEN_KEY_FAILED          3017
+#define STRING_UNSUPPORTED_TYPE         3018
+#define STRING_EXPORT_AS_BINARY         3019
+#define STRING_INVALID_SYSTEM_KEY       3020
+#define STRING_REG_KEY_NOT_FOUND        3021
+#define STRING_DELETE_FAILED            3022
+#define STRING_UNKNOWN_TYPE             3023
+#define STRING_INVALID_LINE_SYNTAX      3024

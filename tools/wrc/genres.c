@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * History:
  * 05-May-2000 BS	- Added code to support endian conversions. The
@@ -41,24 +41,24 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "wine/unicode.h"
 
 #define SetResSize(res, tag)	set_dword((res), (tag), (res)->size - get_dword((res), (tag)))
 
 res_t *new_res(void)
 {
 	res_t *r;
-	r = (res_t *)xmalloc(sizeof(res_t));
+	r = xmalloc(sizeof(res_t));
 	r->allocsize = RES_BLOCKSIZE;
 	r->size = 0;
-	r->data = (char *)xmalloc(RES_BLOCKSIZE);
+	r->dataidx = 0;
+	r->data = xmalloc(RES_BLOCKSIZE);
 	return r;
 }
 
 res_t *grow_res(res_t *r, unsigned int add)
 {
 	r->allocsize += add;
-	r->data = (char *)xrealloc(r->data, r->allocsize);
+	r->data = xrealloc(r->data, r->allocsize);
 	return r;
 }
 
@@ -263,16 +263,86 @@ static void string_to_upper(string_t *str)
 
     if(str->type == str_char)
     {
-        for (i = 0; i < str->size; i++) str->str.cstr[i] = toupper((unsigned char)str->str.cstr[i]);
+        for (i = 0; i < str->size; i++)
+            if (str->str.cstr[i] >= 'a' && str->str.cstr[i] <= 'z') str->str.cstr[i] -= 32;
     }
     else if(str->type == str_unicode)
     {
-        for (i = 0; i < str->size; i++) str->str.wstr[i] = toupperW(str->str.wstr[i]);
+        for (i = 0; i < str->size; i++)
+            if (str->str.wstr[i] >= 'a' && str->str.wstr[i] <= 'z') str->str.wstr[i] -= 32;
     }
     else
     {
-        internal_error(__FILE__, __LINE__, "Invalid string type %d", str->type);
+        internal_error(__FILE__, __LINE__, "Invalid string type %d\n", str->type);
     }
+}
+
+static int parse_accel_string( const string_t *key, int flags )
+{
+    int keycode;
+
+    if(key->type == str_char)
+    {
+        if (key->str.cstr[0] == '#') return 0;  /* ignore message contexts */
+	if((flags & WRC_AF_VIRTKEY) &&
+           !((key->str.cstr[0] >= 'A' && key->str.cstr[0] <= 'Z') ||
+             (key->str.cstr[0] >= '0' && key->str.cstr[0] <= '9')))
+        {
+            print_location( &key->loc );
+            error("VIRTKEY code is not equal to ascii value\n");
+        }
+
+	if(key->str.cstr[0] == '^' && (flags & WRC_AF_CONTROL) != 0)
+	{
+            print_location( &key->loc );
+            error("Cannot use both '^' and CONTROL modifier\n");
+	}
+	else if(key->str.cstr[0] == '^')
+	{
+            if (key->str.cstr[1] >= 'a' && key->str.cstr[1] <= 'z')
+                keycode = key->str.cstr[1] - 'a' + 1;
+            else if (key->str.cstr[1] >= 'A' && key->str.cstr[1] <= 'Z')
+                keycode = key->str.cstr[1] - 'A' + 1;
+            else
+            {
+                print_location( &key->loc );
+                error("Control-code out of range\n");
+            }
+	}
+	else
+            keycode = key->str.cstr[0];
+    }
+    else
+    {
+        if (key->str.wstr[0] == '#') return 0;  /* ignore message contexts */
+	if((flags & WRC_AF_VIRTKEY) &&
+           !((key->str.wstr[0] >= 'A' && key->str.wstr[0] <= 'Z') ||
+             (key->str.wstr[0] >= '0' && key->str.wstr[0] <= '9')))
+        {
+            print_location( &key->loc );
+            error("VIRTKEY code is not equal to ascii value\n");
+        }
+	if(key->str.wstr[0] == '^' && (flags & WRC_AF_CONTROL) != 0)
+	{
+            print_location( &key->loc );
+            error("Cannot use both '^' and CONTROL modifier\n");
+	}
+	else if(key->str.wstr[0] == '^')
+	{
+            if (key->str.wstr[1] >= 'a' && key->str.wstr[1] <= 'z')
+                keycode = key->str.wstr[1] - 'a' + 1;
+            else if (key->str.wstr[1] >= 'A' && key->str.wstr[1] <= 'Z')
+                keycode = key->str.wstr[1] - 'A' + 1;
+            else
+            {
+                print_location( &key->loc );
+                error("Control-code out of range\n");
+            }
+	}
+	else
+            keycode = key->str.wstr[0];
+    }
+    return keycode;
 }
 
 /*
@@ -311,8 +381,17 @@ static void put_string(res_t *res, const string_t *str, enum str_e type, int ist
         if (str->type == str_char)
         {
             if (!check_unicode_conversion( str, newstr, codepage ))
+            {
+                print_location( &str->loc );
                 error( "String %s does not convert identically to Unicode and back in codepage %d. "
-                       "Try using a Unicode string instead.", str->str.cstr, codepage );
+                       "Try using a Unicode string instead\n", str->str.cstr, codepage );
+            }
+            if (check_valid_utf8( str, codepage ))
+            {
+                print_location( &str->loc );
+                warning( "string \"%s\" seems to be UTF-8 but codepage %u is in use.\n",
+                         str->str.cstr, codepage );
+            }
         }
         if (!isterm) put_word(res, newstr->size);
         for(cnt = 0; cnt < newstr->size; cnt++)
@@ -365,7 +444,7 @@ static void put_name_id(res_t *res, name_id_t *nid, int upcase, const language_t
 	}
 	else
 	{
-		internal_error(__FILE__, __LINE__, "Invalid name_id type %d", nid->type);
+		internal_error(__FILE__, __LINE__, "Invalid name_id type %d\n", nid->type);
 	}
 }
 
@@ -417,7 +496,7 @@ static void put_raw_data(res_t *res, raw_data_t *raw, int offset)
 /*
  *****************************************************************************
  * Function	: put_res_header
- * Syntax	: intput_res_header(res_t *res, int type, name_id_t *ntype,
+ * Syntax	: input_res_header(res_t *res, int type, name_id_t *ntype,
  *				    name_id_t *name, DWORD memopt, lvc_t *lvc)
  *
  * Input	:
@@ -504,8 +583,10 @@ static res_t *accelerator2res(name_id_t *name, accelerator_t *acc)
 		restag = put_res_header(res, WRC_RT_ACCELERATOR, NULL, name, acc->memopt, &(acc->lvc));
 		while(ev)
 		{
+			int key = ev->key;
+			if (ev->str) key = parse_accel_string( ev->str, ev->flags );
 			put_word(res, ev->flags | (ev->next ? 0 : 0x80));
-			put_word(res, ev->key);
+			put_word(res, key);
 			put_word(res, ev->id);
 			put_word(res, 0);	/* Padding */
 			ev = ev->next;
@@ -517,8 +598,10 @@ static res_t *accelerator2res(name_id_t *name, accelerator_t *acc)
 		restag = put_res_header(res, WRC_RT_ACCELERATOR, NULL, name, acc->memopt, NULL);
 		while(ev)
 		{
+			int key = ev->key;
+			if (ev->str) key = parse_accel_string( ev->str, ev->flags );
 			put_byte(res, ev->flags | (ev->next ? 0 : 0x80));
-			put_word(res, ev->key);
+			put_word(res, key);
 			put_word(res, ev->id);
 			ev = ev->next;
 		}
@@ -556,8 +639,25 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 	{
 		restag = put_res_header(res, WRC_RT_DIALOG, NULL, name, dlg->memopt, &(dlg->lvc));
 
-		put_dword(res, dlg->style->or_mask);
-		put_dword(res, dlg->gotexstyle ? dlg->exstyle->or_mask : 0);
+		if (dlg->is_ex)
+		{
+			/* FIXME: MS doc says that the first word must contain 0xffff
+			 * and the second 0x0001 to signal a DLGTEMPLATEEX. Borland's
+			 * compiler reverses the two words.
+			 * I don't know which one to choose, but I write it as Mr. B
+			 * writes it.
+			 */
+			put_word(res, 1);		/* Signature */
+			put_word(res, 0xffff);		/* DlgVer */
+			put_dword(res, dlg->gothelpid ? dlg->helpid : 0);
+			put_dword(res, dlg->gotexstyle ? dlg->exstyle->or_mask : 0);
+			put_dword(res, dlg->gotstyle ? dlg->style->or_mask : WS_POPUPWINDOW);
+		}
+		else
+		{
+			put_dword(res, dlg->style->or_mask);
+			put_dword(res, dlg->gotexstyle ? dlg->exstyle->or_mask : 0);
+		}
 		tag_nctrl = res->size;
 		put_word(res, 0);		/* Number of controls */
 		put_word(res, dlg->x);
@@ -565,11 +665,11 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 		put_word(res, dlg->width);
 		put_word(res, dlg->height);
 		if(dlg->menu)
-			put_name_id(res, dlg->menu, TRUE, dlg->lvc.language);
+			put_name_id(res, dlg->menu, FALSE, dlg->lvc.language);
 		else
 			put_word(res, 0);
 		if(dlg->dlgclass)
-			put_name_id(res, dlg->dlgclass, TRUE, dlg->lvc.language);
+			put_name_id(res, dlg->dlgclass, FALSE, dlg->lvc.language);
 		else
 			put_word(res, 0);
 		if(dlg->title)
@@ -579,32 +679,54 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 		if(dlg->font)
 		{
 			put_word(res, dlg->font->size);
+			if (dlg->is_ex)
+			{
+				put_word(res, dlg->font->weight);
+				/* FIXME: ? TRUE should be sufficient to say that it's
+				 * italic, but Borland's compiler says it's 0x0101.
+				 * I just copy it here, and hope for the best.
+				 */
+				put_word(res, dlg->font->italic ? 0x0101 : 0);
+			}
 			put_string(res, dlg->font->name, str_unicode, TRUE, dlg->lvc.language);
 		}
+                else if (dlg->style->or_mask & DS_SETFONT) put_word( res, 0x7fff );
 
 		put_pad(res);
 		while(ctrl)
 		{
-			/* FIXME: what is default control style? */
-			put_dword(res, ctrl->gotstyle ? ctrl->style->or_mask: WS_CHILD);
-			put_dword(res, ctrl->gotexstyle ? ctrl->exstyle->or_mask : 0);
+			if (dlg->is_ex)
+			{
+				put_dword(res, ctrl->gothelpid ? ctrl->helpid : 0);
+				put_dword(res, ctrl->gotexstyle ? ctrl->exstyle->or_mask : 0);
+				/* FIXME: what is default control style? */
+				put_dword(res, ctrl->gotstyle ? ctrl->style->or_mask : WS_CHILD | WS_VISIBLE);
+			}
+			else
+			{
+				/* FIXME: what is default control style? */
+				put_dword(res, ctrl->gotstyle ? ctrl->style->or_mask: WS_CHILD);
+				put_dword(res, ctrl->gotexstyle ? ctrl->exstyle->or_mask : 0);
+			}
 			put_word(res, ctrl->x);
 			put_word(res, ctrl->y);
 			put_word(res, ctrl->width);
 			put_word(res, ctrl->height);
-			put_word(res, ctrl->id);
-			if(ctrl->ctlclass)
-				put_name_id(res, ctrl->ctlclass, TRUE, dlg->lvc.language);
+			if (dlg->is_ex)
+				put_dword(res, ctrl->id);
 			else
-				internal_error(__FILE__, __LINE__, "Control has no control-class");
+				put_word(res, ctrl->id);
+			if(ctrl->ctlclass)
+				put_name_id(res, ctrl->ctlclass, FALSE, dlg->lvc.language);
+			else
+				internal_error(__FILE__, __LINE__, "Control has no control-class\n");
 			if(ctrl->title)
 				put_name_id(res, ctrl->title, FALSE, dlg->lvc.language);
 			else
 				put_word(res, 0);
 			if(ctrl->extra)
 			{
-				put_word(res, ctrl->extra->size+2);
-				put_pad(res);
+				put_word(res, ctrl->extra->size);
 				put_raw_data(res, ctrl->extra, 0);
 			}
 			else
@@ -664,10 +786,10 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 				else if(ctrl->ctlclass->type == name_str)
 					put_name_id(res, ctrl->ctlclass, FALSE, NULL);
 				else
-					error("Unknown control-class %04x", ctrl->ctlclass->name.i_name);
+					error("Unknown control-class %04x\n", ctrl->ctlclass->name.i_name);
 			}
 			else
-				internal_error(__FILE__, __LINE__, "Control has no control-class");
+				internal_error(__FILE__, __LINE__, "Control has no control-class\n");
 			if(ctrl->title)
 				put_name_id(res, ctrl->title, FALSE, NULL);
 			else
@@ -684,124 +806,6 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 	}
 	/* Set ResourceSize */
 	SetResSize(res, restag);
-	return res;
-}
-
-/*
- *****************************************************************************
- * Function	: dialogex2res
- * Syntax	: res_t *dialogex2res(name_id_t *name, dialogex_t *dlgex)
- * Input	:
- *	name	- Name/ordinal of the resource
- *	dlgex	- The dialogex descriptor
- * Output	: New .res format structure
- * Description	:
- * Remarks	:
- *****************************************************************************
-*/
-static res_t *dialogex2res(name_id_t *name, dialogex_t *dlgex)
-{
-	int restag;
-	res_t *res;
-	control_t *ctrl;
-	int tag_nctrl;
-	int nctrl = 0;
-	assert(name != NULL);
-	assert(dlgex != NULL);
-
-	ctrl = dlgex->controls;
-	res = new_res();
-	if(win32)
-	{
-		restag = put_res_header(res, WRC_RT_DIALOG, NULL, name, dlgex->memopt, &(dlgex->lvc));
-
-		/* FIXME: MS doc says thet the first word must contain 0xffff
-		 * and the second 0x0001 to signal a DLGTEMPLATEEX. Borland's
-		 * compiler reverses the two words.
-		 * I don't know which one to choose, but I write it as Mr. B
-		 * writes it.
-		 */
-		put_word(res, 1);		/* Signature */
-		put_word(res, 0xffff);		/* DlgVer */
-		put_dword(res, dlgex->gothelpid ? dlgex->helpid : 0);
-		put_dword(res, dlgex->gotexstyle ? dlgex->exstyle->or_mask : 0);
-		put_dword(res, dlgex->gotstyle ? dlgex->style->or_mask : WS_POPUPWINDOW);
-		tag_nctrl = res->size;
-		put_word(res, 0);		/* Number of controls */
-		put_word(res, dlgex->x);
-		put_word(res, dlgex->y);
-		put_word(res, dlgex->width);
-		put_word(res, dlgex->height);
-		if(dlgex->menu)
-			put_name_id(res, dlgex->menu, TRUE, dlgex->lvc.language);
-		else
-			put_word(res, 0);
-		if(dlgex->dlgclass)
-			put_name_id(res, dlgex->dlgclass, TRUE, dlgex->lvc.language);
-		else
-			put_word(res, 0);
-		if(dlgex->title)
-			put_string(res, dlgex->title, str_unicode, TRUE, dlgex->lvc.language);
-		else
-			put_word(res, 0);
-		if(dlgex->font)
-		{
-			put_word(res, dlgex->font->size);
-			put_word(res, dlgex->font->weight);
-			/* FIXME: ? TRUE should be sufficient to say that its
-			 * italic, but Borland's compiler says its 0x0101.
-			 * I just copy it here, and hope for the best.
-			 */
-			put_word(res, dlgex->font->italic ? 0x0101 : 0);
-			put_string(res, dlgex->font->name, str_unicode, TRUE, dlgex->lvc.language);
-		}
-
-		put_pad(res);
-		while(ctrl)
-		{
-			put_dword(res, ctrl->gothelpid ? ctrl->helpid : 0);
-			put_dword(res, ctrl->gotexstyle ? ctrl->exstyle->or_mask : 0);
-			/* FIXME: what is default control style? */
-			put_dword(res, ctrl->gotstyle ? ctrl->style->or_mask : WS_CHILD | WS_VISIBLE);
-			put_word(res, ctrl->x);
-			put_word(res, ctrl->y);
-			put_word(res, ctrl->width);
-			put_word(res, ctrl->height);
-			put_dword(res, ctrl->id);
-			if(ctrl->ctlclass)
-				put_name_id(res, ctrl->ctlclass, TRUE, dlgex->lvc.language);
-			else
-				internal_error(__FILE__, __LINE__, "Control has no control-class");
-			if(ctrl->title)
-				put_name_id(res, ctrl->title, FALSE, dlgex->lvc.language);
-			else
-				put_word(res, 0);
-			if(ctrl->extra)
-			{
-				put_pad(res);
-				put_word(res, ctrl->extra->size);
-				put_raw_data(res, ctrl->extra, 0);
-			}
-			else
-				put_word(res, 0);
-
-			put_pad(res);
-			nctrl++;
-			ctrl = ctrl->next;
-		}
-		/* Set number of controls */
-		set_word(res, tag_nctrl, (WORD)nctrl);
-		/* Set ResourceSize */
-		SetResSize(res, restag);
-		put_pad(res);
-	}
-	else /* win16 */
-	{
-		/* Do not generate anything in 16-bit mode */
-		free(res->data);
-		free(res);
-		return NULL;
-	}
 	return res;
 }
 
@@ -855,37 +859,6 @@ static void menuitem2res(res_t *res, menu_item_t *menitem, const language_t *lan
 
 /*
  *****************************************************************************
- * Function	: menu2res
- * Syntax	: res_t *menu2res(name_id_t *name, menu_t *men)
- * Input	:
- *	name	- Name/ordinal of the resource
- *	men	- The menu descriptor
- * Output	: New .res format structure
- * Description	:
- * Remarks	:
- *****************************************************************************
-*/
-static res_t *menu2res(name_id_t *name, menu_t *men)
-{
-	int restag;
-	res_t *res;
-	assert(name != NULL);
-	assert(men != NULL);
-
-	res = new_res();
-	restag = put_res_header(res, WRC_RT_MENU, NULL, name, men->memopt, win32 ? &(men->lvc) : NULL);
-
-	put_dword(res, 0);		/* Menuheader: Version and HeaderSize */
-	menuitem2res(res, men->items, win32 ? men->lvc.language : NULL);
-	/* Set ResourceSize */
-	SetResSize(res, restag);
-	if(win32)
-		put_pad(res);
-	return res;
-}
-
-/*
- *****************************************************************************
  * Function	: menuexitem2res
  * Syntax	: void menuexitem2res(res_t *res, menuex_item_t *item)
  * Input	:
@@ -894,15 +867,15 @@ static res_t *menu2res(name_id_t *name, menu_t *men)
  * Remarks	: Self recursive
  *****************************************************************************
 */
-static void menuexitem2res(res_t *res, menuex_item_t *menitem, const language_t *lang)
+static void menuexitem2res(res_t *res, menu_item_t *menitem, const language_t *lang)
 {
-	menuex_item_t *itm = menitem;
+	menu_item_t *itm = menitem;
 	assert(win32 != 0);
 	while(itm)
 	{
 		put_dword(res, itm->gottype ? itm->type : 0);
 		put_dword(res, itm->gotstate ? itm->state : 0);
-		put_dword(res, itm->gotid ? itm->id : 0);	/* FIXME: Docu. says word */
+		put_dword(res, itm->gotid ? itm->id : 0);
 		put_word(res, (itm->popup ? 0x01 : 0) | (!itm->next ? MF_END : 0));
 		if(itm->name)
 			put_string(res, itm->name, str_unicode, TRUE, lang);
@@ -921,8 +894,8 @@ static void menuexitem2res(res_t *res, menuex_item_t *menitem, const language_t 
 
 /*
  *****************************************************************************
- * Function	: menuex2res
- * Syntax	: res_t *menuex2res(name_id_t *name, menuex_t *menex)
+ * Function	: menu2res
+ * Syntax	: res_t *menu2res(name_id_t *name, menu_t *men)
  * Input	:
  *	name	- Name/ordinal of the resource
  *	menex	- The menuex descriptor
@@ -931,33 +904,43 @@ static void menuexitem2res(res_t *res, menuex_item_t *menitem, const language_t 
  * Remarks	:
  *****************************************************************************
 */
-static res_t *menuex2res(name_id_t *name, menuex_t *menex)
+static res_t *menu2res(name_id_t *name, menu_t *men)
 {
 	int restag;
 	res_t *res;
 	assert(name != NULL);
-	assert(menex != NULL);
+	assert(men != NULL);
 
 	res = new_res();
 	if(win32)
 	{
-		restag = put_res_header(res, WRC_RT_MENU, NULL, name, menex->memopt, &(menex->lvc));
+		restag = put_res_header(res, WRC_RT_MENU, NULL, name, men->memopt, &(men->lvc));
 
-		put_word(res, 1);		/* Menuheader: Version */
-		put_word(res, 4);		/* Offset */
-		put_dword(res, 0);		/* HelpId */
-		put_pad(res);
-		menuexitem2res(res, menex->items, menex->lvc.language);
+		if (men->is_ex)
+		{
+			put_word(res, 1);		/* Menuheader: Version */
+			put_word(res, 4);		/* Offset */
+			put_dword(res, 0);		/* HelpId */
+			put_pad(res);
+			menuexitem2res(res, men->items, men->lvc.language);
+		}
+		else
+		{
+			put_dword(res, 0);		/* Menuheader: Version and HeaderSize */
+			menuitem2res(res, men->items, men->lvc.language);
+		}
 		/* Set ResourceSize */
 		SetResSize(res, restag);
 		put_pad(res);
 	}
 	else /* win16 */
 	{
-		/* Do not generate anything in 16-bit mode */
-		free(res->data);
-		free(res);
-		return NULL;
+		restag = put_res_header(res, WRC_RT_MENU, NULL, name, men->memopt, NULL);
+
+		put_dword(res, 0);		/* Menuheader: Version and HeaderSize */
+		menuitem2res(res, men->items, NULL);
+		/* Set ResourceSize */
+		SetResSize(res, restag);
 	}
 	return res;
 }
@@ -984,86 +967,48 @@ static res_t *cursorgroup2res(name_id_t *name, cursor_group_t *curg)
 
 	res = new_res();
 	restag = put_res_header(res, WRC_RT_GROUP_CURSOR, NULL, name, curg->memopt, &(curg->lvc));
-	if(win32)
-	{
-		put_word(res, 0);	/* Reserved */
-		/* FIXME: The ResType in the NEWHEADER structure should
-		 * contain 14 according to the MS win32 doc. This is
-		 * not the case with the BRC compiler and I really doubt
-		 * the latter. Putting one here is compliant to win16 spec,
-		 * but who knows the true value?
-		 */
-		put_word(res, 2);	/* ResType */
-		put_word(res, curg->ncursor);
+
+    put_word(res, 0);	/* Reserved */
+    /* FIXME: The ResType in the NEWHEADER structure should
+     * contain 14 according to the MS win32 doc. This is
+     * not the case with the BRC compiler and I really doubt
+     * the latter. Putting one here is compliant to win16 spec,
+     * but who knows the true value?
+     */
+    put_word(res, 2);	/* ResType */
+    put_word(res, curg->ncursor);
 #if 0
-		for(cur = curg->cursorlist; cur; cur = cur->next)
+    for(cur = curg->cursorlist; cur; cur = cur->next)
 #else
-		cur = curg->cursorlist;
-		while(cur->next)
-			cur = cur->next;
-		for(; cur; cur = cur->prev)
+    cur = curg->cursorlist;
+    while(cur->next)
+        cur = cur->next;
+    for(; cur; cur = cur->prev)
 #endif
-		{
-			put_word(res, cur->width);
-			/* FIXME: The height of a cursor is half the size of
-			 * the bitmap's height. BRC puts the height from the
-			 * BITMAPINFOHEADER here instead of the cursorfile's
-			 * height. MS doesn't seem to care...
-			 */
-			put_word(res, cur->height);
-			/* FIXME: The next two are reversed in BRC and I don't
-			 * know why. Probably a bug. But, we can safely ignore
-			 * it because win16 does not support color cursors.
-			 * A warning should have been generated by the parser.
-			 */
-			put_word(res, cur->planes);
-			put_word(res, cur->bits);
-			/* FIXME: The +4 is the hotspot in the cursor resource.
-			 * However, I cound not find this in the documentation.
-			 * The hotspot bytes must either be included or MS
-			 * doesn't care.
-			 */
-			put_dword(res, cur->data->size +4);
-			put_word(res, cur->id);
-		}
-	}
-	else /* win16 */
-	{
-		put_word(res, 0);	/* Reserved */
-		put_word(res, 2);	/* ResType */
-		put_word(res, curg->ncursor);
-#if 0
-		for(cur = curg->cursorlist; cur; cur = cur->next)
-#else
-		cur = curg->cursorlist;
-		while(cur->next)
-			cur = cur->next;
-		for(; cur; cur = cur->prev)
-#endif
-		{
-			put_word(res, cur->width);
-			/* FIXME: The height of a cursor is half the size of
-			 * the bitmap's height. BRC puts the height from the
-			 * BITMAPINFOHEADER here instead of the cursorfile's
-			 * height. MS doesn't seem to care...
-			 */
-			put_word(res, cur->height);
-			/* FIXME: The next two are reversed in BRC and I don't
-			 * know why. Probably a bug. But, we can safely ignore
-			 * it because win16 does not support color cursors.
-			 * A warning should have been generated by the parser.
-			 */
-			put_word(res, cur->planes);
-			put_word(res, cur->bits);
-			/* FIXME: The +4 is the hotspot in the cursor resource.
-			 * However, I cound not find this in the documentation.
-			 * The hotspot bytes must either be included or MS
-			 * doesn't care.
-			 */
-			put_dword(res, cur->data->size +4);
-			put_word(res, cur->id);
-		}
-	}
+    {
+        put_word(res, cur->width);
+        /* FIXME: The height of a cursor is half the size of
+         * the bitmap's height. BRC puts the height from the
+         * BITMAPINFOHEADER here instead of the cursorfile's
+         * height. MS doesn't seem to care...
+         */
+        put_word(res, cur->height);
+        /* FIXME: The next two are reversed in BRC and I don't
+         * know why. Probably a bug. But, we can safely ignore
+         * it because win16 does not support color cursors.
+         * A warning should have been generated by the parser.
+         */
+        put_word(res, cur->planes);
+        put_word(res, cur->bits);
+        /* FIXME: The +4 is the hotspot in the cursor resource.
+         * However, I could not find this in the documentation.
+         * The hotspot bytes must either be included or MS
+         * doesn't care.
+         */
+        put_dword(res, cur->data->size +4);
+        put_word(res, cur->id);
+    }
+
 	SetResSize(res, restag);	/* Set ResourceSize */
 	if(win32)
 		put_pad(res);
@@ -1127,46 +1072,28 @@ static res_t *icongroup2res(name_id_t *name, icon_group_t *icog)
 
 	res = new_res();
 	restag = put_res_header(res, WRC_RT_GROUP_ICON, NULL, name, icog->memopt, &(icog->lvc));
-	if(win32)
-	{
-		put_word(res, 0);	/* Reserved */
-		/* FIXME: The ResType in the NEWHEADER structure should
-		 * contain 14 according to the MS win32 doc. This is
-		 * not the case with the BRC compiler and I really doubt
-		 * the latter. Putting one here is compliant to win16 spec,
-		 * but who knows the true value?
-		 */
-		put_word(res, 1);	/* ResType */
-		put_word(res, icog->nicon);
-		for(ico = icog->iconlist; ico; ico = ico->next)
-		{
-			put_byte(res, ico->width);
-			put_byte(res, ico->height);
-			put_byte(res, ico->nclr);
-			put_byte(res, 0);	/* Reserved */
-			put_word(res, ico->planes);
-			put_word(res, ico->bits);
-			put_dword(res, ico->data->size);
-			put_word(res, ico->id);
-		}
-	}
-	else /* win16 */
-	{
-		put_word(res, 0);	/* Reserved */
-		put_word(res, 1);	/* ResType */
-		put_word(res, icog->nicon);
-		for(ico = icog->iconlist; ico; ico = ico->next)
-		{
-			put_byte(res, ico->width);
-			put_byte(res, ico->height);
-			put_byte(res, ico->nclr);
-			put_byte(res, 0);	/* Reserved */
-			put_word(res, ico->planes);
-			put_word(res, ico->bits);
-			put_dword(res, ico->data->size);
-			put_word(res, ico->id);
-		}
-	}
+
+    put_word(res, 0);	/* Reserved */
+    /* FIXME: The ResType in the NEWHEADER structure should
+     * contain 14 according to the MS win32 doc. This is
+     * not the case with the BRC compiler and I really doubt
+     * the latter. Putting one here is compliant to win16 spec,
+     * but who knows the true value?
+     */
+    put_word(res, 1);	/* ResType */
+    put_word(res, icog->nicon);
+    for(ico = icog->iconlist; ico; ico = ico->next)
+    {
+        put_byte(res, ico->width);
+        put_byte(res, ico->height);
+        put_byte(res, ico->nclr);
+        put_byte(res, 0);	/* Reserved */
+        put_word(res, ico->planes);
+        put_word(res, ico->bits);
+        put_dword(res, ico->data->size);
+        put_word(res, ico->id);
+    }
+
 	SetResSize(res, restag);	/* Set ResourceSize */
 	if(win32)
 		put_pad(res);
@@ -1407,7 +1334,7 @@ static res_t *rcdata2res(name_id_t *name, rcdata_t *rdt)
  * Output	: New .res format structure
  * Description	:
  * Remarks	: The data has been converted to the appropriate endian
- *		  after is was parsed.
+ *		  after it was parsed.
  *****************************************************************************
 */
 static res_t *messagetable2res(name_id_t *name, messagetable_t *msg)
@@ -1453,7 +1380,7 @@ static res_t *stringtable2res(stringtable_t *stt)
 	{
 		if(!stt->nentries)
 		{
-			warning("Empty internal stringtable");
+			warning("Empty internal stringtable\n");
 			continue;
 		}
 		name.type = name_ord;
@@ -1590,7 +1517,7 @@ static void versionblock2res(res_t *res, ver_block_t *blk, int level, const lang
 		}
 		else
 		{
-			internal_error(__FILE__, __LINE__, "Invalid value indicator %d in VERSIONINFO", val->type);
+			internal_error(__FILE__, __LINE__, "Invalid value indicator %d in VERSIONINFO\n", val->type);
 		}
 	}
 
@@ -1793,7 +1720,7 @@ char *prep_nid_for_label(const name_id_t *nid)
 			if((unsigned)*sptr < 0x80 && isprint(*sptr & 0xff))
 				buf[i] = *sptr++;
 			else
-				warning("Resourcename (str_unicode) contain unprintable characters or invalid translation, ignored");
+				warning("Resourcename (str_unicode) contain unprintable characters or invalid translation, ignored\n");
 		}
 		buf[i] = '\0';
 	}
@@ -1808,7 +1735,7 @@ char *prep_nid_for_label(const name_id_t *nid)
 			if((unsigned)*cptr < 0x80 && isprint(*cptr & 0xff))
 				buf[i] = *cptr++;
 			else
-				warning("Resourcename (str_char) contain unprintable characters, ignored");
+				warning("Resourcename (str_char) contain unprintable characters, ignored\n");
 		}
 		buf[i] = '\0';
 	}
@@ -1818,7 +1745,7 @@ char *prep_nid_for_label(const name_id_t *nid)
 	}
 	else
 	{
-		internal_error(__FILE__, __LINE__, "Resource name_id with invalid type %d", nid->type);
+		internal_error(__FILE__, __LINE__, "Resource name_id with invalid type %d\n", nid->type);
 	}
 	return buf;
 }
@@ -1837,23 +1764,8 @@ char *prep_nid_for_label(const name_id_t *nid)
 */
 char *make_c_name(const char *base, const name_id_t *nid, const language_t *lan)
 {
-	int nlen;
-	char *buf;
-	char *ret;
-	char lanbuf[6];
-
-	sprintf(lanbuf, "%d", lan ? MAKELANGID(lan->id, lan->sub) : 0);
-	buf = prep_nid_for_label(nid);
-	nlen = strlen(buf) + strlen(lanbuf);
-	nlen += strlen(base) + 4; /* three time '_' and '\0' */
-	ret = (char *)xmalloc(nlen);
-	strcpy(ret, "_");
-	strcat(ret, base);
-	strcat(ret, "_");
-	strcat(ret, buf);
-	strcat(ret, "_");
-	strcat(ret, lanbuf);
-	return ret;
+	char *buf = prep_nid_for_label(nid);
+	return strmake( "_%s_%s_%d", base, buf, lan ? MAKELANGID(lan->id, lan->sub) : 0);
 }
 
 /*
@@ -1877,14 +1789,12 @@ const char *get_c_typename(enum res_e type)
 	case res_bmp:	return "Bmp";
 	case res_cur:	return "Cur";
 	case res_curg:	return "CurGrp";
-	case res_dlg:
-	case res_dlgex:	return "Dlg";
+	case res_dlg:	return "Dlg";
 	case res_fnt:	return "Fnt";
 	case res_fntdir:return "FntDir";
 	case res_ico:	return "Ico";
 	case res_icog:	return "IcoGrp";
-	case res_men:
-	case res_menex:	return "Men";
+	case res_men:	return "Men";
 	case res_rdt:	return "RCDat";
 	case res_stt:	return "StrTab";
 	case res_usr:	return "Usr";
@@ -1933,10 +1843,6 @@ void resources2res(resource_t *top)
 			if(!top->binres)
 				top->binres = dialog2res(top->name, top->res.dlg);
 			break;
-		case res_dlgex:
-			if(!top->binres)
-				top->binres = dialogex2res(top->name, top->res.dlgex);
-			break;
 		case res_fnt:
 			if(!top->binres)
 				top->binres = font2res(top->name, top->res.fnt);
@@ -1956,10 +1862,6 @@ void resources2res(resource_t *top)
 		case res_men:
 			if(!top->binres)
 				top->binres = menu2res(top->name, top->res.men);
-			break;
-		case res_menex:
-			if(!top->binres)
-				top->binres = menuex2res(top->name, top->res.menex);
 			break;
 		case res_html:
 			if(!top->binres)
@@ -1999,7 +1901,7 @@ void resources2res(resource_t *top)
 			    top->binres = anicurico2res(top->name, top->res.ani, top->type);
 			break;
 		default:
-			internal_error(__FILE__, __LINE__, "Unknown resource type encountered %d in binary res generation", top->type);
+			internal_error(__FILE__, __LINE__, "Unknown resource type encountered %d in binary res generation\n", top->type);
 		}
 		top->c_name = make_c_name(get_c_typename(top->type), top->name, top->lan);
 		top = top->next;

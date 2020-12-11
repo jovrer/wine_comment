@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -37,12 +37,12 @@ struct expr
     {
         struct
         {
-            int                 value;
+            long int            value;
         } s_const;
 
         struct
         {
-            unsigned int        value;
+            long unsigned int   value;
         } u_const;
 
         struct
@@ -165,7 +165,7 @@ struct expr* expr_alloc_symbol(const char* name)
     return ex;
 }
 
-struct expr* expr_alloc_sconstant(int value)
+struct expr* expr_alloc_sconstant(long int value)
 {
     struct expr*        ex;
 
@@ -176,7 +176,7 @@ struct expr* expr_alloc_sconstant(int value)
     return ex;
 }
 
-struct expr* expr_alloc_uconstant(unsigned int value)
+struct expr* expr_alloc_uconstant(long unsigned int value)
 {
     struct expr*        ex;
 
@@ -278,8 +278,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
     int		                        i;
     struct dbg_lvalue                   exp1;
     struct dbg_lvalue                   exp2;
-    unsigned int	                cexp[5];
-    DWORD	                        scale1, scale2, scale3;
+    DWORD64	                        scale1, scale2, scale3;
     struct dbg_type                     type1, type2;
     DWORD                               tag;
     const struct dbg_internal_var*      div;
@@ -346,19 +345,19 @@ struct dbg_lvalue expr_eval(struct expr* exp)
         rtn.cookie      = DLV_HOST;
         rtn.type.id     = dbg_itype_astring;
         rtn.type.module = 0;
-        rtn.addr.Offset = (unsigned int)&exp->un.string.str;
+        rtn.addr.Offset = (ULONG_PTR)&exp->un.string.str;
         break;
     case EXPR_TYPE_U_CONST:
         rtn.cookie      = DLV_HOST;
-        rtn.type.id     = dbg_itype_unsigned_int;
+        rtn.type.id     = dbg_itype_unsigned_long_int;
         rtn.type.module = 0;
-        rtn.addr.Offset = (unsigned int)&exp->un.u_const.value;
+        rtn.addr.Offset = (ULONG_PTR)&exp->un.u_const.value;
         break;
     case EXPR_TYPE_S_CONST:
         rtn.cookie      = DLV_HOST;
-        rtn.type.id     = dbg_itype_signed_int;
+        rtn.type.id     = dbg_itype_signed_long_int;
         rtn.type.module = 0;
-        rtn.addr.Offset = (unsigned int)&exp->un.s_const.value;
+        rtn.addr.Offset = (ULONG_PTR)&exp->un.s_const.value;
         break;
     case EXPR_TYPE_SYMBOL:
         switch (symbol_get_lvalue(exp->un.symbol.name, -1, &rtn, FALSE))
@@ -375,7 +374,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
         break;
     case EXPR_TYPE_PSTRUCT:
         exp1 = expr_eval(exp->un.structure.exp1);
-        if (exp1.type.id == dbg_itype_none || !types_deref(&exp1, &rtn) ||
+        if (exp1.type.id == dbg_itype_none || !types_array_index(&exp1, 0, &rtn) ||
             rtn.type.id == dbg_itype_none)
             RaiseException(DEBUG_STATUS_BAD_TYPE, 0, 0, NULL);
         if (!types_udt_find_element(&rtn, exp->un.structure.element_name,
@@ -397,6 +396,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
         }
         break;
     case EXPR_TYPE_CALL:
+#if 0
         /*
          * First, evaluate all of the arguments.  If any of them are not
          * evaluable, then bail.
@@ -424,7 +424,6 @@ struct dbg_lvalue expr_eval(struct expr* exp)
             /* should never be here */
         }
 
-#if 0
         /* FIXME: NEWDBG NIY */
         /* Anyway, I wonder how this could work depending on the calling order of
          * the function (cdecl vs pascal for example)
@@ -461,11 +460,9 @@ struct dbg_lvalue expr_eval(struct expr* exp)
         exp->un.call.result = 0;
 #endif
         rtn.cookie = DLV_HOST;
-        /* get function signature type */
-        types_get_info(&rtn.type, TI_GET_TYPE, &rtn.type);
-        /* and now, return type */
-        types_get_info(&rtn.type, TI_GET_TYPE, &rtn.type);
-        rtn.addr.Offset = (unsigned int)&exp->un.call.result;
+        /* get return type from function signature tupe */
+        types_get_info(&rtn.type, TI_GET_TYPE, &rtn.type.id);
+        rtn.addr.Offset = (ULONG_PTR)&exp->un.call.result;
         break;
     case EXPR_TYPE_INTVAR:
         rtn.cookie = DLV_HOST;
@@ -473,7 +470,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
             RaiseException(DEBUG_STATUS_NO_SYMBOL, 0, 0, NULL);
         rtn.type.id     = div->typeid;
         rtn.type.module = 0;
-        rtn.addr.Offset = (unsigned int)div->pval;
+        rtn.addr.Offset = (ULONG_PTR)div->pval;
         break;
     case EXPR_TYPE_BINOP:
         rtn.cookie = DLV_HOST;
@@ -483,17 +480,19 @@ struct dbg_lvalue expr_eval(struct expr* exp)
             RaiseException(DEBUG_STATUS_BAD_TYPE, 0, 0, NULL);
         rtn.type.id = dbg_itype_signed_int;
         rtn.type.module = 0;
-        rtn.addr.Offset = (unsigned int)&exp->un.binop.result;
+        rtn.addr.Offset = (ULONG_PTR)&exp->un.binop.result;
+        type1 = exp1.type;
+        type2 = exp2.type;
         switch (exp->un.binop.binop_type)
 	{
 	case EXP_OP_ADD:
             if (!types_get_info(&exp1.type, TI_GET_SYMTAG, &tag) ||
                 tag != SymTagPointerType ||
-                !types_get_info(&exp1.type, TI_GET_TYPE, &type1))
+                !types_get_info(&exp1.type, TI_GET_TYPE, &type1.id))
                 type1.id = dbg_itype_none;
             if (!types_get_info(&exp2.type, TI_GET_SYMTAG, &tag) ||
                 tag != SymTagPointerType ||
-                !types_get_info(&exp2.type, TI_GET_TYPE, &type2))
+                !types_get_info(&exp2.type, TI_GET_TYPE, &type2.id))
                 type2.id = dbg_itype_none;
             scale1 = 1;
             scale2 = 1;
@@ -509,17 +508,17 @@ struct dbg_lvalue expr_eval(struct expr* exp)
                 types_get_info(&type2, TI_GET_LENGTH, &scale1);
                 rtn.type = exp2.type;
 	    }
-            exp->un.binop.result = (types_extract_as_integer(&exp1) * scale1 +
-                                    scale2 * types_extract_as_integer(&exp2));
+            exp->un.binop.result = types_extract_as_integer(&exp1) * (DWORD)scale1 +
+                (DWORD)scale2 * types_extract_as_integer(&exp2);
             break;
 	case EXP_OP_SUB:
             if (!types_get_info(&exp1.type, TI_GET_SYMTAG, &tag) ||
                 tag != SymTagPointerType ||
-                !types_get_info(&exp1.type, TI_GET_TYPE, &type1))
+                !types_get_info(&exp1.type, TI_GET_TYPE, &type1.id))
                 type1.id = dbg_itype_none;
             if (!types_get_info(&exp2.type, TI_GET_SYMTAG, &tag) ||
                 tag != SymTagPointerType ||
-                !types_get_info(&exp2.type, TI_GET_TYPE, &type2))
+                !types_get_info(&exp2.type, TI_GET_TYPE, &type2.id))
                 type2.id = dbg_itype_none;
             scale1 = 1;
             scale2 = 1;
@@ -541,15 +540,14 @@ struct dbg_lvalue expr_eval(struct expr* exp)
                 types_get_info(&type2, TI_GET_LENGTH, &scale1);
                 rtn.type = exp2.type;
 	    }
-            exp->un.binop.result = (types_extract_as_integer(&exp1) * scale1 - 
-                                    types_extract_as_integer(&exp2) * scale2) / scale3;
+            exp->un.binop.result = (types_extract_as_integer(&exp1) * (DWORD)scale1 - 
+                                    types_extract_as_integer(&exp2) * (DWORD)scale2) / (DWORD)scale3;
             break;
 	case EXP_OP_SEG:
-            rtn.type.id = dbg_itype_none;
+            rtn.type.id = dbg_itype_segptr;
             rtn.type.module = 0;
-            rtn.addr.Mode = AddrMode1632;
-            rtn.addr.Segment = types_extract_as_integer(&exp1);
-            rtn.addr.Offset = types_extract_as_integer(&exp2);
+            dbg_curr_process->be_cpu->build_addr(dbg_curr_thread->handle, &dbg_context, &rtn.addr,
+                types_extract_as_integer(&exp1), types_extract_as_integer(&exp2));
             break;
 	case EXP_OP_LOR:
             exp->un.binop.result = (types_extract_as_integer(&exp1) || types_extract_as_integer(&exp2));
@@ -612,7 +610,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
         rtn.cookie = DLV_HOST;
         exp1 = expr_eval(exp->un.unop.exp1);
         if (exp1.type.id == dbg_itype_none) RaiseException(DEBUG_STATUS_BAD_TYPE, 0, 0, NULL);
-        rtn.addr.Offset = (unsigned int)&exp->un.unop.result;
+        rtn.addr.Offset = (ULONG_PTR)&exp->un.unop.result;
         rtn.type.id     = dbg_itype_signed_int;
         rtn.type.module = 0;
         switch (exp->un.unop.unop_type)
@@ -627,7 +625,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
             exp->un.unop.result = ~types_extract_as_integer(&exp1);
             break;
 	case EXP_OP_DEREF:
-            if (!types_deref(&exp1, &rtn))
+            if (!types_array_index(&exp1, 0, &rtn))
                 RaiseException(DEBUG_STATUS_BAD_TYPE, 0, 0, NULL);
             break;
 	case EXP_OP_FORCE_DEREF:
@@ -639,7 +637,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
             /* only do it on linear addresses */
             if (exp1.addr.Mode != AddrModeFlat)
                 RaiseException(DEBUG_STATUS_CANT_DEREF, 0, 0, NULL);
-            exp->un.unop.result = (unsigned int)memory_to_linear_addr(&exp1.addr);
+            exp->un.unop.result = (ULONG_PTR)memory_to_linear_addr(&exp1.addr);
             rtn.type = types_find_pointer(&exp1.type);
             if (rtn.type.id == dbg_itype_none)
                 RaiseException(DEBUG_STATUS_CANT_DEREF, 0, 0, NULL);
@@ -656,7 +654,7 @@ struct dbg_lvalue expr_eval(struct expr* exp)
     return rtn;
 }
 
-int expr_print(const struct expr* exp)
+BOOL expr_print(const struct expr* exp)
 {
     int		        i;
     struct dbg_type     type;
@@ -691,10 +689,10 @@ int expr_print(const struct expr* exp)
         dbg_printf("$%s", exp->un.intvar.name);
         break;
     case EXPR_TYPE_U_CONST:
-        dbg_printf("%u", exp->un.u_const.value);
+        dbg_printf("%lu", exp->un.u_const.value);
         break;
     case EXPR_TYPE_S_CONST:
-        dbg_printf("%d", exp->un.s_const.value);
+        dbg_printf("%ld", exp->un.s_const.value);
         break;
     case EXPR_TYPE_STRING:
         dbg_printf("\"%s\"", exp->un.string.str);
@@ -834,7 +832,7 @@ struct expr* expr_clone(const struct expr* exp, BOOL *local_binding)
  * Recursively go through an expression tree and free all memory associated
  * with it.
  */
-int expr_free(struct expr* exp)
+BOOL expr_free(struct expr* exp)
 {
     int i;
 

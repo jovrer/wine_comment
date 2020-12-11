@@ -16,32 +16,20 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#define WIN32_LEAN_AND_MEAN
 
 #include "windows.h"
 #include "progman.h"
 
 /* Class names */
 
-CHAR STRING_MAIN_WIN_CLASS_NAME[]    = "PMMain";
-CHAR STRING_MDI_WIN_CLASS_NAME[]     = "MDICLIENT";
-CHAR STRING_GROUP_WIN_CLASS_NAME[]   = "PMGroup";
-CHAR STRING_PROGRAM_WIN_CLASS_NAME[] = "PMProgram";
-
-/* Resource names */
-CHAR STRING_ACCEL[]      = "ACCEL";
-CHAR STRING_MENU[]    = "MENU";
-CHAR STRING_NEW[]     = "DIALOG_NEW";
-CHAR STRING_OPEN[]    = "DIALOG_OPEN";
-CHAR STRING_MOVE[]    = "DIALOG_MOVE";
-CHAR STRING_COPY[]    = "DIALOG_COPY";
-CHAR STRING_DELETE[]  = "DIALOG_DELETE";
-CHAR STRING_GROUP[]   = "DIALOG_GROUP";
-CHAR STRING_PROGRAM[] = "DIALOG_PROGRAM";
-CHAR STRING_SYMBOL[]  = "DIALOG_SYMBOL";
-CHAR STRING_EXECUTE[] = "DIALOG_EXECUTE";
-
+WCHAR STRING_MAIN_WIN_CLASS_NAME[]    = {'P','M','M','a','i','n',0};
+WCHAR STRING_MDI_WIN_CLASS_NAME[]     = {'M','D','I','C','L','I','E','N','T',0};
+WCHAR STRING_GROUP_WIN_CLASS_NAME[]   = {'P','M','G','r','o','u','p',0};
+WCHAR STRING_PROGRAM_WIN_CLASS_NAME[] = {'P','M','P','r','o','g','r','a','m',0};
 
 VOID STRING_LoadMenus(VOID)
 {
@@ -49,18 +37,18 @@ VOID STRING_LoadMenus(VOID)
   HMENU  hMainMenu;
 
   /* Set frame caption */
-  LoadString(Globals.hInstance, IDS_PROGRAM_MANAGER, caption, sizeof(caption));
-  SetWindowText(Globals.hMainWnd, caption);
+  LoadStringA(Globals.hInstance, IDS_PROGRAM_MANAGER, caption, sizeof(caption));
+  SetWindowTextA(Globals.hMainWnd, caption);
 
   /* Create menu */
-  hMainMenu = LoadMenu(Globals.hInstance, MAKEINTRESOURCE(MAIN_MENU));
+  hMainMenu = LoadMenuW(Globals.hInstance, MAKEINTRESOURCEW(MAIN_MENU));
   Globals.hFileMenu     = GetSubMenu(hMainMenu, 0);
   Globals.hOptionMenu   = GetSubMenu(hMainMenu, 1);
   Globals.hWindowsMenu  = GetSubMenu(hMainMenu, 2);
   Globals.hLanguageMenu = GetSubMenu(hMainMenu, 3);
 
   if (Globals.hMDIWnd)
-    SendMessage(Globals.hMDIWnd, WM_MDISETMENU,
+    SendMessageW(Globals.hMDIWnd, WM_MDISETMENU,
 		(WPARAM) hMainMenu,
 		(LPARAM) Globals.hWindowsMenu);
   else SetMenu(Globals.hMainWnd, hMainMenu);
@@ -69,7 +57,3 @@ VOID STRING_LoadMenus(VOID)
   if (Globals.hMainMenu) DestroyMenu(Globals.hMainMenu);
   Globals.hMainMenu = hMainMenu;
 }
-
-/* Local Variables:    */
-/* c-file-style: "GNU" */
-/* End:                */

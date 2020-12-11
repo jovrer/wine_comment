@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINTAB_INTERNAL_H
@@ -136,7 +136,7 @@ typedef struct tagWTPACKET {
 typedef struct tagOPENCONTEXT
 {
     HCTX        handle;
-    LOGCONTEXTA context;
+    LOGCONTEXTW context;
     HWND        hwndOwner;
     BOOL        enabled;
     INT         ActiveCursor;
@@ -147,17 +147,16 @@ typedef struct tagOPENCONTEXT
 } OPENCONTEXT, *LPOPENCONTEXT;
 
 int TABLET_PostTabletMessage(LPOPENCONTEXT newcontext, UINT msg, WPARAM wParam,
-                             LPARAM lParam, BOOL send_always);
-LPOPENCONTEXT AddPacketToContextQueue(LPWTPACKET packet, HWND hwnd);
-LPOPENCONTEXT FindOpenContext(HWND hwnd);
+                             LPARAM lParam, BOOL send_always) DECLSPEC_HIDDEN;
+LPOPENCONTEXT AddPacketToContextQueue(LPWTPACKET packet, HWND hwnd) DECLSPEC_HIDDEN;
 
 /* X11drv functions */
-extern int (*pLoadTabletInfo)(HWND hwnddefault);
-extern int (*pGetCurrentPacket)(LPWTPACKET packet);
-extern int (*pAttachEventQueueToTablet)(HWND hOwner);
-extern UINT (*pWTInfoA)(UINT wCategory, UINT nIndex, LPVOID lpOutput);
+extern int  (CDECL *pLoadTabletInfo)(HWND hwnddefault) DECLSPEC_HIDDEN;
+extern int  (CDECL *pGetCurrentPacket)(LPWTPACKET packet) DECLSPEC_HIDDEN;
+extern int  (CDECL *pAttachEventQueueToTablet)(HWND hOwner) DECLSPEC_HIDDEN;
+extern UINT (CDECL *pWTInfoW)(UINT wCategory, UINT nIndex, LPVOID lpOutput) DECLSPEC_HIDDEN;
 
-extern HWND hwndDefault;
-extern CRITICAL_SECTION csTablet;
+extern HWND hwndDefault DECLSPEC_HIDDEN;
+extern CRITICAL_SECTION csTablet DECLSPEC_HIDDEN;
 
 #endif /* __WINE_WINTAB_INTERNAL_H */

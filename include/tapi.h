@@ -15,11 +15,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_TAPI_H
 #define __WINE_TAPI_H
+
+#include <windows.h>
+#include <basetsd.h>
+#include <oaidl.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,7 +35,7 @@ typedef HANDLE HLINEAPP, *LPHLINEAPP;
 typedef HANDLE HPHONE, *LPHPHONE;
 typedef HANDLE HPHONEAPP, *LPHPHONEAPP;
 
-#define TAPIERR_REQUESTFAILED            -16L
+#define TAPIERR_REQUESTFAILED          __MSABI_LONG(-16)
 #define LINEERR_ALLOCATED              0x80000001
 #define LINEERR_BADDEVICEID            0x80000002
 #define LINEERR_BEARERMODEUNAVAIL      0x80000003
@@ -190,34 +194,34 @@ typedef HANDLE HPHONEAPP, *LPHPHONEAPP;
 
 /* tapi callback messages */
 
-#define LINE_ADDRESSSTATE              0L
-#define LINE_CALLINFO                  1L
-#define LINE_CALLSTATE                 2L
-#define LINE_CLOSE                     3L
-#define LINE_DEVSPECIFIC               4L
-#define LINE_DEVSPECIFICFEATURE        5L
-#define LINE_GATHERDIGITS              6L
-#define LINE_GENERATE                  7L
-#define LINE_LINEDEVSTATE              8L
-#define LINE_MONITORDIGITS             9L
-#define LINE_MONITORMEDIA             10L
-#define LINE_MONITORTONE              11L
-#define LINE_REPLY                    12L
-#define LINE_REQUEST                  13L
-#define PHONE_BUTTON                  14L
-#define PHONE_CLOSE                   15L
-#define PHONE_DEVSPECIFIC             16L
-#define PHONE_REPLY                   17L
-#define PHONE_STATE                   18L
-#define LINE_CREATE                   19L
-#define PHONE_CREATE                  20L
+#define LINE_ADDRESSSTATE             __MSABI_LONG(0)
+#define LINE_CALLINFO                 __MSABI_LONG(1)
+#define LINE_CALLSTATE                __MSABI_LONG(2)
+#define LINE_CLOSE                    __MSABI_LONG(3)
+#define LINE_DEVSPECIFIC              __MSABI_LONG(4)
+#define LINE_DEVSPECIFICFEATURE       __MSABI_LONG(5)
+#define LINE_GATHERDIGITS             __MSABI_LONG(6)
+#define LINE_GENERATE                 __MSABI_LONG(7)
+#define LINE_LINEDEVSTATE             __MSABI_LONG(8)
+#define LINE_MONITORDIGITS            __MSABI_LONG(9)
+#define LINE_MONITORMEDIA             __MSABI_LONG(10)
+#define LINE_MONITORTONE              __MSABI_LONG(11)
+#define LINE_REPLY                    __MSABI_LONG(12)
+#define LINE_REQUEST                  __MSABI_LONG(13)
+#define PHONE_BUTTON                  __MSABI_LONG(14)
+#define PHONE_CLOSE                   __MSABI_LONG(15)
+#define PHONE_DEVSPECIFIC             __MSABI_LONG(16)
+#define PHONE_REPLY                   __MSABI_LONG(17)
+#define PHONE_STATE                   __MSABI_LONG(18)
+#define LINE_CREATE                   __MSABI_LONG(19)
+#define PHONE_CREATE                  __MSABI_LONG(20)
 
-#define LINE_AGENTSPECIFIC            21L
-#define LINE_AGENTSTATUS              22L
-#define LINE_APPNEWCALL               23L
-#define LINE_PROXYREQUEST             24L
-#define LINE_REMOVE                   25L
-#define PHONE_REMOVE                  26L
+#define LINE_AGENTSPECIFIC            __MSABI_LONG(21)
+#define LINE_AGENTSTATUS              __MSABI_LONG(22)
+#define LINE_APPNEWCALL               __MSABI_LONG(23)
+#define LINE_PROXYREQUEST             __MSABI_LONG(24)
+#define LINE_REMOVE                   __MSABI_LONG(25)
+#define PHONE_REMOVE                  __MSABI_LONG(26)
 /* these are used as Param1 of line_callstate messages */
 #define LINECALLSTATE_IDLE            0x00000001
 #define LINECALLSTATE_OFFERING        0x00000002
@@ -300,6 +304,11 @@ typedef HANDLE HPHONEAPP, *LPHPHONEAPP;
 #define LINECALLFEATURE_SWAPHOLD            0x04000000
 #define LINECALLFEATURE_UNHOLD              0x08000000
 #define LINECALLFEATURE_RELEASEUSERUSERINFO 0x10000000
+
+#define LINEINITIALIZEEXOPTION_USEHIDDENWINDOW   0x00000001
+#define LINEINITIALIZEEXOPTION_USEEVENT          0x00000002
+#define LINEINITIALIZEEXOPTION_USECOMPLETIONPORT 0x00000003
+#define LINEINITIALIZEEXOPTION_CALLHUBTRACKING   0x80000000
 
 typedef struct lineaddresscaps_tag {
     DWORD dwTotalSize;
@@ -583,9 +592,9 @@ typedef struct linedevstatus_tag {
     DWORD dwOpenMediaModes;
     DWORD dwNumActiveCalls;
     DWORD dwNumOnHoldCalls;
-    DWORD dwNumOnHoldPendingCalls;
+    DWORD dwNumOnHoldPendCalls;
     DWORD dwLineFeatures;
-    DWORD dwNumCallCompletion;
+    DWORD dwNumCallCompletions;
     DWORD dwRingMode;
     DWORD dwSignalLevel;
     DWORD dwBatteryLevel;
@@ -625,6 +634,18 @@ typedef struct linegeneratetone_tag {
     DWORD dwCadenceOff;
     DWORD dwVolume;
 } LINEGENERATETONE, *LPLINEGENERATETONE;
+
+typedef struct lineinitializeexparams_tag {
+    DWORD dwTotalSize;
+    DWORD dwNeededSize;
+    DWORD dwUsedSize;
+    DWORD dwOptions;
+    union {
+    HANDLE hEvent;
+    HANDLE hCompletionPort;
+    } Handles;
+    DWORD dwCompletionKey;
+} LINEINITIALIZEEXPARAMS, *LPLINEINITIALIZEEXPARAMS;
 
 typedef struct linemediacontrolcallstate_tag {
     DWORD dwCallStates;
@@ -731,6 +752,15 @@ typedef struct linetranslateoutput_tag {
     DWORD dwTranslateResults;
 } LINETRANSLATEOUTPUT, *LPLINETRANSLATEOUTPUT;
 
+typedef struct linemessage_tag {
+  DWORD     hDevice;
+  DWORD     dwMessageID;
+  DWORD_PTR dwCallbackInstance;
+  DWORD_PTR dwParam1;
+  DWORD_PTR dwParam2;
+  DWORD_PTR dwParam3;
+} LINEMESSAGE, *LPLINEMESSAGE;
+
 typedef void (CALLBACK *LINECALLBACK)(DWORD, DWORD, DWORD, DWORD, DWORD, DWORD);
 
 typedef struct _PHONEAPP {
@@ -801,6 +831,27 @@ typedef struct phoneextensionid_tag {
     DWORD dwExtensionID3;
 } PHONEEXTENSIONID, *LPPHONEEXTENSIONID;
 
+typedef struct phoneinitializeexparams_tag {
+    DWORD dwTotalSize;
+    DWORD dwNeededSize;
+    DWORD dwUsedSize;
+    DWORD dwOptions;
+    union {
+    HANDLE hEvent;
+    HANDLE hCompletionPort;
+    } Handles;
+    DWORD dwCompletionKey;
+} PHONEINITIALIZEEXPARAMS, *LPPHONEINITIALIZEEXPARAMS;
+
+typedef struct phonemessage_tag {
+  DWORD     hDevice;
+  DWORD     dwMessageID;
+  DWORD_PTR dwCallbackInstance;
+  DWORD_PTR dwParam1;
+  DWORD_PTR dwParam2;
+  DWORD_PTR dwParam3;
+} PHONEMESSAGE, *LPPHONEMESSAGE;
+
 typedef struct phonestatus_tag {
     DWORD dwTotalSize;
     DWORD dwNeededSize;
@@ -841,7 +892,9 @@ typedef struct varstring_tag {
 
 /* line functions */
 DWORD WINAPI lineAccept(HCALL,LPCSTR,DWORD);
-DWORD WINAPI lineAddProvider(LPCSTR,HWND,LPDWORD);
+DWORD WINAPI lineAddProviderA(LPCSTR,HWND,LPDWORD);
+DWORD WINAPI lineAddProviderW(LPCWSTR,HWND,LPDWORD);
+#define      lineAddProvider WINELIB_NAME_AW(lineAddProvider)
 DWORD WINAPI lineAddToConference(HCALL,HCALL);
 DWORD WINAPI lineAnswer(HCALL,LPCSTR,DWORD);
 DWORD WINAPI lineBlindTransfer(HCALL,LPCSTR,DWORD);
@@ -868,21 +921,32 @@ DWORD WINAPI lineGetCallInfo(HCALL,LPLINECALLINFO);
 DWORD WINAPI lineGetCallStatus(HCALL,LPLINECALLSTATUS);
 DWORD WINAPI lineGetConfRelatedCalls(HCALL,LPLINECALLLIST);
 DWORD WINAPI lineGetCountry(DWORD,DWORD,LPLINECOUNTRYLIST);
-DWORD WINAPI lineGetDevCaps(HLINEAPP,DWORD,DWORD,DWORD,LPLINEDEVCAPS);
+DWORD WINAPI lineGetDevCapsA(HLINEAPP,DWORD,DWORD,DWORD,LPLINEDEVCAPS);
+DWORD WINAPI lineGetDevCapsW(HLINEAPP,DWORD,DWORD,DWORD,LPLINEDEVCAPS);
+#define      lineGetDevCaps WINELIB_NAME_AW(lineGetDevCaps)
 DWORD WINAPI lineGetDevConfig(DWORD,LPVARSTRING,LPCSTR);
-DWORD WINAPI lineGetID(HLINE,DWORD,HCALL,DWORD,LPVARSTRING,LPCSTR);
+DWORD WINAPI lineGetIDA(HLINE,DWORD,HCALL,DWORD,LPVARSTRING,LPCSTR);
+DWORD WINAPI lineGetIDW(HLINE,DWORD,HCALL,DWORD,LPVARSTRING,LPCWSTR);
+#define      lineGetID WINELIB_NAME_AW(lineGetID)
 DWORD WINAPI lineGetIcon(DWORD,LPCSTR,HICON *);
 DWORD WINAPI lineGetLineDevStatus(HLINE,LPLINEDEVSTATUS);
 DWORD WINAPI lineGetNewCalls(HLINE,DWORD,DWORD,LPLINECALLLIST);
 DWORD WINAPI lineGetNumRings(HLINE,DWORD,LPDWORD);
-DWORD WINAPI lineGetProviderList(DWORD dwAPIVersion,LPLINEPROVIDERLIST);
+DWORD WINAPI lineGetProviderListA(DWORD,LPLINEPROVIDERLIST);
+DWORD WINAPI lineGetProviderListW(DWORD,LPLINEPROVIDERLIST);
+#define      lineGetProviderList WINELIB_NAME_AW(lineGetProviderList)
 DWORD WINAPI lineGetRequest(HLINEAPP,DWORD,LPVOID);
 DWORD WINAPI lineGetStatusMessages(HLINE,LPDWORD,LPDWORD);
 DWORD WINAPI lineGetTranslateCaps(HLINEAPP,DWORD,LPLINETRANSLATECAPS);
 DWORD WINAPI lineHandoff(HCALL,LPCSTR,DWORD);
 DWORD WINAPI lineHold(HCALL);
 DWORD WINAPI lineInitialize(LPHLINEAPP,HINSTANCE,LINECALLBACK,LPCSTR,LPDWORD);
-DWORD WINAPI lineMakeCall(HLINE,LPHCALL,LPCSTR,DWORD,LPLINECALLPARAMS);
+LONG  WINAPI lineInitializeExA(LPHLINEAPP,HINSTANCE,LINECALLBACK,LPCSTR,LPDWORD,LPDWORD,LPLINEINITIALIZEEXPARAMS);
+LONG  WINAPI lineInitializeExW(LPHLINEAPP,HINSTANCE,LINECALLBACK,LPCWSTR,LPDWORD,LPDWORD,LPLINEINITIALIZEEXPARAMS);
+#define      lineInitializeEx WINELIB_NAME_AW(lineInitializeEx)
+DWORD WINAPI lineMakeCallA(HLINE,LPHCALL,LPCSTR,DWORD,LPLINECALLPARAMS);
+DWORD WINAPI lineMakeCallW(HLINE,LPHCALL,LPCWSTR,DWORD,LPLINECALLPARAMS);
+#define      lineMakeCall WINELIB_NAME_AW(lineMakeCall)
 DWORD WINAPI lineMonitorDigits(HCALL,DWORD);
 DWORD WINAPI lineMonitorMedia(HCALL,DWORD);
 DWORD WINAPI lineMonitorTones(HCALL,LPLINEMONITORTONE,DWORD);
@@ -921,7 +985,6 @@ DWORD WINAPI lineUncompleteCall(HLINE,DWORD);
 DWORD WINAPI lineUnHold(HCALL);
 DWORD WINAPI lineUnpark(HLINE,DWORD,LPHCALL,LPCSTR);
 
-DWORD WINAPI lineAddProviderA(LPCSTR,HWND,LPDWORD);
 DWORD WINAPI lineBlindTransferA(HCALL,LPCSTR,DWORD);
 DWORD WINAPI lineConfigDialogA(DWORD,HWND,LPCSTR);
 DWORD WINAPI lineConfigDialogEditA(DWORD,HWND,LPCSTR,LPVOID const,DWORD,LPVARSTRING);
@@ -935,16 +998,12 @@ DWORD WINAPI lineGetAddressStatusA(HLINE,DWORD,LPLINEADDRESSSTATUS);
 DWORD WINAPI lineGetAppPriorityA(LPCSTR,DWORD,LPLINEEXTENSIONID const,DWORD,LPVARSTRING,LPDWORD);
 DWORD WINAPI lineGetCallInfoA(HCALL,LPLINECALLINFO);
 DWORD WINAPI lineGetCountryA(DWORD,DWORD,LPLINECOUNTRYLIST);
-DWORD WINAPI lineGetDevCapsA(HLINEAPP,DWORD,DWORD,DWORD,LPLINEDEVCAPS);
 DWORD WINAPI lineGetDevConfigA(DWORD,LPVARSTRING,LPCSTR);
-DWORD WINAPI lineGetIDA(HLINE,DWORD,HCALL,DWORD,LPVARSTRING,LPCSTR);
 DWORD WINAPI lineGetIconA(DWORD,LPCSTR,HICON *);
 DWORD WINAPI lineGetLineDevStatusA(HLINE,LPLINEDEVSTATUS);
-DWORD WINAPI lineGetProviderListA(DWORD dwAPIVersion,LPLINEPROVIDERLIST);
 DWORD WINAPI lineGetRequestA(HLINEAPP,DWORD,LPVOID);
 DWORD WINAPI lineGetTranslateCapsA(HLINEAPP,DWORD,LPLINETRANSLATECAPS);
 DWORD WINAPI lineHandoffA(HCALL,LPCSTR,DWORD);
-DWORD WINAPI lineMakeCallA(HLINE,LPHCALL,LPCSTR,DWORD,LPLINECALLPARAMS);
 DWORD WINAPI lineOpenA(HLINEAPP,DWORD,LPHLINE,DWORD,DWORD,DWORD,DWORD,DWORD,LPLINECALLPARAMS);
 DWORD WINAPI lineParkA(HCALL,DWORD,LPCSTR,LPVARSTRING);
 DWORD WINAPI linePickupA(HLINE,DWORD,LPHCALL,LPCSTR,LPCSTR);

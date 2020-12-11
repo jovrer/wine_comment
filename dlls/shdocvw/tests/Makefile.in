@@ -1,14 +1,6 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = shdocvw.dll
-IMPORTS   = shell32 ole32 advapi32 kernel32
-EXTRALIBS = -luuid
+IMPORTS   = shell32 ole32 oleaut32 advapi32
 
-CTESTS = \
-	shortcut.c 
-
-@MAKE_TEST_RULES@
-
-### Dependencies:
+C_SRCS = \
+	shdocvw.c \
+	shortcut.c

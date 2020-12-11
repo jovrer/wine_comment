@@ -1,14 +1,7 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = regedit.exe
-APPMODE   = -mwindows
-IMPORTS   = msvcrt advapi32 kernel32
+APPMODE   = -mwindows -municode -mno-cygwin
+IMPORTS   = advapi32
 DELAYIMPORTS = shlwapi shell32 comdlg32 comctl32 user32 gdi32
-EXTRAINCL = -I$(TOPSRCDIR)/include/msvcrt
-EXTRADEFS = -DNO_LIBWINE_PORT
-MODCFLAGS = @BUILTINFLAG@
 
 C_SRCS = \
 	about.c \
@@ -22,16 +15,8 @@ C_SRCS = \
 	regproc.c \
 	treeview.c
 
-RC_SRCS = rsrc.rc
-RC_BINSRC = resource.rc
-RC_BINARIES = \
-	bin.ico \
-	computer.ico \
-	folder.ico \
-	folderopen.ico \
-	regedit.ico \
-	string.ico
+RC_SRCS = regedit.rc
 
-@MAKE_PROG_RULES@
+MANPAGES = regedit.man.in
 
-### Dependencies:
+SVG_SRCS = regedit.svg

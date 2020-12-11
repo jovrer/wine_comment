@@ -15,11 +15,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_ICMPAPI_H
 #define __WINE_ICMPAPI_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 HANDLE WINAPI IcmpCreateFile(
     VOID
@@ -40,5 +45,9 @@ DWORD WINAPI IcmpSendEcho(
     DWORD                  Timeout
     );
 
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __WINE_ICMPAPI_H */

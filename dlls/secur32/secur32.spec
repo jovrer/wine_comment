@@ -6,8 +6,8 @@
 @ stdcall AcquireCredentialsHandleW(wstr wstr long ptr ptr ptr ptr ptr ptr)
 @ stdcall AddCredentialsA(ptr str str long ptr ptr ptr ptr)
 @ stdcall AddCredentialsW(ptr wstr wstr long ptr ptr ptr ptr)
-@ stub AddSecurityPackageA
-@ stub AddSecurityPackageW
+@ stdcall AddSecurityPackageA(str ptr)
+@ stdcall AddSecurityPackageW(wstr ptr)
 @ stdcall ApplyControlToken(ptr ptr)
 @ stdcall CompleteAuthToken(ptr ptr)
 @ stdcall DecryptMessage(ptr ptr long ptr)
@@ -33,14 +33,14 @@
 @ stdcall InitializeSecurityContextA(ptr ptr str long long long ptr long ptr ptr ptr ptr)
 @ stdcall InitializeSecurityContextW(ptr ptr wstr long long long ptr long ptr ptr ptr ptr)
 @ stdcall LsaCallAuthenticationPackage(long long ptr long ptr ptr ptr)
-@ stdcall LsaConnectUntrusted(long)
+@ stdcall LsaConnectUntrusted(ptr)
 @ stdcall LsaDeregisterLogonProcess(long)
-@ stub LsaEnumerateLogonSessions
-@ stub LsaFreeReturnBuffer
-@ stub LsaGetLogonSessionData
-@ stub LsaLogonUser
-@ stub LsaLookupAuthenticationPackage
-@ stub LsaRegisterLogonProcess
+@ stdcall LsaEnumerateLogonSessions(ptr ptr)
+@ stdcall LsaFreeReturnBuffer(ptr)
+@ stdcall LsaGetLogonSessionData(ptr ptr)
+@ stdcall LsaLogonUser(ptr ptr long long ptr long ptr ptr ptr ptr ptr ptr ptr ptr)
+@ stdcall LsaLookupAuthenticationPackage(ptr ptr ptr)
+@ stdcall LsaRegisterLogonProcess(ptr ptr ptr)
 @ stub LsaRegisterPolicyChangeNotification
 @ stub LsaUnregisterPolicyChangeNotification
 @ stdcall MakeSignature(ptr long ptr long)
@@ -61,13 +61,21 @@
 @ stub SaslIdentifyPackageW
 @ stub SaslInitializeSecurityContextA
 @ stub SaslInitializeSecurityContextW
-@ stub SealMessage
+@ stdcall SealMessage(ptr long ptr long) EncryptMessage
 @ stub SecCacheSspiPackages
 @ stub SecGetLocaleSpecificEncryptionRules
 @ stub SecpFreeMemory
 @ stub SecpTranslateName
 @ stub SecpTranslateNameEx
+@ stdcall SetContextAttributesA(ptr long ptr long)
+@ stdcall SetContextAttributesW(ptr long ptr long)
+@ stdcall SspiEncodeAuthIdentityAsStrings(ptr ptr ptr ptr) sspicli.SspiEncodeAuthIdentityAsStrings
+@ stdcall SspiEncodeStringsAsAuthIdentity(wstr wstr wstr ptr) sspicli.SspiEncodeStringsAsAuthIdentity
+@ stdcall SspiFreeAuthIdentity(ptr) sspicli.SspiFreeAuthIdentity
+@ stdcall SspiLocalFree(ptr) sspicli.SspiLocalFree
+@ stdcall SspiPrepareForCredWrite(ptr wstr ptr ptr ptr ptr ptr) sspicli.SspiPrepareForCredWrite
+@ stdcall SspiZeroAuthIdentity(ptr) sspicli.SspiZeroAuthIdentity
 @ stdcall TranslateNameA(str long long ptr ptr)
 @ stdcall TranslateNameW(wstr long long ptr ptr)
-@ stub UnsealMessage
+@ stdcall UnsealMessage(ptr ptr long ptr) DecryptMessage
 @ stdcall VerifySignature(ptr ptr long ptr)

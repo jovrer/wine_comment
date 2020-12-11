@@ -15,12 +15,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "wine/test.h"
 #include "windef.h"
 #include "winbase.h"
@@ -28,6 +26,7 @@
 #include "winerror.h"
 #include "winnt.h"
 #include "mapiutil.h"
+#include "mapi32_test.h"
 
 static HMODULE hMapi32 = 0;
 
@@ -46,28 +45,34 @@ static void test_IMalloc(void)
     pMAPIGetDefaultMalloc = (void*)GetProcAddress(hMapi32,
                                                   "MAPIGetDefaultMalloc@0");
     if (!pMAPIGetDefaultMalloc)
+    {
+        win_skip("MAPIGetDefaultMalloc is not available\n");
         return;
+    }
 
     lpMalloc = pMAPIGetDefaultMalloc();
+    ok(lpMalloc != NULL, "Expected MAPIGetDefaultMalloc to return non-NULL\n");
     if (!lpMalloc)
+    {
+        skip("MAPIGetDefaultMalloc failed\n");
         return;
+    }
 
     lpVoid = NULL;
     hRet = IMalloc_QueryInterface(lpMalloc, &IID_IUnknown, &lpVoid);
     ok (hRet == S_OK && lpVoid != NULL,
-        "IID_IUnknown: exepected S_OK, non-null, got 0x%08lx, %p\n",
+        "IID_IUnknown: expected S_OK, non-null, got 0x%08x, %p\n",
         hRet, lpVoid);
 
     lpVoid = NULL;
     hRet = IMalloc_QueryInterface(lpMalloc, &IID_IMalloc, &lpVoid);
     ok (hRet == S_OK && lpVoid != NULL,
-        "IID_IIMalloc: exepected S_OK, non-null, got 0x%08lx, %p\n",
+        "IID_IIMalloc: expected S_OK, non-null, got 0x%08x, %p\n",
         hRet, lpVoid);
 
     /* Prove that native mapi uses LocalAlloc/LocalFree */
     lpMem = IMalloc_Alloc(lpMalloc, 61);
-    ok (lpMem && IMalloc_GetSize(lpMalloc, lpMem) ==
-        LocalSize((HANDLE)lpMem),
+    ok (lpMem && IMalloc_GetSize(lpMalloc, lpMem) == LocalSize(lpMem),
         "Expected non-null, same size, got %p, %s size\n", lpMem,
         lpMem ? "different" : "same");
 
@@ -79,22 +84,50 @@ static void test_IMalloc(void)
     LocalFree(lpMem);
  
     ulRef = IMalloc_AddRef(lpMalloc);
-    ok (ulRef == 1u, "AddRef expected 1, returned %ld\n", ulRef); 
+    ok (ulRef == 1u, "AddRef expected 1, returned %d\n", ulRef); 
     
     ulRef = IMalloc_Release(lpMalloc);
-    ok (ulRef == 1u, "AddRef expected 1, returned %ld\n", ulRef);
+    ok (ulRef == 1u, "AddRef expected 1, returned %d\n", ulRef);
 
     IMalloc_Release(lpMalloc);
 }
 
 START_TEST(imalloc)
 {
+    SCODE ret;
+
+    if (!HaveDefaultMailClient())
+    {
+        win_skip("No default mail client installed\n");
+        return;
+    }
+
     hMapi32 = LoadLibraryA("mapi32.dll");
 
     pScInitMapiUtil = (void*)GetProcAddress(hMapi32, "ScInitMapiUtil@4");
     if (!pScInitMapiUtil)
+    {
+        win_skip("ScInitMapiUtil is not available\n");
+        FreeLibrary(hMapi32);
         return;
-    pScInitMapiUtil(0);
+    }
+
+    SetLastError(0xdeadbeef);
+    ret = pScInitMapiUtil(0);
+    if ((ret != S_OK) && (GetLastError() == ERROR_PROC_NOT_FOUND))
+    {
+        win_skip("ScInitMapiUtil is not implemented\n");
+        FreeLibrary(hMapi32);
+        return;
+    }
+    else if ((ret == E_FAIL) && (GetLastError() == ERROR_INVALID_HANDLE))
+    {
+        win_skip("ScInitMapiUtil doesn't work on some Win98 and WinME systems\n");
+        FreeLibrary(hMapi32);
+        return;
+    }
 
     test_IMalloc();
+
+    FreeLibrary(hMapi32);
 }

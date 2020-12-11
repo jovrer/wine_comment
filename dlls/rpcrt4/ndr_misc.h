@@ -1,7 +1,7 @@
 /*
  * NDR definitions
  *
- * Copyright 2001 Ove Kåven, TransGaming Technologies
+ * Copyright 2001 Ove KÃ¥ven, TransGaming Technologies
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_NDR_MISC_H
@@ -30,24 +30,38 @@
 
 struct IPSFactoryBuffer;
 
-LONG_PTR RPCRT4_NdrClientCall2(PMIDL_STUB_DESC pStubDesc,
-			       PFORMAT_STRING pFormat, va_list args );
+PFORMAT_STRING ComputeConformanceOrVariance(
+    MIDL_STUB_MESSAGE *pStubMsg, unsigned char *pMemory,
+    PFORMAT_STRING pFormat, ULONG_PTR def, ULONG_PTR *pCount) DECLSPEC_HIDDEN;
 
-HRESULT RPCRT4_GetPSFactory(REFIID riid, struct IPSFactoryBuffer **ppPS);
+static inline PFORMAT_STRING ComputeConformance(PMIDL_STUB_MESSAGE pStubMsg, unsigned char *pMemory, PFORMAT_STRING pFormat, ULONG def)
+{
+    return ComputeConformanceOrVariance(pStubMsg, pMemory, pFormat, def, &pStubMsg->MaxCount);
+}
 
-PFORMAT_STRING ComputeConformance(MIDL_STUB_MESSAGE *pStubMsg, unsigned char *pMemory,
-                                  PFORMAT_STRING pFormat, ULONG_PTR def);
+static inline PFORMAT_STRING ComputeVariance(PMIDL_STUB_MESSAGE pStubMsg, unsigned char *pMemory, PFORMAT_STRING pFormat, ULONG def)
+{
+    PFORMAT_STRING ret;
+    ULONG_PTR ActualCount = pStubMsg->ActualCount;
+
+    pStubMsg->Offset = 0;
+    ret = ComputeConformanceOrVariance(pStubMsg, pMemory, pFormat, def, &ActualCount);
+    pStubMsg->ActualCount = (ULONG)ActualCount;
+    return ret;
+}
 
 typedef unsigned char* (WINAPI *NDR_MARSHALL)  (PMIDL_STUB_MESSAGE, unsigned char*, PFORMAT_STRING);
 typedef unsigned char* (WINAPI *NDR_UNMARSHALL)(PMIDL_STUB_MESSAGE, unsigned char**,PFORMAT_STRING, unsigned char);
 typedef void           (WINAPI *NDR_BUFFERSIZE)(PMIDL_STUB_MESSAGE, unsigned char*, PFORMAT_STRING);
-typedef unsigned long  (WINAPI *NDR_MEMORYSIZE)(PMIDL_STUB_MESSAGE,                 PFORMAT_STRING);
+typedef ULONG          (WINAPI *NDR_MEMORYSIZE)(PMIDL_STUB_MESSAGE,                 PFORMAT_STRING);
 typedef void           (WINAPI *NDR_FREE)      (PMIDL_STUB_MESSAGE, unsigned char*, PFORMAT_STRING);
 
-extern NDR_MARSHALL   NdrMarshaller[];
-extern NDR_UNMARSHALL NdrUnmarshaller[];
-extern NDR_BUFFERSIZE NdrBufferSizer[];
-extern NDR_MEMORYSIZE NdrMemorySizer[];
-extern NDR_FREE       NdrFreer[];
+extern const NDR_MARSHALL   NdrMarshaller[] DECLSPEC_HIDDEN;
+extern const NDR_UNMARSHALL NdrUnmarshaller[] DECLSPEC_HIDDEN;
+extern const NDR_BUFFERSIZE NdrBufferSizer[] DECLSPEC_HIDDEN;
+extern const NDR_MEMORYSIZE NdrMemorySizer[] DECLSPEC_HIDDEN;
+extern const NDR_FREE       NdrFreer[] DECLSPEC_HIDDEN;
+
+ULONG ComplexStructSize(PMIDL_STUB_MESSAGE pStubMsg, PFORMAT_STRING pFormat) DECLSPEC_HIDDEN;
 
 #endif  /* __WINE_NDR_MISC_H */

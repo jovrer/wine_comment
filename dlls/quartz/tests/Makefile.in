@@ -1,15 +1,18 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = quartz.dll
-IMPORTS   = ole32 user32 gdi32 kernel32
-EXTRALIBS = -lstrmiids
+IMPORTS   = oleaut32 ole32 advapi32 user32
 
-CTESTS = \
+C_SRCS = \
+	avisplitter.c \
+	dsoundrender.c \
+	filesource.c \
 	filtergraph.c \
-	memallocator.c
+	filtermapper.c \
+	memallocator.c \
+	misc.c \
+	mpegsplit.c \
+	referenceclock.c \
+	videorenderer.c
 
-@MAKE_TEST_RULES@
 
-### Dependencies:
+RC_SRCS = \
+	rsrc.rc

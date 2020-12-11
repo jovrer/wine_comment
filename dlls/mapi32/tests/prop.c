@@ -15,23 +15,24 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "wine/test.h"
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
 #include "winerror.h"
 #include "winnt.h"
+#include "initguid.h"
 #include "mapiutil.h"
 #include "mapitags.h"
+#include "mapi32_test.h"
 
 static HMODULE hMapi32 = 0;
 
 static SCODE        (WINAPI *pScInitMapiUtil)(ULONG);
+static void         (WINAPI *pDeinitMapiUtil)(void);
 static SCODE        (WINAPI *pPropCopyMore)(LPSPropValue,LPSPropValue,ALLOCATEMORE*,LPVOID);
 static ULONG        (WINAPI *pUlPropSize)(LPSPropValue);
 static BOOL         (WINAPI *pFPropContainsProp)(LPSPropValue,LPSPropValue,ULONG);
@@ -53,26 +54,49 @@ static SCODE        (WINAPI *pCreateIProp)(LPCIID,ALLOCATEBUFFER*,ALLOCATEMORE*,
                                            FREEBUFFER*,LPVOID,LPPROPDATA*);
 static SCODE        (WINAPI *pMAPIAllocateBuffer)(ULONG, LPVOID);
 static SCODE        (WINAPI *pMAPIAllocateMore)(ULONG, LPVOID, LPVOID);
+static SCODE        (WINAPI *pMAPIInitialize)(LPVOID);
 static SCODE        (WINAPI *pMAPIFreeBuffer)(LPVOID);
+static void         (WINAPI *pMAPIUninitialize)(void);
 
 static BOOL InitFuncPtrs(void)
 {
     hMapi32 = LoadLibraryA("mapi32.dll");
 
+    pPropCopyMore = (void*)GetProcAddress(hMapi32, "PropCopyMore@16");
+    pUlPropSize = (void*)GetProcAddress(hMapi32, "UlPropSize@4");
+    pFPropContainsProp = (void*)GetProcAddress(hMapi32, "FPropContainsProp@12");
+    pFPropCompareProp = (void*)GetProcAddress(hMapi32, "FPropCompareProp@12");
+    pLPropCompareProp = (void*)GetProcAddress(hMapi32, "LPropCompareProp@8");
+    pPpropFindProp = (void*)GetProcAddress(hMapi32, "PpropFindProp@12");
+    pScCountProps = (void*)GetProcAddress(hMapi32, "ScCountProps@12");
+    pScCopyProps = (void*)GetProcAddress(hMapi32, "ScCopyProps@16");
+    pScRelocProps = (void*)GetProcAddress(hMapi32, "ScRelocProps@20");
+    pLpValFindProp = (void*)GetProcAddress(hMapi32, "LpValFindProp@12");
+    pFBadRglpszA = (void*)GetProcAddress(hMapi32, "FBadRglpszA@8");
+    pFBadRglpszW = (void*)GetProcAddress(hMapi32, "FBadRglpszW@8");
+    pFBadRowSet = (void*)GetProcAddress(hMapi32, "FBadRowSet@4");
+    pFBadPropTag = (void*)GetProcAddress(hMapi32, "FBadPropTag@4");
+    pFBadRow = (void*)GetProcAddress(hMapi32, "FBadRow@4");
+    pFBadProp = (void*)GetProcAddress(hMapi32, "FBadProp@4");
+    pFBadColumnSet = (void*)GetProcAddress(hMapi32, "FBadColumnSet@4");
+    pCreateIProp = (void*)GetProcAddress(hMapi32, "CreateIProp@24");
+
     pScInitMapiUtil = (void*)GetProcAddress(hMapi32, "ScInitMapiUtil@4");
+    pDeinitMapiUtil = (void*)GetProcAddress(hMapi32, "DeinitMapiUtil@0");
     pMAPIAllocateBuffer = (void*)GetProcAddress(hMapi32, "MAPIAllocateBuffer");
     pMAPIAllocateMore = (void*)GetProcAddress(hMapi32, "MAPIAllocateMore");
     pMAPIFreeBuffer = (void*)GetProcAddress(hMapi32, "MAPIFreeBuffer");
-    if(pScInitMapiUtil && pMAPIAllocateBuffer && pMAPIAllocateMore && pMAPIFreeBuffer)
-        return TRUE;
-    else
-        return FALSE;
+    pMAPIInitialize = (void*)GetProcAddress(hMapi32, "MAPIInitialize");
+    pMAPIUninitialize = (void*)GetProcAddress(hMapi32, "MAPIUninitialize");
+
+    return pMAPIAllocateBuffer && pMAPIAllocateMore && pMAPIFreeBuffer &&
+           pScInitMapiUtil && pDeinitMapiUtil;
 }
 
+/* FIXME: Test PT_I2, PT_I4, PT_R4, PT_R8, PT_CURRENCY, PT_APPTIME, PT_SYSTIME,
+ * PT_ERROR, PT_BOOLEAN, PT_I8, and PT_CLSID. */
 static ULONG ptTypes[] = {
-    PT_I2, PT_I4, PT_R4, PT_R8, PT_CURRENCY, PT_APPTIME, PT_SYSTIME,
-    PT_ERROR, PT_BOOLEAN, PT_I8, PT_CLSID, PT_STRING8, PT_BINARY,
-    PT_UNICODE
+    PT_STRING8, PT_BINARY, PT_UNICODE
 };
 
 static inline int strcmpW(const WCHAR *str1, const WCHAR *str2)
@@ -83,36 +107,45 @@ static inline int strcmpW(const WCHAR *str1, const WCHAR *str2)
 
 static void test_PropCopyMore(void)
 {
-    static const char *szHiA = "Hi!";
-    static const WCHAR szHiW[] = { 'H', 'i', '!', '\0' };
+    static char szHiA[] = "Hi!";
+    static WCHAR szHiW[] = { 'H', 'i', '!', '\0' };
     SPropValue *lpDest = NULL, *lpSrc = NULL;
     ULONG i;
     SCODE scode;
 
-    pPropCopyMore = (void*)GetProcAddress(hMapi32, "PropCopyMore@16");
-
     if (!pPropCopyMore)
+    {
+        win_skip("PropCopyMore is not available\n");
         return;
+    }
 
-    scode = pMAPIAllocateBuffer(sizeof(LPSPropValue), (LPVOID *)lpDest);
+    scode = pMAPIAllocateBuffer(sizeof(SPropValue), &lpDest);
+    ok(scode == S_OK, "Expected MAPIAllocateBuffer to return S_OK, got 0x%x\n", scode);
     if (FAILED(scode))
+    {
+        skip("MAPIAllocateBuffer failed\n");
         return;
+    }
 
-    scode = pMAPIAllocateMore(sizeof(LPSPropValue), lpDest, (LPVOID *)lpSrc);
+    scode = pMAPIAllocateMore(sizeof(SPropValue), lpDest, &lpSrc);
+    ok(scode == S_OK, "Expected MAPIAllocateMore to return S_OK, got 0x%x\n", scode);
     if (FAILED(scode))
+    {
+        skip("MAPIAllocateMore failed\n");
         return;
+    }
 
-    for (i = 0; i < sizeof(ptTypes)/sizeof(ptTypes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ptTypes); i++)
     {
         lpSrc->ulPropTag = ptTypes[i];
 
         switch (ptTypes[i])
         {
         case PT_STRING8:
-            lpSrc->Value.lpszA = (char*)szHiA;
+            lpSrc->Value.lpszA = szHiA;
             break;
         case PT_UNICODE:
-            lpSrc->Value.lpszW = (WCHAR*)szHiW;
+            lpSrc->Value.lpszW = szHiW;
             break;
         case PT_BINARY:
             lpSrc->Value.bin.cb = 4;
@@ -124,7 +157,7 @@ static void test_PropCopyMore(void)
 
         scode = pPropCopyMore(lpDest, lpSrc, (ALLOCATEMORE*)pMAPIAllocateMore, lpDest);
         ok(!scode && lpDest->ulPropTag == lpSrc->ulPropTag,
-           "PropCopyMore: Expected 0x0,%ld, got 0x%08lx,%ld\n",
+           "PropCopyMore: Expected 0x0,%d, got 0x%08x,%d\n",
            lpSrc->ulPropTag, scode, lpDest->ulPropTag);
         if (SUCCEEDED(scode))
         {
@@ -148,22 +181,24 @@ static void test_PropCopyMore(void)
     }
 
     /* Since all allocations are linked, freeing lpDest frees everything */
-    pMAPIFreeBuffer(lpDest);
+    scode = pMAPIFreeBuffer(lpDest);
+    ok(scode == S_OK, "Expected MAPIFreeBuffer to return S_OK, got 0x%x\n", scode);
 }
 
 static void test_UlPropSize(void)
 {
-    static const char *szHiA = "Hi!";
-    static const WCHAR szHiW[] = { 'H', 'i', '!', '\0' };
+    static char szHiA[] = "Hi!";
+    static WCHAR szHiW[] = { 'H', 'i', '!', '\0' };
     LPSTR  buffa[2];
     LPWSTR buffw[2];
     SBinary buffbin[2];
     ULONG pt, exp, res;
 
-    pUlPropSize = (void*)GetProcAddress(hMapi32, "UlPropSize@4");
-
     if (!pUlPropSize)
+    {
+        win_skip("UlPropSize is not available\n");
         return;
+    }
 
     for (pt = 0; pt < PROP_ID_INVALID; pt++)
     {
@@ -204,11 +239,11 @@ static void test_UlPropSize(void)
 #endif
         case PT_CLSID:       exp *= sizeof(GUID); break;
         case PT_STRING8:
-            pv.Value.lpszA = (LPSTR)szHiA;
+            pv.Value.lpszA = szHiA;
             exp = 4;
             break;
         case PT_UNICODE:
-            pv.Value.lpszW = (LPWSTR)szHiW;
+            pv.Value.lpszW = szHiW;
             exp = 4 * sizeof(WCHAR);
             break;
         case PT_BINARY:
@@ -217,15 +252,15 @@ static void test_UlPropSize(void)
         case PT_MV_STRING8:
             pv.Value.MVszA.cValues = 2;
             pv.Value.MVszA.lppszA = buffa;
-            buffa[0] = (LPSTR)szHiA;
-            buffa[1] = (LPSTR)szHiA;
+            buffa[0] = szHiA;
+            buffa[1] = szHiA;
             exp = 8;
             break;
         case PT_MV_UNICODE:
             pv.Value.MVszW.cValues = 2;
             pv.Value.MVszW.lppszW = buffw;
-            buffw[0] = (LPWSTR)szHiW;
-            buffw[1] = (LPWSTR)szHiW;
+            buffw[0] = szHiW;
+            buffw[1] = szHiW;
             exp = 8 * sizeof(WCHAR);
             break;
         case PT_MV_BINARY:
@@ -240,26 +275,28 @@ static void test_UlPropSize(void)
         }
 
         res = pUlPropSize(&pv);
-        ok(res == exp, "pt= %ld: Expected %ld, got %ld\n", pt, exp, res);
+        ok(res == exp,
+           "pt= %d: Expected %d, got %d\n", pt, exp, res);
     }
 }
 
 static void test_FPropContainsProp(void)
 {
-    static const char *szFull = "Full String";
-    static const char *szFullLower = "full string";
-    static const char *szPrefix = "Full";
-    static const char *szPrefixLower = "full";
-    static const char *szSubstring = "ll St";
-    static const char *szSubstringLower = "ll st";
+    static char szFull[] = "Full String";
+    static char szFullLower[] = "full string";
+    static char szPrefix[] = "Full";
+    static char szPrefixLower[] = "full";
+    static char szSubstring[] = "ll St";
+    static char szSubstringLower[] = "ll st";
     SPropValue pvLeft, pvRight;
     ULONG pt;
     BOOL bRet;
 
-    pFPropContainsProp = (void*)GetProcAddress(hMapi32, "FPropContainsProp@12");
-
     if (!pFPropContainsProp)
+    {
+        win_skip("FPropContainsProp is not available\n");
         return;
+    }
 
     /* Ensure that only PT_STRING8 and PT_BINARY are handled */
     for (pt = 0; pt < PROP_ID_INVALID; pt++)
@@ -272,24 +309,24 @@ static void test_FPropContainsProp(void)
         pvLeft.ulPropTag = pvRight.ulPropTag = pt;
 
         bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_FULLSTRING);
-        ok(bRet == FALSE, "pt= %ld: Expected FALSE, got %d\n", pt, bRet);
+        ok(bRet == FALSE, "pt= %d: Expected FALSE, got %d\n", pt, bRet);
     }
 
     /* test the various flag combinations */
     pvLeft.ulPropTag = pvRight.ulPropTag = PT_STRING8;
-    pvLeft.Value.lpszA = (LPSTR)szFull;
-    pvRight.Value.lpszA = (LPSTR)szFull;
+    pvLeft.Value.lpszA = szFull;
+    pvRight.Value.lpszA = szFull;
 
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_FULLSTRING);
     ok(bRet == TRUE, "(full,full)[] match failed\n");
-    pvRight.Value.lpszA = (LPSTR)szPrefix;
+    pvRight.Value.lpszA = szPrefix;
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_FULLSTRING);
     ok(bRet == FALSE, "(full,prefix)[] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_PREFIX);
     ok(bRet == TRUE, "(full,prefix)[PREFIX] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_SUBSTRING);
     ok(bRet == TRUE, "(full,prefix)[SUBSTRING] match failed\n");
-    pvRight.Value.lpszA = (LPSTR)szPrefixLower;
+    pvRight.Value.lpszA = szPrefixLower;
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_PREFIX);
     ok(bRet == FALSE, "(full,prefixlow)[PREFIX] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_SUBSTRING);
@@ -298,14 +335,14 @@ static void test_FPropContainsProp(void)
     ok(bRet == TRUE, "(full,prefixlow)[PREFIX|IGNORECASE] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_SUBSTRING|FL_IGNORECASE);
     ok(bRet == TRUE, "(full,prefixlow)[SUBSTRING|IGNORECASE] match failed\n");
-    pvRight.Value.lpszA = (LPSTR)szSubstring;
+    pvRight.Value.lpszA = szSubstring;
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_FULLSTRING);
     ok(bRet == FALSE, "(full,substr)[] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_PREFIX);
     ok(bRet == FALSE, "(full,substr)[PREFIX] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_SUBSTRING);
     ok(bRet == TRUE, "(full,substr)[SUBSTRING] match failed\n");
-    pvRight.Value.lpszA = (LPSTR)szSubstringLower;
+    pvRight.Value.lpszA = szSubstringLower;
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_PREFIX);
     ok(bRet == FALSE, "(full,substrlow)[PREFIX] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_SUBSTRING);
@@ -314,7 +351,7 @@ static void test_FPropContainsProp(void)
     ok(bRet == FALSE, "(full,substrlow)[PREFIX|IGNORECASE] match failed\n");
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_SUBSTRING|FL_IGNORECASE);
     ok(bRet == TRUE, "(full,substrlow)[SUBSTRING|IGNORECASE] match failed\n");
-    pvRight.Value.lpszA = (LPSTR)szFullLower;
+    pvRight.Value.lpszA = szFullLower;
     bRet = pFPropContainsProp(&pvLeft, &pvRight, FL_FULLSTRING|FL_IGNORECASE);
     ok(bRet == TRUE, "(full,fulllow)[IGNORECASE] match failed\n");
 
@@ -405,21 +442,22 @@ static void test_FPropCompareProp(void)
     ULONG i, j;
     BOOL bRet, bExp;
 
-    pFPropCompareProp = (void*)GetProcAddress(hMapi32, "FPropCompareProp@12");
-
     if (!pFPropCompareProp)
+    {
+        win_skip("FPropCompareProp is not available\n");
         return;
+    }
 
     lbuffa[1] = '\0';
     rbuffa[1] = '\0';
     lbuffw[1] = '\0';
     rbuffw[1] = '\0';
 
-    for (i = 0; i < sizeof(ptTypes)/sizeof(ptTypes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ptTypes); i++)
     {
         pvLeft.ulPropTag = pvRight.ulPropTag = ptTypes[i];
 
-        for (j = 0; j < sizeof(FPCProp_Results)/sizeof(FPCProp_Results[0]); j++)
+        for (j = 0; j < ARRAY_SIZE(FPCProp_Results); j++)
         {
             SHORT lVal = FPCProp_Results[j].lVal;
             SHORT rVal = FPCProp_Results[j].rVal;
@@ -503,7 +541,8 @@ static void test_FPropCompareProp(void)
             }
 
             bRet = pFPropCompareProp(&pvLeft, FPCProp_Results[j].relOp, &pvRight);
-            ok(bRet == bExp, "pt %ld (%d,%d,%s): expected %d, got %d\n", ptTypes[i],
+            ok(bRet == bExp,
+               "pt %d (%d,%d,%s): expected %d, got %d\n", ptTypes[i],
                FPCProp_Results[j].lVal, FPCProp_Results[j].rVal,
                relops[FPCProp_Results[j].relOp], bExp, bRet);
         }
@@ -533,21 +572,22 @@ static void test_LPropCompareProp(void)
     ULONG i, j;
     INT iRet, iExp;
 
-    pLPropCompareProp = (void*)GetProcAddress(hMapi32, "LPropCompareProp@8");
-
     if (!pLPropCompareProp)
+    {
+        win_skip("LPropCompareProp is not available\n");
         return;
+    }
 
     lbuffa[1] = '\0';
     rbuffa[1] = '\0';
     lbuffw[1] = '\0';
     rbuffw[1] = '\0';
 
-    for (i = 0; i < sizeof(ptTypes)/sizeof(ptTypes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ptTypes); i++)
     {
         pvLeft.ulPropTag = pvRight.ulPropTag = ptTypes[i];
 
-        for (j = 0; j < sizeof(LPCProp_Results)/sizeof(LPCProp_Results[0]); j++)
+        for (j = 0; j < ARRAY_SIZE(LPCProp_Results); j++)
         {
             SHORT lVal = LPCProp_Results[j].lVal;
             SHORT rVal = LPCProp_Results[j].rVal;
@@ -626,7 +666,8 @@ static void test_LPropCompareProp(void)
             }
 
             iRet = pLPropCompareProp(&pvLeft, &pvRight);
-            ok(iRet == iExp, "pt %ld (%d,%d): expected %d, got %d\n", ptTypes[i],
+            ok(iRet == iExp,
+               "pt %d (%d,%d): expected %d, got %d\n", ptTypes[i],
                LPCProp_Results[j].lVal, LPCProp_Results[j].rVal, iExp, iRet);
         }
     }
@@ -637,21 +678,23 @@ static void test_PpropFindProp(void)
     SPropValue pvProp, *pRet;
     ULONG i;
 
-    pPpropFindProp = (void*)GetProcAddress(hMapi32, "PpropFindProp@12");
-
     if (!pPpropFindProp)
+    {
+        win_skip("PpropFindProp is not available\n");
         return;
+    }
 
-    for (i = 0; i < sizeof(ptTypes)/sizeof(ptTypes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ptTypes); i++)
     {
         pvProp.ulPropTag = ptTypes[i];
 
         pRet = pPpropFindProp(&pvProp, 1u, ptTypes[i]);
-        ok(pRet == &pvProp, "PpropFindProp[%ld]: Didn't find existing propery\n",
+        ok(pRet == &pvProp,
+           "PpropFindProp[%d]: Didn't find existing property\n",
            ptTypes[i]);
 
         pRet = pPpropFindProp(&pvProp, 1u, i ? ptTypes[i-1] : ptTypes[i+1]);
-        ok(pRet == NULL, "PpropFindProp[%ld]: Found nonexistent propery\n",
+        ok(pRet == NULL, "PpropFindProp[%d]: Found nonexistent property\n",
            ptTypes[i]);
     }
 
@@ -664,8 +707,8 @@ static void test_PpropFindProp(void)
 
 static void test_ScCountProps(void)
 {
-    static const char *szHiA = "Hi!";
-    static const WCHAR szHiW[] = { 'H', 'i', '!', '\0' };
+    static char szHiA[] = "Hi!";
+    static WCHAR szHiW[] = { 'H', 'i', '!', '\0' };
     static const ULONG ULHILEN = 4; /* chars in szHiA/W incl. NUL */
     LPSTR  buffa[3];
     LPWSTR buffw[3];
@@ -673,12 +716,13 @@ static void test_ScCountProps(void)
     GUID iids[4], *iid = iids;
     SCODE res;
     ULONG pt, exp, ulRet;
-    int success = 1;
-
-    pScCountProps = (void*)GetProcAddress(hMapi32, "ScCountProps@12");
+    BOOL success = TRUE;
 
     if (!pScCountProps)
+    {
+        win_skip("ScCountProps is not available\n");
         return;
+    }
 
     for (pt = 0; pt < PROP_ID_INVALID && success; pt++)
     {
@@ -707,11 +751,11 @@ static void test_ScCountProps(void)
             exp = sizeof(GUID) + sizeof(pv);
             break;
         case PT_STRING8:
-            pv.Value.lpszA = (LPSTR)szHiA;
+            pv.Value.lpszA = szHiA;
             exp = 4 + sizeof(pv);
             break;
         case PT_UNICODE:
-            pv.Value.lpszW = (LPWSTR)szHiW;
+            pv.Value.lpszW = szHiW;
             exp = 4 * sizeof(WCHAR) + sizeof(pv);
             break;
         case PT_BINARY:
@@ -758,17 +802,17 @@ static void test_ScCountProps(void)
         case PT_MV_STRING8:
             pv.Value.MVszA.cValues = 3;
             pv.Value.MVszA.lppszA = buffa;
-            buffa[0] = (LPSTR)szHiA;
-            buffa[1] = (LPSTR)szHiA;
-            buffa[2] = (LPSTR)szHiA;
+            buffa[0] = szHiA;
+            buffa[1] = szHiA;
+            buffa[2] = szHiA;
             exp = ULHILEN * 3 + 3 * sizeof(char*) + sizeof(pv);
             break;
         case PT_MV_UNICODE:
             pv.Value.MVszW.cValues = 3;
             pv.Value.MVszW.lppszW = buffw;
-            buffw[0] = (LPWSTR)szHiW;
-            buffw[1] = (LPWSTR)szHiW;
-            buffw[2] = (LPWSTR)szHiW;
+            buffw[0] = szHiW;
+            buffw[1] = szHiW;
+            buffw[2] = szHiW;
             exp = ULHILEN * 3 * sizeof(WCHAR) + 3 * sizeof(WCHAR*) + sizeof(pv);
             break;
         case PT_MV_BINARY:
@@ -790,12 +834,12 @@ static void test_ScCountProps(void)
         res = pScCountProps(1, &pv, &ulRet);
         if (!exp) {
             success = res == MAPI_E_INVALID_PARAMETER && ulRet == 0xffffffff;
-            ok(success, "pt= %ld: Expected failure, got %ld, ret=0x%08lX\n",
+            ok(success, "pt= %d: Expected failure, got %d, ret=0x%08X\n",
                pt, ulRet, res);
         }
         else {
             success = res == S_OK && ulRet == exp;
-            ok(success, "pt= %ld: Expected %ld, got %ld, ret=0x%08lX\n",
+            ok(success, "pt= %d: Expected %d, got %d, ret=0x%08X\n",
                pt, exp, ulRet, res);
         }
     }
@@ -804,37 +848,37 @@ static void test_ScCountProps(void)
 
 static void test_ScCopyRelocProps(void)
 {
-    static const char* szTestA = "Test";
+    static char szTestA[] = "Test";
     char buffer[512], buffer2[512], *lppszA[1];
     SPropValue pvProp, *lpResProp = (LPSPropValue)buffer;
     ULONG ulCount;
     SCODE sc;
 
-    pScCopyProps = (void*)GetProcAddress(hMapi32, "ScCopyProps@16");
-    pScRelocProps = (void*)GetProcAddress(hMapi32, "ScRelocProps@20");
-
     if (!pScCopyProps || !pScRelocProps)
+    {
+        win_skip("SPropValue copy functions are not available\n");
         return;
+    }
 
     pvProp.ulPropTag = PROP_TAG(PT_MV_STRING8, 1u);
 
-    lppszA[0] = (char *)szTestA;
+    lppszA[0] = szTestA;
     pvProp.Value.MVszA.cValues = 1;
     pvProp.Value.MVszA.lppszA = lppszA;
     ulCount = 0;
 
     sc = pScCopyProps(1, &pvProp, buffer, &ulCount);
-    ok(sc == S_OK && lpResProp->ulPropTag == pvProp.ulPropTag &&
-       lpResProp->Value.MVszA.cValues == 1 &&
-       lpResProp->Value.MVszA.lppszA[0] == buffer + sizeof(SPropValue) + sizeof(char*) &&
-       ulCount == sizeof(SPropValue) + sizeof(char*) + 5 &&
-       !strcmp(lpResProp->Value.MVszA.lppszA[0], szTestA),
-       "CopyProps(str): Expected 0 {1,%lx,%p,%s} %d got 0x%08lx {%ld,%lx,%p,%s} %ld\n",
-       pvProp.ulPropTag, buffer + sizeof(SPropValue) + sizeof(char*),
-       szTestA, sizeof(SPropValue) + sizeof(char*) + 5, sc,
-       lpResProp->Value.MVszA.cValues, lpResProp->ulPropTag,
-       sc==S_OK?lpResProp->Value.MVszA.lppszA[0]:NULL, 
-       sc==S_OK?lpResProp->Value.MVszA.lppszA[0]:NULL, ulCount);
+    ok(sc == S_OK, "wrong ret %d\n", sc);
+    if(sc == S_OK)
+    {
+        ok(lpResProp->ulPropTag == pvProp.ulPropTag, "wrong tag %x\n",lpResProp->ulPropTag);
+        ok(lpResProp->Value.MVszA.cValues == 1, "wrong cValues %d\n", lpResProp->Value.MVszA.cValues);
+        ok(lpResProp->Value.MVszA.lppszA[0] == buffer + sizeof(SPropValue) + sizeof(char*),
+           "wrong lppszA[0] %p\n",lpResProp->Value.MVszA.lppszA[0]);
+        ok(ulCount == sizeof(SPropValue) + sizeof(char*) + 5, "wrong count %d\n", ulCount);
+        ok(!strcmp(lpResProp->Value.MVszA.lppszA[0], szTestA),
+           "wrong string '%s'\n", lpResProp->Value.MVszA.lppszA[0]);
+    }
 
     memcpy(buffer2, buffer, sizeof(buffer));
 
@@ -847,21 +891,23 @@ static void test_ScCopyRelocProps(void)
 
     sc = pScRelocProps(1, (LPSPropValue)buffer2, buffer, buffer2, &ulCount);
     lpResProp = (LPSPropValue)buffer2;
-    ok(sc == S_OK && lpResProp->ulPropTag == pvProp.ulPropTag &&
-       lpResProp->Value.MVszA.cValues == 1 &&
-       lpResProp->Value.MVszA.lppszA[0] == buffer2 + sizeof(SPropValue) + sizeof(char*) &&
-       /* Native has a bug whereby it calculates the size correctly when copying
-        * but when relocating does not (presumably it uses UlPropSize() which
-        * ignores multivalue pointers). Wine returns the correct value.
-        */
-       (ulCount == sizeof(SPropValue) + sizeof(char*) + 5 || ulCount == sizeof(SPropValue) + 5) &&
-       !strcmp(lpResProp->Value.MVszA.lppszA[0], szTestA),
-       "RelocProps(str): Expected 0 {1,%lx,%p,%s} %d got 0x%08lx {%ld,%lx,%p,%s} %ld\n",
-       pvProp.ulPropTag, buffer2 + sizeof(SPropValue) + sizeof(char*),
-       szTestA, sizeof(SPropValue) + sizeof(char*) + 5, sc,
-       lpResProp->Value.MVszA.cValues, lpResProp->ulPropTag,
-       sc==S_OK?lpResProp->Value.MVszA.lppszA[0]:NULL, 
-       sc==S_OK?lpResProp->Value.MVszA.lppszA[0]:NULL, ulCount);
+
+    ok(sc == S_OK, "wrong ret %d\n", sc);
+    if(sc == S_OK)
+    {
+        ok(lpResProp->ulPropTag == pvProp.ulPropTag, "wrong tag %x\n",lpResProp->ulPropTag);
+        ok(lpResProp->Value.MVszA.cValues == 1, "wrong cValues %d\n", lpResProp->Value.MVszA.cValues);
+        ok(lpResProp->Value.MVszA.lppszA[0] == buffer2 + sizeof(SPropValue) + sizeof(char*),
+           "wrong lppszA[0] %p\n",lpResProp->Value.MVszA.lppszA[0]);
+        /* Native has a bug whereby it calculates the size correctly when copying
+         * but when relocating does not (presumably it uses UlPropSize() which
+         * ignores multivalue pointers). Wine returns the correct value.
+         */
+        ok(ulCount == sizeof(SPropValue) + sizeof(char*) + 5 || ulCount == sizeof(SPropValue) + 5,
+           "wrong count %d\n", ulCount);
+        ok(!strcmp(lpResProp->Value.MVszA.lppszA[0], szTestA),
+           "wrong string '%s'\n", lpResProp->Value.MVszA.lppszA[0]);
+    }
 
     /* Native crashes with lpNew or lpOld set to NULL so skip testing this */
 }
@@ -871,29 +917,32 @@ static void test_LpValFindProp(void)
     SPropValue pvProp, *pRet;
     ULONG i;
 
-    pLpValFindProp = (void*)GetProcAddress(hMapi32, "LpValFindProp@12");
-
     if (!pLpValFindProp)
+    {
+        win_skip("LpValFindProp is not available\n");
         return;
+    }
 
-    for (i = 0; i < sizeof(ptTypes)/sizeof(ptTypes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ptTypes); i++)
     {
         pvProp.ulPropTag = PROP_TAG(ptTypes[i], 1u);
 
         pRet = pLpValFindProp(PROP_TAG(ptTypes[i], 1u), 1u, &pvProp);
-        ok(pRet == &pvProp, "LpValFindProp[%ld]: Didn't find existing propery id/type\n",
+        ok(pRet == &pvProp,
+           "LpValFindProp[%d]: Didn't find existing property id/type\n",
            ptTypes[i]);
 
         pRet = pLpValFindProp(PROP_TAG(ptTypes[i], 0u), 1u, &pvProp);
-        ok(pRet == NULL, "LpValFindProp[%ld]: Found nonexistent propery id\n",
+        ok(pRet == NULL, "LpValFindProp[%d]: Found nonexistent property id\n",
            ptTypes[i]);
 
         pRet = pLpValFindProp(PROP_TAG(PT_NULL, 0u), 1u, &pvProp);
-        ok(pRet == NULL, "LpValFindProp[%ld]: Found nonexistent propery id/type\n",
+        ok(pRet == NULL, "LpValFindProp[%d]: Found nonexistent property id/type\n",
            ptTypes[i]);
 
         pRet = pLpValFindProp(PROP_TAG(PT_NULL, 1u), 1u, &pvProp);
-        ok(pRet == &pvProp, "LpValFindProp[%ld]: Didn't find existing propery id\n",
+        ok(pRet == &pvProp,
+           "LpValFindProp[%d]: Didn't find existing property id\n",
            ptTypes[i]);
     }
 }
@@ -901,12 +950,14 @@ static void test_LpValFindProp(void)
 static void test_FBadRglpszA(void)
 {
     LPSTR lpStrs[4];
-    char *szString = "A String";
+    static CHAR szString[] = "A String";
     BOOL bRet;
 
-    pFBadRglpszA = (void*)GetProcAddress(hMapi32, "FBadRglpszA@8");
     if (!pFBadRglpszA)
+    {
+        win_skip("FBadRglpszA is not available\n");
         return;
+    }
 
     bRet = pFBadRglpszA(NULL, 10);
     ok(bRet == TRUE, "FBadRglpszA(Null): expected TRUE, got FALSE\n");
@@ -926,12 +977,14 @@ static void test_FBadRglpszA(void)
 static void test_FBadRglpszW(void)
 {
     LPWSTR lpStrs[4];
-    WCHAR szString[] = { 'A',' ','S','t','r','i','n','g','\0' };
+    static WCHAR szString[] = { 'A',' ','S','t','r','i','n','g','\0' };
     BOOL bRet;
 
-    pFBadRglpszW = (void*)GetProcAddress(hMapi32, "FBadRglpszW@8");
     if (!pFBadRglpszW)
+    {
+        win_skip("FBadRglpszW is not available\n");
         return;
+    }
 
     bRet = pFBadRglpszW(NULL, 10);
     ok(bRet == TRUE, "FBadRglpszW(Null): expected TRUE, got FALSE\n");
@@ -952,9 +1005,11 @@ static void test_FBadRowSet(void)
 {
     ULONG ulRet;
 
-    pFBadRowSet = (void*)GetProcAddress(hMapi32, "FBadRowSet@4");
     if (!pFBadRowSet)
+    {
+        win_skip("FBadRowSet is not available\n");
         return;
+    }
 
     ulRet = pFBadRowSet(NULL);
     ok(ulRet != 0, "FBadRow(null): Expected non-zero, got 0\n");
@@ -966,9 +1021,11 @@ static void test_FBadPropTag(void)
 {
     ULONG pt, res;
 
-    pFBadPropTag = (void*)GetProcAddress(hMapi32, "FBadPropTag@4");
     if (!pFBadPropTag)
+    {
+        win_skip("FBadPropTag is not available\n");
         return;
+    }
 
     for (pt = 0; pt < PROP_ID_INVALID; pt++)
     {
@@ -987,9 +1044,10 @@ static void test_FBadPropTag(void)
 
         res = pFBadPropTag(pt);
         if (bBad)
-            ok(res != 0, "pt= %ld: Expected non-zero, got 0\n", pt);
+            ok(res != 0, "pt= %d: Expected non-zero, got 0\n", pt);
         else
-            ok(res == 0, "pt= %ld: Expected zero, got %ld\n", pt, res);
+            ok(res == 0,
+               "pt= %d: Expected zero, got %d\n", pt, res);
     }
 }
 
@@ -997,9 +1055,11 @@ static void test_FBadRow(void)
 {
     ULONG ulRet;
 
-    pFBadRow = (void*)GetProcAddress(hMapi32, "FBadRow@4");
     if (!pFBadRow)
+    {
+        win_skip("FBadRow is not available\n");
         return;
+    }
 
     ulRet = pFBadRow(NULL);
     ok(ulRet != 0, "FBadRow(null): Expected non-zero, got 0\n");
@@ -1009,14 +1069,16 @@ static void test_FBadRow(void)
 
 static void test_FBadProp(void)
 {
-    WCHAR szEmpty[] = { '\0' };
+    static WCHAR szEmpty[] = { '\0' };
     GUID iid;
     ULONG pt, res;
     SPropValue pv;
 
-    pFBadProp = (void*)GetProcAddress(hMapi32, "FBadProp@4");
     if (!pFBadProp)
+    {
+        win_skip("FBadProp is not available\n");
         return;
+    }
 
     for (pt = 0; pt < PROP_ID_INVALID; pt++)
     {
@@ -1076,9 +1138,10 @@ static void test_FBadProp(void)
 
         res = pFBadProp(&pv);
         if (bBad)
-            ok(res != 0, "pt= %ld: Expected non-zero, got 0\n", pt);
+            ok(res != 0, "pt= %d: Expected non-zero, got 0\n", pt);
         else
-            ok(res == 0, "pt= %ld: Expected zero, got %ld\n", pt, res);
+            ok(res == 0,
+               "pt= %d: Expected zero, got %d\n", pt, res);
     }
 }
 
@@ -1087,9 +1150,11 @@ static void test_FBadColumnSet(void)
     SPropTagArray pta;
     ULONG pt, res;
 
-    pFBadColumnSet = (void*)GetProcAddress(hMapi32, "FBadColumnSet@4");
     if (!pFBadColumnSet)
+    {
+        win_skip("FBadColumnSet is not available\n");
         return;
+    }
 
     res = pFBadColumnSet(NULL);
     ok(res != 0, "(null): Expected non-zero, got 0\n");
@@ -1127,9 +1192,10 @@ static void test_FBadColumnSet(void)
 
         res = pFBadColumnSet(&pta);
         if (bBad)
-            ok(res != 0, "pt= %ld: Expected non-zero, got 0\n", pt);
+            ok(res != 0, "pt= %d: Expected non-zero, got 0\n", pt);
         else
-            ok(res == 0, "pt= %ld: Expected zero, got %ld\n", pt, res);
+            ok(res == 0,
+               "pt= %d: Expected zero, got %d\n", pt, res);
     }
 }
 
@@ -1146,10 +1212,11 @@ static void test_IProp(void)
     ULONG access[2], count;
     SCODE sc;
 
-    pCreateIProp = (void*)GetProcAddress(hMapi32, "CreateIProp@24");
-
     if (!pCreateIProp)
+    {
+        win_skip("CreateIProp is not available\n");
         return;
+    }
 
     memset(&tags, 0 , sizeof(tags));
 
@@ -1158,22 +1225,22 @@ static void test_IProp(void)
     sc = pCreateIProp(&IID_IMAPIPropData, (ALLOCATEBUFFER *)pMAPIAllocateBuffer, (ALLOCATEMORE*)pMAPIAllocateMore,
                       (FREEBUFFER *)pMAPIFreeBuffer, NULL, &lpIProp);
     ok(sc == S_OK && lpIProp,
-       "CreateIProp: expected S_OK, non-null, got 0x%08lX,%p\n", sc, lpIProp);
+       "CreateIProp: expected S_OK, non-null, got 0x%08X,%p\n", sc, lpIProp);
 
     if (sc != S_OK || !lpIProp)
         return;
 
     /* GetLastError - No errors set */
     lpError = NULL;
-    IPropData_GetLastError(lpIProp, E_INVALIDARG, 0, &lpError);
+    sc = IPropData_GetLastError(lpIProp, E_INVALIDARG, 0, &lpError);
     ok(sc == S_OK && !lpError,
-       "GetLastError: Expected S_OK, null, got 0x%08lX,%p\n", sc, lpError);
+       "GetLastError: Expected S_OK, null, got 0x%08X,%p\n", sc, lpError);
 
     /* Get prop tags - succeeds returning 0 items */
     lpTags = NULL;
     sc = IPropData_GetPropList(lpIProp, 0, &lpTags);
     ok(sc == S_OK && lpTags && lpTags->cValues == 0,
-       "GetPropList(empty): Expected S_OK, non-null, 0, got 0x%08lX,%p,%ld\n",
+       "GetPropList(empty): Expected S_OK, non-null, 0, got 0x%08X,%p,%d\n",
         sc, lpTags, lpTags ? lpTags->cValues : 0);
     if (lpTags)
         pMAPIFreeBuffer(lpTags);
@@ -1185,31 +1252,31 @@ static void test_IProp(void)
     tags.aulPropTag[0] = PR_IMPORTANCE;
     sc = IPropData_GetProps(lpIProp, (LPSPropTagArray)&tags, 0, &count, &lpProps);
     ok(sc == MAPI_W_ERRORS_RETURNED && lpProps && count == 1,
-       "GetProps(empty): Expected ERRORS_RETURNED, non-null, 1, got 0x%08lX,%p,%ld\n",
+       "GetProps(empty): Expected ERRORS_RETURNED, non-null, 1, got 0x%08X,%p,%d\n",
        sc, lpProps, count);
     if (lpProps && count > 0)
     {
         ok(lpProps[0].ulPropTag == CHANGE_PROP_TYPE(PR_IMPORTANCE,PT_ERROR),
-           "GetProps(empty): Expected %x, got %lx\n",
+           "GetProps(empty): Expected %x, got %x\n",
            CHANGE_PROP_TYPE(PR_IMPORTANCE,PT_ERROR), lpProps[0].ulPropTag);
 
         pMAPIFreeBuffer(lpProps);
     }
 
-    /* Add (NULL) - Can't add NULL's */
+    /* Add (NULL) - Can't add NULLs */
     lpProbs = NULL;
     pvs[0].ulPropTag = PROP_TAG(PT_NULL,0x01);
     sc = IPropData_SetProps(lpIProp, 1, pvs, &lpProbs);
     ok(sc == MAPI_E_INVALID_PARAMETER && !lpProbs,
-       "SetProps(): Expected INVALID_PARAMETER, null, got 0x%08lX,%p\n",
+       "SetProps(): Expected INVALID_PARAMETER, null, got 0x%08X,%p\n",
        sc, lpProbs);
 
-    /* Add (OBJECT) - Can't add OBJECTS's */
+    /* Add (OBJECT) - Can't add OBJECTs */
     lpProbs = NULL;
     pvs[0].ulPropTag = PROP_TAG(PT_OBJECT,0x01);
     sc = IPropData_SetProps(lpIProp, 1, pvs, &lpProbs);
     ok(sc == MAPI_E_INVALID_PARAMETER && !lpProbs,
-       "SetProps(OBJECT): Expected INVALID_PARAMETER, null, got 0x%08lX,%p\n",
+       "SetProps(OBJECT): Expected INVALID_PARAMETER, null, got 0x%08X,%p\n",
        sc, lpProbs);
 
     /* Add - Adds value */
@@ -1217,25 +1284,25 @@ static void test_IProp(void)
     pvs[0].ulPropTag = PR_IMPORTANCE;
     sc = IPropData_SetProps(lpIProp, 1, pvs, &lpProbs);
     ok(sc == S_OK && !lpProbs,
-       "SetProps(ERROR): Expected S_OK, null, got 0x%08lX,%p\n", sc, lpProbs);
+       "SetProps(ERROR): Expected S_OK, null, got 0x%08X,%p\n", sc, lpProbs);
 
     /* Get prop list - returns 1 item */
     lpTags = NULL;
     IPropData_GetPropList(lpIProp, 0, &lpTags);
     ok(sc == S_OK && lpTags && lpTags->cValues == 1,
-       "GetPropList: Expected S_OK, non-null, 1, got 0x%08lX,%p,%ld\n",
+       "GetPropList: Expected S_OK, non-null, 1, got 0x%08X,%p,%d\n",
         sc, lpTags, lpTags ? lpTags->cValues : 0);
     if (lpTags && lpTags->cValues > 0)
     {
         ok(lpTags->aulPropTag[0] == PR_IMPORTANCE,
-           "GetPropList: Expected %x, got %lx\n",
+           "GetPropList: Expected %x, got %x\n",
            PR_IMPORTANCE, lpTags->aulPropTag[0]);
         pMAPIFreeBuffer(lpTags);
     }
 
     /* Set access to read and write */
     sc = IPropData_HrSetObjAccess(lpIProp, IPROP_READWRITE);
-    ok(sc == S_OK, "SetObjAcess(WRITE): Expected S_OK got 0x%08lX\n", sc);
+    ok(sc == S_OK, "SetObjAccess(WRITE): Expected S_OK got 0x%08X\n", sc);
 
     tags.cValues = 1;
     tags.aulPropTag[0] = PR_IMPORTANCE;
@@ -1244,50 +1311,50 @@ static void test_IProp(void)
     access[0] = 0;
     sc = IPropData_HrSetPropAccess(lpIProp, (LPSPropTagArray)&tags, access);
     ok(sc == MAPI_E_INVALID_PARAMETER,
-       "SetPropAcess(0): Expected INVALID_PARAMETER got 0x%08lX\n",sc);
+       "SetPropAccess(0): Expected INVALID_PARAMETER got 0x%08X\n",sc);
     access[0] = IPROP_READWRITE;
     sc = IPropData_HrSetPropAccess(lpIProp, (LPSPropTagArray)&tags, access);
     ok(sc == MAPI_E_INVALID_PARAMETER,
-       "SetPropAcess(RW): Expected INVALID_PARAMETER got 0x%08lX\n",sc);
+       "SetPropAccess(RW): Expected INVALID_PARAMETER got 0x%08X\n",sc);
     access[0] = IPROP_CLEAN;
     sc = IPropData_HrSetPropAccess(lpIProp, (LPSPropTagArray)&tags, access);
     ok(sc == MAPI_E_INVALID_PARAMETER,
-       "SetPropAcess(C): Expected INVALID_PARAMETER got 0x%08lX\n",sc);
+       "SetPropAccess(C): Expected INVALID_PARAMETER got 0x%08X\n",sc);
 
     /* Set item access to read/write/clean */
     tags.cValues = 1;
     tags.aulPropTag[0] = PR_IMPORTANCE;
     access[0] = IPROP_READWRITE|IPROP_CLEAN;
     sc = IPropData_HrSetPropAccess(lpIProp, (LPSPropTagArray)&tags, access);
-    ok(sc == S_OK, "SetPropAcess(RW/C): Expected S_OK got 0x%08lX\n",sc);
+    ok(sc == S_OK, "SetPropAccess(RW/C): Expected S_OK got 0x%08X\n",sc);
 
     /* Set object access to read only */
     sc = IPropData_HrSetObjAccess(lpIProp, IPROP_READONLY);
-    ok(sc == S_OK, "SetObjAcess(READ): Expected S_OK got 0x%08lX\n", sc);
+    ok(sc == S_OK, "SetObjAccess(READ): Expected S_OK got 0x%08X\n", sc);
 
     /* Set item access to read/write/dirty - doesn't care about RO object */
     access[0] = IPROP_READONLY|IPROP_DIRTY;
     sc = IPropData_HrSetPropAccess(lpIProp, (LPSPropTagArray)&tags, access);
-    ok(sc == S_OK, "SetPropAcess(WRITE): Expected S_OK got 0x%08lX\n", sc);
+    ok(sc == S_OK, "SetPropAccess(WRITE): Expected S_OK got 0x%08X\n", sc);
 
     /* Delete any item when set to read only - Error */
     lpProbs = NULL;
     tags.aulPropTag[0] = PR_RESPONSE_REQUESTED;
     sc = IPropData_DeleteProps(lpIProp, (LPSPropTagArray)&tags, &lpProbs);
     ok(sc == E_ACCESSDENIED && !lpProbs,
-       "DeleteProps(nonexistent): Expected E_ACCESSDENIED null got 0x%08lX %p\n",
+       "DeleteProps(nonexistent): Expected E_ACCESSDENIED null got 0x%08X %p\n",
        sc, lpProbs);
 
     /* Set access to read and write */
     sc = IPropData_HrSetObjAccess(lpIProp, IPROP_READWRITE);
-    ok(sc == S_OK, "SetObjAcess(WRITE): Expected S_OK got 0x%08lX\n", sc);
+    ok(sc == S_OK, "SetObjAccess(WRITE): Expected S_OK got 0x%08X\n", sc);
 
     /* Delete nonexistent item - No error */
     lpProbs = NULL;
     tags.aulPropTag[0] = PR_RESPONSE_REQUESTED;
     sc = IPropData_DeleteProps(lpIProp, (LPSPropTagArray)&tags, &lpProbs);
     ok(sc == S_OK && !lpProbs,
-       "DeleteProps(nonexistent): Expected S_OK null got 0x%08lX %p\n",
+       "DeleteProps(nonexistent): Expected S_OK null got 0x%08X %p\n",
        sc, lpProbs);
 
     /* Delete existing item (r/o) - No error, but lpProbs populated */
@@ -1295,7 +1362,7 @@ static void test_IProp(void)
     tags.aulPropTag[0] = PR_IMPORTANCE;
     sc = IPropData_DeleteProps(lpIProp, (LPSPropTagArray)&tags, &lpProbs);
     ok(sc == S_OK && lpProbs,
-       "DeleteProps(RO): Expected S_OK non-null got 0x%08lX %p\n", sc, lpProbs);
+       "DeleteProps(RO): Expected S_OK non-null got 0x%08X %p\n", sc, lpProbs);
 
     if (lpProbs && lpProbs->cProblem > 0)
     {
@@ -1303,7 +1370,7 @@ static void test_IProp(void)
            lpProbs->aProblem[0].ulIndex == 0 &&
            lpProbs->aProblem[0].ulPropTag == PR_IMPORTANCE &&
            lpProbs->aProblem[0].scode == E_ACCESSDENIED,
-           "DeleteProps(RO): Expected (1,0,%x,%lx) got (%ld,%lx,%lx)\n",
+           "DeleteProps(RO): Expected (1,0,%x,%x) got (%d,%x,%x)\n",
             PR_IMPORTANCE, E_ACCESSDENIED,
             lpProbs->aProblem[0].ulIndex, lpProbs->aProblem[0].ulPropTag,
             lpProbs->aProblem[0].scode);
@@ -1315,18 +1382,18 @@ static void test_IProp(void)
     tags.aulPropTag[0] = PR_RESPONSE_REQUESTED;
     IPropData_HrAddObjProps(lpIProp, (LPSPropTagArray)&tags, &lpProbs);
     ok(sc == S_OK && !lpProbs,
-       "AddObjProps(RO): Expected S_OK null got 0x%08lX %p\n", sc, lpProbs);
+       "AddObjProps(RO): Expected S_OK null got 0x%08X %p\n", sc, lpProbs);
 
     /* Get prop list - returns 1 item */
     lpTags = NULL;
     IPropData_GetPropList(lpIProp, 0, &lpTags);
     ok(sc == S_OK && lpTags && lpTags->cValues == 1,
-       "GetPropList: Expected S_OK, non-null, 1, got 0x%08lX,%p,%ld\n",
+       "GetPropList: Expected S_OK, non-null, 1, got 0x%08X,%p,%d\n",
         sc, lpTags, lpTags ? lpTags->cValues : 0);
     if (lpTags && lpTags->cValues > 0)
     {
         ok(lpTags->aulPropTag[0] == PR_IMPORTANCE,
-           "GetPropList: Expected %x, got %lx\n",
+           "GetPropList: Expected %x, got %x\n",
            PR_IMPORTANCE, lpTags->aulPropTag[0]);
         pMAPIFreeBuffer(lpTags);
     }
@@ -1334,13 +1401,13 @@ static void test_IProp(void)
     /* Set item to r/w again */
     access[0] = IPROP_READWRITE|IPROP_DIRTY;
     sc = IPropData_HrSetPropAccess(lpIProp, (LPSPropTagArray)&tags, access);
-    ok(sc == S_OK, "SetPropAcess(WRITE): Expected S_OK got 0x%08lX\n", sc);
+    ok(sc == S_OK, "SetPropAccess(WRITE): Expected S_OK got 0x%08X\n", sc);
 
     /* Delete existing item (r/w) - No error, no problems */
     lpProbs = NULL;
     sc = IPropData_DeleteProps(lpIProp, (LPSPropTagArray)&tags, &lpProbs);
     ok(sc == S_OK && !lpProbs,
-       "DeleteProps(RO): Expected S_OK null got 0x%08lX %p\n", sc, lpProbs);
+       "DeleteProps(RO): Expected S_OK null got 0x%08X %p\n", sc, lpProbs);
 
     /* Free the list */
     IPropData_Release(lpIProp);
@@ -1348,14 +1415,48 @@ static void test_IProp(void)
 
 START_TEST(prop)
 {
-    if(!InitFuncPtrs())
-        return;
+    SCODE ret;
 
-    pScInitMapiUtil(0);
+    if (!HaveDefaultMailClient())
+    {
+        win_skip("No default mail client installed\n");
+        return;
+    }
+
+    if(!InitFuncPtrs())
+    {
+        win_skip("Needed functions are not available\n");
+        return;
+    }
+
+    SetLastError(0xdeadbeef);
+    ret = pScInitMapiUtil(0);
+    if ((ret != S_OK) && (GetLastError() == ERROR_PROC_NOT_FOUND))
+    {
+        win_skip("ScInitMapiUtil is not implemented\n");
+        FreeLibrary(hMapi32);
+        return;
+    }
+    else if ((ret == E_FAIL) && (GetLastError() == ERROR_INVALID_HANDLE))
+    {
+        win_skip("ScInitMapiUtil doesn't work on some Win98 and WinME systems\n");
+        FreeLibrary(hMapi32);
+        return;
+    }
 
     test_PropCopyMore();
     test_UlPropSize();
+
+    /* We call MAPIInitialize here for the benefit of native extended MAPI
+     * providers which crash in the FPropContainsProp tests when MAPIInitialize
+     * has not been called. Since MAPIInitialize is irrelevant for FPropContainsProp
+     * on Wine, we do not care whether MAPIInitialize succeeds. */
+    if (pMAPIInitialize)
+        ret = pMAPIInitialize(NULL);
     test_FPropContainsProp();
+    if (pMAPIUninitialize && ret == S_OK)
+        pMAPIUninitialize();
+
     test_FPropCompareProp();
     test_LPropCompareProp();
     test_PpropFindProp();
@@ -1371,5 +1472,7 @@ START_TEST(prop)
     test_FBadColumnSet();
 
     test_IProp();
+
+    pDeinitMapiUtil();
     FreeLibrary(hMapi32);
 }

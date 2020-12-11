@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifdef __WINESRC__
@@ -41,8 +41,9 @@
  * This means select and all the related stuff is already defined and we
  * cannot override types and function prototypes.
  * All we can do is disable all these symbols so that they are not used
- * inadvertantly.
+ * inadvertently.
  */
+#  include <sys/types.h>
 #  undef FD_SETSIZE
 #  undef FD_CLR
 #  undef FD_SET
@@ -78,17 +79,22 @@
 #  define fd_set unix_fd_set
 #  define timeval unix_timeval
 #  define select unix_select
+#  define socklen_t unix_socklen_t
+#  define u_long unix_u_long
 #  include <sys/types.h>
 #  include <time.h>
 #  include <stdlib.h>
 #  undef fd_set
 #  undef timeval
 #  undef select
+#  undef socklen_t
+#  undef u_long
 #  undef FD_SETSIZE
 #  undef FD_CLR
 #  undef FD_SET
 #  undef FD_ZERO
 #  undef FD_ISSET
+#  undef _TIMEVAL_DEFINED
 
 #  define WS_DEFINE_SELECT
 # endif /* FD_CLR */
@@ -101,21 +107,27 @@
 
 #endif /* __WINE_WINSOCKAPI_STDLIB_H */
 
-#ifndef __WINESRC__
-# include <windows.h>
-#else
-# include <windef.h>
-#endif
+#include <windows.h>
 
 #ifndef _WINSOCKAPI_
 #define _WINSOCKAPI_
 
-#if (defined(_MSC_VER) || defined(__MINGW_H)) && !defined(_BSD_TYPES_DEFINED)
+#include <inaddr.h>
+
+#ifdef USE_WS_PREFIX
+typedef unsigned char  WS_u_char;
+typedef unsigned short WS_u_short;
+typedef unsigned int   WS_u_int;
+typedef ULONG          WS_u_long;
+#elif (defined(_MSC_VER) || defined(__MINGW32__) || defined(__WATCOMC__)) && !defined(_BSDTYPES_DEFINED)
 /* MinGW doesn't define the u_xxx types */
-typedef unsigned char u_char;
+typedef unsigned char  u_char;
 typedef unsigned short u_short;
-typedef unsigned int  u_int;
-typedef unsigned long u_long;
+typedef unsigned int   u_int;
+typedef ULONG          u_long;
+#define _BSDTYPES_DEFINED
+#else
+#define u_long ULONG  /* make sure we don't use the system u_long */
 #endif
 
 #ifdef USE_WS_PREFIX
@@ -127,9 +139,6 @@ typedef unsigned long u_long;
 #ifdef __cplusplus
 extern "C" {
 #endif /* defined(__cplusplus) */
-
-/* proper 4-byte packing */
-#include <pshpack4.h>
 
 /*
  * Address families
@@ -251,6 +260,8 @@ extern "C" {
 #define IPPROTO_TCP                6
 #define IPPROTO_UDP                17
 #define IPPROTO_IDP                22
+#define IPPROTO_IPV6               41
+#define IPPROTO_ICMPV6             58
 #define IPPROTO_ND                 77
 #define IPPROTO_RAW                255
 #define IPPROTO_MAX                256
@@ -262,6 +273,8 @@ extern "C" {
 #define WS_IPPROTO_TCP             6
 #define WS_IPPROTO_UDP             17
 #define WS_IPPROTO_IDP             22
+#define WS_IPPROTO_IPV6            41
+#define WS_IPPROTO_ICMPV6          58
 #define WS_IPPROTO_ND              77
 #define WS_IPPROTO_RAW             255
 #define WS_IPPROTO_MAX             256
@@ -284,7 +297,7 @@ struct WS(netent)
     char* n_name;                  /* official name of net */
     char** n_aliases;              /* alias list */
     short n_addrtype;              /* net address type */
-    u_long n_net;              /* network # */
+    ULONG n_net;                   /* network # */
 };
 
 
@@ -349,8 +362,13 @@ typedef struct WS(servent)
 {
     char* s_name;                  /* official service name */
     char** s_aliases;              /* alias list */
+#ifdef _WIN64
+    char* s_proto;                 /* protocol to use */
+    short s_port;                  /* port # */
+#else
     short s_port;                  /* port # */
     char* s_proto;                 /* protocol to use */
+#endif
 } SERVENT, *PSERVENT, *LPSERVENT;
 
 
@@ -380,19 +398,19 @@ typedef UINT_PTR SOCKET;
  * This is used instead of -1, since the
  * SOCKET type is unsigned.
  */
-#define INVALID_SOCKET             (~0)
+#define INVALID_SOCKET             (SOCKET)(~0)
 #define SOCKET_ERROR               (-1)
 
 typedef struct WS(sockaddr)
 {
-        u_short sa_family;
-        char    sa_data[14];
+        WS(u_short) sa_family;
+        char        sa_data[14];
 } SOCKADDR, *PSOCKADDR, *LPSOCKADDR;
 
 typedef struct WS(linger)
 {
-    u_short l_onoff;           /* option on/off */
-    u_short l_linger;          /* linger time */
+    WS(u_short) l_onoff;           /* option on/off */
+    WS(u_short) l_linger;          /* linger time */
 } LINGER, *PLINGER, *LPLINGER;
 
 /*
@@ -414,7 +432,7 @@ typedef struct WS(linger)
 
 typedef struct WS(fd_set)
 {
-    u_int fd_count;            /* how many are SET? */
+    WS(u_int) fd_count;            /* how many are SET? */
 # ifndef USE_WS_PREFIX
     SOCKET fd_array[FD_SETSIZE];   /* an array of SOCKETs */
 # else
@@ -426,13 +444,13 @@ typedef struct WS(fd_set)
 #define _TIMEVAL_DEFINED
 typedef struct WS(timeval)
 {
-    long    tv_sec;                /* seconds */
-    long    tv_usec;               /* and microseconds */
+    LONG    tv_sec;                /* seconds */
+    LONG    tv_usec;               /* and microseconds */
 } TIMEVAL, *PTIMEVAL, *LPTIMEVAL;
 #endif
 
 #define __WS_FD_CLR(fd, set, cast) do { \
-    u_int __i; \
+    unsigned int __i; \
     for (__i = 0; __i < ((cast*)(set))->fd_count ; __i++) \
     { \
         if (((cast*)(set))->fd_array[__i] == fd) \
@@ -456,7 +474,7 @@ typedef struct WS(timeval)
  * only if it's not the case
  */
 #define __WS_FD_SET2(fd, set, cast) do { \
-    u_int __i; \
+    unsigned int __i; \
     for (__i = 0; __i < ((cast*)(set))->fd_count ; __i++) \
     { \
         if (((cast*)(set))->fd_array[__i]==(fd)) \
@@ -483,7 +501,7 @@ typedef struct WS(timeval)
 #else
 #define WS_FD_CLR(fd, set)   __WS_FD_CLR((fd),(set), WS_fd_set)
 #define WS_FD_SET(fd, set)   __WS_FD_SET((fd),(set), WS_fd_set)
-#define WS_FD_ZERO(set)      ((WS_fd_set*)(set))->fd_count=0)
+#define WS_FD_ZERO(set)      (((WS_fd_set*)(set))->fd_count=0)
 #define WS_FD_ISSET(fd, set) __WSAFDIsSet((SOCKET)(fd), (WS_fd_set*)(set))
 #endif
 
@@ -501,25 +519,33 @@ int WINAPI __WSAFDIsSet(SOCKET,WS(fd_set)*);
 
 #ifdef WORDS_BIGENDIAN
 
-#define htonl(l) ((u_long)(l))
-#define htons(s) ((u_short)(s))
-#define ntohl(l) ((u_long)(l))
-#define ntohs(s) ((u_short)(s))
+static inline u_short __wine_ushort_noop(u_short s)
+{
+    return s;
+}
+static inline ULONG __wine_ulong_noop(ULONG l)
+{
+    return l;
+}
+#define htonl __wine_ulong_noop
+#define htons __wine_ushort_noop
+#define ntohl __wine_ulong_noop
+#define ntohs __wine_ushort_noop
 
 #else  /* WORDS_BIGENDIAN */
 
-inline static u_short __wine_ushort_swap(u_short s)
+static inline u_short __wine_ushort_swap(u_short s)
 {
     return (s >> 8) | (s << 8);
 }
-inline static u_long __wine_ulong_swap(u_long l)
+static inline ULONG __wine_ulong_swap(ULONG l)
 {
-    return ((u_long)__wine_ushort_swap((u_short)l) << 16) | __wine_ushort_swap((u_short)(l >> 16));
+    return ((ULONG)__wine_ushort_swap((u_short)l) << 16) | __wine_ushort_swap((u_short)(l >> 16));
 }
-#define htonl(l) __wine_ulong_swap(l)
-#define htons(s) __wine_ushort_swap(s)
-#define ntohl(l) __wine_ulong_swap(l)
-#define ntohs(s) __wine_ushort_swap(s)
+#define htonl __wine_ulong_swap
+#define htons __wine_ushort_swap
+#define ntohl __wine_ulong_swap
+#define ntohs __wine_ushort_swap
 
 #endif  /* WORDS_BIGENDIAN */
 
@@ -534,77 +560,49 @@ inline static u_long __wine_ulong_swap(u_long l)
 #define IN_CLASSA_MAX              128
 #define IN_CLASSA_NET              0xff000000
 #define IN_CLASSA_HOST             0x00ffffff
-#define IN_CLASSA(i)               (((long)(i) & 0x80000000) == 0)
+#define IN_CLASSA(i)               (((LONG)(i) & 0x80000000) == 0)
 #define IN_CLASSB_NSHIFT           16
 #define IN_CLASSB_MAX              65536
 #define IN_CLASSB_NET              0xffff0000
 #define IN_CLASSB_HOST             0x0000ffff
-#define IN_CLASSB(i)               (((long)(i) & 0xc0000000) == 0x80000000)
+#define IN_CLASSB(i)               (((LONG)(i) & 0xc0000000) == 0x80000000)
 #define IN_CLASSC_NSHIFT           8
 #define IN_CLASSC_NET              0xffffff00
 #define IN_CLASSC_HOST             0x000000ff
-#define IN_CLASSC(i)               (((long)(i) & 0xe0000000) == 0xc0000000)
+#define IN_CLASSC(i)               (((LONG)(i) & 0xe0000000) == 0xc0000000)
 #else
 #define WS_IN_CLASSA_NSHIFT        24
 #define WS_IN_CLASSA_MAX           128
 #define WS_IN_CLASSA_NET           0xff000000
 #define WS_IN_CLASSA_HOST          0x00ffffff
-#define WS_IN_CLASSA(i)            (((long)(i) & 0x80000000) == 0)
+#define WS_IN_CLASSA(i)            (((LONG)(i) & 0x80000000) == 0)
 #define WS_IN_CLASSB_NSHIFT        16
 #define WS_IN_CLASSB_MAX           65536
 #define WS_IN_CLASSB_NET           0xffff0000
 #define WS_IN_CLASSB_HOST          0x0000ffff
-#define WS_IN_CLASSB(i)            (((long)(i) & 0xc0000000) == 0x80000000)
+#define WS_IN_CLASSB(i)            (((LONG)(i) & 0xc0000000) == 0x80000000)
 #define WS_IN_CLASSC_NSHIFT        8
 #define WS_IN_CLASSC_NET           0xffffff00
 #define WS_IN_CLASSC_HOST          0x000000ff
-#define WS_IN_CLASSC(i)            (((long)(i) & 0xe0000000) == 0xc0000000)
+#define WS_IN_CLASSC(i)            (((LONG)(i) & 0xe0000000) == 0xc0000000)
 #endif /* USE_WS_PREFIX */
 
 #ifndef USE_WS_PREFIX
-#define INADDR_ANY                 (u_long)0x00000000
+#define INADDR_ANY                 ((ULONG)0x00000000)
 #define INADDR_LOOPBACK            0x7f000001
-#define INADDR_BROADCAST           (u_long)0xffffffff
+#define INADDR_BROADCAST           ((ULONG)0xffffffff)
 #define INADDR_NONE                0xffffffff
 #else
-#define WS_INADDR_ANY              (u_long)0x00000000
+#define WS_INADDR_ANY              ((ULONG)0x00000000)
 #define WS_INADDR_LOOPBACK         0x7f000001
-#define WS_INADDR_BROADCAST        (u_long)0xffffffff
+#define WS_INADDR_BROADCAST        ((ULONG)0xffffffff)
 #define WS_INADDR_NONE             0xffffffff
 #endif /* USE_WS_PREFIX */
-
-typedef struct WS(in_addr)
-{
-    union {
-        struct {
-            u_char s_b1,s_b2,s_b3,s_b4;
-        } S_un_b;
-        struct {
-            u_short s_w1,s_w2;
-        } S_un_w;
-        u_long S_addr;
-    } S_un;
-#ifndef USE_WS_PREFIX
-#define s_addr  S_un.S_addr
-#define s_host  S_un.S_un_b.s_b2
-#define s_net   S_un.S_un_b.s_b1
-#define s_imp   S_un.S_un_w.s_w2
-#define s_impno S_un.S_un_b.s_b4
-#define s_lh    S_un.S_un_b.s_b3
-#else
-#define WS_s_addr  S_un.S_addr
-#define WS_s_host  S_un.S_un_b.s_b2
-#define WS_s_net   S_un.S_un_b.s_b1
-#define WS_s_imp   S_un.S_un_w.s_w2
-#define WS_s_impno S_un.S_un_b.s_b4
-#define WS_s_lh    S_un.S_un_b.s_b3
-#endif /* USE_WS_PREFIX */
-} IN_ADDR, *PIN_ADDR, *LPIN_ADDR;
 
 typedef struct WS(sockaddr_in)
 {
     short              sin_family;
-    u_short               sin_port;
+    WS(u_short)        sin_port;
     struct WS(in_addr) sin_addr;
     char               sin_zero[8];
 } SOCKADDR_IN, *PSOCKADDR_IN, *LPSOCKADDR_IN;
@@ -631,11 +629,19 @@ typedef struct WS(WSAData)
 {
     WORD                    wVersion;
     WORD                    wHighVersion;
+#ifdef _WIN64
+    WORD                    iMaxSockets;
+    WORD                    iMaxUdpDg;
+    char                   *lpVendorInfo;
+    char                    szDescription[WSADESCRIPTION_LEN+1];
+    char                    szSystemStatus[WSASYS_STATUS_LEN+1];
+#else
     char                    szDescription[WSADESCRIPTION_LEN+1];
     char                    szSystemStatus[WSASYS_STATUS_LEN+1];
     WORD                    iMaxSockets;
     WORD                    iMaxUdpDg;
     char                   *lpVendorInfo;
+#endif
 } WSADATA, *LPWSADATA;
 
 
@@ -648,13 +654,14 @@ typedef struct WS(WSAData)
 #define SO_DEBUG                   0x0001
 #define SO_ACCEPTCONN              0x0002
 #define SO_REUSEADDR               0x0004
+#define SO_EXCLUSIVEADDRUSE        ((u_int)(~SO_REUSEADDR))
 #define SO_KEEPALIVE               0x0008
 #define SO_DONTROUTE               0x0010
 #define SO_BROADCAST               0x0020
 #define SO_USELOOPBACK             0x0040
 #define SO_LINGER                  0x0080
 #define SO_OOBINLINE               0x0100
-#define SO_DONTLINGER              (u_int)(~SO_LINGER)
+#define SO_DONTLINGER              ((u_int)(~SO_LINGER))
 #define SO_SNDBUF                  0x1001
 #define SO_RCVBUF                  0x1002
 #define SO_SNDLOWAT                0x1003
@@ -663,7 +670,12 @@ typedef struct WS(WSAData)
 #define SO_RCVTIMEO                0x1006
 #define SO_ERROR                   0x1007
 #define SO_TYPE                    0x1008
+#define SO_BSP_STATE               0x1009
 
+#define SO_RANDOMIZE_PORT          0x3005
+#define SO_PORT_SCALABILITY        0x3006
+#define SO_REUSE_UNICASTPORT       0x3007
+#define SO_REUSE_MULTICASTPORT     0x3008
 
 #define IOCPARM_MASK               0x7f
 #define IOC_VOID                   0x20000000
@@ -681,13 +693,14 @@ typedef struct WS(WSAData)
 #define WS_SO_DEBUG                0x0001
 #define WS_SO_ACCEPTCONN           0x0002
 #define WS_SO_REUSEADDR            0x0004
+#define WS_SO_EXCLUSIVEADDRUSE     ((WS_u_int)(~WS_SO_REUSEADDR))
 #define WS_SO_KEEPALIVE            0x0008
 #define WS_SO_DONTROUTE            0x0010
 #define WS_SO_BROADCAST            0x0020
 #define WS_SO_USELOOPBACK          0x0040
 #define WS_SO_LINGER               0x0080
 #define WS_SO_OOBINLINE            0x0100
-#define WS_SO_DONTLINGER           (u_int)(~WS_SO_LINGER)
+#define WS_SO_DONTLINGER           ((WS_u_int)(~WS_SO_LINGER))
 #define WS_SO_SNDBUF               0x1001
 #define WS_SO_RCVBUF               0x1002
 #define WS_SO_SNDLOWAT             0x1003
@@ -696,6 +709,12 @@ typedef struct WS(WSAData)
 #define WS_SO_RCVTIMEO             0x1006
 #define WS_SO_ERROR                0x1007
 #define WS_SO_TYPE                 0x1008
+#define WS_SO_BSP_STATE            0x1009
+
+#define WS_SO_RANDOMIZE_PORT       0x3005
+#define WS_SO_PORT_SCALABILITY     0x3006
+#define WS_SO_REUSE_UNICASTPORT    0x3007
+#define WS_SO_REUSE_MULTICASTPORT  0x3008
 
 #define WS_IOCPARM_MASK            0x7f
 #define WS_IOC_VOID                0x20000000
@@ -704,8 +723,8 @@ typedef struct WS(WSAData)
 #define WS_IOC_INOUT               (WS_IOC_IN|WS_IOC_OUT)
 
 #define WS__IO(x,y)    (WS_IOC_VOID|((x)<<8)|(y))
-#define WS__IOR(x,y,t) (WS_IOC_OUT|(((long)sizeof(t)&WS_IOCPARM_MASK)<<16)|((x)<<8)|(y))
-#define WS__IOW(x,y,t) (WS_IOC_IN|(((long)sizeof(t)&WS_IOCPARM_MASK)<<16)|((x)<<8)|(y))
+#define WS__IOR(x,y,t) (WS_IOC_OUT|(((LONG)sizeof(t)&WS_IOCPARM_MASK)<<16)|((x)<<8)|(y))
+#define WS__IOW(x,y,t) (WS_IOC_IN|(((LONG)sizeof(t)&WS_IOCPARM_MASK)<<16)|((x)<<8)|(y))
 
 #endif
 
@@ -728,16 +747,18 @@ typedef struct WS(WSAData)
 #  define IP_TTL                 7
 #  define IP_TOS                 8
 #  define IP_DONTFRAGMENT        9
+#  define IP_RECEIVE_BROADCAST   22
 # else
-#  define WS_IP_OPTIONS          1
-#  define WS_IP_MULTICAST_IF     2
-#  define WS_IP_MULTICAST_TTL    3
-#  define WS_IP_MULTICAST_LOOP   4
-#  define WS_IP_ADD_MEMBERSHIP   5
-#  define WS_IP_DROP_MEMBERSHIP  6
-#  define WS_IP_TTL              7
-#  define WS_IP_TOS              8
-#  define WS_IP_DONTFRAGMENT     9
+#  define WS_IP_OPTIONS           1
+#  define WS_IP_MULTICAST_IF      2
+#  define WS_IP_MULTICAST_TTL     3
+#  define WS_IP_MULTICAST_LOOP    4
+#  define WS_IP_ADD_MEMBERSHIP    5
+#  define WS_IP_DROP_MEMBERSHIP   6
+#  define WS_IP_TTL               7
+#  define WS_IP_TOS               8
+#  define WS_IP_DONTFRAGMENT      9
+#  define WS_IP_RECEIVE_BROADCAST 22
 # endif
 #endif
 
@@ -746,13 +767,23 @@ typedef struct WS(WSAData)
  * Socket I/O flags (supported by spec 1.1)
  */
 #ifndef USE_WS_PREFIX
-#define FIONREAD                   _IOR('f', 127, u_long)
-#define FIONBIO                    _IOW('f', 126, u_long)
-#define SIOCATMARK                 _IOR('s',  7, u_long)
+#define FIONREAD                   _IOR('f', 127, ULONG)
+#define FIONBIO                    _IOW('f', 126, ULONG)
+#define FIOASYNC                   _IOW('f', 125, ULONG)
+#define SIOCSHIWAT                 _IOW('s',  0, ULONG)
+#define SIOCGHIWAT                 _IOR('s',  1, ULONG)
+#define SIOCSLOWAT                 _IOW('s',  2, ULONG)
+#define SIOCGLOWAT                 _IOR('s',  3, ULONG)
+#define SIOCATMARK                 _IOR('s',  7, ULONG)
 #else
-#define WS_FIONREAD                WS__IOR('f', 127, u_long)
-#define WS_FIONBIO                 WS__IOW('f', 126, u_long)
-#define WS_SIOCATMARK              WS__IOR('s',  7, u_long)
+#define WS_FIONREAD                WS__IOR('f', 127, ULONG)
+#define WS_FIONBIO                 WS__IOW('f', 126, ULONG)
+#define WS_FIOASYNC                WS__IOW('f', 125, ULONG)
+#define WS_SIOCSHIWAT              WS__IOW('s',  0, ULONG)
+#define WS_SIOCGHIWAT              WS__IOR('s',  1, ULONG)
+#define WS_SIOCSLOWAT              WS__IOW('s',  2, ULONG)
+#define WS_SIOCGLOWAT              WS__IOR('s',  3, ULONG)
+#define WS_SIOCATMARK              WS__IOR('s',  7, ULONG)
 #endif
 
 /*
@@ -764,16 +795,20 @@ typedef struct WS(WSAData)
 #define MSG_OOB                    0x0001
 #define MSG_PEEK                   0x0002
 #define MSG_DONTROUTE              0x0004
-#define MSG_MAXIOVLEN              0x000a
+#define MSG_WAITALL                0x0008
+#define MSG_INTERRUPT              0x0010
 #define MSG_PARTIAL                0x8000
+#define MSG_MAXIOVLEN              16
 #else /* USE_WS_PREFIX */
 #define WS_SOMAXCONN               5
 
 #define WS_MSG_OOB                 0x0001
 #define WS_MSG_PEEK                0x0002
 #define WS_MSG_DONTROUTE           0x0004
-#define WS_MSG_MAXIOVLEN           0x000a
+#define WS_MSG_WAITALL             0x0008
+#define WS_MSG_INTERRUPT           0x0010
 #define WS_MSG_PARTIAL             0x8000
+#define WS_MSG_MAXIOVLEN           16
 #endif /* USE_WS_PREFIX */
 
 /*
@@ -807,7 +842,7 @@ typedef struct WS(WSAData)
 
 /*
  * All Windows Sockets error constants are biased by WSABASEERR from
- * the "normal"
+ * the "normal". They are also defined in winerror.h.
  */
 #define WSABASEERR                 10000
 /*
@@ -860,7 +895,6 @@ typedef struct WS(WSAData)
 #define WSAEDQUOT                  (WSABASEERR+69)
 #define WSAESTALE                  (WSABASEERR+70)
 #define WSAEREMOTE                 (WSABASEERR+71)
-#define WSAEDISCON                 (WSABASEERR+101)
 
 /*
  * Extended Windows Sockets error constant definitions
@@ -972,13 +1006,13 @@ typedef struct WS(WSAData)
  * "Winsock Function Typedefs" section in winsock2.h.
  */
 #if !defined(__WINE_WINSOCK2__) || WS_API_PROTOTYPES
-HANDLE WINAPI WSAAsyncGetHostByAddr(HWND,u_int,const char*,int,int,char*,int);
-HANDLE WINAPI WSAAsyncGetHostByName(HWND,u_int,const char*,char*,int);
-HANDLE WINAPI WSAAsyncGetProtoByName(HWND,u_int,const char*,char*,int);
-HANDLE WINAPI WSAAsyncGetProtoByNumber(HWND,u_int,int,char*,int);
-HANDLE WINAPI WSAAsyncGetServByName(HWND,u_int,const char*,const char*,char*,int);
-HANDLE WINAPI WSAAsyncGetServByPort(HWND,u_int,int,const char*,char*,int);
-int WINAPI WSAAsyncSelect(SOCKET,HWND,u_int,long);
+HANDLE WINAPI WSAAsyncGetHostByAddr(HWND,WS(u_int),const char*,int,int,char*,int);
+HANDLE WINAPI WSAAsyncGetHostByName(HWND,WS(u_int),const char*,char*,int);
+HANDLE WINAPI WSAAsyncGetProtoByName(HWND,WS(u_int),const char*,char*,int);
+HANDLE WINAPI WSAAsyncGetProtoByNumber(HWND,WS(u_int),int,char*,int);
+HANDLE WINAPI WSAAsyncGetServByName(HWND,WS(u_int),const char*,const char*,char*,int);
+HANDLE WINAPI WSAAsyncGetServByPort(HWND,WS(u_int),int,const char*,char*,int);
+int WINAPI WSAAsyncSelect(SOCKET,HWND,WS(u_int),LONG);
 int WINAPI WSACancelAsyncRequest(HANDLE);
 int WINAPI WSACancelBlockingCall(void);
 int WINAPI WSACleanup(void);
@@ -995,7 +1029,6 @@ int WINAPI WS(closesocket)(SOCKET);
 int WINAPI WS(connect)(SOCKET,const struct WS(sockaddr)*,int);
 struct WS(hostent)* WINAPI WS(gethostbyaddr)(const char*,int,int);
 struct WS(hostent)* WINAPI WS(gethostbyname)(const char*);
-/* gethostname not defined because of conflicts with unistd.h */
 int WINAPI WS(getpeername)(SOCKET,struct WS(sockaddr)*,int*);
 struct WS(protoent)* WINAPI WS(getprotobyname)(const char*);
 struct WS(protoent)* WINAPI WS(getprotobynumber)(int);
@@ -1006,9 +1039,9 @@ struct WS(servent)* WINAPI WS(getservbyname)(const char*,const char*);
 struct WS(servent)* WINAPI WS(getservbyport)(int,const char*);
 int WINAPI WS(getsockname)(SOCKET,struct WS(sockaddr)*,int*);
 int WINAPI WS(getsockopt)(SOCKET,int,int,char*,int*);
-unsigned long WINAPI WS(inet_addr)(const char*);
+ULONG WINAPI WS(inet_addr)(const char*);
 char* WINAPI WS(inet_ntoa)(struct WS(in_addr));
-int WINAPI WS(ioctlsocket)(SOCKET,long,u_long*);
+int WINAPI WS(ioctlsocket)(SOCKET,LONG,ULONG*);
 int WINAPI WS(listen)(SOCKET,int);
 int WINAPI WS(recv)(SOCKET,char*,int,int);
 int WINAPI WS(recvfrom)(SOCKET,char*,int,int,struct WS(sockaddr)*,int*);
@@ -1018,10 +1051,12 @@ int WINAPI WS(setsockopt)(SOCKET,int,int,const char*,int);
 int WINAPI WS(shutdown)(SOCKET,int);
 SOCKET WINAPI WS(socket)(int,int,int);
 
+#if defined(__MINGW32__) || defined (_MSC_VER)
+/* gethostname is not defined on Unix because of conflicts with unistd.h */
+int WINAPI WS(gethostname)(char*,int);
+#endif
+
 #endif /* !defined(__WINE_WINSOCK2__) || WS_API_PROTOTYPES */
-
-
-#include <poppack.h>
 
 #ifdef __cplusplus
 }

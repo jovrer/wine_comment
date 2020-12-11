@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -23,8 +23,8 @@
 #include <stdarg.h>
 #include "windef.h"
 #include "winbase.h"
-#include "iphlpapi.h"
 #include "winsock2.h"
+#include "iphlpapi.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(vxd);
@@ -125,7 +125,7 @@ BOOL WINAPI VNBT_DeviceIoControl(DWORD dwIoControlCode,
                 error = GetAdaptersInfo(adapterInfo, &size);
                 if (NO_ERROR == error)
                 {
-                    PIP_ADAPTER_INFO ptr = adapterInfo;
+                    PIP_ADAPTER_INFO ptr;
 
                     for (ptr = adapterInfo; ptr && info->numEntries <
                              MAX_NBT_ENTRIES; ptr = ptr->Next)
@@ -155,7 +155,7 @@ BOOL WINAPI VNBT_DeviceIoControl(DWORD dwIoControlCode,
          * to unimplemented...
          */
     default:
-        FIXME( "Unimplemented control %ld for VxD device VNB\n",
+        FIXME( "Unimplemented control %d for VxD device VNB\n",
                dwIoControlCode );
         error = ERROR_NOT_SUPPORTED;
         break;

@@ -15,36 +15,37 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
-
 #include "wine/port.h"
-#include "wine/debug.h"
 
 #include <stdarg.h>
+#ifdef HAVE_LDAP_H
+#include <ldap.h>
+#endif
 
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
 
-#ifdef HAVE_LDAP_H
-#include <ldap.h>
-#else
-#define LDAP_NOT_SUPPORTED  0x5c
-#endif
-
 #include "winldap_private.h"
 #include "wldap32.h"
+#include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wldap32);
 
-ULONG ldap_rename_extA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newrdn,
+/***********************************************************************
+ *      ldap_rename_extA     (WLDAP32.@)
+ *
+ *  See ldap_rename_extW.
+ */
+ULONG CDECL ldap_rename_extA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newrdn,
     PCHAR newparent, INT delete, PLDAPControlA *serverctrls,
     PLDAPControlA *clientctrls, ULONG *message )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *dnW = NULL, *newrdnW = NULL, *newparentW = NULL;
     LDAPControlW **serverctrlsW = NULL, **clientctrlsW = NULL;
@@ -92,11 +93,35 @@ exit:
     return ret;
 }
 
-ULONG ldap_rename_extW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newrdn,
+/***********************************************************************
+ *      ldap_rename_extW     (WLDAP32.@)
+ *
+ * Change the DN of a directory entry (asynchronous operation).
+ *
+ * PARAMS
+ *  ld          [I] Pointer to an LDAP context.
+ *  dn          [I] DN of the entry to change.
+ *  newrdn      [I] New RDN for the entry.
+ *  newparent   [I] New parent for the entry.
+ *  delete      [I] Delete old RDN?
+ *  serverctrls [I] Array of LDAP server controls.
+ *  clientctrls [I] Array of LDAP client controls.
+ *  message     [O] Message ID of the operation.
+ *
+ * RETURNS
+ *  Success: LDAP_SUCCESS
+ *  Failure: An LDAP error code.
+ *
+ * NOTES
+ *  Call ldap_result with the message ID to get the result of
+ *  the operation. Cancel the operation by calling ldap_abandon
+ *  with the message ID.
+ */
+ULONG CDECL ldap_rename_extW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newrdn,
     PWCHAR newparent, INT delete, PLDAPControlW *serverctrls,
     PLDAPControlW *clientctrls, ULONG *message )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *dnU = NULL, *newrdnU = NULL, *newparentU = NULL;
     LDAPControl **serverctrlsU = NULL, **clientctrlsU = NULL;
@@ -130,8 +155,8 @@ ULONG ldap_rename_extW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newrdn,
         if (!clientctrlsU) goto exit;
     }
 
-    ret = ldap_rename( ld, dn ? dnU : "", newrdn ? newrdnU : "", newparentU,
-                       delete, serverctrlsU, clientctrlsU, (int *)message );
+    ret = map_error( ldap_rename( ld, dn ? dnU : "", newrdn ? newrdnU : "", newparentU,
+                                  delete, serverctrlsU, clientctrlsU, (int *)message ));
 
 exit:
     strfreeU( dnU );
@@ -144,11 +169,16 @@ exit:
     return ret;
 }
 
-ULONG ldap_rename_ext_sA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newrdn,
+/***********************************************************************
+ *      ldap_rename_ext_sA     (WLDAP32.@)
+ *
+ *  See ldap_rename_ext_sW.
+ */
+ULONG CDECL ldap_rename_ext_sA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newrdn,
     PCHAR newparent, INT delete, PLDAPControlA *serverctrls,
     PLDAPControlA *clientctrls )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *dnW = NULL, *newrdnW = NULL, *newparentW = NULL;
     LDAPControlW **serverctrlsW = NULL, **clientctrlsW = NULL;
@@ -195,12 +225,29 @@ exit:
 #endif
     return ret;
 }
-
-ULONG ldap_rename_ext_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newrdn,
+/***********************************************************************
+ *      ldap_rename_ext_sW     (WLDAP32.@)
+ *
+ * Change the DN of a directory entry (synchronous operation).
+ *
+ * PARAMS
+ *  ld          [I] Pointer to an LDAP context.
+ *  dn          [I] DN of the entry to change.
+ *  newrdn      [I] New RDN for the entry.
+ *  newparent   [I] New parent for the entry.
+ *  delete      [I] Delete old RDN?
+ *  serverctrls [I] Array of LDAP server controls.
+ *  clientctrls [I] Array of LDAP client controls.
+ *
+ * RETURNS
+ *  Success: LDAP_SUCCESS
+ *  Failure: An LDAP error code.
+ */ 
+ULONG CDECL ldap_rename_ext_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newrdn,
     PWCHAR newparent, INT delete, PLDAPControlW *serverctrls,
     PLDAPControlW *clientctrls )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *dnU = NULL, *newrdnU = NULL, *newparentU = NULL;
     LDAPControl **serverctrlsU = NULL, **clientctrlsU = NULL;
@@ -234,8 +281,8 @@ ULONG ldap_rename_ext_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newrdn,
         if (!clientctrlsU) goto exit;
     }
 
-    ret = ldap_rename_s( ld, dn ? dnU : "", newrdn ? newrdnU : "", newparentU,
-                         delete, serverctrlsU, clientctrlsU );
+    ret = map_error( ldap_rename_s( ld, dn ? dnU : "", newrdn ? newrdnU : "", newparentU,
+                                    delete, serverctrlsU, clientctrlsU ));
 
 exit:
     strfreeU( dnU );

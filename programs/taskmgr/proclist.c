@@ -17,24 +17,19 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-    
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <malloc.h>
-#include <memory.h>
-#include <tchar.h>
-#include <stdio.h>
 #include <winnt.h>
-    
+
 #include "taskmgr.h"
 #include "perfdata.h"
 
-
-LRESULT CALLBACK    ProcessListWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
 WNDPROC                OldProcessListWndProc;
 
@@ -42,6 +37,7 @@ WNDPROC                OldProcessListWndProc;
 LRESULT CALLBACK ProcessListWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     HBRUSH    hbrBackground;
+    int     count;
     RECT    rcItem;
     RECT    rcClip;
     HDC        hDC;
@@ -63,7 +59,7 @@ LRESULT CALLBACK ProcessListWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
          */
 
         /*
-         * Get the device context and save it's state
+         * Get the device context and save its state
          * to be restored after we're done
          */
         hDC = (HDC) wParam;
@@ -72,7 +68,7 @@ LRESULT CALLBACK ProcessListWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         /*
          * Get the background brush
          */
-        hbrBackground = (HBRUSH) GetClassLongPtr(hWnd, GCLP_HBRBACKGROUND);
+        hbrBackground = (HBRUSH) GetClassLongPtrW(hWnd, GCLP_HBRBACKGROUND);
 
         /*
          * Calculate the clip rect by getting the RECT
@@ -82,10 +78,15 @@ LRESULT CALLBACK ProcessListWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
          * subtract it from our clip rect because we don't
          * use icons in this list control.
          */
-        ListView_GetItemRect(hWnd, 0, &rcClip, LVIR_BOUNDS);
-        ListView_GetItemRect(hWnd, ListView_GetItemCount(hWnd) - 1, &rcItem, LVIR_BOUNDS);
+        rcClip.left = LVIR_BOUNDS;
+        SendMessageW(hWnd, LVM_GETITEMRECT, 0, (LPARAM) &rcClip);
+        rcItem.left = LVIR_BOUNDS;
+        count = SendMessageW(hWnd, LVM_GETITEMCOUNT, 0, 0);
+        SendMessageW(hWnd, LVM_GETITEMRECT, count - 1, (LPARAM) &rcItem);
+
         rcClip.bottom = rcItem.bottom;
-        ListView_GetItemRect(hWnd, 0, &rcItem, LVIR_ICON);
+        rcItem.left = LVIR_ICON;
+        SendMessageW(hWnd, LVM_GETITEMRECT, 0, (LPARAM) &rcItem);
         rcClip.left = rcItem.right;
 
         /*
@@ -116,5 +117,5 @@ LRESULT CALLBACK ProcessListWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     /*
      * We pass on all messages except WM_ERASEBKGND
      */
-    return CallWindowProc(OldProcessListWndProc, hWnd, message, wParam, lParam);
+    return CallWindowProcW(OldProcessListWndProc, hWnd, message, wParam, lParam);
 }

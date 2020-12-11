@@ -13,10 +13,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef DO_NO_IMPORTS
 import "objidl.idl";
+#endif
 
 interface IDispatch;
 interface ITypeInfo;
@@ -228,6 +230,17 @@ typedef VARIANT *LPVARIANT;
 typedef VARIANT VARIANTARG;
 typedef VARIANTARG *LPVARIANTARG;
 
+cpp_quote("#if 0")
+typedef const VARIANT *REFVARIANT;
+cpp_quote("#elif !defined(_REFVARIANT_DEFINED)")
+cpp_quote("#define _REFVARIANT_DEFINED")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("#define REFVARIANT const VARIANT &")
+cpp_quote("#else")
+cpp_quote("#define REFVARIANT const VARIANT *__MIDL_CONST")
+cpp_quote("#endif")
+cpp_quote("#endif")
+
 struct _wireBRECORD {
   ULONG fFlags;
   ULONG clSize;
@@ -284,7 +297,7 @@ struct _wireVARIANT {
   [case(VT_DISPATCH|VT_BYREF)] IDispatch **ppdispVal;
   [case(VT_ARRAY|VT_BYREF)]    wireSAFEARRAY *pparray;
   [case(VT_RECORD, VT_RECORD|VT_BYREF)] wireBRECORD brecVal;
-  };
+  } DUMMYUNIONNAME;
 };
 
 /* Dispatch */
@@ -311,7 +324,7 @@ typedef struct tagTYPEDESC {
   [case(VT_CARRAY)]            struct tagARRAYDESC *lpadesc;
   [case(VT_USERDEFINED)]       HREFTYPE hreftype;
   [default]                    ;
-  };
+  } DUMMYUNIONNAME;
   VARTYPE vt;
 } TYPEDESC;
 
@@ -341,7 +354,7 @@ const USHORT PARAMFLAG_FHASDEFAULT  = 0x20;
 const USHORT PARAMFLAG_FHASCUSTDATA = 0x40;
 
 typedef struct tagIDLDESC {
-  ULONG dwReserved;
+  ULONG_PTR dwReserved;
   USHORT wIDLFlags;
 } IDLDESC, *LPIDLDESC;
 
@@ -402,8 +415,8 @@ typedef struct tagEXCEPINFO {
   BSTR bstrDescription;
   BSTR bstrHelpFile;
   DWORD dwHelpContext;
-  ULONG pvReserved;
-  ULONG pfnDeferredFillIn;
+  ULONG_PTR pvReserved;
+  ULONG_PTR pfnDeferredFillIn;
   SCODE scode;
 } EXCEPINFO;
 cpp_quote("#else")
@@ -482,7 +495,7 @@ typedef struct tagVARDESC {
   [switch_is(varkind)] union {
   [case(VAR_PERINSTANCE, VAR_DISPATCH, VAR_STATIC)] ULONG oInst;
   [case(VAR_CONST)] VARIANT *lpvarValue;
-  };
+  } DUMMYUNIONNAME;
   ELEMDESC elemdescVar;
   WORD wVarFlags;
   VARKIND varkind;
@@ -987,7 +1000,8 @@ interface ITypeLib : IUnknown
   typedef [v1_enum] enum tagSYSKIND {
     SYS_WIN16 = 0,
     SYS_WIN32,
-    SYS_MAC
+    SYS_MAC,
+    SYS_WIN64
   } SYSKIND;
 
   typedef [v1_enum] enum tagLIBFLAGS {

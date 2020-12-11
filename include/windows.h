@@ -13,20 +13,19 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINDOWS_H
 #define __WINE_WINDOWS_H
 
-#ifdef __WINESRC__
-#error Wine should not include windows.h internally
-#endif
-
 #if defined(_MSC_VER) && (_MSC_VER >= 800) && !defined(__cplusplus)
 /* TYPE_ALIGNMENT generates this - move it outside the warning push/pop scope. */
 # pragma warning(disable:4116)
 #endif
+
+#ifndef _INC_WINDOWS
+#define _INC_WINDOWS
 
 #if defined(RC_INVOKED) && !defined(NOWINRES)
 #include <winresrc.h>
@@ -46,6 +45,8 @@
 #include <winnetwk.h>
 
 /* Not so essential ones */
+#ifndef __WINESRC__
+
 #ifndef WIN32_LEAN_AND_MEAN
 
 #include <cderr.h>
@@ -57,16 +58,16 @@
 #include <nb30.h>
 #include <rpc.h>
 #include <shellapi.h>
-/* #include <winperf.h> */
+#include <winperf.h>
 
 #ifndef WINE_NOWINSOCK
-#include <winsock2.h>
+#include <winsock.h>
 #endif /* WINE_NOWINSOCK */
 
 #ifndef NOCRYPT
 #include <wincrypt.h>
 /* #include <winefs.h> */
-/* #include <winscard.h> */
+#include <winscard.h>
 #endif /* !NOCRYPT */
 
 #ifndef NOGDI
@@ -99,5 +100,8 @@
 #include <imm.h>
 #endif /* !NOIMM */
 
+#endif  /* __WINESRC__ */
+
 #endif  /* RC_INVOKED && !NOWINRES */
+#endif /* _INC_WINDOWS */
 #endif  /* __WINE_WINDOWS_H */

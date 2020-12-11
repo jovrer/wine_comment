@@ -15,10 +15,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define COM_NO_WINDOWS_H
+#define COBJMACROS
+
 #include <stdarg.h>
 
 #include "windef.h"
@@ -27,28 +28,71 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "oledlg.h"
-#include "wine/debug.h"
 #include "ole2.h"
+#include "oledlg_private.h"
+#include "resource.h"
+
+#include "wine/debug.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
 
 HINSTANCE OLEDLG_hInstance = 0;
+
+UINT cf_embed_source;
+UINT cf_embedded_object;
+UINT cf_link_source;
+UINT cf_object_descriptor;
+UINT cf_link_src_descriptor;
+UINT cf_ownerlink;
+UINT cf_filename;
+UINT cf_filenamew;
+
+UINT oleui_msg_help;
+UINT oleui_msg_enddialog;
+
+static void register_clipboard_formats(void)
+{
+    /* These used to be declared in olestd.h, but that seems to have been removed from the api */
+    static const WCHAR CF_EMBEDSOURCEW[]          = { 'E','m','b','e','d',' ','S','o','u','r','c','e',0 };
+    static const WCHAR CF_EMBEDDEDOBJECTW[]       = { 'E','m','b','e','d','d','e','d',' ','O','b','j','e','c','t',0 };
+    static const WCHAR CF_LINKSOURCEW[]           = { 'L','i','n','k',' ','S','o','u','r','c','e',0 };
+    static const WCHAR CF_OBJECTDESCRIPTORW[]     = { 'O','b','j','e','c','t',' ','D','e','s','c','r','i','p','t','o','r',0 };
+    static const WCHAR CF_LINKSRCDESCRIPTORW[]    = { 'L','i','n','k',' ','S','o','u','r','c','e',' ','D','e','s','c','r','i','p','t','o','r',0 };
+    static const WCHAR CF_OWNERLINKW[]            = { 'O','w','n','e','r','L','i','n','k',0 };
+    static const WCHAR CF_FILENAMEW[]             = { 'F','i','l','e','N','a','m','e',0 };
+    static const WCHAR CF_FILENAMEWW[]            = { 'F','i','l','e','N','a','m','e','W',0 };
+
+    /* Load in the same order as native to make debugging easier */
+    cf_object_descriptor    = RegisterClipboardFormatW(CF_OBJECTDESCRIPTORW);
+    cf_link_src_descriptor  = RegisterClipboardFormatW(CF_LINKSRCDESCRIPTORW);
+    cf_embed_source         = RegisterClipboardFormatW(CF_EMBEDSOURCEW);
+    cf_embedded_object      = RegisterClipboardFormatW(CF_EMBEDDEDOBJECTW);
+    cf_link_source          = RegisterClipboardFormatW(CF_LINKSOURCEW);
+    cf_ownerlink            = RegisterClipboardFormatW(CF_OWNERLINKW);
+    cf_filename             = RegisterClipboardFormatW(CF_FILENAMEW);
+    cf_filenamew            = RegisterClipboardFormatW(CF_FILENAMEWW);
+}
+
+static void register_messages(void)
+{
+    oleui_msg_help             = RegisterWindowMessageW(SZOLEUI_MSG_HELPW);
+    oleui_msg_enddialog        = RegisterWindowMessageW(SZOLEUI_MSG_ENDDIALOGW);
+}
 
 /***********************************************************************
  *		DllMain
  */
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID fImpLoad)
 {
-    TRACE("%p 0x%lx %p\n", hinstDLL, fdwReason, fImpLoad);
+    TRACE("%p 0x%x %p\n", hinstDLL, fdwReason, fImpLoad);
 
     switch(fdwReason) {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hinstDLL);
         OLEDLG_hInstance = hinstDLL;
-        break;
-
-    case DLL_PROCESS_DETACH:
-        OLEDLG_hInstance = 0;
+        register_clipboard_formats();
+        register_messages();
         break;
     }
     return TRUE;
@@ -58,35 +102,159 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID fImpLoad)
 /***********************************************************************
  *           OleUIAddVerbMenuA (OLEDLG.1)
  */
-BOOL WINAPI OleUIAddVerbMenuA(
-  LPOLEOBJECT lpOleObj, LPCSTR lpszShortType,
-  HMENU hMenu, UINT uPos, UINT uIDVerbMin, UINT uIDVerbMax,
-  BOOL bAddConvert, UINT idConvert, HMENU *lphMenu)
+BOOL WINAPI OleUIAddVerbMenuA(IOleObject *object, LPCSTR shorttype,
+    HMENU hMenu, UINT uPos, UINT uIDVerbMin, UINT uIDVerbMax,
+    BOOL addConvert, UINT idConvert, HMENU *lphMenu)
 {
-  FIXME("(%p, %s, %p, %d, %d, %d, %d, %d, %p): stub\n",
-    lpOleObj, debugstr_a(lpszShortType),
-    hMenu, uPos, uIDVerbMin, uIDVerbMax,
-    bAddConvert, idConvert, lphMenu
-  );
-  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-  return FALSE;
+    WCHAR *shorttypeW = NULL;
+    BOOL ret;
+
+    TRACE("(%p, %s, %p, %d, %d, %d, %d, %d, %p)\n", object, debugstr_a(shorttype),
+        hMenu, uPos, uIDVerbMin, uIDVerbMax, addConvert, idConvert, lphMenu);
+
+    if (shorttype)
+    {
+        INT len = MultiByteToWideChar(CP_ACP, 0, shorttype, -1, NULL, 0);
+        shorttypeW = HeapAlloc(GetProcessHeap(), 0, len*sizeof(WCHAR));
+        if (shorttypeW)
+            MultiByteToWideChar(CP_ACP, 0, shorttype, -1, shorttypeW, len);
+    }
+
+    ret = OleUIAddVerbMenuW(object, shorttypeW, hMenu, uPos, uIDVerbMin, uIDVerbMax,
+        addConvert, idConvert, lphMenu);
+    HeapFree(GetProcessHeap(), 0, shorttypeW);
+    return ret;
+}
+
+static inline BOOL is_verb_in_range(const OLEVERB *verb, UINT idmin, UINT idmax)
+{
+    if (idmax == 0) return TRUE;
+    return (verb->lVerb + idmin <= idmax);
+}
+
+static HRESULT get_next_insertable_verb(IEnumOLEVERB *enumverbs, UINT idmin, UINT idmax, OLEVERB *verb)
+{
+    memset(verb, 0, sizeof(*verb));
+
+    while (IEnumOLEVERB_Next(enumverbs, 1, verb, NULL) == S_OK) {
+        if (is_verb_in_range(verb, idmin, idmax) && (verb->grfAttribs & OLEVERBATTRIB_ONCONTAINERMENU))
+            return S_OK;
+
+        CoTaskMemFree(verb->lpszVerbName);
+        memset(verb, 0, sizeof(*verb));
+    }
+
+    return S_FALSE;
+}
+
+static void insert_verb_to_menu(HMENU menu, UINT idmin, const OLEVERB *verb)
+{
+    InsertMenuW(menu, ~0, verb->fuFlags | MF_BYPOSITION | MF_STRING, verb->lVerb + idmin, verb->lpszVerbName);
 }
 
 /***********************************************************************
  *           OleUIAddVerbMenuW (OLEDLG.14)
  */
-BOOL WINAPI OleUIAddVerbMenuW(
-  LPOLEOBJECT lpOleObj, LPCWSTR lpszShortType,
-  HMENU hMenu, UINT uPos, UINT uIDVerbMin, UINT uIDVerbMax,
-  BOOL bAddConvert, UINT idConvert, HMENU *lphMenu)
+BOOL WINAPI OleUIAddVerbMenuW(IOleObject *object, LPCWSTR shorttype,
+    HMENU hMenu, UINT uPos, UINT idmin, UINT idmax, BOOL addConvert, UINT idConvert, HMENU *ret_submenu)
 {
-  FIXME("(%p, %s, %p, %d, %d, %d, %d, %d, %p): stub\n",
-    lpOleObj, debugstr_w(lpszShortType),
-    hMenu, uPos, uIDVerbMin, uIDVerbMax,
-    bAddConvert, idConvert, lphMenu
-  );
-  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-  return FALSE;
+    IEnumOLEVERB *enumverbs = NULL;
+    LPOLESTR usertype = NULL;
+    OLEVERB firstverb, verb;
+    WCHAR *objecttype;
+    WCHAR resstrW[32]; /* should be enough */
+    DWORD_PTR args[2];
+    BOOL singleverb;
+    HMENU submenu;
+    WCHAR *str;
+
+    TRACE("(%p, %s, %p, %d, %d, %d, %d, %d, %p)\n", object, debugstr_w(shorttype),
+        hMenu, uPos, idmin, idmax, addConvert, idConvert, ret_submenu);
+
+    if (ret_submenu)
+        *ret_submenu = NULL;
+
+    if (!hMenu || !ret_submenu)
+        return FALSE;
+
+    /* check if we can get verbs at all */
+    if (object)
+        IOleObject_EnumVerbs(object, &enumverbs);
+
+    LoadStringW(OLEDLG_hInstance, IDS_VERBMENU_OBJECT, resstrW, ARRAY_SIZE(resstrW));
+    /* no object, or object without enumeration support */
+    if (!object || !enumverbs) {
+        RemoveMenu(hMenu, uPos, MF_BYPOSITION);
+        InsertMenuW(hMenu, uPos, MF_BYPOSITION|MF_STRING|MF_GRAYED, idmin, resstrW);
+        return FALSE;
+    }
+
+    /* root entry string */
+    if (!shorttype && (IOleObject_GetUserType(object, USERCLASSTYPE_SHORT, &usertype) == S_OK))
+        objecttype = usertype;
+    else
+        objecttype = (WCHAR*)shorttype;
+
+    /* iterate through verbs */
+
+    /* find first suitable verb */
+    get_next_insertable_verb(enumverbs, idmin, idmax, &firstverb);
+    singleverb = get_next_insertable_verb(enumverbs, idmin, idmax, &verb) != S_OK;
+
+    if (singleverb && !addConvert) {
+        LoadStringW(OLEDLG_hInstance, IDS_VERBMENU_SINGLEVERB_OBJECT, resstrW, ARRAY_SIZE(resstrW));
+
+        args[0] = (DWORD_PTR)firstverb.lpszVerbName;
+        args[1] = (DWORD_PTR)objecttype;
+
+        FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER|FORMAT_MESSAGE_ARGUMENT_ARRAY,
+            resstrW, 0, 0, (WCHAR*)&str, 0, (__ms_va_list*)args);
+
+        RemoveMenu(hMenu, uPos, MF_BYPOSITION);
+        InsertMenuW(hMenu, uPos, MF_BYPOSITION|MF_STRING, idmin, str);
+        CoTaskMemFree(firstverb.lpszVerbName);
+        HeapFree(GetProcessHeap(), 0, str);
+        IEnumOLEVERB_Release(enumverbs);
+        CoTaskMemFree(usertype);
+        return TRUE;
+    }
+
+    submenu = CreatePopupMenu();
+    insert_verb_to_menu(submenu, idmin, &firstverb);
+    CoTaskMemFree(firstverb.lpszVerbName);
+
+    if (!singleverb) {
+        insert_verb_to_menu(submenu, idmin, &verb);
+        CoTaskMemFree(verb.lpszVerbName);
+    }
+
+    while (get_next_insertable_verb(enumverbs, idmin, idmax, &verb) == S_OK) {
+        insert_verb_to_menu(submenu, idmin, &verb);
+        CoTaskMemFree(verb.lpszVerbName);
+    }
+
+    /* convert verb is at the bottom of a popup, separated from verbs */
+    if (addConvert) {
+        LoadStringW(OLEDLG_hInstance, IDS_VERBMENU_CONVERT, resstrW, ARRAY_SIZE(resstrW));
+        InsertMenuW(submenu, ~0, MF_BYPOSITION|MF_SEPARATOR, 0, NULL);
+        InsertMenuW(submenu, ~0, MF_BYPOSITION|MF_STRING, idConvert, resstrW);
+    }
+
+    if (submenu)
+        *ret_submenu = submenu;
+
+    /* now submenu is ready, add root entry to original menu, attach submenu */
+    LoadStringW(OLEDLG_hInstance, IDS_VERBMENU_OBJECT_WITH_NAME, resstrW, ARRAY_SIZE(resstrW));
+
+    args[0] = (DWORD_PTR)objecttype;
+    FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER|FORMAT_MESSAGE_ARGUMENT_ARRAY,
+        resstrW, 0, 0, (WCHAR*)&str, 0, (__ms_va_list*)args);
+
+    InsertMenuW(hMenu, uPos, MF_BYPOSITION|MF_POPUP|MF_STRING, (UINT_PTR)submenu, str);
+    HeapFree(GetProcessHeap(), 0, str);
+    IEnumOLEVERB_Release(enumverbs);
+    CoTaskMemFree(usertype);
+    return TRUE;
 }
 
 /***********************************************************************
@@ -108,26 +276,6 @@ BOOL WINAPI OleUICanConvertOrActivateAs(
 UINT WINAPI OleUIInsertObjectW(LPOLEUIINSERTOBJECTW lpOleUIInsertObject)
 {
   FIXME("(%p): stub\n", lpOleUIInsertObject);
-  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-  return OLEUI_FALSE;
-}
-
-/***********************************************************************
- *           OleUIPasteSpecialA (OLEDLG.4)
- */
-UINT WINAPI OleUIPasteSpecialA(LPOLEUIPASTESPECIALA lpOleUIPasteSpecial)
-{
-  FIXME("(%p): stub\n", lpOleUIPasteSpecial);
-  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-  return OLEUI_FALSE;
-}
-
-/***********************************************************************
- *           OleUIPasteSpecialW (OLEDLG.22)
- */
-UINT WINAPI OleUIPasteSpecialW(LPOLEUIPASTESPECIALW lpOleUIPasteSpecial)
-{
-  FIXME("(%p): stub\n", lpOleUIPasteSpecial);
   SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
   return OLEUI_FALSE;
 }
@@ -245,7 +393,7 @@ BOOL WINAPI OleUIUpdateLinksW(
 /***********************************************************************
  *           OleUIPromptUserA (OLEDLG.10)
  */
-INT __cdecl OleUIPromptUserA(
+INT WINAPIV OleUIPromptUserA(
   INT nTemplate, HWND hwndParent, ...)
 {
   FIXME("(%d, %p, ...): stub\n", nTemplate, hwndParent);
@@ -256,7 +404,7 @@ INT __cdecl OleUIPromptUserA(
 /***********************************************************************
  *           OleUIPromptUserW (OLEDLG.13)
  */
-INT __cdecl OleUIPromptUserW(
+INT WINAPIV OleUIPromptUserW(
   INT nTemplate, HWND hwndParent, ...)
 {
   FIXME("(%d, %p, ...): stub\n", nTemplate, hwndParent);

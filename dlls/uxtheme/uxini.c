@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -27,6 +27,7 @@
 #include "winnls.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(uxtheme);
 
@@ -68,14 +69,14 @@ PUXINI_FILE UXINI_LoadINI(HMODULE hTheme, LPCWSTR lpName) {
     TRACE("Loading resource INI %s\n", debugstr_w(lpName));
 
     if((hrsc = FindResourceW(hTheme, lpName, szTextFileResource))) {
-        if(!(lpThemesIni = (LPCWSTR)LoadResource(hTheme, hrsc))) {
+        if(!(lpThemesIni = LoadResource(hTheme, hrsc))) {
             TRACE("%s resource not found\n", debugstr_w(lpName));
             return NULL;
         }
     }
 
     dwIniSize = SizeofResource(hTheme, hrsc) / sizeof(WCHAR);
-    uf = HeapAlloc(GetProcessHeap(), 0, sizeof(UXINI_FILE));
+    uf = heap_alloc(sizeof(*uf));
     uf->lpIni = lpThemesIni;
     uf->lpCurLoc = lpThemesIni;
     uf->lpEnd = lpThemesIni + dwIniSize;
@@ -92,20 +93,7 @@ PUXINI_FILE UXINI_LoadINI(HMODULE hTheme, LPCWSTR lpName) {
  */
 void UXINI_CloseINI(PUXINI_FILE uf)
 {
-    HeapFree(GetProcessHeap(), 0, uf);
-}
-
-/**********************************************************************
- *      UXINI_ResetINI
- *
- * Reset the current pointer into INI file to the beginning of the file
- *
- * PARAMS
- *     uf                  Theme INI file to reset
- */
-void UXINI_ResetINI(PUXINI_FILE uf)
-{
-    uf->lpCurLoc = uf->lpIni;
+    heap_free(uf);
 }
 
 /**********************************************************************
@@ -212,7 +200,6 @@ LPCWSTR UXINI_GetNextSection(PUXINI_FILE uf, DWORD *dwLen)
  *
  * Locate a section with the specified name, search starts
  * at current location in ini file
- * to start search from start, call UXINI_ResetINI
  *
  * PARAMS
  *     uf                  INI file to search, search starts at current location

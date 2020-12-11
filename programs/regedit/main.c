@@ -15,24 +15,36 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #define WIN32_LEAN_AND_MEAN     /* Exclude rarely-used stuff from Windows headers */
 #include <windows.h>
 #include <commctrl.h>
 #include <stdlib.h>
-#include <tchar.h>
-#include <stdio.h>
 #include <fcntl.h>
+#include "wine/debug.h"
 
 #define REGEDIT_DECLARE_FUNCTIONS
 #include "main.h"
 
-LPCSTR g_pszDefaultValueName = _T("(Default)");
+WINE_DEFAULT_DEBUG_CHANNEL(regedit);
 
-BOOL ProcessCmdLine(LPSTR lpCmdLine);
+WCHAR g_pszDefaultValueName[64];
 
+BOOL ProcessCmdLine(WCHAR *cmdline);
+
+static const WCHAR hkey_local_machine[] = {'H','K','E','Y','_','L','O','C','A','L','_','M','A','C','H','I','N','E',0};
+static const WCHAR hkey_users[] = {'H','K','E','Y','_','U','S','E','R','S',0};
+static const WCHAR hkey_classes_root[] = {'H','K','E','Y','_','C','L','A','S','S','E','S','_','R','O','O','T',0};
+static const WCHAR hkey_current_config[] = {'H','K','E','Y','_','C','U','R','R','E','N','T','_','C','O','N','F','I','G',0};
+static const WCHAR hkey_current_user[] = {'H','K','E','Y','_','C','U','R','R','E','N','T','_','U','S','E','R',0};
+static const WCHAR hkey_dyn_data[] = {'H','K','E','Y','_','D','Y','N','_','D','A','T','A',0};
+
+const WCHAR *reg_class_namesW[] = {hkey_local_machine, hkey_users,
+                                   hkey_classes_root, hkey_current_config,
+                                   hkey_current_user, hkey_dyn_data
+                                  };
 
 /*******************************************************************************
  * Global Variables:
@@ -44,68 +56,39 @@ HWND hStatusBar;
 HMENU hMenuFrame;
 HMENU hPopupMenus = 0;
 UINT nClipboardFormat;
-LPCTSTR strClipboardFormat = _T("TODO: SET CORRECT FORMAT");
+const WCHAR strClipboardFormat[] = {'T','O','D','O',':',' ','S','E','T',' ','C','O','R','R','E','C','T',' ','F','O','R','M','A','T',0};
 
 
 #define MAX_LOADSTRING  100
-TCHAR szTitle[MAX_LOADSTRING];
-TCHAR szFrameClass[MAX_LOADSTRING];
-TCHAR szChildClass[MAX_LOADSTRING];
-
-
-/*******************************************************************************
- *
- *
- *   FUNCTION: InitInstance(HANDLE, int)
- *
- *   PURPOSE: Saves instance handle and creates main window
- *
- *   COMMENTS:
- *
- *        In this function, we save the instance handle in a global variable and
- *        create and display the main program window.
- */
+WCHAR szTitle[MAX_LOADSTRING];
+const WCHAR szFrameClass[] = {'R','e','g','E','d','i','t','_','R','e','g','E','d','i','t',0};
+const WCHAR szChildClass[] = {'R','E','G','E','D','I','T',0};
 
 static BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
-    WNDCLASSEX wcFrame = {
-                             sizeof(WNDCLASSEX),
-                             CS_HREDRAW | CS_VREDRAW/*style*/,
-                             FrameWndProc,
-                             0/*cbClsExtra*/,
-                             0/*cbWndExtra*/,
-                             hInstance,
-                             LoadIcon(hInstance, MAKEINTRESOURCE(IDI_REGEDIT)),
-                             LoadCursor(0, IDC_ARROW),
-                             0/*hbrBackground*/,
-                             0/*lpszMenuName*/,
-                             szFrameClass,
-                             (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_REGEDIT), IMAGE_ICON,
-                                              GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED)
-                         };
-    ATOM hFrameWndClass = RegisterClassEx(&wcFrame); /* register frame window class */
+    WCHAR empty = 0;
+    WNDCLASSEXW wndclass = {0};
 
-    WNDCLASSEX wcChild = {
-                             sizeof(WNDCLASSEX),
-                             CS_HREDRAW | CS_VREDRAW/*style*/,
-                             ChildWndProc,
-                             0/*cbClsExtra*/,
-                             sizeof(HANDLE)/*cbWndExtra*/,
-                             hInstance,
-                             LoadIcon(hInstance, MAKEINTRESOURCE(IDI_REGEDIT)),
-                             LoadCursor(0, IDC_ARROW),
-                             0/*hbrBackground*/,
-                             0/*lpszMenuName*/,
-                             szChildClass,
-                             (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_REGEDIT), IMAGE_ICON,
-                                              GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED)
+    /* Frame class */
+    wndclass.cbSize = sizeof(WNDCLASSEXW);
+    wndclass.style = CS_HREDRAW | CS_VREDRAW;
+    wndclass.lpfnWndProc = FrameWndProc;
+    wndclass.hInstance = hInstance;
+    wndclass.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_REGEDIT));
+    wndclass.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+    wndclass.lpszClassName = szFrameClass;
+    wndclass.hIconSm = LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_REGEDIT), IMAGE_ICON,
+                                  GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+    RegisterClassExW(&wndclass);
 
-                         };
-    ATOM hChildWndClass = RegisterClassEx(&wcChild); /* register child windows class */
-    hChildWndClass = hChildWndClass; /* warning eater */
+    /* Child class */
+    wndclass.lpfnWndProc = ChildWndProc;
+    wndclass.cbWndExtra = sizeof(HANDLE);
+    wndclass.lpszClassName = szChildClass;
+    RegisterClassExW(&wndclass);
 
-    hMenuFrame = LoadMenu(hInstance, MAKEINTRESOURCE(IDR_REGEDIT_MENU));
-    hPopupMenus = LoadMenu(hInstance, MAKEINTRESOURCE(IDR_POPUP_MENUS));
+    hMenuFrame = LoadMenuW(hInstance, MAKEINTRESOURCEW(IDR_REGEDIT_MENU));
+    hPopupMenus = LoadMenuW(hInstance, MAKEINTRESOURCEW(IDR_POPUP_MENUS));
 
     /* Initialize the Windows Common Controls DLL */
     InitCommonControls();
@@ -113,23 +96,20 @@ static BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     /* register our hex editor control */
     HexEdit_Register();
 
-    nClipboardFormat = RegisterClipboardFormat(strClipboardFormat);
-    /* if (nClipboardFormat == 0) {
-        DWORD dwError = GetLastError();
-    } */
+    nClipboardFormat = RegisterClipboardFormatW(strClipboardFormat);
 
-    hFrameWnd = CreateWindowEx(0, (LPCTSTR)(int)hFrameWndClass, szTitle,
-                               WS_OVERLAPPEDWINDOW | WS_EX_CLIENTEDGE,
-                               CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                               NULL, hMenuFrame, hInstance, NULL/*lpParam*/);
+    hFrameWnd = CreateWindowExW(0, szFrameClass, szTitle,
+                                WS_OVERLAPPEDWINDOW | WS_EX_CLIENTEDGE,
+                                CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                NULL, hMenuFrame, hInstance, NULL/*lpParam*/);
 
     if (!hFrameWnd) {
         return FALSE;
     }
 
     /* Create the status bar */
-    hStatusBar = CreateStatusWindow(WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|SBT_NOBORDERS,
-                                    _T(""), hFrameWnd, STATUS_WINDOW);
+    hStatusBar = CreateStatusWindowW(WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|SBT_NOBORDERS,
+                                    &empty, hFrameWnd, STATUS_WINDOW);
     if (hStatusBar) {
         /* Create the status bar panes */
         SetupStatusBar(hFrameWnd, FALSE);
@@ -152,26 +132,47 @@ static BOOL TranslateChildTabMessage(MSG *msg)
     if (msg->message != WM_KEYDOWN) return FALSE;
     if (msg->wParam != VK_TAB) return FALSE;
     if (GetParent(msg->hwnd) != g_pChildWnd->hWnd) return FALSE;
-    PostMessage(g_pChildWnd->hWnd, WM_COMMAND, ID_SWITCH_PANELS, 0);
+    PostMessageW(g_pChildWnd->hWnd, WM_COMMAND, ID_SWITCH_PANELS, 0);
     return TRUE;
 }
 
-int APIENTRY WinMain(HINSTANCE hInstance,
-                     HINSTANCE hPrevInstance,
-                     LPSTR     lpCmdLine,
-                     int       nCmdShow)
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
 {
     MSG msg;
     HACCEL hAccel;
+    BOOL is_wow64;
 
-    if (ProcessCmdLine(lpCmdLine)) {
+    if (ProcessCmdLine(GetCommandLineW())) {
         return 0;
     }
 
+    if (IsWow64Process( GetCurrentProcess(), &is_wow64 ) && is_wow64)
+    {
+        STARTUPINFOW si;
+        PROCESS_INFORMATION pi;
+        WCHAR filename[MAX_PATH];
+        void *redir;
+        DWORD exit_code;
+
+        memset( &si, 0, sizeof(si) );
+        si.cb = sizeof(si);
+        GetModuleFileNameW( 0, filename, MAX_PATH );
+
+        Wow64DisableWow64FsRedirection( &redir );
+        if (CreateProcessW( filename, GetCommandLineW(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi ))
+        {
+            WINE_TRACE( "restarting %s\n", wine_dbgstr_w(filename) );
+            WaitForSingleObject( pi.hProcess, INFINITE );
+            GetExitCodeProcess( pi.hProcess, &exit_code );
+            ExitProcess( exit_code );
+        }
+        else WINE_ERR( "failed to restart 64-bit %s, err %d\n", wine_dbgstr_w(filename), GetLastError() );
+        Wow64RevertWow64FsRedirection( redir );
+    }
+
     /* Initialize global strings */
-    LoadString(hInstance, IDS_APP_TITLE, szTitle, COUNT_OF(szTitle));
-    LoadString(hInstance, IDC_REGEDIT_FRAME, szFrameClass, COUNT_OF(szFrameClass));
-    LoadString(hInstance, IDC_REGEDIT, szChildClass, COUNT_OF(szChildClass));
+    LoadStringW(hInstance, IDS_APP_TITLE, szTitle, ARRAY_SIZE(szTitle));
+    LoadStringW(hInstance, IDS_REGISTRY_DEFAULT_VALUE, g_pszDefaultValueName, ARRAY_SIZE(g_pszDefaultValueName));
 
     /* Store instance handle in our global variable */
     hInst = hInstance;
@@ -180,14 +181,14 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     if (!InitInstance(hInstance, nCmdShow)) {
         return FALSE;
     }
-    hAccel = LoadAccelerators(hInstance, (LPCTSTR)IDC_REGEDIT);
+    hAccel = LoadAcceleratorsW(hInstance, MAKEINTRESOURCEW(IDC_REGEDIT));
 
     /* Main message loop */
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        if (!TranslateAccelerator(hFrameWnd, hAccel, &msg)
+    while (GetMessageW(&msg, NULL, 0, 0)) {
+        if (!TranslateAcceleratorW(hFrameWnd, hAccel, &msg)
            && !TranslateChildTabMessage(&msg)) {
             TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            DispatchMessageW(&msg);
         }
     }
     ExitInstance();

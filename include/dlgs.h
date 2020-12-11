@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DLGS_H
@@ -209,5 +209,16 @@
 #define PAGESETUPDLGORDMOTIF	1550
 #define COLORMGMTDLGORD		1551
 #define NEWFILEOPENV2ORD	1552
+#define NEWFILEOPENV3ORD	1553
+#define NEWFORMATDLGWITHLINK	1591
+#define IDC_MANAGE_LINK		1592
+
+typedef struct tagCRGB
+{
+    BYTE bRed;
+    BYTE bGreen;
+    BYTE bBlue;
+    BYTE bExtra;
+} CRGB;
 
 #endif  /* #ifdef __WINE_DLGS_H */

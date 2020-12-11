@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #include "msvcrt.h"
 #include "wine/debug.h"
@@ -25,6 +25,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 /********************************************************************/
 
 typedef struct {
+  HANDLE thread;
   MSVCRT__beginthread_start_routine_t start_address;
   void *arglist;
 } _beginthread_trampoline_t;
@@ -44,11 +45,48 @@ thread_data_t *msvcrt_get_thread_data(void)
         if (!(ptr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ptr) )))
             _amsg_exit( _RT_THREAD );
         if (!TlsSetValue( msvcrt_tls_index, ptr )) _amsg_exit( _RT_THREAD );
+        ptr->tid = GetCurrentThreadId();
+        ptr->handle = INVALID_HANDLE_VALUE;
+        ptr->random_seed = 1;
+        ptr->locinfo = MSVCRT_locale->locinfo;
+        ptr->mbcinfo = MSVCRT_locale->mbcinfo;
     }
     SetLastError( err );
     return ptr;
 }
 
+/*********************************************************************
+ *		_endthread (MSVCRT.@)
+ */
+void CDECL _endthread(void)
+{
+  thread_data_t *tls;
+
+  TRACE("(void)\n");
+
+  tls = TlsGetValue(msvcrt_tls_index);
+  if (tls && tls->handle != INVALID_HANDLE_VALUE)
+  {
+      CloseHandle(tls->handle);
+      tls->handle = INVALID_HANDLE_VALUE;
+  } else
+      WARN("tls=%p tls->handle=%p\n", tls, tls ? tls->handle : INVALID_HANDLE_VALUE);
+
+  /* FIXME */
+  ExitThread(0);
+}
+
+/*********************************************************************
+ *		_endthreadex (MSVCRT.@)
+ */
+void CDECL _endthreadex(
+  unsigned int retval) /* [in] Thread exit code */
+{
+  TRACE("(%d)\n", retval);
+
+  /* FIXME */
+  ExitThread(retval);
+}
 
 /*********************************************************************
  *		_beginthread_trampoline
@@ -56,46 +94,61 @@ thread_data_t *msvcrt_get_thread_data(void)
 static DWORD CALLBACK _beginthread_trampoline(LPVOID arg)
 {
     _beginthread_trampoline_t local_trampoline;
+    thread_data_t *data = msvcrt_get_thread_data();
 
-    /* Maybe it's just being paranoid, but freeing arg right
-     * away seems safer.
-     */
     memcpy(&local_trampoline,arg,sizeof(local_trampoline));
+    data->handle = local_trampoline.thread;
     MSVCRT_free(arg);
 
     local_trampoline.start_address(local_trampoline.arglist);
+    _endthread();
     return 0;
 }
 
 /*********************************************************************
  *		_beginthread (MSVCRT.@)
  */
-MSVCRT_uintptr_t _beginthread(
+MSVCRT_uintptr_t CDECL _beginthread(
   MSVCRT__beginthread_start_routine_t start_address, /* [in] Start address of routine that begins execution of new thread */
   unsigned int stack_size, /* [in] Stack size for new thread or 0 */
   void *arglist)           /* [in] Argument list to be passed to new thread or NULL */
 {
   _beginthread_trampoline_t* trampoline;
+  HANDLE thread;
 
   TRACE("(%p, %d, %p)\n", start_address, stack_size, arglist);
 
-  /* Allocate the trampoline here so that it is still valid when the thread
-   * starts... typically after this function has returned.
-   * _beginthread_trampoline is responsible for freeing the trampoline
-   */
-  trampoline=MSVCRT_malloc(sizeof(*trampoline));
+  trampoline = MSVCRT_malloc(sizeof(*trampoline));
+  if(!trampoline) {
+      *MSVCRT__errno() = MSVCRT_EAGAIN;
+      return -1;
+  }
+
+  thread = CreateThread(NULL, stack_size, _beginthread_trampoline,
+          trampoline, CREATE_SUSPENDED, NULL);
+  if(!thread) {
+      MSVCRT_free(trampoline);
+      *MSVCRT__errno() = MSVCRT_EAGAIN;
+      return -1;
+  }
+
+  trampoline->thread = thread;
   trampoline->start_address = start_address;
   trampoline->arglist = arglist;
 
-  /* FIXME */
-  return (MSVCRT_uintptr_t)CreateThread(NULL, stack_size, _beginthread_trampoline,
-				     trampoline, 0, NULL);
+  if(ResumeThread(thread) == -1) {
+      MSVCRT_free(trampoline);
+      *MSVCRT__errno() = MSVCRT_EAGAIN;
+      return -1;
+  }
+
+  return (MSVCRT_uintptr_t)thread;
 }
 
 /*********************************************************************
  *		_beginthreadex (MSVCRT.@)
  */
-MSVCRT_uintptr_t _beginthreadex(
+MSVCRT_uintptr_t CDECL _beginthreadex(
   void *security,          /* [in] Security descriptor for new thread; must be NULL for Windows 9x applications */
   unsigned int stack_size, /* [in] Stack size for new thread or 0 */
   MSVCRT__beginthreadex_start_routine_t start_address, /* [in] Start address of routine that begins execution of new thread */
@@ -107,29 +160,17 @@ MSVCRT_uintptr_t _beginthreadex(
 
   /* FIXME */
   return (MSVCRT_uintptr_t)CreateThread(security, stack_size,
-				     (LPTHREAD_START_ROUTINE) start_address,
-				     arglist, initflag, (LPDWORD) thrdaddr);
+				     start_address, arglist,
+				     initflag, thrdaddr);
 }
 
+#if _MSVCR_VER>=80
 /*********************************************************************
- *		_endthread (MSVCRT.@)
+ *		_getptd (MSVCR80.@)
  */
-void _endthread(void)
+thread_data_t* CDECL _getptd(void)
 {
-  TRACE("(void)\n");
-
-  /* FIXME */
-  ExitThread(0);
+    FIXME("returns undocumented/not fully filled data\n");
+    return msvcrt_get_thread_data();
 }
-
-/*********************************************************************
- *		_endthreadex (MSVCRT.@)
- */
-void _endthreadex(
-  unsigned int retval) /* [in] Thread exit code */
-{
-  TRACE("(%d)\n", retval);
-
-  /* FIXME */
-  ExitThread(retval);
-}
+#endif

@@ -1,18 +1,10 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = objsel.dll
-IMPORTS   = ole32 oleaut32 user32 advapi32 kernel32
-EXTRALIBS = -lstrmiids -luuid $(LIBUNICODE)
+IMPORTS   = strmiids uuid ole32 advapi32
 
 C_SRCS = \
 	factory.c \
-	objsel.c \
-	regsvr.c
+	objsel.c
+
+IDL_SRCS = objsel_classes.idl
 
 RC_SRCS = objsel.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

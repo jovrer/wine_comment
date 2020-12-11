@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -25,18 +25,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msimg32);
-
-/***********************************************************************
- *           DllInitialize (MSIMG32.@)
- *
- * MSIMG32 initialisation routine.
- */
-BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
-{
-    if (reason == DLL_PROCESS_ATTACH) DisableThreadLibraryCalls( inst );
-    return TRUE;
-}
-
 
 /******************************************************************************
  *           vSetDdrawflag   (MSIMG32.@)

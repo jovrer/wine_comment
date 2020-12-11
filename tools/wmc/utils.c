@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -36,9 +36,8 @@
 
 static void generic_msg(const char *s, const char *t, va_list ap)
 {
-	fprintf(stderr, "%s %s: %d, %d: ", t, input_name ? input_name : "stdin", line_number, char_number);
+	fprintf(stderr, "%s:%d:%d: %s: ", input_name ? input_name : "stdin", line_number, char_number, t);
 	vfprintf(stderr, s, ap);
-	fprintf(stderr, "\n");
 }
 
 /*
@@ -49,7 +48,7 @@ static void generic_msg(const char *s, const char *t, va_list ap)
  * The extra routine 'xyyerror' is used to exit after giving a real
  * message.
  */
-int yyerror(const char *s, ...)
+int mcy_error(const char *s, ...)
 {
 #ifndef SUPPRESS_YACC_ERROR_MESSAGE
 	va_list ap;
@@ -70,7 +69,7 @@ int xyyerror(const char *s, ...)
 	return 1;
 }
 
-int yywarning(const char *s, ...)
+int mcy_warning(const char *s, ...)
 {
 	va_list ap;
 	va_start(ap, s);
@@ -85,9 +84,19 @@ void internal_error(const char *file, int line, const char *s, ...)
 	va_start(ap, s);
 	fprintf(stderr, "Internal error (please report) %s %d: ", file, line);
 	vfprintf(stderr, s, ap);
-	fprintf(stderr, "\n");
 	va_end(ap);
 	exit(3);
+}
+
+void fatal_perror( const char *msg, ... )
+{
+        va_list valist;
+        va_start( valist, msg );
+	fprintf(stderr, "Error: ");
+        vfprintf( stderr, msg, valist );
+        perror( " " );
+        va_end( valist );
+        exit(2);
 }
 
 void error(const char *s, ...)
@@ -96,7 +105,6 @@ void error(const char *s, ...)
 	va_start(ap, s);
 	fprintf(stderr, "Error: ");
 	vfprintf(stderr, s, ap);
-	fprintf(stderr, "\n");
 	va_end(ap);
 	exit(2);
 }
@@ -107,7 +115,6 @@ void warning(const char *s, ...)
 	va_start(ap, s);
 	fprintf(stderr, "Warning: ");
 	vfprintf(stderr, s, ap);
-	fprintf(stderr, "\n");
 	va_end(ap);
 }
 
@@ -128,7 +135,7 @@ char *dup_basename(const char *name, const char *ext)
 	namelen = strlen(name);
 
 	/* +4 for later extension and +1 for '\0' */
-	base = (char *)xmalloc(namelen +4 +1);
+	base = xmalloc(namelen +4 +1);
 	strcpy(base, name);
 	if(!strcasecmp(name + namelen-extlen, ext))
 	{
@@ -142,18 +149,12 @@ void *xmalloc(size_t size)
     void *res;
 
     assert(size > 0);
-    assert(size < 102400);
     res = malloc(size);
     if(res == NULL)
     {
 	error("Virtual memory exhausted.\n");
     }
-    /*
-     * We set it to 0.
-     * This is *paramount* because we depend on it
-     * just about everywhere in the rest of the code.
-     */
-    memset(res, 0, size);
+    memset(res, 0x55, size);
     return res;
 }
 
@@ -163,7 +164,6 @@ void *xrealloc(void *p, size_t size)
     void *res;
 
     assert(size > 0);
-    assert(size < 102400);
     res = realloc(p, size);
     if(res == NULL)
     {
@@ -177,8 +177,27 @@ char *xstrdup(const char *str)
 	char *s;
 
 	assert(str != NULL);
-	s = (char *)xmalloc(strlen(str)+1);
+	s = xmalloc(strlen(str)+1);
 	return strcpy(s, str);
+}
+
+char *strmake( const char* fmt, ... )
+{
+    int n;
+    size_t size = 100;
+    va_list ap;
+
+    for (;;)
+    {
+        char *p = xmalloc( size );
+        va_start( ap, fmt );
+        n = vsnprintf( p, size, fmt, ap );
+        va_end( ap );
+        if (n == -1) size *= 2;
+        else if ((size_t)n >= size) size = n + 1;
+        else return p;
+        free( p );
+    }
 }
 
 int unistrlen(const WCHAR *s)
@@ -203,7 +222,7 @@ WCHAR *xunistrdup(const WCHAR * str)
 	WCHAR *s;
 
 	assert(str != NULL);
-	s = (WCHAR *)xmalloc((unistrlen(str)+1) * sizeof(WCHAR));
+	s = xmalloc((unistrlen(str)+1) * sizeof(WCHAR));
 	return unistrcpy(s, str);
 }
 
@@ -211,7 +230,7 @@ int unistricmp(const WCHAR *s1, const WCHAR *s2)
 {
 	int i;
 	int once = 0;
-	static const char warn[] = "Don't know the uppercase equivalent of non acsii characters;"
+	static const char warn[] = "Don't know the uppercase equivalent of non ascii characters;"
 	       		     "comparison might yield wrong results";
 	while(*s1 && *s2)
 	{
@@ -220,7 +239,7 @@ int unistricmp(const WCHAR *s1, const WCHAR *s2)
 			if(!once)
 			{
 				once++;
-				yywarning(warn);
+				mcy_warning(warn);
 			}
 			i = *s1++ - *s2++;
 		}
@@ -233,7 +252,7 @@ int unistricmp(const WCHAR *s1, const WCHAR *s2)
 	if((*s1 & 0xffff) > 0x7f || (*s2 & 0xffff) > 0x7f)
 	{
 		if(!once)
-			yywarning(warn);
+			mcy_warning(warn);
 		return *s1 - *s2;
 	}
 	else
@@ -251,4 +270,77 @@ int unistrcmp(const WCHAR *s1, const WCHAR *s2)
 	}
 
 	return *s1 - *s2;
+}
+
+/*******************************************************************
+ *         buffer management
+ *
+ * Function for writing to a memory buffer.
+ */
+
+int byte_swapped = 0;
+unsigned char *output_buffer;
+size_t output_buffer_pos;
+size_t output_buffer_size;
+
+static void check_output_buffer_space( size_t size )
+{
+    if (output_buffer_pos + size >= output_buffer_size)
+    {
+        output_buffer_size = max( output_buffer_size * 2, output_buffer_pos + size );
+        output_buffer = xrealloc( output_buffer, output_buffer_size );
+    }
+}
+
+void init_output_buffer(void)
+{
+    output_buffer_size = 1024;
+    output_buffer_pos = 0;
+    output_buffer = xmalloc( output_buffer_size );
+}
+
+void flush_output_buffer( const char *name )
+{
+    int fd = open( name, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666 );
+    if (fd == -1) error( "Error creating %s\n", name );
+    if (write( fd, output_buffer, output_buffer_pos ) != output_buffer_pos)
+        error( "Error writing to %s\n", name );
+    close( fd );
+    free( output_buffer );
+}
+
+void put_data( const void *data, size_t size )
+{
+    check_output_buffer_space( size );
+    memcpy( output_buffer + output_buffer_pos, data, size );
+    output_buffer_pos += size;
+}
+
+void put_byte( unsigned char val )
+{
+    check_output_buffer_space( 1 );
+    output_buffer[output_buffer_pos++] = val;
+}
+
+void put_word( unsigned short val )
+{
+    if (byte_swapped) val = (val << 8) | (val >> 8);
+    put_data( &val, sizeof(val) );
+}
+
+void put_dword( unsigned int val )
+{
+    if (byte_swapped)
+        val = ((val << 24) | ((val << 8) & 0x00ff0000) | ((val >> 8) & 0x0000ff00) | (val >> 24));
+    put_data( &val, sizeof(val) );
+}
+
+void align_output( unsigned int align )
+{
+    size_t size = align - (output_buffer_pos % align);
+
+    if (size == align) return;
+    check_output_buffer_space( size );
+    memset( output_buffer + output_buffer_pos, 0, size );
+    output_buffer_pos += size;
 }

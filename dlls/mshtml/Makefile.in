@@ -1,36 +1,69 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = mshtml.dll
-IMPORTLIB = libmshtml.$(IMPLIBEXT)
-IMPORTS   = urlmon ole32 oleaut32 user32 gdi32 advapi32 kernel32 ntdll
-EXTRALIBS = $(LIBUNICODE) -lstrmiids -luuid
-EXTRADEFS = -DCOM_NO_WINDOWS_H
+IMPORTLIB = mshtml
+IMPORTS   = strmiids uuid urlmon shlwapi shell32 ole32 oleaut32 user32 gdi32 advapi32
+DELAYIMPORTS = wininet inetcomm
 
 C_SRCS = \
-	hlink.c \
+	conpoint.c \
+	dispex.c \
+	editor.c \
+	htmlanchor.c \
+	htmlarea.c \
+	htmlattr.c \
+	htmlbody.c \
+	htmlcomment.c \
+	htmlcurstyle.c \
 	htmldoc.c \
+	htmlelem.c \
+	htmlelemcol.c \
+	htmlevent.c \
+	htmlform.c \
+	htmlframe.c \
+	htmlgeneric.c \
+	htmlhead.c \
+	htmlimg.c \
+	htmlinput.c \
+	htmllink.c \
+	htmllocation.c \
+	htmlnode.c \
+	htmlobject.c \
+	htmlscript.c \
+	htmlselect.c \
+	htmlstorage.c \
+	htmlstyle.c \
+	htmlstyleelem.c \
+	htmlstylesheet.c \
+	htmltable.c \
+	htmltextarea.c \
+	htmltextnode.c \
+	htmlwindow.c \
+	ifacewrap.c \
+	loadopts.c \
 	main.c \
+	mutation.c \
+	navigate.c \
+	npplugin.c \
 	nsembed.c \
+	nsevents.c \
+	nsio.c \
+	nsservice.c \
+	olecmd.c \
 	oleobj.c \
-	olewnd.c \
+	omnavigator.c \
 	persist.c \
+	pluginhost.c \
 	protocol.c \
+	script.c \
+	secmgr.c \
+	selection.c \
 	service.c \
-	view.c
+	task.c \
+	txtrange.c \
+	view.c \
+	xmlhttprequest.c
 
-RC_SRCS = rsrc.rc
+RC_SRCS = mshtml.rc
 
-IDL_SRCS = nsiface.idl
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-rsrc.res: mshtml.inf blank.htm
-
-### Dependencies:
-
-# note: this will get overwritten by make depend
-$(ALL_OBJS): $(IDL_SRCS:.idl=.h)
+IDL_SRCS = \
+	mshtml_classes.idl \
+	nsiface.idl

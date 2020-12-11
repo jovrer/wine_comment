@@ -20,10 +20,9 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <assert.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -31,57 +30,16 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
-#include "winreg.h"
 #include "winternl.h"
 #include "wine/debug.h"
 
 #include "storage32.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(storage);
-
-
-/***
- * This is the destructor of the StgStreamImpl class.
- *
- * This method will clean-up all the resources used-up by the given StgStreamImpl
- * class. The pointer passed-in to this function will be freed and will not
- * be valid anymore.
- */
-static void StgStreamImpl_Destroy(StgStreamImpl* This)
-{
-  TRACE("(%p)\n", This);
-
-  /*
-   * Release the reference we are holding on the parent storage.
-   */
-  IStorage_Release((IStorage*)This->parentStorage);
-  This->parentStorage = 0;
-
-  /*
-   * Make sure we clean-up the block chain stream objects that we were using.
-   */
-  if (This->bigBlockChain != 0)
-  {
-    BlockChainStream_Destroy(This->bigBlockChain);
-    This->bigBlockChain = 0;
-  }
-
-  if (This->smallBlockChain != 0)
-  {
-    SmallBlockChainStream_Destroy(This->smallBlockChain);
-    This->smallBlockChain = 0;
-  }
-
-  /*
-   * Finally, free the memory used-up by the class.
-   */
-  HeapFree(GetProcessHeap(), 0, This);
-}
 
 /***
  * This implements the IUnknown method QueryInterface for this
@@ -92,38 +50,22 @@ static HRESULT WINAPI StgStreamImpl_QueryInterface(
 		  REFIID         riid,	      /* [in] */
 		  void**         ppvObject)   /* [iid_is][out] */
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
 
-  /*
-   * Perform a sanity check on the parameters.
-   */
   if (ppvObject==0)
     return E_INVALIDARG;
 
-  /*
-   * Initialize the return parameter.
-   */
   *ppvObject = 0;
 
-  /*
-   * Compare the riid with the interface IDs implemented by this object.
-   */
-  if (IsEqualGUID(&IID_IUnknown, riid)||
-      IsEqualGUID(&IID_IStream, riid))
+  if (IsEqualIID(&IID_IUnknown, riid) ||
+      IsEqualIID(&IID_ISequentialStream, riid) ||
+      IsEqualIID(&IID_IStream, riid))
   {
-    *ppvObject = (IStream*)This;
+    *ppvObject = &This->IStream_iface;
   }
-
-  /*
-   * Check that we obtained an interface.
-   */
-  if ((*ppvObject)==0)
+  else
     return E_NOINTERFACE;
 
-  /*
-   * Query Interface always increases the reference count by one when it is
-   * successful
-   */
   IStream_AddRef(iface);
 
   return S_OK;
@@ -136,7 +78,7 @@ static HRESULT WINAPI StgStreamImpl_QueryInterface(
 static ULONG WINAPI StgStreamImpl_AddRef(
 		IStream* iface)
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
   return InterlockedIncrement(&This->ref);
 }
 
@@ -147,87 +89,31 @@ static ULONG WINAPI StgStreamImpl_AddRef(
 static ULONG WINAPI StgStreamImpl_Release(
 		IStream* iface)
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
+  ULONG ref = InterlockedDecrement(&This->ref);
 
-  ULONG ref;
-
-  ref = InterlockedDecrement(&This->ref);
-
-  /*
-   * If the reference count goes down to 0, perform suicide.
-   */
-  if (ref==0)
+  if (!ref)
   {
-    StgStreamImpl_Destroy(This);
+    TRACE("(%p)\n", This);
+
+    /*
+     * Release the reference we are holding on the parent storage.
+     * IStorage_Release(&This->parentStorage->IStorage_iface);
+     *
+     * No, don't do this. Some apps call IStorage_Release without
+     * calling IStream_Release first. If we grab a reference the
+     * file is not closed, and the app fails when it tries to
+     * reopen the file (Easy-PC, for example). Just inform the
+     * storage that we have closed the stream
+     */
+
+    if (This->parentStorage)
+      StorageBaseImpl_RemoveStream(This->parentStorage, This);
+    This->parentStorage = 0;
+    HeapFree(GetProcessHeap(), 0, This);
   }
 
   return ref;
-}
-
-/***
- * This method will open the block chain pointed by the property
- * that describes the stream.
- * If the stream's size is null, no chain is opened.
- */
-static void StgStreamImpl_OpenBlockChain(
-        StgStreamImpl* This)
-{
-  StgProperty    curProperty;
-  BOOL         readSucessful;
-
-  /*
-   * Make sure no old object is left over.
-   */
-  if (This->smallBlockChain != 0)
-  {
-    SmallBlockChainStream_Destroy(This->smallBlockChain);
-    This->smallBlockChain = 0;
-  }
-
-  if (This->bigBlockChain != 0)
-  {
-    BlockChainStream_Destroy(This->bigBlockChain);
-    This->bigBlockChain = 0;
-  }
-
-  /*
-   * Read the information from the property.
-   */
-  readSucessful = StorageImpl_ReadProperty(This->parentStorage->ancestorStorage,
-					     This->ownerProperty,
-					     &curProperty);
-
-  if (readSucessful)
-  {
-    This->streamSize = curProperty.size;
-
-    /*
-     * This code supports only streams that are <32 bits in size.
-     */
-    assert(This->streamSize.u.HighPart == 0);
-
-    if(curProperty.startingBlock == BLOCK_END_OF_CHAIN)
-    {
-      assert( (This->streamSize.u.HighPart == 0) && (This->streamSize.u.LowPart == 0) );
-    }
-    else
-    {
-      if ( (This->streamSize.u.HighPart == 0) &&
-	   (This->streamSize.u.LowPart < LIMIT_TO_USE_SMALL_BLOCK) )
-      {
-	This->smallBlockChain = SmallBlockChainStream_Construct(
-								This->parentStorage->ancestorStorage,
-								This->ownerProperty);
-      }
-      else
-      {
-	This->bigBlockChain = BlockChainStream_Construct(
-							 This->parentStorage->ancestorStorage,
-							 NULL,
-							 This->ownerProperty);
-      }
-    }
-  }
 }
 
 /***
@@ -245,14 +131,19 @@ static HRESULT WINAPI StgStreamImpl_Read(
 		  ULONG          cb,        /* [in] */
 		  ULONG*         pcbRead)   /* [out] */
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
 
   ULONG bytesReadBuffer;
-  ULONG bytesToReadFromBuffer;
-  HRESULT res = S_FALSE;
+  HRESULT res;
 
-  TRACE("(%p, %p, %ld, %p)\n",
+  TRACE("(%p, %p, %d, %p)\n",
 	iface, pv, cb, pcbRead);
+
+  if (!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
 
   /*
    * If the caller is not interested in the number of bytes read,
@@ -261,72 +152,22 @@ static HRESULT WINAPI StgStreamImpl_Read(
   if (pcbRead==0)
     pcbRead = &bytesReadBuffer;
 
-  /*
-   * Using the known size of the stream, calculate the number of bytes
-   * to read from the block chain
-   */
-  bytesToReadFromBuffer = min( This->streamSize.u.LowPart - This->currentPosition.u.LowPart, cb);
+  res = StorageBaseImpl_StreamReadAt(This->parentStorage,
+                                     This->dirEntry,
+                                     This->currentPosition,
+                                     cb,
+                                     pv,
+                                     pcbRead);
 
-  /*
-   * Depending on the type of chain that was opened when the stream was constructed,
-   * we delegate the work to the method that reads the block chains.
-   */
-  if (This->smallBlockChain!=0)
-  {
-    SmallBlockChainStream_ReadAt(This->smallBlockChain,
-				 This->currentPosition,
-				 bytesToReadFromBuffer,
-				 pv,
-				 pcbRead);
-
-  }
-  else if (This->bigBlockChain!=0)
-  {
-    BlockChainStream_ReadAt(This->bigBlockChain,
-			    This->currentPosition,
-			    bytesToReadFromBuffer,
-			    pv,
-			    pcbRead);
-  }
-  else
+  if (SUCCEEDED(res))
   {
     /*
-     * Small and big block chains are both NULL. This case will happen
-     * when a stream starts with BLOCK_END_OF_CHAIN and has size zero.
+     * Advance the pointer for the number of positions read.
      */
-
-    *pcbRead = 0;
-    res = S_OK;
-    goto end;
+    This->currentPosition.QuadPart += *pcbRead;
   }
 
-  /*
-   * We should always be able to read the proper amount of data from the
-   * chain.
-   */
-  assert(bytesToReadFromBuffer == *pcbRead);
-
-  /*
-   * Advance the pointer for the number of positions read.
-   */
-  This->currentPosition.u.LowPart += *pcbRead;
-
-  if(*pcbRead != cb)
-  {
-    WARN("read %ld instead of the required %ld bytes !\n", *pcbRead, cb);
-    /*
-     * this used to return S_FALSE, however MSDN docu says that an app should
-     * be prepared to handle error in case of stream end reached, as *some*
-     * implementations *might* return an error (IOW: most do *not*).
-     * As some program fails on returning S_FALSE, I better use S_OK here.
-     */
-    res = S_OK;
-  }
-  else
-    res = S_OK;
-
-end:
-  TRACE("<-- %08lx\n", res);
+  TRACE("<-- %08x\n", res);
   return res;
 }
 
@@ -346,12 +187,12 @@ static HRESULT WINAPI StgStreamImpl_Write(
 		  ULONG          cb,          /* [in] */
 		  ULONG*         pcbWritten)  /* [out] */
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
 
-  ULARGE_INTEGER newSize;
   ULONG bytesWritten = 0;
+  HRESULT res;
 
-  TRACE("(%p, %p, %ld, %p)\n",
+  TRACE("(%p, %p, %d, %p)\n",
 	iface, pv, cb, pcbWritten);
 
   /*
@@ -363,12 +204,19 @@ static HRESULT WINAPI StgStreamImpl_Write(
   case STGM_READWRITE:
       break;
   default:
+      WARN("access denied by flags: 0x%x\n", STGM_ACCESS_MODE(This->grfMode));
       return STG_E_ACCESSDENIED;
   }
 
   if (!pv)
     return STG_E_INVALIDPOINTER;
 
+  if (!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
+ 
   /*
    * If the caller is not interested in the number of bytes written,
    * we use another buffer to avoid "if" statements in the code.
@@ -383,53 +231,27 @@ static HRESULT WINAPI StgStreamImpl_Write(
 
   if (cb == 0)
   {
+    TRACE("<-- S_OK, written 0\n");
     return S_OK;
   }
-  else
-  {
-    newSize.u.HighPart = 0;
-    newSize.u.LowPart = This->currentPosition.u.LowPart + cb;
-  }
 
-  /*
-   * Verify if we need to grow the stream
-   */
-  if (newSize.u.LowPart > This->streamSize.u.LowPart)
-  {
-    /* grow stream */
-    IStream_SetSize(iface, newSize);
-  }
-
-  /*
-   * Depending on the type of chain that was opened when the stream was constructed,
-   * we delegate the work to the method that readwrites to the block chains.
-   */
-  if (This->smallBlockChain!=0)
-  {
-    SmallBlockChainStream_WriteAt(This->smallBlockChain,
-				  This->currentPosition,
-				  cb,
-				  pv,
-				  pcbWritten);
-
-  }
-  else if (This->bigBlockChain!=0)
-  {
-    BlockChainStream_WriteAt(This->bigBlockChain,
-			     This->currentPosition,
-			     cb,
-			     pv,
-			     pcbWritten);
-  }
-  else
-    assert(FALSE);
+  res = StorageBaseImpl_StreamWriteAt(This->parentStorage,
+                                      This->dirEntry,
+                                      This->currentPosition,
+                                      cb,
+                                      pv,
+                                      pcbWritten);
 
   /*
    * Advance the position pointer for the number of positions written.
    */
-  This->currentPosition.u.LowPart += *pcbWritten;
+  This->currentPosition.QuadPart += *pcbWritten;
 
-  return S_OK;
+  if (SUCCEEDED(res))
+    res = StorageBaseImpl_Flush(This->parentStorage);
+
+  TRACE("<-- %08x, written %u\n", res, *pcbWritten);
+  return res;
 }
 
 /***
@@ -446,12 +268,24 @@ static HRESULT WINAPI StgStreamImpl_Seek(
 		  DWORD           dwOrigin,         /* [in] */
 		  ULARGE_INTEGER* plibNewPosition) /* [out] */
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
 
   ULARGE_INTEGER newPosition;
+  DirEntry currentEntry;
+  HRESULT hr;
 
-  TRACE("(%p, %ld, %ld, %p)\n",
+  TRACE("(%p, %d, %d, %p)\n",
 	iface, dlibMove.u.LowPart, dwOrigin, plibNewPosition);
+
+  /*
+   * fail if the stream has no parent (as does windows)
+   */
+
+  if (!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
 
   /*
    * The caller is allowed to pass in NULL as the new position return value.
@@ -477,13 +311,16 @@ static HRESULT WINAPI StgStreamImpl_Seek(
       *plibNewPosition = This->currentPosition;
       break;
     case STREAM_SEEK_END:
-      *plibNewPosition = This->streamSize;
+      hr = StorageBaseImpl_ReadDirEntry(This->parentStorage, This->dirEntry, &currentEntry);
+      if (FAILED(hr)) return hr;
+      *plibNewPosition = currentEntry.size;
       break;
     default:
+      WARN("invalid dwOrigin %d\n", dwOrigin);
       return STG_E_INVALIDFUNCTION;
   }
 
-  plibNewPosition->QuadPart = RtlLargeIntegerAdd( plibNewPosition->QuadPart, dlibMove.QuadPart );
+  plibNewPosition->QuadPart += dlibMove.QuadPart;
 
   /*
    * tell the caller what we calculated
@@ -498,108 +335,48 @@ static HRESULT WINAPI StgStreamImpl_Seek(
  *
  * It will change the size of a stream.
  *
- * TODO: Switch from small blocks to big blocks and vice versa.
- *
  * See the documentation of IStream for more info.
  */
 static HRESULT WINAPI StgStreamImpl_SetSize(
 				     IStream*      iface,
 				     ULARGE_INTEGER  libNewSize)   /* [in] */
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
 
-  StgProperty    curProperty;
-  BOOL         Success;
+  HRESULT      hr;
 
-  TRACE("(%p, %ld)\n", iface, libNewSize.u.LowPart);
+  TRACE("(%p, %d)\n", iface, libNewSize.u.LowPart);
+
+  if(!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
 
   /*
    * As documented.
    */
   if (libNewSize.u.HighPart != 0)
+  {
+    WARN("invalid value for libNewSize.u.HighPart %d\n", libNewSize.u.HighPart);
     return STG_E_INVALIDFUNCTION;
+  }
 
   /*
    * Do we have permission?
    */
   if (!(This->grfMode & (STGM_WRITE | STGM_READWRITE)))
+  {
+    WARN("access denied\n");
     return STG_E_ACCESSDENIED;
-
-  if (This->streamSize.u.LowPart == libNewSize.u.LowPart)
-    return S_OK;
-
-  /*
-   * This will happen if we're creating a stream
-   */
-  if ((This->smallBlockChain == 0) && (This->bigBlockChain == 0))
-  {
-    if (libNewSize.u.LowPart < LIMIT_TO_USE_SMALL_BLOCK)
-    {
-      This->smallBlockChain = SmallBlockChainStream_Construct(
-                                    This->parentStorage->ancestorStorage,
-                                    This->ownerProperty);
-    }
-    else
-    {
-      This->bigBlockChain = BlockChainStream_Construct(
-                                This->parentStorage->ancestorStorage,
-                                NULL,
-                                This->ownerProperty);
-    }
   }
 
-  /*
-   * Read this stream's property to see if it's small blocks or big blocks
-   */
-  Success = StorageImpl_ReadProperty(This->parentStorage->ancestorStorage,
-                                       This->ownerProperty,
-                                       &curProperty);
-  /*
-   * Determine if we have to switch from small to big blocks or vice versa
-   */
-  if ( (This->smallBlockChain!=0) &&
-       (curProperty.size.u.LowPart < LIMIT_TO_USE_SMALL_BLOCK) )
-  {
-    if (libNewSize.u.LowPart >= LIMIT_TO_USE_SMALL_BLOCK)
-    {
-      /*
-       * Transform the small block chain into a big block chain
-       */
-      This->bigBlockChain = Storage32Impl_SmallBlocksToBigBlocks(
-                                This->parentStorage->ancestorStorage,
-                                &This->smallBlockChain);
-    }
-  }
+  hr = StorageBaseImpl_StreamSetSize(This->parentStorage, This->dirEntry, libNewSize);
 
-  if (This->smallBlockChain!=0)
-  {
-    Success = SmallBlockChainStream_SetSize(This->smallBlockChain, libNewSize);
-  }
-  else
-  {
-    Success = BlockChainStream_SetSize(This->bigBlockChain, libNewSize);
-  }
+  if (SUCCEEDED(hr))
+    hr = StorageBaseImpl_Flush(This->parentStorage);
 
-  /*
-   * Write the new information about this stream to the property
-   */
-  Success = StorageImpl_ReadProperty(This->parentStorage->ancestorStorage,
-                                       This->ownerProperty,
-                                       &curProperty);
-
-  curProperty.size.u.HighPart = libNewSize.u.HighPart;
-  curProperty.size.u.LowPart = libNewSize.u.LowPart;
-
-  if (Success)
-  {
-    StorageImpl_WriteProperty(This->parentStorage->ancestorStorage,
-				This->ownerProperty,
-				&curProperty);
-  }
-
-  This->streamSize = libNewSize;
-
-  return S_OK;
+  return hr;
 }
 
 /***
@@ -616,43 +393,46 @@ static HRESULT WINAPI StgStreamImpl_CopyTo(
 				    ULARGE_INTEGER* pcbRead,      /* [out] */
 				    ULARGE_INTEGER* pcbWritten)   /* [out] */
 {
+  StgStreamImpl* This = impl_from_IStream(iface);
   HRESULT        hr = S_OK;
   BYTE           tmpBuffer[128];
   ULONG          bytesRead, bytesWritten, copySize;
   ULARGE_INTEGER totalBytesRead;
   ULARGE_INTEGER totalBytesWritten;
 
-  TRACE("(%p, %p, %ld, %p, %p)\n",
+  TRACE("(%p, %p, %d, %p, %p)\n",
 	iface, pstm, cb.u.LowPart, pcbRead, pcbWritten);
 
   /*
    * Sanity check
    */
+
+  if (!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
+
   if ( pstm == 0 )
     return STG_E_INVALIDPOINTER;
 
-  totalBytesRead.u.LowPart = totalBytesRead.u.HighPart = 0;
-  totalBytesWritten.u.LowPart = totalBytesWritten.u.HighPart = 0;
+  totalBytesRead.QuadPart = 0;
+  totalBytesWritten.QuadPart = 0;
 
-  /*
-   * use stack to store data temporarily
-   * there is surely a more performant way of doing it, for now this basic
-   * implementation will do the job
-   */
-  while ( cb.u.LowPart > 0 )
+  while ( cb.QuadPart > 0 )
   {
-    if ( cb.u.LowPart >= 128 )
-      copySize = 128;
+    if ( cb.QuadPart >= sizeof(tmpBuffer) )
+      copySize = sizeof(tmpBuffer);
     else
       copySize = cb.u.LowPart;
 
     IStream_Read(iface, tmpBuffer, copySize, &bytesRead);
 
-    totalBytesRead.u.LowPart += bytesRead;
+    totalBytesRead.QuadPart += bytesRead;
 
     IStream_Write(pstm, tmpBuffer, bytesRead, &bytesWritten);
 
-    totalBytesWritten.u.LowPart += bytesWritten;
+    totalBytesWritten.QuadPart += bytesWritten;
 
     /*
      * Check that read & write operations were successful
@@ -660,29 +440,19 @@ static HRESULT WINAPI StgStreamImpl_CopyTo(
     if (bytesRead != bytesWritten)
     {
       hr = STG_E_MEDIUMFULL;
+      WARN("medium full\n");
       break;
     }
 
     if (bytesRead!=copySize)
-      cb.u.LowPart = 0;
+      cb.QuadPart = 0;
     else
-      cb.u.LowPart -= bytesRead;
+      cb.QuadPart -= bytesRead;
   }
 
-  /*
-   * Update number of bytes read and written
-   */
-  if (pcbRead)
-  {
-    pcbRead->u.LowPart = totalBytesRead.u.LowPart;
-    pcbRead->u.HighPart = totalBytesRead.u.HighPart;
-  }
+  if (pcbRead) pcbRead->QuadPart = totalBytesRead.QuadPart;
+  if (pcbWritten) pcbWritten->QuadPart = totalBytesWritten.QuadPart;
 
-  if (pcbWritten)
-  {
-    pcbWritten->u.LowPart = totalBytesWritten.u.LowPart;
-    pcbWritten->u.HighPart = totalBytesWritten.u.HighPart;
-  }
   return hr;
 }
 
@@ -698,7 +468,15 @@ static HRESULT WINAPI StgStreamImpl_Commit(
 		  IStream*      iface,
 		  DWORD           grfCommitFlags)  /* [in] */
 {
-  return S_OK;
+  StgStreamImpl* This = impl_from_IStream(iface);
+
+  if (!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
+
+  return StorageBaseImpl_Flush(This->parentStorage);
 }
 
 /***
@@ -721,6 +499,14 @@ static HRESULT WINAPI StgStreamImpl_LockRegion(
 					ULARGE_INTEGER cb,          /* [in] */
 					DWORD          dwLockType)  /* [in] */
 {
+  StgStreamImpl* This = impl_from_IStream(iface);
+
+  if (!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
+
   FIXME("not implemented!\n");
   return E_NOTIMPL;
 }
@@ -731,6 +517,14 @@ static HRESULT WINAPI StgStreamImpl_UnlockRegion(
 					  ULARGE_INTEGER cb,          /* [in] */
 					  DWORD          dwLockType)  /* [in] */
 {
+  StgStreamImpl* This = impl_from_IStream(iface);
+
+  if (!This->parentStorage)
+  {
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
+
   FIXME("not implemented!\n");
   return E_NOTIMPL;
 }
@@ -748,30 +542,48 @@ static HRESULT WINAPI StgStreamImpl_Stat(
 		  STATSTG*       pstatstg,     /* [out] */
 		  DWORD          grfStatFlag)  /* [in] */
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
+  StgStreamImpl* This = impl_from_IStream(iface);
 
-  StgProperty    curProperty;
-  BOOL         readSucessful;
+  DirEntry     currentEntry;
+  HRESULT      hr;
+
+  TRACE("%p %p %d\n", This, pstatstg, grfStatFlag);
 
   /*
-   * Read the information from the property.
+   * if stream has no parent, return STG_E_REVERTED
    */
-  readSucessful = StorageImpl_ReadProperty(This->parentStorage->ancestorStorage,
-					     This->ownerProperty,
-					     &curProperty);
 
-  if (readSucessful)
+  if (!This->parentStorage)
   {
-    StorageUtl_CopyPropertyToSTATSTG(pstatstg,
-				     &curProperty,
+    WARN("storage reverted\n");
+    return STG_E_REVERTED;
+  }
+
+  /*
+   * Read the information from the directory entry.
+   */
+  hr = StorageBaseImpl_ReadDirEntry(This->parentStorage,
+					     This->dirEntry,
+					     &currentEntry);
+
+  if (SUCCEEDED(hr))
+  {
+    StorageUtl_CopyDirEntryToSTATSTG(This->parentStorage,
+                     pstatstg,
+				     &currentEntry,
 				     grfStatFlag);
 
     pstatstg->grfMode = This->grfMode;
 
+    /* In simple create mode cbSize is the current pos */
+    if((This->parentStorage->openFlags & STGM_SIMPLE) && This->parentStorage->create)
+      pstatstg->cbSize = This->currentPosition;
+
     return S_OK;
   }
 
-  return E_FAIL;
+  WARN("failed to read entry\n");
+  return hr;
 }
 
 /***
@@ -790,36 +602,39 @@ static HRESULT WINAPI StgStreamImpl_Clone(
 				   IStream*     iface,
 				   IStream**    ppstm) /* [out] */
 {
-  StgStreamImpl* const This=(StgStreamImpl*)iface;
-  HRESULT hres;
+  StgStreamImpl* This = impl_from_IStream(iface);
   StgStreamImpl* new_stream;
   LARGE_INTEGER seek_pos;
+
+  TRACE("%p %p\n", This, ppstm);
 
   /*
    * Sanity check
    */
+
+  if (!This->parentStorage)
+    return STG_E_REVERTED;
+
   if ( ppstm == 0 )
     return STG_E_INVALIDPOINTER;
 
-  new_stream = StgStreamImpl_Construct (This->parentStorage, This->grfMode, This->ownerProperty);
+  new_stream = StgStreamImpl_Construct (This->parentStorage, This->grfMode, This->dirEntry);
 
   if (!new_stream)
     return STG_E_INSUFFICIENTMEMORY; /* Currently the only reason for new_stream=0 */
 
-  *ppstm = (IStream*) new_stream;
+  *ppstm = &new_stream->IStream_iface;
+  IStream_AddRef(*ppstm);
+
   seek_pos.QuadPart = This->currentPosition.QuadPart;
 
-  hres=StgStreamImpl_Seek (*ppstm, seek_pos, STREAM_SEEK_SET, NULL);
-
-  assert (SUCCEEDED(hres));
-
-  return S_OK;
+  return IStream_Seek(*ppstm, seek_pos, STREAM_SEEK_SET, NULL);
 }
 
 /*
  * Virtual function table for the StgStreamImpl class.
  */
-static const IStreamVtbl StgStreamImpl_Vtbl =
+static const IStreamVtbl StgStreamVtbl =
 {
     StgStreamImpl_QueryInterface,
     StgStreamImpl_AddRef,
@@ -846,34 +661,41 @@ static const IStreamVtbl StgStreamImpl_Vtbl =
  *
  * Params:
  *    parentStorage - Pointer to the storage that contains the stream to open
- *    ownerProperty - Index of the property that points to this stream.
+ *    dirEntry      - Index of the directory entry that points to this stream.
  */
 StgStreamImpl* StgStreamImpl_Construct(
 		StorageBaseImpl* parentStorage,
     DWORD            grfMode,
-    ULONG            ownerProperty)
+    DirRef           dirEntry)
 {
   StgStreamImpl* newStream;
 
   newStream = HeapAlloc(GetProcessHeap(), 0, sizeof(StgStreamImpl));
 
-  if (newStream!=0)
+  if (newStream)
   {
     /*
      * Set-up the virtual function table and reference count.
      */
-    newStream->lpVtbl    = &StgStreamImpl_Vtbl;
+    newStream->IStream_iface.lpVtbl = &StgStreamVtbl;
     newStream->ref       = 0;
+
+    newStream->parentStorage = parentStorage;
 
     /*
      * We want to nail-down the reference to the storage in case the
      * stream out-lives the storage in the client application.
+     *
+     * -- IStorage_AddRef(&newStream->parentStorage->IStorage_iface);
+     *
+     * No, don't do this. Some apps call IStorage_Release without
+     * calling IStream_Release first. If we grab a reference the
+     * file is not closed, and the app fails when it tries to
+     * reopen the file (Easy-PC, for example)
      */
-    newStream->parentStorage = parentStorage;
-    IStorage_AddRef((IStorage*)newStream->parentStorage);
 
     newStream->grfMode = grfMode;
-    newStream->ownerProperty = ownerProperty;
+    newStream->dirEntry = dirEntry;
 
     /*
      * Start the stream at the beginning.
@@ -881,19 +703,8 @@ StgStreamImpl* StgStreamImpl_Construct(
     newStream->currentPosition.u.HighPart = 0;
     newStream->currentPosition.u.LowPart = 0;
 
-    /*
-     * Initialize the rest of the data.
-     */
-    newStream->streamSize.u.HighPart = 0;
-    newStream->streamSize.u.LowPart  = 0;
-    newStream->bigBlockChain       = 0;
-    newStream->smallBlockChain     = 0;
-
-    /*
-     * Read the size from the property and determine if the blocks forming
-     * this stream are large or small.
-     */
-    StgStreamImpl_OpenBlockChain(newStream);
+    /* add us to the storage's list of active streams */
+    StorageBaseImpl_AddStream(parentStorage, newStream);
   }
 
   return newStream;

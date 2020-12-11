@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -27,6 +27,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+
 #include "wine/list.h"
 
 #include "request.h"
@@ -34,6 +37,7 @@
 #include "process.h"
 #include "user.h"
 #include "winuser.h"
+#include "winternl.h"
 
 struct window_class
 {
@@ -42,15 +46,14 @@ struct window_class
     int             count;           /* reference count */
     int             local;           /* local class? */
     atom_t          atom;            /* class atom */
-    void           *instance;        /* module instance */
+    atom_t          base_atom;       /* base class atom for versioned class */
+    mod_handle_t    instance;        /* module instance */
     unsigned int    style;           /* class style */
     int             win_extra;       /* number of window extra bytes */
-    void           *client_ptr;      /* pointer to class in client address space */
+    client_ptr_t    client_ptr;      /* pointer to class in client address space */
     int             nb_extra_bytes;  /* number of extra bytes */
     char            extra_bytes[1];  /* extra bytes storage */
 };
-
-static struct window_class *desktop_class;
 
 static struct window_class *create_class( struct process *process, int extra_bytes, int local )
 {
@@ -71,26 +74,10 @@ static struct window_class *create_class( struct process *process, int extra_byt
     return class;
 }
 
-static struct window_class *get_desktop_class(void)
-{
-    if (!desktop_class)
-    {
-        if (!(desktop_class = mem_alloc( sizeof(*desktop_class) - 1 ))) return NULL;
-        desktop_class->process        = NULL;
-        desktop_class->count          = 0;
-        desktop_class->local          = 0;
-        desktop_class->nb_extra_bytes = 0;
-        desktop_class->atom           = DESKTOP_ATOM;
-        desktop_class->instance       = NULL;
-        desktop_class->style          = CS_DBLCLKS;
-        desktop_class->win_extra      = 0;
-        desktop_class->client_ptr     = NULL;
-    }
-    return desktop_class;
-}
-
 static void destroy_class( struct window_class *class )
 {
+    release_global_atom( NULL, class->atom );
+    release_global_atom( NULL, class->base_atom );
     list_remove( &class->entry );
     release_object( class->process );
     free( class );
@@ -107,7 +94,7 @@ void destroy_process_classes( struct process *process )
     }
 }
 
-static struct window_class *find_class( struct process *process, atom_t atom, void *instance )
+static struct window_class *find_class( struct process *process, atom_t atom, mod_handle_t instance )
 {
     struct list *ptr;
 
@@ -117,12 +104,11 @@ static struct window_class *find_class( struct process *process, atom_t atom, vo
         if (class->atom != atom) continue;
         if (!instance || !class->local || class->instance == instance) return class;
     }
-    if (atom == DESKTOP_ATOM) return get_desktop_class();
     return NULL;
 }
 
 struct window_class *grab_class( struct process *process, atom_t atom,
-                                 void *instance, int *extra_bytes )
+                                 mod_handle_t instance, int *extra_bytes )
 {
     struct window_class *class = find_class( process, atom, instance );
     if (class)
@@ -140,12 +126,25 @@ void release_class( struct window_class *class )
     class->count--;
 }
 
-atom_t get_class_atom( struct window_class *class )
+int is_desktop_class( struct window_class *class )
 {
-    return class->atom;
+    return (class->atom == DESKTOP_ATOM && !class->local);
 }
 
-void *get_class_client_ptr( struct window_class *class )
+int is_hwnd_message_class( struct window_class *class )
+{
+    static const WCHAR messageW[] = {'M','e','s','s','a','g','e'};
+    static const struct unicode_str name = { messageW, sizeof(messageW) };
+
+    return (!class->local && class->atom == find_global_atom( NULL, &name ));
+}
+
+atom_t get_class_atom( struct window_class *class )
+{
+    return class->base_atom;
+}
+
+client_ptr_t get_class_client_ptr( struct window_class *class )
 {
     return class->client_ptr;
 }
@@ -154,59 +153,87 @@ void *get_class_client_ptr( struct window_class *class )
 DECL_HANDLER(create_class)
 {
     struct window_class *class;
-    struct winstation *winstation;
+    struct unicode_str name = get_req_unicode_str();
+    atom_t atom, base_atom;
 
-    if (!req->local && req->atom == DESKTOP_ATOM)
-        return;  /* silently ignore attempts to create the desktop class */
+    if (name.len)
+    {
+        atom = add_global_atom( NULL, &name );
+        if (!atom) return;
+        if (req->name_offset && req->name_offset < name.len / sizeof(WCHAR))
+        {
+            name.str += req->name_offset;
+            name.len -= req->name_offset * sizeof(WCHAR);
 
-    class = find_class( current->process, req->atom, req->instance );
+            base_atom = add_global_atom( NULL, &name );
+            if (!base_atom)
+            {
+                release_global_atom( NULL, atom );
+                return;
+            }
+        }
+        else
+        {
+            base_atom = atom;
+            grab_global_atom( NULL, atom );
+        }
+    }
+    else
+    {
+        base_atom = atom = req->atom;
+        if (!grab_global_atom( NULL, atom )) return;
+        grab_global_atom( NULL, base_atom );
+    }
+
+    class = find_class( current->process, atom, req->instance );
     if (class && !class->local == !req->local)
     {
         set_win32_error( ERROR_CLASS_ALREADY_EXISTS );
+        release_global_atom( NULL, atom );
+        release_global_atom( NULL, base_atom );
         return;
     }
     if (req->extra < 0 || req->extra > 4096 || req->win_extra < 0 || req->win_extra > 4096)
     {
         /* don't allow stupid values here */
         set_error( STATUS_INVALID_PARAMETER );
+        release_global_atom( NULL, atom );
+        release_global_atom( NULL, base_atom );
         return;
     }
 
-    if (!(winstation = get_process_winstation( current->process, WINSTA_ACCESSGLOBALATOMS )))
-        return;
-
-    if (!grab_global_atom( winstation, req->atom ))
-    {
-        release_object( winstation );
-        return;
-    }
     if (!(class = create_class( current->process, req->extra, req->local )))
     {
-        release_global_atom( winstation, req->atom );
-        release_object( winstation );
+        release_global_atom( NULL, atom );
+        release_global_atom( NULL, base_atom );
         return;
     }
-    class->atom       = req->atom;
+    class->atom       = atom;
+    class->base_atom  = base_atom;
     class->instance   = req->instance;
     class->style      = req->style;
     class->win_extra  = req->win_extra;
     class->client_ptr = req->client_ptr;
-    release_object( winstation );
+    reply->atom = atom;
 }
 
 /* destroy a window class */
 DECL_HANDLER(destroy_class)
 {
-    struct window_class *class = find_class( current->process, req->atom, req->instance );
+    struct window_class *class;
+    struct unicode_str name = get_req_unicode_str();
+    atom_t atom = req->atom;
 
-    if (!class)
+    if (name.len) atom = find_global_atom( NULL, &name );
+
+    if (!(class = find_class( current->process, atom, req->instance )))
         set_win32_error( ERROR_CLASS_DOES_NOT_EXIST );
     else if (class->count)
         set_win32_error( ERROR_CLASS_HAS_WINDOWS );
     else
     {
         reply->client_ptr = class->client_ptr;
-        if (class != desktop_class) destroy_class( class );
+        destroy_class( class );
     }
 }
 
@@ -251,19 +278,13 @@ DECL_HANDLER(set_class_info)
     reply->old_extra     = class->nb_extra_bytes;
     reply->old_win_extra = class->win_extra;
     reply->old_instance  = class->instance;
+    reply->base_atom     = class->base_atom;
 
     if (req->flags & SET_CLASS_ATOM)
     {
-        struct winstation *winstation = get_process_winstation( current->process,
-                                                                WINSTA_ACCESSGLOBALATOMS );
-        if (!grab_global_atom( winstation, req->atom ))
-        {
-            release_object( winstation );
-            return;
-        }
-        release_global_atom( winstation, class->atom );
+        if (!grab_global_atom( NULL, req->atom )) return;
+        release_global_atom( NULL, class->atom );
         class->atom = req->atom;
-        release_object( winstation );
     }
     if (req->flags & SET_CLASS_STYLE) class->style = req->style;
     if (req->flags & SET_CLASS_WINEXTRA) class->win_extra = req->win_extra;

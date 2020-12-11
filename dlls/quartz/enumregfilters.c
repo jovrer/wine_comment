@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "quartz_private.h"
@@ -28,12 +28,17 @@ WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 
 typedef struct IEnumRegFiltersImpl
 {
-    const IEnumRegFiltersVtbl * lpVtbl;
+    IEnumRegFilters IEnumRegFilters_iface;
     LONG refCount;
     ULONG size;
     REGFILTER* RegFilters;
     ULONG uIndex;
 } IEnumRegFiltersImpl;
+
+static inline IEnumRegFiltersImpl *impl_from_IEnumRegFilters(IEnumRegFilters *iface)
+{
+    return CONTAINING_RECORD(iface, IEnumRegFiltersImpl, IEnumRegFilters_iface);
+}
 
 static const struct IEnumRegFiltersVtbl IEnumRegFiltersImpl_Vtbl;
 
@@ -43,7 +48,7 @@ HRESULT IEnumRegFiltersImpl_Construct(REGFILTER* pInRegFilters, const ULONG size
     REGFILTER* pRegFilters = NULL;
     unsigned int i;
 
-    TRACE("(%p, %ld, %p)\n", pInRegFilters, size, ppEnum);
+    TRACE("(%p, %d, %p)\n", pInRegFilters, size, ppEnum);
 
     pEnumRegFilters = CoTaskMemAlloc(sizeof(IEnumRegFiltersImpl));
     if (!pEnumRegFilters)
@@ -67,7 +72,7 @@ HRESULT IEnumRegFiltersImpl_Construct(REGFILTER* pInRegFilters, const ULONG size
     for(i = 0; i < size; i++)
     {
         pRegFilters[i].Clsid = pInRegFilters[i].Clsid;
-        pRegFilters[i].Name = (WCHAR*)CoTaskMemAlloc((strlenW(pInRegFilters[i].Name)+1)*sizeof(WCHAR));
+        pRegFilters[i].Name = CoTaskMemAlloc((strlenW(pInRegFilters[i].Name)+1)*sizeof(WCHAR));
         if (!pRegFilters[i].Name)
         {
             while(i)
@@ -79,13 +84,13 @@ HRESULT IEnumRegFiltersImpl_Construct(REGFILTER* pInRegFilters, const ULONG size
         CopyMemory(pRegFilters[i].Name, pInRegFilters[i].Name, (strlenW(pInRegFilters[i].Name)+1)*sizeof(WCHAR));
     }
 
-    pEnumRegFilters->lpVtbl = &IEnumRegFiltersImpl_Vtbl;
+    pEnumRegFilters->IEnumRegFilters_iface.lpVtbl = &IEnumRegFiltersImpl_Vtbl;
     pEnumRegFilters->refCount = 1;
     pEnumRegFilters->uIndex = 0;
     pEnumRegFilters->RegFilters = pRegFilters;
     pEnumRegFilters->size = size;
 
-    *ppEnum = (IEnumRegFilters *)(&pEnumRegFilters->lpVtbl);
+    *ppEnum = &pEnumRegFilters->IEnumRegFilters_iface;
 
     return S_OK;
 }
@@ -97,9 +102,9 @@ static HRESULT WINAPI IEnumRegFiltersImpl_QueryInterface(IEnumRegFilters * iface
     *ppv = NULL;
 
     if (IsEqualIID(riid, &IID_IUnknown))
-        *ppv = (LPVOID)iface;
+        *ppv = iface;
     else if (IsEqualIID(riid, &IID_IEnumRegFilters))
-        *ppv = (LPVOID)iface;
+        *ppv = iface;
 
     if (*ppv)
     {
@@ -114,7 +119,7 @@ static HRESULT WINAPI IEnumRegFiltersImpl_QueryInterface(IEnumRegFilters * iface
 
 static ULONG WINAPI IEnumRegFiltersImpl_AddRef(IEnumRegFilters * iface)
 {
-    IEnumRegFiltersImpl *This = (IEnumRegFiltersImpl *)iface;
+    IEnumRegFiltersImpl *This = impl_from_IEnumRegFilters(iface);
     ULONG refCount = InterlockedIncrement(&This->refCount);
 
     TRACE("(%p)\n", iface);
@@ -124,13 +129,20 @@ static ULONG WINAPI IEnumRegFiltersImpl_AddRef(IEnumRegFilters * iface)
 
 static ULONG WINAPI IEnumRegFiltersImpl_Release(IEnumRegFilters * iface)
 {
-    IEnumRegFiltersImpl *This = (IEnumRegFiltersImpl *)iface;
+    IEnumRegFiltersImpl *This = impl_from_IEnumRegFilters(iface);
     ULONG refCount = InterlockedDecrement(&This->refCount);
 
     TRACE("(%p)\n", iface);
 
     if (!refCount)
     {
+        ULONG i;
+
+        for(i = 0; i < This->size; i++)
+        {
+            CoTaskMemFree(This->RegFilters[i].Name);
+        }
+        CoTaskMemFree(This->RegFilters);
         CoTaskMemFree(This);
         return 0;
     } else
@@ -140,19 +152,19 @@ static ULONG WINAPI IEnumRegFiltersImpl_Release(IEnumRegFilters * iface)
 static HRESULT WINAPI IEnumRegFiltersImpl_Next(IEnumRegFilters * iface, ULONG cFilters, REGFILTER ** ppRegFilter, ULONG * pcFetched)
 {
     ULONG cFetched; 
-    IEnumRegFiltersImpl *This = (IEnumRegFiltersImpl *)iface;
+    IEnumRegFiltersImpl *This = impl_from_IEnumRegFilters(iface);
     unsigned int i;
 
     cFetched = min(This->size, This->uIndex + cFilters) - This->uIndex;
 
-    TRACE("(%p)->(%lu, %p, %p)\n", iface, cFilters, ppRegFilter, pcFetched);
+    TRACE("(%p)->(%u, %p, %p)\n", iface, cFilters, ppRegFilter, pcFetched);
 
     if (cFetched > 0)
     {
         for(i = 0; i < cFetched; i++)
         {
             /* The string in the REGFILTER structure must be allocated in the same block as the REGFILTER structure itself */
-            ppRegFilter[i] = (REGFILTER*)CoTaskMemAlloc(sizeof(REGFILTER)+(strlenW(This->RegFilters[i].Name)+1)*sizeof(WCHAR));
+            ppRegFilter[i] = CoTaskMemAlloc(sizeof(REGFILTER)+(strlenW(This->RegFilters[This->uIndex + i].Name)+1)*sizeof(WCHAR));
             if (!ppRegFilter[i])
             {
                 while(i)
@@ -162,9 +174,10 @@ static HRESULT WINAPI IEnumRegFiltersImpl_Next(IEnumRegFilters * iface, ULONG cF
                 }
                 return E_OUTOFMEMORY;
         }
-            ppRegFilter[i]->Clsid = This->RegFilters[i].Clsid;
+            ppRegFilter[i]->Clsid = This->RegFilters[This->uIndex + i].Clsid;
             ppRegFilter[i]->Name = (WCHAR*)((char*)ppRegFilter[i]+sizeof(REGFILTER));
-            CopyMemory(ppRegFilter[i]->Name, This->RegFilters[i].Name, (strlenW(This->RegFilters[i].Name)+1)*sizeof(WCHAR));
+            CopyMemory(ppRegFilter[i]->Name, This->RegFilters[This->uIndex + i].Name,
+                            (strlenW(This->RegFilters[This->uIndex + i].Name)+1)*sizeof(WCHAR));
         }
 
         This->uIndex += cFetched;
@@ -178,14 +191,14 @@ static HRESULT WINAPI IEnumRegFiltersImpl_Next(IEnumRegFilters * iface, ULONG cF
 
 static HRESULT WINAPI IEnumRegFiltersImpl_Skip(IEnumRegFilters * iface, ULONG n)
 {
-    TRACE("(%p)->(%lu)\n", iface, n);
+    TRACE("(%p)->(%u)\n", iface, n);
 
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI IEnumRegFiltersImpl_Reset(IEnumRegFilters * iface)
 {
-    IEnumRegFiltersImpl *This = (IEnumRegFiltersImpl *)iface;
+    IEnumRegFiltersImpl *This = impl_from_IEnumRegFilters(iface);
 
     TRACE("(%p)\n", iface);
 

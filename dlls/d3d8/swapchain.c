@@ -1,7 +1,7 @@
 /*
  * IDirect3DSwapChain8 implementation
  *
- * Copyright 2002 Jason Edmeades
+ * Copyright 2005 Oliver Stieber
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,87 +15,188 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
-
-#include <stdarg.h>
-
-#include "windef.h"
-#include "winbase.h"
-#include "winuser.h"
-#include "wingdi.h"
-#include "wine/debug.h"
-
 #include "d3d8_private.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(d3d);
+WINE_DEFAULT_DEBUG_CHANNEL(d3d8);
 
-/* IDirect3DSwapChain IUnknown parts follow: */
-HRESULT WINAPI IDirect3DSwapChain8Impl_QueryInterface(LPDIRECT3DSWAPCHAIN8 iface,REFIID riid,LPVOID *ppobj)
+static inline struct d3d8_swapchain *impl_from_IDirect3DSwapChain8(IDirect3DSwapChain8 *iface)
 {
-    IDirect3DSwapChain8Impl *This = (IDirect3DSwapChain8Impl *)iface;
+    return CONTAINING_RECORD(iface, struct d3d8_swapchain, IDirect3DSwapChain8_iface);
+}
 
-    if (IsEqualGUID(riid, &IID_IUnknown)
-        || IsEqualGUID(riid, &IID_IDirect3DSwapChain8)) {
-        IDirect3DSwapChain8Impl_AddRef(iface);
-        *ppobj = This;
-        return D3D_OK;
+static HRESULT WINAPI d3d8_swapchain_QueryInterface(IDirect3DSwapChain8 *iface, REFIID riid, void **out)
+{
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
+
+    if (IsEqualGUID(riid, &IID_IDirect3DSwapChain8)
+            || IsEqualGUID(riid, &IID_IUnknown))
+    {
+        IDirect3DSwapChain8_AddRef(iface);
+        *out = iface;
+        return S_OK;
     }
 
-    WARN("(%p)->(%s,%p),not found\n",This,debugstr_guid(riid),ppobj);
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(riid));
+
+    *out = NULL;
     return E_NOINTERFACE;
 }
 
-ULONG WINAPI IDirect3DSwapChain8Impl_AddRef(LPDIRECT3DSWAPCHAIN8 iface) {
-    IDirect3DSwapChain8Impl *This = (IDirect3DSwapChain8Impl *)iface;
-    ULONG ref = InterlockedIncrement(&This->ref);
+static ULONG WINAPI d3d8_swapchain_AddRef(IDirect3DSwapChain8 *iface)
+{
+    struct d3d8_swapchain *swapchain = impl_from_IDirect3DSwapChain8(iface);
+    ULONG ref = InterlockedIncrement(&swapchain->refcount);
 
-    TRACE("(%p) : AddRef from %ld\n", This, ref - 1);
+    TRACE("%p increasing refcount to %u.\n", iface, ref);
+
+    if (ref == 1)
+    {
+        if (swapchain->parent_device)
+            IDirect3DDevice8_AddRef(swapchain->parent_device);
+        wined3d_swapchain_incref(swapchain->wined3d_swapchain);
+    }
 
     return ref;
 }
 
-ULONG WINAPI IDirect3DSwapChain8Impl_Release(LPDIRECT3DSWAPCHAIN8 iface) {
-    IDirect3DSwapChain8Impl *This = (IDirect3DSwapChain8Impl *)iface;
-    ULONG ref = InterlockedDecrement(&This->ref);
+static ULONG WINAPI d3d8_swapchain_Release(IDirect3DSwapChain8 *iface)
+{
+    struct d3d8_swapchain *swapchain = impl_from_IDirect3DSwapChain8(iface);
+    ULONG ref = InterlockedDecrement(&swapchain->refcount);
 
-    TRACE("(%p) : ReleaseRef to %ld\n", This, ref);
+    TRACE("%p decreasing refcount to %u.\n", iface, ref);
 
-    if (ref == 0) {
-        HeapFree(GetProcessHeap(), 0, This);
+    if (!ref)
+    {
+        IDirect3DDevice8 *parent_device = swapchain->parent_device;
+
+        wined3d_swapchain_decref(swapchain->wined3d_swapchain);
+
+        if (parent_device)
+            IDirect3DDevice8_Release(parent_device);
     }
     return ref;
 }
 
-/* IDirect3DSwapChain parts follow: */
-HRESULT WINAPI IDirect3DSwapChain8Impl_Present(LPDIRECT3DSWAPCHAIN8 iface, CONST RECT* pSourceRect, CONST RECT* pDestRect, HWND hDestWindowOverride,CONST RGNDATA* pDirtyRegion) {
-    IDirect3DSwapChain8Impl *This = (IDirect3DSwapChain8Impl *)iface;
-    FIXME("(%p) : stub\n", This);
-    return D3D_OK;
+static HRESULT WINAPI DECLSPEC_HOTPATCH d3d8_swapchain_Present(IDirect3DSwapChain8 *iface,
+        const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override,
+        const RGNDATA *dirty_region)
+{
+    struct d3d8_swapchain *swapchain = impl_from_IDirect3DSwapChain8(iface);
+    struct d3d8_device *device = impl_from_IDirect3DDevice8(swapchain->parent_device);
+
+    TRACE("iface %p, src_rect %s, dst_rect %s, dst_window_override %p, dirty_region %p.\n",
+            iface, wine_dbgstr_rect(src_rect), wine_dbgstr_rect(dst_rect), dst_window_override, dirty_region);
+
+    if (device->device_state != D3D8_DEVICE_STATE_OK)
+        return D3DERR_DEVICELOST;
+
+    if (dirty_region)
+        FIXME("Ignoring dirty_region %p.\n", dirty_region);
+
+    return wined3d_swapchain_present(swapchain->wined3d_swapchain,
+            src_rect, dst_rect, dst_window_override, swapchain->swap_interval, 0);
 }
 
-HRESULT WINAPI IDirect3DSwapChain8Impl_GetBackBuffer(LPDIRECT3DSWAPCHAIN8 iface, UINT BackBuffer, D3DBACKBUFFER_TYPE Type, IDirect3DSurface8** ppBackBuffer) {
-    IDirect3DSwapChain8Impl *This = (IDirect3DSwapChain8Impl *)iface;
-    *ppBackBuffer = (LPDIRECT3DSURFACE8) This->backBuffer;
-    TRACE("(%p) : BackBuf %d Type %d returning %p\n", This, BackBuffer, Type, *ppBackBuffer);
+static HRESULT WINAPI d3d8_swapchain_GetBackBuffer(IDirect3DSwapChain8 *iface,
+        UINT backbuffer_idx, D3DBACKBUFFER_TYPE backbuffer_type, IDirect3DSurface8 **backbuffer)
+{
+    struct d3d8_swapchain *swapchain = impl_from_IDirect3DSwapChain8(iface);
+    struct wined3d_texture *wined3d_texture;
+    struct d3d8_surface *surface_impl;
+    HRESULT hr = D3D_OK;
 
-    if (BackBuffer > This->PresentParms.BackBufferCount - 1) {
-        FIXME("Only one backBuffer currently supported\n");
+    TRACE("iface %p, backbuffer_idx %u, backbuffer_type %#x, backbuffer %p.\n",
+            iface, backbuffer_idx, backbuffer_type, backbuffer);
+
+    /* backbuffer_type is ignored by native. */
+
+    if (!backbuffer)
+    {
+        WARN("The output pointer is NULL, returning D3DERR_INVALIDCALL.\n");
         return D3DERR_INVALIDCALL;
     }
 
-    /* Note inc ref on returned surface */
-    IDirect3DSurface8Impl_AddRef((LPDIRECT3DSURFACE8) *ppBackBuffer);
+    wined3d_mutex_lock();
+    if ((wined3d_texture = wined3d_swapchain_get_back_buffer(swapchain->wined3d_swapchain, backbuffer_idx)))
+    {
+        surface_impl = wined3d_texture_get_sub_resource_parent(wined3d_texture, 0);
+        *backbuffer = &surface_impl->IDirect3DSurface8_iface;
+        IDirect3DSurface8_AddRef(*backbuffer);
+    }
+    else
+    {
+        /* Do not set *backbuffer = NULL, see tests/device.c, test_swapchain(). */
+        hr = D3DERR_INVALIDCALL;
+    }
+    wined3d_mutex_unlock();
+
+    return hr;
+}
+
+static const IDirect3DSwapChain8Vtbl d3d8_swapchain_vtbl =
+{
+    d3d8_swapchain_QueryInterface,
+    d3d8_swapchain_AddRef,
+    d3d8_swapchain_Release,
+    d3d8_swapchain_Present,
+    d3d8_swapchain_GetBackBuffer
+};
+
+static void STDMETHODCALLTYPE d3d8_swapchain_wined3d_object_released(void *parent)
+{
+    heap_free(parent);
+}
+
+static const struct wined3d_parent_ops d3d8_swapchain_wined3d_parent_ops =
+{
+    d3d8_swapchain_wined3d_object_released,
+};
+
+static HRESULT swapchain_init(struct d3d8_swapchain *swapchain, struct d3d8_device *device,
+        struct wined3d_swapchain_desc *desc, unsigned int swap_interval)
+{
+    HRESULT hr;
+
+    swapchain->refcount = 1;
+    swapchain->IDirect3DSwapChain8_iface.lpVtbl = &d3d8_swapchain_vtbl;
+    swapchain->swap_interval = swap_interval;
+
+    if (FAILED(hr = wined3d_swapchain_create(device->wined3d_device, desc, swapchain,
+            &d3d8_swapchain_wined3d_parent_ops, &swapchain->wined3d_swapchain)))
+    {
+        WARN("Failed to create wined3d swapchain, hr %#x.\n", hr);
+        return hr;
+    }
+
+    swapchain->parent_device = &device->IDirect3DDevice8_iface;
+    IDirect3DDevice8_AddRef(swapchain->parent_device);
+
     return D3D_OK;
 }
 
-const IDirect3DSwapChain8Vtbl Direct3DSwapChain8_Vtbl =
+HRESULT d3d8_swapchain_create(struct d3d8_device *device, struct wined3d_swapchain_desc *desc,
+        unsigned int swap_interval, struct d3d8_swapchain **swapchain)
 {
-    IDirect3DSwapChain8Impl_QueryInterface,
-    IDirect3DSwapChain8Impl_AddRef,
-    IDirect3DSwapChain8Impl_Release,
-    IDirect3DSwapChain8Impl_Present,
-    IDirect3DSwapChain8Impl_GetBackBuffer
-};
+    struct d3d8_swapchain *object;
+    HRESULT hr;
+
+    if (!(object = heap_alloc_zero(sizeof(*object))))
+        return E_OUTOFMEMORY;
+
+    if (FAILED(hr = swapchain_init(object, device, desc, swap_interval)))
+    {
+        WARN("Failed to initialize swapchain, hr %#x.\n", hr);
+        heap_free(object);
+        return hr;
+    }
+
+    TRACE("Created swapchain %p.\n", object);
+    *swapchain = object;
+
+    return D3D_OK;
+}

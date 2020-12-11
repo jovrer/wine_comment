@@ -1,17 +1,25 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = dinput8.dll
-IMPORTLIB = libdinput8.$(IMPLIBEXT)
-IMPORTS   = dinput kernel32
-EXTRALIBS = -luuid
+IMPORTLIB = dinput8
+IMPORTS   = dxguid uuid comctl32 ole32 user32 advapi32
+EXTRADEFS = -DDIRECTINPUT_VERSION=0x0800
+EXTRALIBS = $(IOKIT_LIBS) $(FORCEFEEDBACK_LIBS)
+PARENTSRC = ../dinput
 
 C_SRCS = \
-	dinput8_main.c
+	config.c \
+	data_formats.c \
+	device.c \
+	dinput_main.c \
+	effect_linuxinput.c \
+	joystick.c \
+	joystick_linux.c \
+	joystick_linuxinput.c \
+	joystick_osx.c \
+	keyboard.c \
+	mouse.c
 
-RC_SRCS = version.rc
+IDL_SRCS = dinput8.idl
 
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = \
+	dinput.rc \
+	version.rc

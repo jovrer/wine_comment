@@ -1,26 +1,25 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = ntdll.dll
-IMPORTS   = kernel32
+IMPORTS   = user32 advapi32
 
-CTESTS = \
+C_SRCS = \
 	atom.c \
+	change.c \
+	directory.c \
 	env.c \
 	error.c \
+	exception.c \
+	file.c \
 	generated.c \
 	info.c \
 	large_int.c \
-	path.c \
 	om.c \
+	path.c \
+	pipe.c \
+	port.c \
 	reg.c \
 	rtl.c \
 	rtlbitmap.c \
 	rtlstr.c \
 	string.c \
+	threadpool.c \
 	time.c
-
-@MAKE_TEST_RULES@
-
-### Dependencies:

@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #include <stdarg.h>
 
@@ -509,6 +509,9 @@ ULONG WINAPI LHashValOfNameSysA( SYSKIND skind, LCID lcid, LPCSTR lpStr)
   ULONG nHiWord, nLoWord = 0x0deadbee;
   const unsigned char *str = (const unsigned char *)lpStr, *pnLookup = NULL;
 
+  TRACE("(%d, 0x%x, %s) %s\n", skind, lcid, debugstr_a(lpStr),
+    (skind == SYS_WIN16) ? "SYS_WIN16" : (skind == SYS_WIN32) ? "SYS_WIN32" : "");
+
   if (!str)
     return 0;
 
@@ -517,7 +520,7 @@ ULONG WINAPI LHashValOfNameSysA( SYSKIND skind, LCID lcid, LPCSTR lpStr)
   switch (PRIMARYLANGID(LANGIDFROMLCID(lcid)))
   {
   default:
-    ERR("Unknown lcid %lx, treating as latin-based, please report\n", lcid);
+    ERR("Unknown lcid %x, treating as latin-based, please report\n", lcid);
     /* .. Fall Through .. */
   case LANG_AFRIKAANS:  case LANG_ALBANIAN:   case LANG_ARMENIAN:
   case LANG_ASSAMESE:   case LANG_AZERI:      case LANG_BASQUE:
@@ -538,13 +541,13 @@ ULONG WINAPI LHashValOfNameSysA( SYSKIND skind, LCID lcid, LPCSTR lpStr)
   case LANG_SWEDISH:    case LANG_SYRIAC:     case LANG_TAMIL:
   case LANG_TATAR:      case LANG_TELUGU:     case LANG_THAI:
   case LANG_UKRAINIAN:  case LANG_URDU:       case LANG_UZBEK:
-  case LANG_VIETNAMESE: case LANG_GAELIC:     case LANG_MALTESE:
-  case LANG_MAORI:      case LANG_RHAETO_ROMANCE:
-  case LANG_SAAMI:      case LANG_SORBIAN:    case LANG_SUTU:
+  case LANG_VIETNAMESE: case LANG_SCOTTISH_GAELIC: case LANG_MALTESE:
+  case LANG_MAORI:      case LANG_ROMANSH:    case LANG_IRISH:
+  case LANG_SAMI:       case LANG_UPPER_SORBIAN: case LANG_SUTU:
   case LANG_TSONGA:     case LANG_TSWANA:     case LANG_VENDA:
   case LANG_XHOSA:      case LANG_ZULU:       case LANG_ESPERANTO:
   case LANG_WALON:      case LANG_CORNISH:    case LANG_WELSH:
-  case LANG_BRETON:
+  case LANG_BRETON:     case LANG_MANX_GAELIC:
     nOffset = 16;
     pnLookup = Lookup_16;
     break;
@@ -608,13 +611,7 @@ ULONG WINAPI LHashValOfNameSysA( SYSKIND skind, LCID lcid, LPCSTR lpStr)
 
   while (*str)
   {
-    ULONG newLoWord = 0, i;
-
-    /* Cumulative prime multiplication (*37) with modulo 2^32 wrap-around */
-    for (i = 0; i < 37; i++)
-      newLoWord += nLoWord;
-
-    nLoWord = newLoWord + pnLookup[*str > 0x7f && nMask ? *str + 0x80 : *str];
+    nLoWord = 37 * nLoWord + pnLookup[*str > 0x7f && nMask ? *str + 0x80 : *str];
     str++;
   }
   /* Constrain to a prime modulo and sizeof(WORD) */

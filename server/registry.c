@@ -15,12 +15,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /* To do:
- * - behavior with deleted keys
- * - values larger than request buffer
  * - symbolic links
  */
 
@@ -39,10 +37,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "object.h"
 #include "file.h"
 #include "handle.h"
 #include "request.h"
+#include "process.h"
 #include "unicode.h"
 #include "security.h"
 
@@ -65,6 +66,8 @@ struct key
     struct object     obj;         /* object header */
     WCHAR            *name;        /* key name */
     WCHAR            *class;       /* key class */
+    unsigned short    namelen;     /* length of key name */
+    unsigned short    classlen;    /* length of class name */
     struct key       *parent;      /* parent key */
     int               last_subkey; /* last in use subkey */
     int               nb_subkeys;  /* count of allocated subkeys */
@@ -73,7 +76,7 @@ struct key
     int               nb_values;   /* count of allocated values in array */
     struct key_value *values;      /* values array */
     unsigned int      flags;       /* flags */
-    time_t            modif;       /* last modification time */
+    timeout_t         modif;       /* last modification time */
     struct list       notify_list; /* list of notifications */
 };
 
@@ -81,33 +84,47 @@ struct key
 #define KEY_VOLATILE 0x0001  /* key is volatile (not saved to disk) */
 #define KEY_DELETED  0x0002  /* key has been deleted */
 #define KEY_DIRTY    0x0004  /* key has been modified */
+#define KEY_SYMLINK  0x0008  /* key is a symbolic link */
+#define KEY_WOW64    0x0010  /* key contains a Wow6432Node subkey */
+#define KEY_WOWSHARE 0x0020  /* key is a Wow64 shared key (used for Software\Classes) */
 
 /* a key value */
 struct key_value
 {
     WCHAR            *name;    /* value name */
-    int               type;    /* value type */
-    size_t            len;     /* value data length in bytes */
+    unsigned short    namelen; /* length of value name */
+    unsigned int      type;    /* value type */
+    data_size_t       len;     /* value data length in bytes */
     void             *data;    /* pointer to value data */
 };
 
 #define MIN_SUBKEYS  8   /* min. number of allocated subkeys per key */
 #define MIN_VALUES   8   /* min. number of allocated values per key */
 
+#define MAX_NAME_LEN  256    /* max. length of a key name */
+#define MAX_VALUE_LEN 16383  /* max. length of a value name */
 
 /* the root of the registry tree */
 static struct key *root_key;
 
-static const int save_period = 30000;           /* delay between periodic saves (in ms) */
+static const timeout_t ticks_1601_to_1970 = (timeout_t)86400 * (369 * 365 + 89) * TICKS_PER_SEC;
+static const timeout_t save_period = 30 * -TICKS_PER_SEC;  /* delay between periodic saves */
 static struct timeout_user *save_timeout_user;  /* saving timer */
+static enum prefix_type { PREFIX_UNKNOWN, PREFIX_32BIT, PREFIX_64BIT } prefix_type;
+
+static const WCHAR root_name[] = { '\\','R','e','g','i','s','t','r','y','\\' };
+static const WCHAR wow6432node[] = {'W','o','w','6','4','3','2','N','o','d','e'};
+static const WCHAR symlink_value[] = {'S','y','m','b','o','l','i','c','L','i','n','k','V','a','l','u','e'};
+static const struct unicode_str symlink_str = { symlink_value, sizeof(symlink_value) };
 
 static void set_periodic_save_timer(void);
+static struct key_value *find_value( const struct key *key, const struct unicode_str *name, int *index );
 
 /* information about where to save a registry branch */
 struct save_branch_info
 {
     struct key  *key;
-    char        *path;
+    const char  *path;
 };
 
 #define MAX_SAVE_BRANCH_INFO 3
@@ -118,16 +135,20 @@ static struct save_branch_info save_branch_info[MAX_SAVE_BRANCH_INFO];
 /* information about a file being loaded */
 struct file_load_info
 {
-    FILE *file;    /* input file */
-    char *buffer;  /* line buffer */
-    int   len;     /* buffer length */
-    int   line;    /* current input line */
-    WCHAR *tmp;    /* temp buffer to use while parsing input */
-    size_t tmplen; /* length of temp buffer */
+    const char *filename; /* input file name */
+    FILE       *file;     /* input file */
+    char       *buffer;   /* line buffer */
+    int         len;      /* buffer length */
+    int         line;     /* current input line */
+    WCHAR      *tmp;      /* temp buffer to use while parsing input */
+    size_t      tmplen;   /* length of temp buffer */
 };
 
 
 static void key_dump( struct object *obj, int verbose );
+static struct object_type *key_get_type( struct object *obj );
+static unsigned int key_map_access( struct object *obj, unsigned int access );
+static struct security_descriptor *key_get_sd( struct object *obj );
 static int key_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void key_destroy( struct object *obj );
 
@@ -135,16 +156,30 @@ static const struct object_ops key_ops =
 {
     sizeof(struct key),      /* size */
     key_dump,                /* dump */
+    key_get_type,            /* get_type */
     no_add_queue,            /* add_queue */
     NULL,                    /* remove_queue */
     NULL,                    /* signaled */
     NULL,                    /* satisfied */
     no_signal,               /* signal */
     no_get_fd,               /* get_fd */
+    key_map_access,          /* map_access */
+    key_get_sd,              /* get_sd */
+    default_set_sd,          /* set_sd */
+    no_lookup_name,          /* lookup_name */
+    no_link_name,            /* link_name */
+    NULL,                    /* unlink_name */
+    no_open_file,            /* open_file */
     key_close_handle,        /* close_handle */
     key_destroy              /* destroy */
 };
 
+
+static inline int is_wow6432node( const WCHAR *name, unsigned int len )
+{
+    return (len == sizeof(wow6432node) &&
+            !memicmpW( name, wow6432node, ARRAY_SIZE( wow6432node )));
+}
 
 /*
  * The registry text file format v2 used by this code is similar to the one
@@ -155,12 +190,6 @@ static const struct object_ops key_ops =
  * - REG_EXPAND_SZ and REG_MULTI_SZ are saved as strings instead of hex
  */
 
-static inline char to_hex( char ch )
-{
-    if (isdigit(ch)) return ch - '0';
-    return tolower(ch) - 'a' + 10;
-}
-
 /* dump the full path of a key */
 static void dump_path( const struct key *key, const struct key *base, FILE *f )
 {
@@ -169,19 +198,19 @@ static void dump_path( const struct key *key, const struct key *base, FILE *f )
         dump_path( key->parent, base, f );
         fprintf( f, "\\\\" );
     }
-    dump_strW( key->name, strlenW(key->name), f, "[]" );
+    dump_strW( key->name, key->namelen / sizeof(WCHAR), f, "[]" );
 }
 
 /* dump a value to a text file */
 static void dump_value( const struct key_value *value, FILE *f )
 {
-    unsigned int i;
+    unsigned int i, dw;
     int count;
 
-    if (value->name[0])
+    if (value->namelen)
     {
         fputc( '\"', f );
-        count = 1 + dump_strW( value->name, strlenW(value->name), f, "\"\"" );
+        count = 1 + dump_strW( value->name, value->namelen / sizeof(WCHAR), f, "\"\"" );
         count += fprintf( f, "\"=" );
     }
     else count = fprintf( f, "@=" );
@@ -191,37 +220,37 @@ static void dump_value( const struct key_value *value, FILE *f )
     case REG_SZ:
     case REG_EXPAND_SZ:
     case REG_MULTI_SZ:
-        if (value->type != REG_SZ) fprintf( f, "str(%d):", value->type );
+        /* only output properly terminated strings in string format */
+        if (value->len < sizeof(WCHAR)) break;
+        if (value->len % sizeof(WCHAR)) break;
+        if (((WCHAR *)value->data)[value->len / sizeof(WCHAR) - 1]) break;
+        if (value->type != REG_SZ) fprintf( f, "str(%x):", value->type );
         fputc( '\"', f );
-        if (value->data) dump_strW( (WCHAR *)value->data, value->len / sizeof(WCHAR), f, "\"\"" );
-        fputc( '\"', f );
-        break;
+        dump_strW( (WCHAR *)value->data, value->len / sizeof(WCHAR), f, "\"\"" );
+        fprintf( f, "\"\n" );
+        return;
+
     case REG_DWORD:
-        if (value->len == sizeof(DWORD))
+        if (value->len != sizeof(dw)) break;
+        memcpy( &dw, value->data, sizeof(dw) );
+        fprintf( f, "dword:%08x\n", dw );
+        return;
+    }
+
+    if (value->type == REG_BINARY) count += fprintf( f, "hex:" );
+    else count += fprintf( f, "hex(%x):", value->type );
+    for (i = 0; i < value->len; i++)
+    {
+        count += fprintf( f, "%02x", *((unsigned char *)value->data + i) );
+        if (i < value->len-1)
         {
-            DWORD dw;
-            memcpy( &dw, value->data, sizeof(DWORD) );
-            fprintf( f, "dword:%08lx", dw );
-            break;
-        }
-        /* else fall through */
-    default:
-        if (value->type == REG_BINARY) count += fprintf( f, "hex:" );
-        else count += fprintf( f, "hex(%x):", value->type );
-        for (i = 0; i < value->len; i++)
-        {
-            count += fprintf( f, "%02x", *((unsigned char *)value->data + i) );
-            if (i < value->len-1)
+            fputc( ',', f );
+            if (++count > 76)
             {
-                fputc( ',', f );
-                if (++count > 76)
-                {
-                    fprintf( f, "\\\n  " );
-                    count = 2;
-                }
+                fprintf( f, "\\\n  " );
+                count = 2;
             }
         }
-        break;
     }
     fputc( '\n', f );
 }
@@ -232,13 +261,21 @@ static void save_subkeys( const struct key *key, const struct key *base, FILE *f
     int i;
 
     if (key->flags & KEY_VOLATILE) return;
-    /* save key if it has either some values or no subkeys */
+    /* save key if it has either some values or no subkeys, or needs special options */
     /* keys with no values but subkeys are saved implicitly by saving the subkeys */
-    if ((key->last_value >= 0) || (key->last_subkey == -1))
+    if ((key->last_value >= 0) || (key->last_subkey == -1) || key->class || (key->flags & KEY_SYMLINK))
     {
         fprintf( f, "\n[" );
         if (key != base) dump_path( key, base, f );
-        fprintf( f, "] %ld\n", (long)key->modif );
+        fprintf( f, "] %u\n", (unsigned int)((key->modif - ticks_1601_to_1970) / TICKS_PER_SEC) );
+        fprintf( f, "#time=%x%08x\n", (unsigned int)(key->modif >> 32), (unsigned int)key->modif );
+        if (key->class)
+        {
+            fprintf( f, "#class=\"" );
+            dump_strW( key->class, key->classlen / sizeof(WCHAR), f, "\"\"" );
+            fprintf( f, "\"\n" );
+        }
+        if (key->flags & KEY_SYMLINK) fputs( "#link\n", f );
         for (i = 0; i <= key->last_value; i++) dump_value( &key->values[i], f );
     }
     for (i = 0; i <= key->last_subkey; i++) save_subkeys( key->subkeys[i], base, f );
@@ -264,6 +301,13 @@ static void key_dump( struct object *obj, int verbose )
     fprintf( stderr, "Key flags=%x ", key->flags );
     dump_path( key, NULL, stderr );
     fprintf( stderr, "\n" );
+}
+
+static struct object_type *key_get_type( struct object *obj )
+{
+    static const WCHAR name[] = {'K','e','y'};
+    static const struct unicode_str str = { name, sizeof(name) };
+    return get_object_type( &str );
 }
 
 /* notify waiter and maybe delete the notification */
@@ -293,6 +337,63 @@ static inline struct notify *find_notify( struct key *key, struct process *proce
     return NULL;
 }
 
+static unsigned int key_map_access( struct object *obj, unsigned int access )
+{
+    if (access & GENERIC_READ)    access |= KEY_READ;
+    if (access & GENERIC_WRITE)   access |= KEY_WRITE;
+    if (access & GENERIC_EXECUTE) access |= KEY_EXECUTE;
+    if (access & GENERIC_ALL)     access |= KEY_ALL_ACCESS;
+    /* filter the WOW64 masks, as they aren't real access bits */
+    return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL |
+                      KEY_WOW64_64KEY | KEY_WOW64_32KEY);
+}
+
+static struct security_descriptor *key_get_sd( struct object *obj )
+{
+    static struct security_descriptor *key_default_sd;
+
+    if (obj->sd) return obj->sd;
+
+    if (!key_default_sd)
+    {
+        size_t users_sid_len = security_sid_len( security_builtin_users_sid );
+        size_t admins_sid_len = security_sid_len( security_builtin_admins_sid );
+        size_t dacl_len = sizeof(ACL) + 2 * offsetof( ACCESS_ALLOWED_ACE, SidStart )
+                          + users_sid_len + admins_sid_len;
+        ACCESS_ALLOWED_ACE *aaa;
+        ACL *dacl;
+
+        key_default_sd = mem_alloc( sizeof(*key_default_sd) + 2 * admins_sid_len + dacl_len );
+        key_default_sd->control   = SE_DACL_PRESENT;
+        key_default_sd->owner_len = admins_sid_len;
+        key_default_sd->group_len = admins_sid_len;
+        key_default_sd->sacl_len  = 0;
+        key_default_sd->dacl_len  = dacl_len;
+        memcpy( key_default_sd + 1, security_builtin_admins_sid, admins_sid_len );
+        memcpy( (char *)(key_default_sd + 1) + admins_sid_len, security_builtin_admins_sid, admins_sid_len );
+
+        dacl = (ACL *)((char *)(key_default_sd + 1) + 2 * admins_sid_len);
+        dacl->AclRevision = ACL_REVISION;
+        dacl->Sbz1 = 0;
+        dacl->AclSize = dacl_len;
+        dacl->AceCount = 2;
+        dacl->Sbz2 = 0;
+        aaa = (ACCESS_ALLOWED_ACE *)(dacl + 1);
+        aaa->Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
+        aaa->Header.AceFlags = INHERIT_ONLY_ACE | CONTAINER_INHERIT_ACE;
+        aaa->Header.AceSize = offsetof( ACCESS_ALLOWED_ACE, SidStart ) + users_sid_len;
+        aaa->Mask = GENERIC_READ;
+        memcpy( &aaa->SidStart, security_builtin_users_sid, users_sid_len );
+        aaa = (ACCESS_ALLOWED_ACE *)((char *)aaa + aaa->Header.AceSize);
+        aaa->Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
+        aaa->Header.AceFlags = 0;
+        aaa->Header.AceSize = offsetof( ACCESS_ALLOWED_ACE, SidStart ) + admins_sid_len;
+        aaa->Mask = KEY_ALL_ACCESS;
+        memcpy( &aaa->SidStart, security_builtin_admins_sid, admins_sid_len );
+    }
+    return key_default_sd;
+}
+
 /* close the notification associated with a handle */
 static int key_close_handle( struct object *obj, struct process *process, obj_handle_t handle )
 {
@@ -309,20 +410,20 @@ static void key_destroy( struct object *obj )
     struct key *key = (struct key *)obj;
     assert( obj->ops == &key_ops );
 
-    if (key->name) free( key->name );
-    if (key->class) free( key->class );
+    free( key->name );
+    free( key->class );
     for (i = 0; i <= key->last_value; i++)
     {
         free( key->values[i].name );
-        if (key->values[i].data) free( key->values[i].data );
+        free( key->values[i].data );
     }
-    if (key->values) free( key->values );
+    free( key->values );
     for (i = 0; i <= key->last_subkey; i++)
     {
         key->subkeys[i]->parent = NULL;
         release_object( key->subkeys[i] );
     }
-    if (key->subkeys) free( key->subkeys );
+    free( key->subkeys );
     /* unconditionally notify everything waiting on this key */
     while ((ptr = list_head( &key->notify_list )))
     {
@@ -331,81 +432,57 @@ static void key_destroy( struct object *obj )
     }
 }
 
-/* duplicate a key path */
-/* returns a pointer to a static buffer, so only useable once per request */
-static WCHAR *copy_path( const WCHAR *path, size_t len, int skip_root )
+/* get the request vararg as registry path */
+static inline void get_req_path( struct unicode_str *str, int skip_root )
 {
-    static WCHAR buffer[MAX_PATH+1];
-    static const WCHAR root_name[] = { '\\','R','e','g','i','s','t','r','y','\\',0 };
+    str->str = get_req_data();
+    str->len = (get_req_data_size() / sizeof(WCHAR)) * sizeof(WCHAR);
 
-    if (len > sizeof(buffer)-sizeof(buffer[0]))
+    if (skip_root && str->len >= sizeof(root_name) &&
+        !memicmpW( str->str, root_name, ARRAY_SIZE( root_name )))
     {
-        set_error( STATUS_BUFFER_OVERFLOW );
-        return NULL;
+        str->str += ARRAY_SIZE( root_name );
+        str->len -= sizeof(root_name);
     }
-    memcpy( buffer, path, len );
-    buffer[len / sizeof(WCHAR)] = 0;
-    if (skip_root && !strncmpiW( buffer, root_name, 10 )) return buffer + 10;
-    return buffer;
-}
-
-/* copy a path from the request buffer */
-static WCHAR *copy_req_path( size_t len, int skip_root )
-{
-    const WCHAR *name_ptr = get_req_data();
-    if (len > get_req_data_size())
-    {
-        fatal_protocol_error( current, "copy_req_path: invalid length %d/%d\n",
-                              len, get_req_data_size() );
-        return NULL;
-    }
-    return copy_path( name_ptr, len, skip_root );
 }
 
 /* return the next token in a given path */
-/* returns a pointer to a static buffer, so only useable once per request */
-static WCHAR *get_path_token( WCHAR *initpath )
+/* token->str must point inside the path, or be NULL for the first call */
+static struct unicode_str *get_path_token( const struct unicode_str *path, struct unicode_str *token )
 {
-    static WCHAR *path;
-    WCHAR *ret;
+    data_size_t i = 0, len = path->len / sizeof(WCHAR);
 
-    if (initpath)
+    if (!token->str)  /* first time */
     {
         /* path cannot start with a backslash */
-        if (*initpath == '\\')
+        if (len && path->str[0] == '\\')
         {
             set_error( STATUS_OBJECT_PATH_INVALID );
             return NULL;
         }
-        path = initpath;
     }
-    else while (*path == '\\') path++;
-
-    ret = path;
-    while (*path && *path != '\\') path++;
-    if (*path) *path++ = 0;
-    return ret;
-}
-
-/* duplicate a Unicode string from the request buffer */
-static WCHAR *req_strdupW( const void *req, const WCHAR *str, size_t len )
-{
-    WCHAR *name;
-    if ((name = mem_alloc( len + sizeof(WCHAR) )) != NULL)
+    else
     {
-        memcpy( name, str, len );
-        name[len / sizeof(WCHAR)] = 0;
+        i = token->str - path->str;
+        i += token->len / sizeof(WCHAR);
+        while (i < len && path->str[i] == '\\') i++;
     }
-    return name;
+    token->str = path->str + i;
+    while (i < len && path->str[i] != '\\') i++;
+    token->len = (path->str + i - token->str) * sizeof(WCHAR);
+    return token;
 }
 
 /* allocate a key object */
-static struct key *alloc_key( const WCHAR *name, time_t modif )
+static struct key *alloc_key( const struct unicode_str *name, timeout_t modif )
 {
     struct key *key;
     if ((key = alloc_object( &key_ops )))
     {
+        key->name        = NULL;
         key->class       = NULL;
+        key->namelen     = name->len;
+        key->classlen    = 0;
         key->flags       = 0;
         key->last_subkey = -1;
         key->nb_subkeys  = 0;
@@ -416,7 +493,7 @@ static struct key *alloc_key( const WCHAR *name, time_t modif )
         key->modif       = modif;
         key->parent      = NULL;
         list_init( &key->notify_list );
-        if (!(key->name = strdupW( name )))
+        if (name->len && !(key->name = memdup( name->str, name->len )))
         {
             release_object( key );
             key = NULL;
@@ -465,13 +542,13 @@ static void touch_key( struct key *key, unsigned int change )
 {
     struct key *k;
 
-    key->modif = time(NULL);
+    key->modif = current_time;
     make_dirty( key );
 
     /* do notifications */
     check_notify( key, change, 1 );
     for ( k = key->parent; k; k = k->parent )
-        check_notify( k, change & ~REG_NOTIFY_CHANGE_LAST_SET, 0 );
+        check_notify( k, change, 0 );
 }
 
 /* try to grow the array of subkeys; return 1 if OK, 0 on error */
@@ -491,7 +568,7 @@ static int grow_subkeys( struct key *key )
     }
     else
     {
-        nb_subkeys = MIN_VALUES;
+        nb_subkeys = MIN_SUBKEYS;
         if (!(new_subkeys = mem_alloc( nb_subkeys * sizeof(*new_subkeys) ))) return 0;
     }
     key->subkeys    = new_subkeys;
@@ -500,11 +577,17 @@ static int grow_subkeys( struct key *key )
 }
 
 /* allocate a subkey for a given key, and return its index */
-static struct key *alloc_subkey( struct key *parent, const WCHAR *name, int index, time_t modif )
+static struct key *alloc_subkey( struct key *parent, const struct unicode_str *name,
+                                 int index, timeout_t modif )
 {
     struct key *key;
     int i;
 
+    if (name->len > MAX_NAME_LEN * sizeof(WCHAR))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return NULL;
+    }
     if (parent->last_subkey + 1 == parent->nb_subkeys)
     {
         /* need to grow the array */
@@ -516,6 +599,8 @@ static struct key *alloc_subkey( struct key *parent, const WCHAR *name, int inde
         for (i = ++parent->last_subkey; i > index; i--)
             parent->subkeys[i] = parent->subkeys[i-1];
         parent->subkeys[index] = key;
+        if (is_wow6432node( key->name, key->namelen ) && !is_wow6432node( parent->name, parent->namelen ))
+            parent->flags |= KEY_WOW64;
     }
     return key;
 }
@@ -534,6 +619,7 @@ static void free_subkey( struct key *parent, int index )
     parent->last_subkey--;
     key->flags |= KEY_DELETED;
     key->parent = NULL;
+    if (is_wow6432node( key->name, key->namelen )) parent->flags &= ~KEY_WOW64;
     release_object( key );
 
     /* try to shrink the array */
@@ -550,16 +636,20 @@ static void free_subkey( struct key *parent, int index )
 }
 
 /* find the named child of a given key and return its index */
-static struct key *find_subkey( const struct key *key, const WCHAR *name, int *index )
+static struct key *find_subkey( const struct key *key, const struct unicode_str *name, int *index )
 {
     int i, min, max, res;
+    data_size_t len;
 
     min = 0;
     max = key->last_subkey;
     while (min <= max)
     {
         i = (min + max) / 2;
-        if (!(res = strcmpiW( key->subkeys[i]->name, name )))
+        len = min( key->subkeys[i]->namelen, name->len );
+        res = memicmpW( key->subkeys[i]->name, name->str, len / sizeof(WCHAR) );
+        if (!res) res = key->subkeys[i]->namelen - name->len;
+        if (!res)
         {
             *index = i;
             return key->subkeys[i];
@@ -571,82 +661,217 @@ static struct key *find_subkey( const struct key *key, const WCHAR *name, int *i
     return NULL;
 }
 
-/* open a subkey */
-/* warning: the key name must be writeable (use copy_path) */
-static struct key *open_key( struct key *key, WCHAR *name )
+/* return the wow64 variant of the key, or the key itself if none */
+static struct key *find_wow64_subkey( struct key *key, const struct unicode_str *name )
 {
+    static const struct unicode_str wow6432node_str = { wow6432node, sizeof(wow6432node) };
     int index;
-    WCHAR *path;
 
-    if (!(path = get_path_token( name ))) return NULL;
-    while (*path)
+    if (!(key->flags & KEY_WOW64)) return key;
+    if (!is_wow6432node( name->str, name->len ))
     {
-        if (!(key = find_subkey( key, path, &index )))
+        key = find_subkey( key, &wow6432node_str, &index );
+        assert( key );  /* if KEY_WOW64 is set we must find it */
+    }
+    return key;
+}
+
+
+/* follow a symlink and return the resolved key */
+static struct key *follow_symlink( struct key *key, int iteration )
+{
+    struct unicode_str path, token;
+    struct key_value *value;
+    int index;
+
+    if (iteration > 16) return NULL;
+    if (!(key->flags & KEY_SYMLINK)) return key;
+    if (!(value = find_value( key, &symlink_str, &index ))) return NULL;
+
+    path.str = value->data;
+    path.len = (value->len / sizeof(WCHAR)) * sizeof(WCHAR);
+    if (path.len <= sizeof(root_name)) return NULL;
+    if (memicmpW( path.str, root_name, ARRAY_SIZE( root_name ))) return NULL;
+    path.str += ARRAY_SIZE( root_name );
+    path.len -= sizeof(root_name);
+
+    key = root_key;
+    token.str = NULL;
+    if (!get_path_token( &path, &token )) return NULL;
+    while (token.len)
+    {
+        if (!(key = find_subkey( key, &token, &index ))) break;
+        if (!(key = follow_symlink( key, iteration + 1 ))) break;
+        get_path_token( &path, &token );
+    }
+    return key;
+}
+
+/* open a key until we find an element that doesn't exist */
+/* helper for open_key and create_key */
+static struct key *open_key_prefix( struct key *key, const struct unicode_str *name,
+                                    unsigned int access, struct unicode_str *token, int *index )
+{
+    token->str = NULL;
+    if (!get_path_token( name, token )) return NULL;
+    if (access & KEY_WOW64_32KEY) key = find_wow64_subkey( key, token );
+    while (token->len)
+    {
+        struct key *subkey;
+        if (!(subkey = find_subkey( key, token, index )))
+        {
+            if ((key->flags & KEY_WOWSHARE) && !(access & KEY_WOW64_64KEY))
+            {
+                /* try in the 64-bit parent */
+                key = key->parent;
+                subkey = find_subkey( key, token, index );
+            }
+        }
+        if (!subkey) break;
+        key = subkey;
+        get_path_token( name, token );
+        if (!token->len) break;
+        if (!(access & KEY_WOW64_64KEY)) key = find_wow64_subkey( key, token );
+        if (!(key = follow_symlink( key, 0 )))
         {
             set_error( STATUS_OBJECT_NAME_NOT_FOUND );
-            break;
+            return NULL;
         }
-        path = get_path_token( NULL );
     }
+    return key;
+}
 
+/* open a subkey */
+static struct key *open_key( struct key *key, const struct unicode_str *name, unsigned int access,
+                             unsigned int attributes )
+{
+    int index;
+    struct unicode_str token;
+
+    if (!(key = open_key_prefix( key, name, access, &token, &index ))) return NULL;
+
+    if (token.len)
+    {
+        set_error( STATUS_OBJECT_NAME_NOT_FOUND );
+        return NULL;
+    }
+    if (!(access & KEY_WOW64_64KEY)) key = find_wow64_subkey( key, &token );
+    if (!(attributes & OBJ_OPENLINK) && !(key = follow_symlink( key, 0 )))
+    {
+        set_error( STATUS_OBJECT_NAME_NOT_FOUND );
+        return NULL;
+    }
     if (debug_level > 1) dump_operation( key, NULL, "Open" );
-    if (key) grab_object( key );
+    grab_object( key );
     return key;
 }
 
 /* create a subkey */
-/* warning: the key name must be writeable (use copy_path) */
-static struct key *create_key( struct key *key, WCHAR *name, WCHAR *class,
-                               int flags, time_t modif, int *created )
+static struct key *create_key( struct key *key, const struct unicode_str *name,
+                               const struct unicode_str *class, unsigned int options,
+                               unsigned int access, unsigned int attributes,
+                               const struct security_descriptor *sd, int *created )
 {
-    struct key *base;
-    int base_idx, index;
-    WCHAR *path;
+    int index;
+    struct unicode_str token, next;
 
-    if (key->flags & KEY_DELETED) /* we cannot create a subkey under a deleted key */
+    *created = 0;
+    if (!(key = open_key_prefix( key, name, access, &token, &index ))) return NULL;
+
+    if (!token.len)  /* the key already exists */
     {
-        set_error( STATUS_KEY_DELETED );
+        if (!(access & KEY_WOW64_64KEY)) key = find_wow64_subkey( key, &token );
+        if (options & REG_OPTION_CREATE_LINK)
+        {
+            set_error( STATUS_OBJECT_NAME_COLLISION );
+            return NULL;
+        }
+        if (!(attributes & OBJ_OPENLINK) && !(key = follow_symlink( key, 0 )))
+        {
+            set_error( STATUS_OBJECT_NAME_NOT_FOUND );
+            return NULL;
+        }
+        if (debug_level > 1) dump_operation( key, NULL, "Open" );
+        grab_object( key );
+        return key;
+    }
+
+    /* token must be the last path component at this point */
+    next = token;
+    get_path_token( name, &next );
+    if (next.len)
+    {
+        set_error( STATUS_OBJECT_NAME_NOT_FOUND );
         return NULL;
     }
-    if (!(flags & KEY_VOLATILE) && (key->flags & KEY_VOLATILE))
+
+    if ((key->flags & KEY_VOLATILE) && !(options & REG_OPTION_VOLATILE))
     {
         set_error( STATUS_CHILD_MUST_BE_VOLATILE );
         return NULL;
     }
-    if (!modif) modif = time(NULL);
+    *created = 1;
+    make_dirty( key );
+    if (!(key = alloc_subkey( key, &token, index, current_time ))) return NULL;
 
-    if (!(path = get_path_token( name ))) return NULL;
-    *created = 0;
-    while (*path)
+    if (options & REG_OPTION_CREATE_LINK) key->flags |= KEY_SYMLINK;
+    if (options & REG_OPTION_VOLATILE) key->flags |= KEY_VOLATILE;
+    else key->flags |= KEY_DIRTY;
+
+    if (sd) default_set_sd( &key->obj, sd, OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                            DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION );
+
+    if (debug_level > 1) dump_operation( key, NULL, "Create" );
+    if (class && class->len)
+    {
+        key->classlen = class->len;
+        free(key->class);
+        if (!(key->class = memdup( class->str, key->classlen ))) key->classlen = 0;
+    }
+    touch_key( key->parent, REG_NOTIFY_CHANGE_NAME );
+    grab_object( key );
+    return key;
+}
+
+/* recursively create a subkey (for internal use only) */
+static struct key *create_key_recursive( struct key *key, const struct unicode_str *name, timeout_t modif )
+{
+    struct key *base;
+    int index;
+    struct unicode_str token;
+
+    token.str = NULL;
+    if (!get_path_token( name, &token )) return NULL;
+    while (token.len)
     {
         struct key *subkey;
-        if (!(subkey = find_subkey( key, path, &index ))) break;
+        if (!(subkey = find_subkey( key, &token, &index ))) break;
         key = subkey;
-        path = get_path_token( NULL );
+        if (!(key = follow_symlink( key, 0 )))
+        {
+            set_error( STATUS_OBJECT_NAME_NOT_FOUND );
+            return NULL;
+        }
+        get_path_token( name, &token );
     }
 
-    /* create the remaining part */
-
-    if (!*path) goto done;
-    *created = 1;
-    if (flags & KEY_DIRTY) make_dirty( key );
-    base = key;
-    base_idx = index;
-    key = alloc_subkey( key, path, index, modif );
-    while (key)
+    if (token.len)
     {
-        key->flags |= flags;
-        path = get_path_token( NULL );
-        if (!*path) goto done;
-        /* we know the index is always 0 in a new key */
-        key = alloc_subkey( key, path, 0, modif );
+        if (!(key = alloc_subkey( key, &token, index, modif ))) return NULL;
+        base = key;
+        for (;;)
+        {
+            get_path_token( name, &token );
+            if (!token.len) break;
+            /* we know the index is always 0 in a new key */
+            if (!(key = alloc_subkey( key, &token, 0, modif )))
+            {
+                free_subkey( base, index );
+                return NULL;
+            }
+        }
     }
-    if (base_idx != -1) free_subkey( base, base_idx );
-    return NULL;
 
- done:
-    if (debug_level > 1) dump_operation( key, NULL, "Create" );
-    if (class) key->class = strdupW(class);
     grab_object( key );
     return key;
 }
@@ -655,11 +880,13 @@ static struct key *create_key( struct key *key, WCHAR *name, WCHAR *class,
 static void enum_key( const struct key *key, int index, int info_class,
                       struct enum_key_reply *reply )
 {
+    static const WCHAR backslash[] = { '\\' };
     int i;
-    size_t len, namelen, classlen;
-    int max_subkey = 0, max_class = 0;
-    int max_value = 0, max_data = 0;
-    WCHAR *data;
+    data_size_t len, namelen, classlen;
+    data_size_t max_subkey = 0, max_class = 0;
+    data_size_t max_value = 0, max_data = 0;
+    const struct key *k;
+    char *data;
 
     if (index != -1)  /* -1 means use the specified key directly */
     {
@@ -671,11 +898,18 @@ static void enum_key( const struct key *key, int index, int info_class,
         key = key->subkeys[index];
     }
 
-    namelen = strlenW(key->name) * sizeof(WCHAR);
-    classlen = key->class ? strlenW(key->class) * sizeof(WCHAR) : 0;
+    namelen = key->namelen;
+    classlen = key->classlen;
 
     switch(info_class)
     {
+    case KeyNameInformation:
+        namelen = 0;
+        for (k = key; k != root_key; k = k->parent)
+            namelen += k->namelen + sizeof(backslash);
+        if (!namelen) return;
+        namelen += sizeof(root_name) - sizeof(backslash);
+        /* fall through */
     case KeyBasicInformation:
         classlen = 0; /* only return the name */
         /* fall through */
@@ -686,27 +920,25 @@ static void enum_key( const struct key *key, int index, int info_class,
         reply->max_data   = 0;
         break;
     case KeyFullInformation:
+    case KeyCachedInformation:
         for (i = 0; i <= key->last_subkey; i++)
         {
-            struct key *subkey = key->subkeys[i];
-            len = strlenW( subkey->name );
-            if (len > max_subkey) max_subkey = len;
-            if (!subkey->class) continue;
-            len = strlenW( subkey->class );
-            if (len > max_class) max_class = len;
+            if (key->subkeys[i]->namelen > max_subkey) max_subkey = key->subkeys[i]->namelen;
+            if (key->subkeys[i]->classlen > max_class) max_class = key->subkeys[i]->classlen;
         }
         for (i = 0; i <= key->last_value; i++)
         {
-            len = strlenW( key->values[i].name );
-            if (len > max_value) max_value = len;
-            len = key->values[i].len;
-            if (len > max_data) max_data = len;
+            if (key->values[i].namelen > max_value) max_value = key->values[i].namelen;
+            if (key->values[i].len > max_data) max_data = key->values[i].len;
         }
         reply->max_subkey = max_subkey;
         reply->max_class  = max_class;
         reply->max_value  = max_value;
         reply->max_data   = max_data;
-        namelen = 0;  /* only return the class */
+        reply->namelen    = namelen;
+        if (info_class == KeyCachedInformation)
+            classlen = 0; /* don't return any data, only its size */
+        namelen = 0;  /* don't return name */
         break;
     default:
         set_error( STATUS_INVALID_PARAMETER );
@@ -724,7 +956,22 @@ static void enum_key( const struct key *key, int index, int info_class,
         {
             reply->namelen = namelen;
             memcpy( data, key->name, namelen );
-            memcpy( (char *)data + namelen, key->class, len - namelen );
+            memcpy( data + namelen, key->class, len - namelen );
+        }
+        else if (info_class == KeyNameInformation)
+        {
+            data_size_t pos = namelen;
+            reply->namelen = namelen;
+            for (k = key; k != root_key; k = k->parent)
+            {
+                pos -= k->namelen;
+                if (pos < len) memcpy( data + pos, k->name,
+                                       min( k->namelen, len - pos ) );
+                pos -= sizeof(backslash);
+                if (pos < len) memcpy( data + pos, backslash,
+                                       min( sizeof(backslash), len - pos ) );
+            }
+            memcpy( data, root_name, min( sizeof(root_name) - sizeof(backslash), len ) );
         }
         else
         {
@@ -739,7 +986,7 @@ static void enum_key( const struct key *key, int index, int info_class,
 static int delete_key( struct key *key, int recurse )
 {
     int index;
-    struct key *parent;
+    struct key *parent = key->parent;
 
     /* must find parent and index */
     if (key == root_key)
@@ -747,11 +994,7 @@ static int delete_key( struct key *key, int recurse )
         set_error( STATUS_ACCESS_DENIED );
         return -1;
     }
-    if (!(parent = key->parent) || (key->flags & KEY_DELETED))
-    {
-        set_error( STATUS_KEY_DELETED );
-        return -1;
-    }
+    assert( parent );
 
     while (recurse && (key->last_subkey>=0))
         if (0 > delete_key(key->subkeys[key->last_subkey], 1))
@@ -800,16 +1043,20 @@ static int grow_values( struct key *key )
 }
 
 /* find the named value of a given key and return its index in the array */
-static struct key_value *find_value( const struct key *key, const WCHAR *name, int *index )
+static struct key_value *find_value( const struct key *key, const struct unicode_str *name, int *index )
 {
     int i, min, max, res;
+    data_size_t len;
 
     min = 0;
     max = key->last_value;
     while (min <= max)
     {
         i = (min + max) / 2;
-        if (!(res = strcmpiW( key->values[i].name, name )))
+        len = min( key->values[i].namelen, name->len );
+        res = memicmpW( key->values[i].name, name->str, len / sizeof(WCHAR) );
+        if (!res) res = key->values[i].namelen - name->len;
+        if (!res)
         {
             *index = i;
             return &key->values[i];
@@ -822,27 +1069,34 @@ static struct key_value *find_value( const struct key *key, const WCHAR *name, i
 }
 
 /* insert a new value; the index must have been returned by find_value */
-static struct key_value *insert_value( struct key *key, const WCHAR *name, int index )
+static struct key_value *insert_value( struct key *key, const struct unicode_str *name, int index )
 {
     struct key_value *value;
-    WCHAR *new_name;
+    WCHAR *new_name = NULL;
     int i;
 
+    if (name->len > MAX_VALUE_LEN * sizeof(WCHAR))
+    {
+        set_error( STATUS_NAME_TOO_LONG );
+        return NULL;
+    }
     if (key->last_value + 1 == key->nb_values)
     {
         if (!grow_values( key )) return NULL;
     }
-    if (!(new_name = strdupW(name))) return NULL;
+    if (name->len && !(new_name = memdup( name->str, name->len ))) return NULL;
     for (i = ++key->last_value; i > index; i--) key->values[i] = key->values[i - 1];
     value = &key->values[index];
-    value->name = new_name;
-    value->len  = 0;
-    value->data = NULL;
+    value->name    = new_name;
+    value->namelen = name->len;
+    value->len     = 0;
+    value->data    = NULL;
     return value;
 }
 
 /* set a key value */
-static void set_value( struct key *key, WCHAR *name, int type, const void *data, size_t len )
+static void set_value( struct key *key, const struct unicode_str *name,
+                       int type, const void *data, data_size_t len )
 {
     struct key_value *value;
     void *ptr = NULL;
@@ -859,17 +1113,27 @@ static void set_value( struct key *key, WCHAR *name, int type, const void *data,
         }
     }
 
+    if (key->flags & KEY_SYMLINK)
+    {
+        if (type != REG_LINK || name->len != symlink_str.len ||
+            memicmpW( name->str, symlink_str.str, name->len / sizeof(WCHAR) ))
+        {
+            set_error( STATUS_ACCESS_DENIED );
+            return;
+        }
+    }
+
     if (len && !(ptr = memdup( data, len ))) return;
 
     if (!value)
     {
         if (!(value = insert_value( key, name, index )))
         {
-            if (ptr) free( ptr );
+            free( ptr );
             return;
         }
     }
-    else if (value->data) free( value->data ); /* already existing, free previous data */
+    else free( value->data ); /* already existing, free previous data */
 
     value->type  = type;
     value->len   = len;
@@ -879,7 +1143,7 @@ static void set_value( struct key *key, WCHAR *name, int type, const void *data,
 }
 
 /* get a key value */
-static void get_value( struct key *key, const WCHAR *name, int *type, unsigned int *len )
+static void get_value( struct key *key, const struct unicode_str *name, int *type, data_size_t *len )
 {
     struct key_value *value;
     int index;
@@ -907,11 +1171,11 @@ static void enum_value( struct key *key, int i, int info_class, struct enum_key_
     else
     {
         void *data;
-        size_t namelen, maxlen;
+        data_size_t namelen, maxlen;
 
         value = &key->values[i];
         reply->type = value->type;
-        namelen = strlenW( value->name ) * sizeof(WCHAR);
+        namelen = value->namelen;
 
         switch(info_class)
         {
@@ -950,7 +1214,7 @@ static void enum_value( struct key *key, int i, int info_class, struct enum_key_
 }
 
 /* delete a value */
-static void delete_value( struct key *key, const WCHAR *name )
+static void delete_value( struct key *key, const struct unicode_str *name )
 {
     struct key_value *value;
     int i, index, nb_values;
@@ -962,7 +1226,7 @@ static void delete_value( struct key *key, const WCHAR *name )
     }
     if (debug_level > 1) dump_operation( key, value, "Delete" );
     free( value->name );
-    if (value->data) free( value->data );
+    free( value->data );
     for (i = index; i < key->last_value; i++) key->values[i] = key->values[i + 1];
     key->last_value--;
     touch_key( key, REG_NOTIFY_CHANGE_LAST_SET );
@@ -983,8 +1247,22 @@ static void delete_value( struct key *key, const WCHAR *name )
 /* get the registry key corresponding to an hkey handle */
 static struct key *get_hkey_obj( obj_handle_t hkey, unsigned int access )
 {
+    struct key *key = (struct key *)get_handle_obj( current->process, hkey, access, &key_ops );
+
+    if (key && key->flags & KEY_DELETED)
+    {
+        set_error( STATUS_KEY_DELETED );
+        release_object( key );
+        key = NULL;
+    }
+    return key;
+}
+
+/* get the registry key corresponding to a parent key handle */
+static inline struct key *get_parent_hkey_obj( obj_handle_t hkey )
+{
     if (!hkey) return (struct key *)grab_object( root_key );
-    return (struct key *)get_handle_obj( current->process, hkey, access, &key_ops );
+    return get_hkey_obj( hkey, 0 );
 }
 
 /* read a line from the input file */
@@ -1038,66 +1316,10 @@ static int get_file_tmp_space( struct file_load_info *info, size_t size )
 /* report an error while loading an input file */
 static void file_read_error( const char *err, struct file_load_info *info )
 {
-    fprintf( stderr, "Line %d: %s '%s'\n", info->line, err, info->buffer );
-}
-
-/* parse an escaped string back into Unicode */
-/* return the number of chars read from the input, or -1 on output overflow */
-static int parse_strW( WCHAR *dest, int *len, const char *src, char endchar )
-{
-    int count = sizeof(WCHAR);  /* for terminating null */
-    const char *p = src;
-    while (*p && *p != endchar)
-    {
-        if (*p != '\\') *dest = (WCHAR)*p++;
-        else
-        {
-            p++;
-            switch(*p)
-            {
-            case 'a': *dest = '\a'; p++; break;
-            case 'b': *dest = '\b'; p++; break;
-            case 'e': *dest = '\e'; p++; break;
-            case 'f': *dest = '\f'; p++; break;
-            case 'n': *dest = '\n'; p++; break;
-            case 'r': *dest = '\r'; p++; break;
-            case 't': *dest = '\t'; p++; break;
-            case 'v': *dest = '\v'; p++; break;
-            case 'x':  /* hex escape */
-                p++;
-                if (!isxdigit(*p)) *dest = 'x';
-                else
-                {
-                    *dest = to_hex(*p++);
-                    if (isxdigit(*p)) *dest = (*dest * 16) + to_hex(*p++);
-                    if (isxdigit(*p)) *dest = (*dest * 16) + to_hex(*p++);
-                    if (isxdigit(*p)) *dest = (*dest * 16) + to_hex(*p++);
-                }
-                break;
-            case '0':
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-            case '6':
-            case '7':  /* octal escape */
-                *dest = *p++ - '0';
-                if (*p >= '0' && *p <= '7') *dest = (*dest * 8) + (*p++ - '0');
-                if (*p >= '0' && *p <= '7') *dest = (*dest * 8) + (*p++ - '0');
-                break;
-            default:
-                *dest = (WCHAR)*p++;
-                break;
-            }
-        }
-        if ((count += sizeof(WCHAR)) > *len) return -1;  /* dest buffer overflow */
-        dest++;
-    }
-    *dest = 0;
-    if (!*p) return -1;  /* delimiter not found */
-    *len = count;
-    return p + 1 - src;
+    if (info->filename)
+        fprintf( stderr, "%s:%d: %s '%s'\n", info->filename, info->line, err, info->buffer );
+    else
+        fprintf( stderr, "<fd>:%d: %s '%s'\n", info->line, err, info->buffer );
 }
 
 /* convert a data type tag to a value type */
@@ -1122,34 +1344,39 @@ static int get_data_type( const char *buffer, int *type, int *parse_type )
 
     for (ptr = data_types; ptr->tag; ptr++)
     {
-        if (memcmp( ptr->tag, buffer, ptr->len )) continue;
+        if (strncmp( ptr->tag, buffer, ptr->len )) continue;
         *parse_type = ptr->parse_type;
         if ((*type = ptr->type) != -1) return ptr->len;
         /* "hex(xx):" is special */
         *type = (int)strtoul( buffer + 4, &end, 16 );
-        if ((end <= buffer) || memcmp( end, "):", 2 )) return 0;
+        if ((end <= buffer) || strncmp( end, "):", 2 )) return 0;
         return end + 2 - buffer;
     }
     return 0;
 }
 
 /* load and create a key from the input file */
-static struct key *load_key( struct key *base, const char *buffer, int flags,
-                             int prefix_len, struct file_load_info *info,
-                             int default_modif )
+static struct key *load_key( struct key *base, const char *buffer, int prefix_len,
+                             struct file_load_info *info, timeout_t *modif )
 {
-    WCHAR *p, *name;
-    int res, len, modif;
+    WCHAR *p;
+    struct unicode_str name;
+    int res;
+    unsigned int mod;
+    data_size_t len;
 
-    len = strlen(buffer) * sizeof(WCHAR);
-    if (!get_file_tmp_space( info, len )) return NULL;
+    if (!get_file_tmp_space( info, strlen(buffer) * sizeof(WCHAR) )) return NULL;
 
+    len = info->tmplen;
     if ((res = parse_strW( info->tmp, &len, buffer, ']' )) == -1)
     {
         file_read_error( "Malformed key", info );
         return NULL;
     }
-    if (sscanf( buffer + res, " %d", &modif ) != 1) modif = default_modif;
+    if (sscanf( buffer + res, " %u", &mod ) == 1)
+        *modif = (timeout_t)mod * TICKS_PER_SEC + ticks_1601_to_1970;
+    else
+        *modif = current_time;
 
     p = info->tmp;
     while (prefix_len && *p) { if (*p++ == '\\') prefix_len--; }
@@ -1164,60 +1391,134 @@ static struct key *load_key( struct key *base, const char *buffer, int flags,
         /* empty key name, return base key */
         return (struct key *)grab_object( base );
     }
-    if (!(name = copy_path( p, len - (p - info->tmp) * sizeof(WCHAR), 0 )))
+    name.str = p;
+    name.len = len - (p - info->tmp + 1) * sizeof(WCHAR);
+    return create_key_recursive( base, &name, 0 );
+}
+
+/* update the modification time of a key (and its parents) after it has been loaded from a file */
+static void update_key_time( struct key *key, timeout_t modif )
+{
+    while (key && !key->modif)
     {
-        file_read_error( "Key is too long", info );
-        return NULL;
+        key->modif = modif;
+        key = key->parent;
     }
-    return create_key( base, name, NULL, flags, modif, &res );
+}
+
+/* load a global option from the input file */
+static int load_global_option( const char *buffer, struct file_load_info *info )
+{
+    const char *p;
+
+    if (!strncmp( buffer, "#arch=", 6 ))
+    {
+        enum prefix_type type;
+        p = buffer + 6;
+        if (!strcmp( p, "win32" )) type = PREFIX_32BIT;
+        else if (!strcmp( p, "win64" )) type = PREFIX_64BIT;
+        else
+        {
+            file_read_error( "Unknown architecture", info );
+            set_error( STATUS_NOT_REGISTRY_FILE );
+            return 0;
+        }
+        if (prefix_type == PREFIX_UNKNOWN) prefix_type = type;
+        else if (type != prefix_type)
+        {
+            file_read_error( "Mismatched architecture", info );
+            set_error( STATUS_NOT_REGISTRY_FILE );
+            return 0;
+        }
+    }
+    /* ignore unknown options */
+    return 1;
+}
+
+/* load a key option from the input file */
+static int load_key_option( struct key *key, const char *buffer, struct file_load_info *info )
+{
+    const char *p;
+    data_size_t len;
+
+    if (!strncmp( buffer, "#time=", 6 ))
+    {
+        timeout_t modif = 0;
+        for (p = buffer + 6; *p; p++)
+        {
+            if (*p >= '0' && *p <= '9') modif = (modif << 4) | (*p - '0');
+            else if (*p >= 'A' && *p <= 'F') modif = (modif << 4) | (*p - 'A' + 10);
+            else if (*p >= 'a' && *p <= 'f') modif = (modif << 4) | (*p - 'a' + 10);
+            else break;
+        }
+        update_key_time( key, modif );
+    }
+    if (!strncmp( buffer, "#class=", 7 ))
+    {
+        p = buffer + 7;
+        if (*p++ != '"') return 0;
+        if (!get_file_tmp_space( info, strlen(p) * sizeof(WCHAR) )) return 0;
+        len = info->tmplen;
+        if (parse_strW( info->tmp, &len, p, '\"' ) == -1) return 0;
+        free( key->class );
+        if (!(key->class = memdup( info->tmp, len ))) len = 0;
+        key->classlen = len;
+    }
+    if (!strncmp( buffer, "#link", 5 )) key->flags |= KEY_SYMLINK;
+    /* ignore unknown options */
+    return 1;
 }
 
 /* parse a comma-separated list of hex digits */
-static int parse_hex( unsigned char *dest, int *len, const char *buffer )
+static int parse_hex( unsigned char *dest, data_size_t *len, const char *buffer )
 {
     const char *p = buffer;
-    int count = 0;
+    data_size_t count = 0;
+    char *end;
+
     while (isxdigit(*p))
     {
-        int val;
-        char buf[3];
-        memcpy( buf, p, 2 );
-        buf[2] = 0;
-        sscanf( buf, "%x", &val );
+        unsigned int val = strtoul( p, &end, 16 );
+        if (end == p || val > 0xff) return -1;
         if (count++ >= *len) return -1;  /* dest buffer overflow */
-        *dest++ = (unsigned char )val;
-        p += 2;
+        *dest++ = val;
+        p = end;
+        while (isspace(*p)) p++;
         if (*p == ',') p++;
+        while (isspace(*p)) p++;
     }
     *len = count;
     return p - buffer;
 }
 
 /* parse a value name and create the corresponding value */
-static struct key_value *parse_value_name( struct key *key, const char *buffer, int *len,
+static struct key_value *parse_value_name( struct key *key, const char *buffer, data_size_t *len,
                                            struct file_load_info *info )
 {
     struct key_value *value;
-    int index, maxlen;
+    struct unicode_str name;
+    int index;
 
-    maxlen = strlen(buffer) * sizeof(WCHAR);
-    if (!get_file_tmp_space( info, maxlen )) return NULL;
+    if (!get_file_tmp_space( info, strlen(buffer) * sizeof(WCHAR) )) return NULL;
+    name.str = info->tmp;
+    name.len = info->tmplen;
     if (buffer[0] == '@')
     {
-        info->tmp[0] = 0;
+        name.len = 0;
         *len = 1;
     }
     else
     {
-        if ((*len = parse_strW( info->tmp, &maxlen, buffer + 1, '\"' )) == -1) goto error;
-        (*len)++;  /* for initial quote */
+        int r = parse_strW( info->tmp, &name.len, buffer + 1, '\"' );
+        if (r == -1) goto error;
+        *len = r + 1; /* for initial quote */
+        name.len -= sizeof(WCHAR);  /* terminating null */
     }
     while (isspace(buffer[*len])) (*len)++;
     if (buffer[*len] != '=') goto error;
     (*len)++;
     while (isspace(buffer[*len])) (*len)++;
-    if (!(value = find_value( key, info->tmp, &index )))
-        value = insert_value( key, info->tmp, index );
+    if (!(value = find_value( key, &name, &index ))) value = insert_value( key, &name, index );
     return value;
 
  error:
@@ -1230,8 +1531,8 @@ static int load_value( struct key *key, const char *buffer, struct file_load_inf
 {
     DWORD dw;
     void *ptr, *newptr;
-    int maxlen, len, res;
-    int type, parse_type;
+    int res, type, parse_type;
+    data_size_t maxlen, len;
     struct key_value *value;
 
     if (!(value = parse_value_name( key, buffer, &len, info ))) return 0;
@@ -1241,8 +1542,8 @@ static int load_value( struct key *key, const char *buffer, struct file_load_inf
     switch(parse_type)
     {
     case REG_SZ:
-        len = strlen(buffer) * sizeof(WCHAR);
-        if (!get_file_tmp_space( info, len )) return 0;
+        if (!get_file_tmp_space( info, strlen(buffer) * sizeof(WCHAR) )) return 0;
+        len = info->tmplen;
         if ((res = parse_strW( info->tmp, &len, buffer, '\"' )) == -1) goto error;
         ptr = info->tmp;
         break;
@@ -1255,7 +1556,7 @@ static int load_value( struct key *key, const char *buffer, struct file_load_inf
         len = 0;
         for (;;)
         {
-            maxlen = 1 + strlen(buffer)/3;  /* 3 chars for one hex byte */
+            maxlen = 1 + strlen(buffer) / 2;  /* at least 2 chars for one hex byte */
             if (!get_file_tmp_space( info, len + maxlen )) return 0;
             if ((res = parse_hex( (unsigned char *)info->tmp + len, &maxlen, buffer )) == -1) goto error;
             len += maxlen;
@@ -1278,15 +1579,18 @@ static int load_value( struct key *key, const char *buffer, struct file_load_inf
     if (!len) newptr = NULL;
     else if (!(newptr = memdup( ptr, len ))) return 0;
 
-    if (value->data) free( value->data );
+    free( value->data );
     value->data = newptr;
     value->len  = len;
     value->type = type;
-    make_dirty( key );
     return 1;
 
  error:
     file_read_error( "Malformed value", info );
+    free( value->data );
+    value->data = NULL;
+    value->len  = 0;
+    value->type = REG_NONE;
     return 0;
 }
 
@@ -1296,19 +1600,21 @@ static int get_prefix_len( struct key *key, const char *name, struct file_load_i
 {
     WCHAR *p;
     int res;
-    int len = strlen(name) * sizeof(WCHAR);
-    if (!get_file_tmp_space( info, len )) return 0;
+    data_size_t len;
 
+    if (!get_file_tmp_space( info, strlen(name) * sizeof(WCHAR) )) return 0;
+
+    len = info->tmplen;
     if ((res = parse_strW( info->tmp, &len, name, ']' )) == -1)
     {
         file_read_error( "Malformed key", info );
         return 0;
     }
     for (p = info->tmp; *p; p++) if (*p == '\\') break;
-    *p = 0;
+    len = (p - info->tmp) * sizeof(WCHAR);
     for (res = 1; key != root_key; res++)
     {
-        if (!strcmpiW( info->tmp, key->name )) break;
+        if (len == key->namelen && !memicmpW( info->tmp, key->name, len / sizeof(WCHAR) )) break;
         key = key->parent;
     }
     if (key == root_key) res = 0;  /* no matching name */
@@ -1317,14 +1623,14 @@ static int get_prefix_len( struct key *key, const char *name, struct file_load_i
 
 /* load all the keys from the input file */
 /* prefix_len is the number of key name prefixes to skip, or -1 for autodetection */
-static void load_keys( struct key *key, FILE *f, int prefix_len )
+static void load_keys( struct key *key, const char *filename, FILE *f, int prefix_len )
 {
     struct key *subkey = NULL;
     struct file_load_info info;
+    timeout_t modif = current_time;
     char *p;
-    int default_modif = time(NULL);
-    int flags = (key->flags & KEY_VOLATILE) ? KEY_VOLATILE : KEY_DIRTY;
 
+    info.filename = filename;
     info.file   = f;
     info.len    = 4;
     info.tmplen = 4;
@@ -1350,9 +1656,13 @@ static void load_keys( struct key *key, FILE *f, int prefix_len )
         switch(*p)
         {
         case '[':   /* new key */
-            if (subkey) release_object( subkey );
+            if (subkey)
+            {
+                update_key_time( subkey, modif );
+                release_object( subkey );
+            }
             if (prefix_len == -1) prefix_len = get_prefix_len( key, p + 1, &info );
-            if (!(subkey = load_key( key, p + 1, flags, prefix_len, &info, default_modif )))
+            if (!(subkey = load_key( key, p + 1, prefix_len, &info, &modif )))
                 file_read_error( "Error creating key", &info );
             break;
         case '@':   /* default value */
@@ -1360,7 +1670,10 @@ static void load_keys( struct key *key, FILE *f, int prefix_len )
             if (subkey) load_value( subkey, p, &info );
             else file_read_error( "Value without key", &info );
             break;
-        case '#':   /* comment */
+        case '#':   /* option */
+            if (subkey) load_key_option( subkey, p, &info );
+            else if (!load_global_option( p, &info )) goto done;
+            break;
         case ';':   /* comment */
         case 0:     /* empty line */
             break;
@@ -1371,7 +1684,11 @@ static void load_keys( struct key *key, FILE *f, int prefix_len )
     }
 
  done:
-    if (subkey) release_object( subkey );
+    if (subkey)
+    {
+        update_key_time( subkey, modif );
+        release_object( subkey );
+    }
     free( info.buffer );
     free( info.tmp );
 }
@@ -1382,7 +1699,7 @@ static void load_registry( struct key *key, obj_handle_t handle )
     struct file *file;
     int fd;
 
-    if (!(file = get_file_obj( current->process, handle, GENERIC_READ ))) return;
+    if (!(file = get_file_obj( current->process, handle, FILE_READ_DATA ))) return;
     fd = dup( get_file_unix_fd( file ) );
     release_object( file );
     if (fd != -1)
@@ -1390,7 +1707,7 @@ static void load_registry( struct key *key, obj_handle_t handle )
         FILE *f = fdopen( fd, "r" );
         if (f)
         {
-            load_keys( key, f, -1 );
+            load_keys( key, NULL, f, -1 );
             fclose( f );
         }
         else file_set_error();
@@ -1398,30 +1715,30 @@ static void load_registry( struct key *key, obj_handle_t handle )
 }
 
 /* load one of the initial registry files */
-static void load_init_registry_from_file( const char *filename, struct key *key )
+static int load_init_registry_from_file( const char *filename, struct key *key )
 {
     FILE *f;
 
     if ((f = fopen( filename, "r" )))
     {
-        load_keys( key, f, 0 );
+        load_keys( key, filename, f, 0 );
         fclose( f );
         if (get_error() == STATUS_NOT_REGISTRY_FILE)
-            fatal_error( "%s is not a valid registry file\n", filename );
-        if (get_error())
-            fatal_error( "loading %s failed with error %x\n", filename, get_error() );
+        {
+            fprintf( stderr, "%s is not a valid registry file\n", filename );
+            return 1;
+        }
     }
 
-    if (!(key->flags & KEY_VOLATILE))
-    {
-        assert( save_branch_count < MAX_SAVE_BRANCH_INFO );
+    assert( save_branch_count < MAX_SAVE_BRANCH_INFO );
 
-        if ((save_branch_info[save_branch_count].path = strdup( filename )))
-            save_branch_info[save_branch_count++].key = (struct key *)grab_object( key );
-    }
+    save_branch_info[save_branch_count].path = filename;
+    save_branch_info[save_branch_count++].key = (struct key *)grab_object( key );
+    make_object_static( &key->obj );
+    return (f != NULL);
 }
 
-static WCHAR *format_user_registry_path( const SID *sid )
+static WCHAR *format_user_registry_path( const SID *sid, struct unicode_str *path )
 {
     static const WCHAR prefixW[] = {'U','s','e','r','\\','S',0};
     static const WCHAR formatW[] = {'-','%','u',0};
@@ -1439,66 +1756,118 @@ static WCHAR *format_user_registry_path( const SID *sid )
     for (i = 0; i < sid->SubAuthorityCount; i++)
         p += sprintfW( p, formatW, sid->SubAuthority[i] );
 
-    return memdup( buffer, (p + 1 - buffer) * sizeof(WCHAR) );
+    path->len = (p - buffer) * sizeof(WCHAR);
+    path->str = p = memdup( buffer, path->len );
+    return p;
+}
+
+/* get the cpu architectures that can be supported in the current prefix */
+unsigned int get_prefix_cpu_mask(void)
+{
+    /* Allowed server/client/prefix combinations:
+     *
+     *              prefix
+     *            32     64
+     *  server +------+------+ client
+     *         |  ok  | fail | 32
+     *      32 +------+------+---
+     *         | fail | fail | 64
+     *      ---+------+------+---
+     *         |  ok  |  ok  | 32
+     *      64 +------+------+---
+     *         | fail |  ok  | 64
+     *      ---+------+------+---
+     */
+    switch (prefix_type)
+    {
+    case PREFIX_64BIT:
+        /* 64-bit prefix requires 64-bit server */
+        return sizeof(void *) > sizeof(int) ? ~0 : 0;
+    case PREFIX_32BIT:
+    default:
+        return ~CPU_64BIT_MASK;  /* only 32-bit cpus supported on 32-bit prefix */
+    }
 }
 
 /* registry initialisation */
 void init_registry(void)
 {
-    static const WCHAR root_name[] = { 0 };
     static const WCHAR HKLM[] = { 'M','a','c','h','i','n','e' };
     static const WCHAR HKU_default[] = { 'U','s','e','r','\\','.','D','e','f','a','u','l','t' };
-    WCHAR *current_user_path;
+    static const WCHAR classes[] = {'S','o','f','t','w','a','r','e','\\',
+                                    'C','l','a','s','s','e','s','\\',
+                                    'W','o','w','6','4','3','2','N','o','d','e'};
+    static const struct unicode_str root_name = { NULL, 0 };
+    static const struct unicode_str HKLM_name = { HKLM, sizeof(HKLM) };
+    static const struct unicode_str HKU_name = { HKU_default, sizeof(HKU_default) };
+    static const struct unicode_str classes_name = { classes, sizeof(classes) };
 
-    const char *config = wine_get_config_dir();
-    char *p, *filename;
-    struct key *key;
-    int dummy;
+    WCHAR *current_user_path;
+    struct unicode_str current_user_str;
+    struct key *key, *hklm, *hkcu;
+    char *p;
+
+    /* switch to the config dir */
+
+    if (fchdir( config_dir_fd ) == -1) fatal_error( "chdir to config dir: %s\n", strerror( errno ));
 
     /* create the root key */
-    root_key = alloc_key( root_name, time(NULL) );
+    root_key = alloc_key( &root_name, current_time );
     assert( root_key );
-
-    if (!(filename = malloc( strlen(config) + 16 ))) fatal_error( "out of memory\n" );
-    strcpy( filename, config );
-    p = filename + strlen(filename);
+    make_object_static( &root_key->obj );
 
     /* load system.reg into Registry\Machine */
 
-    if (!(key = create_key( root_key, copy_path( HKLM, sizeof(HKLM), 0 ),
-                            NULL, 0, time(NULL), &dummy )))
+    if (!(hklm = create_key_recursive( root_key, &HKLM_name, current_time )))
         fatal_error( "could not create Machine registry key\n" );
 
-    strcpy( p, "/system.reg" );
-    load_init_registry_from_file( filename, key );
-    release_object( key );
+    if (!load_init_registry_from_file( "system.reg", hklm ))
+    {
+        if ((p = getenv( "WINEARCH" )) && !strcmp( p, "win32" ))
+            prefix_type = PREFIX_32BIT;
+        else
+            prefix_type = sizeof(void *) > sizeof(int) ? PREFIX_64BIT : PREFIX_32BIT;
+    }
+    else if (prefix_type == PREFIX_UNKNOWN)
+        prefix_type = PREFIX_32BIT;
 
     /* load userdef.reg into Registry\User\.Default */
 
-    if (!(key = create_key( root_key, copy_path( HKU_default, sizeof(HKU_default), 0 ),
-                            NULL, 0, time(NULL), &dummy )))
+    if (!(key = create_key_recursive( root_key, &HKU_name, current_time )))
         fatal_error( "could not create User\\.Default registry key\n" );
 
-    strcpy( p, "/userdef.reg" );
-    load_init_registry_from_file( filename, key );
+    load_init_registry_from_file( "userdef.reg", key );
     release_object( key );
 
     /* load user.reg into HKEY_CURRENT_USER */
 
     /* FIXME: match default user in token.c. should get from process token instead */
-    current_user_path = format_user_registry_path( security_interactive_sid );
+    current_user_path = format_user_registry_path( security_local_user_sid, &current_user_str );
     if (!current_user_path ||
-        !(key = create_key( root_key, current_user_path, NULL, 0, time(NULL), &dummy )))
+        !(hkcu = create_key_recursive( root_key, &current_user_str, current_time )))
         fatal_error( "could not create HKEY_CURRENT_USER registry key\n" );
     free( current_user_path );
-    strcpy( p, "/user.reg" );
-    load_init_registry_from_file( filename, key );
-    release_object( key );
+    load_init_registry_from_file( "user.reg", hkcu );
 
-    free( filename );
+    /* set the shared flag on Software\Classes\Wow6432Node */
+    if (prefix_type == PREFIX_64BIT)
+    {
+        if ((key = create_key_recursive( hklm, &classes_name, current_time )))
+        {
+            key->flags |= KEY_WOWSHARE;
+            release_object( key );
+        }
+        /* FIXME: handle HKCU too */
+    }
+
+    release_object( hklm );
+    release_object( hkcu );
 
     /* start the periodic save timer */
     set_periodic_save_timer();
+
+    /* go back to the server dir */
+    if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
 }
 
 /* save a registry branch to a file */
@@ -1508,6 +1877,17 @@ static void save_all_subkeys( struct key *key, FILE *f )
     fprintf( f, ";; All keys relative to " );
     dump_path( key, NULL, f );
     fprintf( f, "\n" );
+    switch (prefix_type)
+    {
+    case PREFIX_32BIT:
+        fprintf( f, "\n#arch=win32\n" );
+        break;
+    case PREFIX_64BIT:
+        fprintf( f, "\n#arch=win64\n" );
+        break;
+    default:
+        break;
+    }
     save_subkeys( key, key, f );
 }
 
@@ -1517,12 +1897,7 @@ static void save_registry( struct key *key, obj_handle_t handle )
     struct file *file;
     int fd;
 
-    if (key->flags & KEY_DELETED)
-    {
-        set_error( STATUS_KEY_DELETED );
-        return;
-    }
-    if (!(file = get_file_obj( current->process, handle, GENERIC_WRITE ))) return;
+    if (!(file = get_file_obj( current->process, handle, FILE_WRITE_DATA ))) return;
     fd = dup( get_file_unix_fd( file ) );
     release_object( file );
     if (fd != -1)
@@ -1545,8 +1920,8 @@ static void save_registry( struct key *key, obj_handle_t handle )
 static int save_branch( struct key *key, const char *path )
 {
     struct stat st;
-    char *p, *real, *tmp = NULL;
-    int fd, count = 0, ret = 0, by_symlink;
+    char *p, *tmp = NULL;
+    int fd, count = 0, ret = 0;
     FILE *f;
 
     if (!(key->flags & KEY_DIRTY))
@@ -1555,25 +1930,13 @@ static int save_branch( struct key *key, const char *path )
         return 1;
     }
 
-    /* get the real path */
-
-    by_symlink = (!lstat(path, &st) && S_ISLNK (st.st_mode));
-    if (!(real = malloc( PATH_MAX ))) return 0;
-    if (!realpath( path, real ))
-    {
-        free( real );
-        real = NULL;
-    }
-    else path = real;
-
     /* test the file type */
 
     if ((fd = open( path, O_WRONLY )) != -1)
     {
         /* if file is not a regular file or has multiple links or is accessed
          * via symbolic links, write directly into it; otherwise use a temp file */
-        if (by_symlink ||
-            (!fstat( fd, &st ) && (!S_ISREG(st.st_mode) || st.st_nlink > 1)))
+        if (!lstat( path, &st ) && (!S_ISREG(st.st_mode) || st.st_nlink > 1))
         {
             ftruncate( fd, 0 );
             goto save;
@@ -1623,7 +1986,6 @@ static int save_branch( struct key *key, const char *path )
 
 done:
     free( tmp );
-    free( real );
     if (ret) make_clean( key );
     return ret;
 }
@@ -1633,21 +1995,19 @@ static void periodic_save( void *arg )
 {
     int i;
 
+    if (fchdir( config_dir_fd ) == -1) return;
     save_timeout_user = NULL;
     for (i = 0; i < save_branch_count; i++)
         save_branch( save_branch_info[i].key, save_branch_info[i].path );
+    if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
     set_periodic_save_timer();
 }
 
 /* start the periodic save timer */
 static void set_periodic_save_timer(void)
 {
-    struct timeval next;
-
-    gettimeofday( &next, NULL );
-    add_timeout( &next, save_period );
     if (save_timeout_user) remove_timeout_user( save_timeout_user );
-    save_timeout_user = add_timeout_user( &next, periodic_save, NULL );
+    save_timeout_user = add_timeout_user( save_period, periodic_save, NULL );
 }
 
 /* save the modified registry branches to disk */
@@ -1655,6 +2015,7 @@ void flush_registry(void)
 {
     int i;
 
+    if (fchdir( config_dir_fd ) == -1) return;
     for (i = 0; i < save_branch_count; i++)
     {
         if (!save_branch( save_branch_info[i].key, save_branch_info[i].path ))
@@ -1664,21 +2025,13 @@ void flush_registry(void)
             perror( " " );
         }
     }
+    if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
 }
 
-/* close the top-level keys; used on server exit */
-void close_registry(void)
+/* determine if the thread is wow64 (32-bit client running on 64-bit prefix) */
+static int is_wow64_thread( struct thread *thread )
 {
-    int i;
-
-    if (save_timeout_user) remove_timeout_user( save_timeout_user );
-    save_timeout_user = NULL;
-    for (i = 0; i < save_branch_count; i++)
-    {
-        release_object( save_branch_info[i].key );
-        free( save_branch_info[i].path );
-    }
-    release_object( root_key );
+    return (prefix_type == PREFIX_64BIT && !(CPU_FLAG(thread->process->cpu) & CPU_64BIT_MASK));
 }
 
 
@@ -1686,34 +2039,32 @@ void close_registry(void)
 DECL_HANDLER(create_key)
 {
     struct key *key = NULL, *parent;
+    struct unicode_str name, class;
     unsigned int access = req->access;
-    WCHAR *name, *class;
+    const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, NULL );
 
-    if (access & MAXIMUM_ALLOWED) access = KEY_ALL_ACCESS;  /* FIXME: needs general solution */
-    reply->hkey = 0;
-    if (!(name = copy_req_path( req->namelen, !req->parent ))) return;
-    /* NOTE: no access rights are required from the parent handle to create a key */
-    if ((parent = get_hkey_obj( req->parent, 0 )))
+    if (!objattr) return;
+
+    if (!is_wow64_thread( current )) access = (access & ~KEY_WOW64_32KEY) | KEY_WOW64_64KEY;
+
+    class.str = get_req_data_after_objattr( objattr, &class.len );
+    class.len = (class.len / sizeof(WCHAR)) * sizeof(WCHAR);
+
+    if (!objattr->rootdir && name.len >= sizeof(root_name) &&
+        !memicmpW( name.str, root_name, ARRAY_SIZE( root_name )))
     {
-        int flags = (req->options & REG_OPTION_VOLATILE) ? KEY_VOLATILE : KEY_DIRTY;
+        name.str += ARRAY_SIZE( root_name );
+        name.len -= sizeof(root_name);
+    }
 
-        if (req->namelen == get_req_data_size())  /* no class specified */
+    /* NOTE: no access rights are required from the parent handle to create a key */
+    if ((parent = get_parent_hkey_obj( objattr->rootdir )))
+    {
+        if ((key = create_key( parent, &name, &class, req->options, access,
+                               objattr->attributes, sd, &reply->created )))
         {
-            key = create_key( parent, name, NULL, flags, req->modif, &reply->created );
-        }
-        else
-        {
-            const WCHAR *class_ptr = (const WCHAR *)((const char *)get_req_data() + req->namelen);
-
-            if ((class = req_strdupW( req, class_ptr, get_req_data_size() - req->namelen )))
-            {
-                key = create_key( parent, name, class, flags, req->modif, &reply->created );
-                free( class );
-            }
-        }
-        if (key)
-        {
-            reply->hkey = alloc_handle( current->process, key, access, 0 );
+            reply->hkey = alloc_handle( current->process, key, access, objattr->attributes );
             release_object( key );
         }
         release_object( parent );
@@ -1724,17 +2075,19 @@ DECL_HANDLER(create_key)
 DECL_HANDLER(open_key)
 {
     struct key *key, *parent;
+    struct unicode_str name;
     unsigned int access = req->access;
 
-    if (access & MAXIMUM_ALLOWED) access = KEY_ALL_ACCESS;  /* FIXME: needs general solution */
+    if (!is_wow64_thread( current )) access = (access & ~KEY_WOW64_32KEY) | KEY_WOW64_64KEY;
+
     reply->hkey = 0;
     /* NOTE: no access rights are required to open the parent key, only the child key */
-    if ((parent = get_hkey_obj( req->parent, 0 )))
+    if ((parent = get_parent_hkey_obj( req->parent )))
     {
-        WCHAR *name = copy_path( get_req_data(), get_req_data_size(), !req->parent );
-        if (name && (key = open_key( parent, name )))
+        get_req_path( &name, !req->parent );
+        if ((key = open_key( parent, &name, access, req->attributes )))
         {
-            reply->hkey = alloc_handle( current->process, key, access, 0 );
+            reply->hkey = alloc_handle( current->process, key, access, req->attributes );
             release_object( key );
         }
         release_object( parent );
@@ -1781,15 +2134,22 @@ DECL_HANDLER(enum_key)
 DECL_HANDLER(set_key_value)
 {
     struct key *key;
-    WCHAR *name;
+    struct unicode_str name;
 
-    if (!(name = copy_req_path( req->namelen, 0 ))) return;
+    if (req->namelen > get_req_data_size())
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+    name.str = get_req_data();
+    name.len = (req->namelen / sizeof(WCHAR)) * sizeof(WCHAR);
+
     if ((key = get_hkey_obj( req->hkey, KEY_SET_VALUE )))
     {
-        size_t datalen = get_req_data_size() - req->namelen;
+        data_size_t datalen = get_req_data_size() - req->namelen;
         const char *data = (const char *)get_req_data() + req->namelen;
 
-        set_value( key, name, req->type, data, datalen );
+        set_value( key, &name, req->type, data, datalen );
         release_object( key );
     }
 }
@@ -1798,13 +2158,12 @@ DECL_HANDLER(set_key_value)
 DECL_HANDLER(get_key_value)
 {
     struct key *key;
-    WCHAR *name;
+    struct unicode_str name = get_req_unicode_str();
 
     reply->total = 0;
-    if (!(name = copy_path( get_req_data(), get_req_data_size(), 0 ))) return;
     if ((key = get_hkey_obj( req->hkey, KEY_QUERY_VALUE )))
     {
-        get_value( key, name, &reply->type, &reply->total );
+        get_value( key, &name, &reply->type, &reply->total );
         release_object( key );
     }
 }
@@ -1824,16 +2183,12 @@ DECL_HANDLER(enum_key_value)
 /* delete a value of a registry key */
 DECL_HANDLER(delete_key_value)
 {
-    WCHAR *name;
     struct key *key;
+    struct unicode_str name = get_req_unicode_str();
 
     if ((key = get_hkey_obj( req->hkey, KEY_SET_VALUE )))
     {
-        if ((name = req_strdupW( req, get_req_data(), get_req_data_size() )))
-        {
-            delete_value( key, name );
-            free( name );
-        }
+        delete_value( key, &name );
         release_object( key );
     }
 }
@@ -1842,26 +2197,29 @@ DECL_HANDLER(delete_key_value)
 DECL_HANDLER(load_registry)
 {
     struct key *key, *parent;
-    struct token *token = thread_get_impersonation_token( current );
+    struct unicode_str name;
+    const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, NULL );
 
-    const LUID_AND_ATTRIBUTES privs[] =
-    {
-        { SeBackupPrivilege,  0 },
-        { SeRestorePrivilege, 0 },
-    };
+    if (!objattr) return;
 
-    if (!token || !token_check_privileges( token, TRUE, privs,
-                                           sizeof(privs)/sizeof(privs[0]), NULL ))
+    if (!thread_single_check_privilege( current, &SeRestorePrivilege ))
     {
         set_error( STATUS_PRIVILEGE_NOT_HELD );
         return;
     }
 
-    if ((parent = get_hkey_obj( req->hkey, 0 )))
+    if (!objattr->rootdir && name.len >= sizeof(root_name) &&
+        !memicmpW( name.str, root_name, ARRAY_SIZE( root_name )))
+    {
+        name.str += ARRAY_SIZE( root_name );
+        name.len -= sizeof(root_name);
+    }
+
+    if ((parent = get_parent_hkey_obj( objattr->rootdir )))
     {
         int dummy;
-        WCHAR *name = copy_path( get_req_data(), get_req_data_size(), !req->hkey );
-        if (name && (key = create_key( parent, name, NULL, KEY_DIRTY, time(NULL), &dummy )))
+        if ((key = create_key( parent, &name, NULL, 0, KEY_WOW64_64KEY, 0, sd, &dummy )))
         {
             load_registry( key, req->file );
             release_object( key );
@@ -1873,16 +2231,8 @@ DECL_HANDLER(load_registry)
 DECL_HANDLER(unload_registry)
 {
     struct key *key;
-    struct token *token = thread_get_impersonation_token( current );
 
-    const LUID_AND_ATTRIBUTES privs[] =
-    {
-        { SeBackupPrivilege,  0 },
-        { SeRestorePrivilege, 0 },
-    };
-
-    if (!token || !token_check_privileges( token, TRUE, privs,
-                                           sizeof(privs)/sizeof(privs[0]), NULL ))
+    if (!thread_single_check_privilege( current, &SeRestorePrivilege ))
     {
         set_error( STATUS_PRIVILEGE_NOT_HELD );
         return;
@@ -1929,7 +2279,8 @@ DECL_HANDLER(set_registry_notification)
             notify = find_notify( key, current->process, req->hkey );
             if (notify)
             {
-                release_object( notify->event );
+                if (notify->event)
+                    release_object( notify->event );
                 grab_object( event );
                 notify->event = event;
             }
@@ -1946,6 +2297,11 @@ DECL_HANDLER(set_registry_notification)
                     notify->process = current->process;
                     list_add_head( &key->notify_list, &notify->entry );
                 }
+            }
+            if (notify)
+            {
+                reset_event( event );
+                set_error( STATUS_PENDING );
             }
             release_object( event );
         }

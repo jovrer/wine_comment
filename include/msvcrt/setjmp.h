@@ -15,13 +15,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_SETJMP_H
 #define __WINE_SETJMP_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
+
+#include <pshpack8.h>
 
 #ifdef __i386__
 
@@ -41,24 +42,116 @@ typedef struct __JUMP_BUFFER
     unsigned long UnwindData[6];
 } _JUMP_BUFFER;
 
-#endif /* __i386__ */
+#define _JBLEN 16
+#define _JBTYPE int
 
-#define _JBLEN                     16
-#define _JBTYPE                    int
-typedef _JBTYPE                    jmp_buf[_JBLEN];
+#elif defined(__x86_64__)
 
+typedef struct _SETJMP_FLOAT128
+{
+    unsigned __int64 DECLSPEC_ALIGN(16) Part[2];
+} SETJMP_FLOAT128;
+
+typedef struct _JUMP_BUFFER
+{
+    unsigned __int64 Frame;
+    unsigned __int64 Rbx;
+    unsigned __int64 Rsp;
+    unsigned __int64 Rbp;
+    unsigned __int64 Rsi;
+    unsigned __int64 Rdi;
+    unsigned __int64 R12;
+    unsigned __int64 R13;
+    unsigned __int64 R14;
+    unsigned __int64 R15;
+    unsigned __int64 Rip;
+    unsigned __int64 Spare;
+    SETJMP_FLOAT128  Xmm6;
+    SETJMP_FLOAT128  Xmm7;
+    SETJMP_FLOAT128  Xmm8;
+    SETJMP_FLOAT128  Xmm9;
+    SETJMP_FLOAT128  Xmm10;
+    SETJMP_FLOAT128  Xmm11;
+    SETJMP_FLOAT128  Xmm12;
+    SETJMP_FLOAT128  Xmm13;
+    SETJMP_FLOAT128  Xmm14;
+    SETJMP_FLOAT128  Xmm15;
+} _JUMP_BUFFER;
+
+#define _JBLEN  16
+typedef SETJMP_FLOAT128 _JBTYPE;
+
+#elif defined(__arm__)
+
+typedef struct _JUMP_BUFFER
+{
+    unsigned long Frame;
+    unsigned long R4;
+    unsigned long R5;
+    unsigned long R6;
+    unsigned long R7;
+    unsigned long R8;
+    unsigned long R9;
+    unsigned long R10;
+    unsigned long R11;
+    unsigned long Sp;
+    unsigned long Pc;
+    unsigned long Fpscr;
+    unsigned long long D[8];
+} _JUMP_BUFFER;
+
+#define _JBLEN  28
+#define _JBTYPE int
+
+#elif defined(__aarch64__)
+
+typedef struct _JUMP_BUFFER
+{
+    unsigned __int64 Frame;
+    unsigned __int64 Reserved;
+    unsigned __int64 X19;
+    unsigned __int64 X20;
+    unsigned __int64 X21;
+    unsigned __int64 X22;
+    unsigned __int64 X23;
+    unsigned __int64 X24;
+    unsigned __int64 X25;
+    unsigned __int64 X26;
+    unsigned __int64 X27;
+    unsigned __int64 X28;
+    unsigned __int64 Fp;
+    unsigned __int64 Lr;
+    unsigned __int64 Sp;
+    unsigned long Fpcr;
+    unsigned long Fpsr;
+    double D[8];
+} _JUMP_BUFFER;
+
+#define _JBLEN  24
+#define _JBTYPE unsigned __int64
+
+#else
+
+#define _JBLEN 1
+#define _JBTYPE int
+
+#endif
+
+typedef _JBTYPE jmp_buf[_JBLEN];
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int         _setjmp(jmp_buf);
-int         longjmp(jmp_buf,int);
+int __cdecl _setjmp(jmp_buf);
+void __cdecl longjmp(jmp_buf,int);
 
 #ifdef __cplusplus
 }
 #endif
 
 #define setjmp _setjmp
+
+#include <poppack.h>
 
 #endif /* __WINE_SETJMP_H */

@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef _WIDL_TYPELIB_STRUCT_H
 #define _WIDL_TYPELIB_STRUCT_H
@@ -33,6 +33,8 @@
  * have the signature "SLTG" as their first four bytes, while those created
  * with ICreateTypeLib2 have "MSFT".
  */
+
+#define MSFT_MAGIC 0x5446534d
 
 /*****************************************************
  *                MSFT typelibs
@@ -76,7 +78,7 @@ typedef struct tagMSFT_Header {
         INT   res44;            /* unknown always: 0x20 (guid hash size?) */
         INT   res48;            /* unknown always: 0x80 (name hash size?) */
         INT   dispatchpos;      /* HREFTYPE to IDispatch, or -1 if no IDispatch */
-/*0x50*/INT   res50;            /* is zero becomes one when an interface is derived */
+/*0x50*/INT   nimpinfos;        /* number of impinfos */
 } MSFT_Header;
 
 /* segments in the type lib file have a structure like this: */
@@ -90,17 +92,17 @@ typedef struct tagMSFT_pSeg {
 
 /* layout of the main segment directory */
 typedef struct tagMSFT_SegDir {
-/*1*/MSFT_pSeg pTypeInfoTab; /* each type info get an entry of 0x64 bytes */
+/*1*/MSFT_pSeg pTypeInfoTab; /* each typeinfo gets an entry of 0x64 bytes */
                              /* (25 ints) */
 /*2*/MSFT_pSeg pImpInfo;     /* table with info for imported types */
-/*3*/MSFT_pSeg pImpFiles;    /* import libaries */
+/*3*/MSFT_pSeg pImpFiles;    /* import libraries */
 /*4*/MSFT_pSeg pRefTab;      /* References table */
-/*5*/MSFT_pSeg pLibtab;      /* always exists, alway same size (0x80) */
-                             /* hash table w offsets to guid????? */
+/*5*/MSFT_pSeg pGuidHashTab; /* always exists, always same size (0x80) */
+                             /* hash table with offsets to guid */
 /*6*/MSFT_pSeg pGuidTab;     /* all guids are stored here together with  */
                              /* offset in some table???? */
-/*7*/MSFT_pSeg res07;        /* always created, alway same size (0x200) */
-                             /* purpose largely unknown */
+/*7*/MSFT_pSeg pNameHashTab; /* always created, always same size (0x200) */
+                             /* hash table with offsets to names */
 /*8*/MSFT_pSeg pNametab;     /* name tables */
 /*9*/MSFT_pSeg pStringtab;   /* string table */
 /*A*/MSFT_pSeg pTypdescTab;  /* table with type descriptors */
@@ -117,10 +119,10 @@ typedef struct tagMSFT_SegDir {
 /* base type info data */
 typedef struct tagMSFT_TypeInfoBase {
 /*000*/ INT   typekind;             /*  it is the TKIND_xxx */
-                                    /* some byte alignment stuf */
+                                    /* some byte alignment stuff */
         INT     memoffset;          /* points past the file, if no elements */
         INT     res2;               /* zero if no element, N*0x40 */
-        INT     res3;               /* -1 if no lement, (N-1)*0x38 */
+        INT     res3;               /* -1 if no element, (N-1)*0x38 */
 /*010*/ INT     res4;               /* always? 3 */
         INT     res5;               /* always? zero */
         INT     cElement;           /* counts elements, HI=cVars, LO=cFuncs */
@@ -146,7 +148,7 @@ typedef struct tagMSFT_TypeInfoBase {
 /*050*/ INT     size;           /* size in bytes, at least for structures */
         /* FIXME: name of this field */
         INT     datatype1;      /* position in type description table */
-                                /* or in base intefaces */
+                                /* or in base interfaces */
                                 /* if coclass: offset in reftable */
                                 /* if interface: reference to inherited if */
         INT     datatype2;      /* for interfaces: hiword is num of inherited funcs */
@@ -162,14 +164,14 @@ typedef struct tagMSFT_ImpInfo {
                             /*               if clear oGuid is a typeinfo index in the specified typelib */
                             /* bits 24 - 31: TKIND of reference */
     INT     oImpFile;       /* offset in the Import File table */
-    INT     oGuid;          /* offset in Guid table or typeinfo index (see bit 16 of res0) */
+    INT     oGuid;          /* offset in Guid table or typeinfo index (see bit 16 of flags) */
 } MSFT_ImpInfo;
 
 #define MSFT_IMPINFO_OFFSET_IS_GUID 0x00010000
 
 /* function description data */
 typedef struct {
-/*  INT   recsize;       record size including some xtra stuff */
+/*  INT   recsize;       record size including some extra stuff */
     INT   DataType;     /* data type of the member, eg return of function */
     INT   Flags;        /* something to do with attribute flags (LOWORD) */
 #ifdef WORDS_BIGENDIAN
@@ -213,7 +215,7 @@ typedef struct {
 
 /* after this may follow an array with default value pointers if the
  * appropriate bit in the FKCCIC field has been set:
- * INT   oDefautlValue[nrargs];
+ * INT   oDefaultValue[nrargs];
  */
 
     /* Parameter info one per argument*/
@@ -225,7 +227,7 @@ typedef struct {
 
 /* Variable description data */
 typedef struct {
-/*  INT   recsize;      // record size including some xtra stuff */
+/*  INT   recsize;      // record size including some extra stuff */
     INT   DataType;     /* data type of the variable */
     INT   Flags;        /* VarFlags (LOWORD) */
 #ifdef WORDS_BIGENDIAN
@@ -284,7 +286,7 @@ typedef struct {
                         /* 0x3800 if name is typeinfo name */
 			/* upper 16 bits are hash code */
 } MSFT_NameIntro;
-/* the custom data table directory has enties like this */
+/* the custom data table directory has entries like this */
 typedef struct {
     INT   GuidOffset;
     INT   DataOffset;

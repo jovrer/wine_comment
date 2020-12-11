@@ -16,16 +16,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdlib.h>
 #include <string.h>
 
 #include "debugger.h"
-#include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
 /* needs to be power of 2, search for MARK to see why :) */
 #define DISPTAB_DELTA 8
@@ -43,8 +40,6 @@ struct display
 static struct display *displaypoints = NULL;
 static unsigned int maxdisplays = 0, ndisplays = 0;
 
-#define OFFSET_OF(_f,_s)        ((unsigned)(&(((_s*)NULL)->_f)))
-
 static inline BOOL cmp_symbol(const SYMBOL_INFO* si1, const SYMBOL_INFO* si2)
 {
     /* FIXME: !memcmp(si1, si2, sizeof(SYMBOL_INFO) + si1->NameLen)
@@ -53,13 +48,13 @@ static inline BOOL cmp_symbol(const SYMBOL_INFO* si1, const SYMBOL_INFO* si2)
      * stack_get_frame, so that un-touched fields by stack_get_frame
      * get the same value!!
      */
-    return !memcmp(si1, si2, OFFSET_OF(Name, SYMBOL_INFO)) &&
+    return !memcmp(si1, si2, FIELD_OFFSET(SYMBOL_INFO, Name)) &&
         !memcmp(si1->Name, si2->Name, si1->NameLen);
 }
 
-int display_add(struct expr *exp, int count, char format)
+BOOL display_add(struct expr *exp, int count, char format)
 {
-    int         i;
+    unsigned i;
     BOOL local_binding = FALSE;
 
     for (i = 0; i < ndisplays; i++)
@@ -87,7 +82,7 @@ int display_add(struct expr *exp, int count, char format)
         displaypoints[i].func->SizeOfStruct = sizeof(SYMBOL_INFO);
         displaypoints[i].func->MaxNameLen = sizeof(displaypoints[i].func_buffer) -
             sizeof(*displaypoints[i].func);
-        if (!stack_get_frame(displaypoints[i].func, NULL))
+        if (!stack_get_current_symbol(displaypoints[i].func))
         {
             expr_free(displaypoints[i].exp);
             displaypoints[i].exp = NULL;
@@ -99,9 +94,9 @@ int display_add(struct expr *exp, int count, char format)
     return TRUE;
 }
 
-int display_info(void)
+BOOL display_info(void)
 {
-    int                 i;
+    unsigned            i;
     char                buffer[sizeof(SYMBOL_INFO) + 256];
     SYMBOL_INFO*        func;
     const char*         info;
@@ -110,7 +105,7 @@ int display_info(void)
     memset(func, 0, sizeof(SYMBOL_INFO));
     func->SizeOfStruct = sizeof(SYMBOL_INFO);
     func->MaxNameLen = sizeof(buffer) - sizeof(*func);
-    if (!stack_get_frame(func, NULL)) return FALSE;
+    if (!stack_get_current_symbol(func)) return FALSE;
 
     for (i = 0; i < ndisplays; i++)
     {
@@ -164,9 +159,9 @@ static void print_one_display(int i)
             print_value(&lvalue, displaypoints[i].format, 0);
 }
 
-int display_print(void)
+BOOL display_print(void)
 {
-    int                 i;
+    unsigned            i;
     char                buffer[sizeof(SYMBOL_INFO) + 256];
     SYMBOL_INFO*        func;
 
@@ -174,7 +169,7 @@ int display_print(void)
     memset(func, 0, sizeof(SYMBOL_INFO));
     func->SizeOfStruct = sizeof(SYMBOL_INFO);
     func->MaxNameLen = sizeof(buffer) - sizeof(*func);
-    if (!stack_get_frame(func, NULL)) return FALSE;
+    if (!stack_get_current_symbol(func)) return FALSE;
 
     for (i = 0; i < ndisplays; i++)
     {
@@ -188,10 +183,8 @@ int display_print(void)
     return TRUE;
 }
 
-int display_delete(int displaynum)
+BOOL display_delete(int displaynum)
 {
-    int i;
-
     if (displaynum > ndisplays || displaynum == 0 || displaynum < -1 ||
         displaypoints[displaynum - 1].exp == NULL)
     {
@@ -201,6 +194,8 @@ int display_delete(int displaynum)
 
     if (displaynum == -1)
     {
+        unsigned i;
+
         for (i = 0; i < ndisplays; i++)
         {
             if (displaypoints[i].exp != NULL) 
@@ -234,7 +229,7 @@ int display_delete(int displaynum)
     return TRUE;
 }
 
-int display_enable(int displaynum, int enable)
+BOOL display_enable(int displaynum, int enable)
 {
     char                buffer[sizeof(SYMBOL_INFO) + 256];
     SYMBOL_INFO*        func;
@@ -243,7 +238,7 @@ int display_enable(int displaynum, int enable)
     memset(func, 0, sizeof(SYMBOL_INFO));
     func->SizeOfStruct = sizeof(SYMBOL_INFO);
     func->MaxNameLen = sizeof(buffer) - sizeof(*func);
-    if (!stack_get_frame(func, NULL)) return FALSE;
+    if (!stack_get_current_symbol(func)) return FALSE;
 
     --displaynum;
     if (displaynum >= ndisplays || displaynum < 0 || 

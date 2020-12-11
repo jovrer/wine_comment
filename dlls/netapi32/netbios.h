@@ -12,7 +12,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_NETBIOS_H__
 #define __WINE_NETBIOS_H__
@@ -32,8 +32,8 @@
  * Public functions
  */
 
-void NetBIOSInit(void);
-void NetBIOSShutdown(void);
+void NetBIOSInit(void) DECLSPEC_HIDDEN;
+void NetBIOSShutdown(void) DECLSPEC_HIDDEN;
 
 struct _NetBIOSTransport;
 
@@ -41,7 +41,7 @@ struct _NetBIOSTransport;
  * a unique id (the transport_id of ACTION_HEADER, for example) and an
  * implementation.  Returns TRUE on success, and FALSE on failure.
  */
-BOOL NetBIOSRegisterTransport(ULONG id, struct _NetBIOSTransport *transport);
+BOOL NetBIOSRegisterTransport(ULONG id, struct _NetBIOSTransport *transport) DECLSPEC_HIDDEN;
 
 /* Registers an adapter with the given transport and ifIndex with NetBIOS.
  * ifIndex is an interface index usable by the IpHlpApi.  ifIndex is not
@@ -51,21 +51,21 @@ BOOL NetBIOSRegisterTransport(ULONG id, struct _NetBIOSTransport *transport);
  * FIXME: need functions for retrieving the name and hardware index, rather
  * than assuming a correlation with IpHlpApi.
  */
-BOOL NetBIOSRegisterAdapter(ULONG transport, DWORD ifIndex, void *adapter);
+BOOL NetBIOSRegisterAdapter(ULONG transport, DWORD ifIndex, void *adapter) DECLSPEC_HIDDEN;
 
 /* During enumeration, all adapters from your transport are disabled
- * internally.  If an adapter is still valid, reenable it with this function.
+ * internally.  If an adapter is still valid, re-enable it with this function.
  * Adapters you don't enable will have their transport's NetBIOSCleanupAdapter
  * function (see below) called on them, and will be removed from the table.
  * (This is to deal with lack of plug-and-play--sorry.)
  */
-void NetBIOSEnableAdapter(UCHAR lana);
+void NetBIOSEnableAdapter(UCHAR lana) DECLSPEC_HIDDEN;
 
 /* Gets a quick count of the number of NetBIOS adapters.  Not guaranteed not
  * to change from one call to the next, depending on what's been enumerated
  * lately.  See also NetBIOSEnumAdapters.
  */
-UCHAR NetBIOSNumAdapters(void);
+UCHAR NetBIOSNumAdapters(void) DECLSPEC_HIDDEN;
 
 typedef struct _NetBIOSAdapterImpl {
     UCHAR lana;
@@ -84,7 +84,7 @@ typedef BOOL (*NetBIOSEnumAdaptersCallback)(UCHAR totalLANAs, UCHAR lanaIndex,
  * Your callback should return FALSE if it no longer wishes to be called.
  */
 void NetBIOSEnumAdapters(ULONG transport, NetBIOSEnumAdaptersCallback cb,
- void *closure);
+ void *closure) DECLSPEC_HIDDEN;
 
 /* Hangs up the session identified in the NCB; the NCB need not be a NCBHANGUP.
  * Will result in the transport's hangup function being called, so release any
@@ -92,7 +92,7 @@ void NetBIOSEnumAdapters(ULONG transport, NetBIOSEnumAdaptersCallback cb,
  * This function is intended for use by a transport, if the session is closed
  * by some error in the transport layer.
  */
-void NetBIOSHangupSession(PNCB ncb);
+void NetBIOSHangupSession(const NCB *ncb) DECLSPEC_HIDDEN;
 
 /**
  * Functions a transport implementation must implement
@@ -132,7 +132,7 @@ typedef void (*NetBIOSCleanup)(void);
  * some calls (recv) will block indefinitely, so a reset, shutdown, etc. will
  * never occur.
  */
-#define NCB_CANCELLED(pncb) *(PBOOL)((pncb)->ncb_reserve)
+#define NCB_CANCELLED(pncb) *(const BOOL *)((pncb)->ncb_reserve)
 
 typedef UCHAR (*NetBIOSAstat)(void *adapter, PNCB ncb);
 typedef UCHAR (*NetBIOSFindName)(void *adapter, PNCB ncb);
@@ -178,6 +178,6 @@ typedef struct _NetBIOSTransport
 /* Not defined by MS, so make my own private define: */
 #define TRANSPORT_NBT "MNBT"
 
-void NetBTInit(void);
+void NetBTInit(void) DECLSPEC_HIDDEN;
 
 #endif /* ndef __WINE_NETBIOS_H__ */

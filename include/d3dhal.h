@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_D3DHAL_H
@@ -47,8 +47,74 @@ typedef struct _D3DDeviceDesc_V1 {
   DWORD			dwMaxVertexCount;
 } D3DDEVICEDESC_V1,*LPD3DDEVICEDESC_V1;
 
-/* this is to allow keeping the bulk of our OpenGL code out of x11drv */
-#define D3DDD_WINE_OPENGL_DEVICE 0x00008000
+typedef struct _D3DDeviceDesc_V2
+{
+  DWORD dwSize;
+  DWORD dwFlags;
+  D3DCOLORMODEL dcmColorModel;
+  DWORD dwDevCaps;
+  D3DTRANSFORMCAPS dtcTransformCaps;
+  BOOL bClipping;
+  D3DLIGHTINGCAPS dlcLightingCaps;
+  D3DPRIMCAPS dpcLineCaps;
+  D3DPRIMCAPS dpcTriCaps;
+  DWORD dwDeviceRenderBitDepth;
+  DWORD dwDeviceZBufferBitDepth;
+  DWORD dwMaxBufferSize;
+  DWORD dwMaxVertexCount;
+
+  /* DirectX 5 */
+  DWORD dwMinTextureWidth;
+  DWORD dwMinTextureHeight;
+  DWORD dwMaxTextureWidth;
+  DWORD dwMaxTextureHeight;
+  DWORD dwMinStippleWidth;
+  DWORD dwMaxStippleWidth;
+  DWORD dwMinStippleHeight;
+  DWORD dwMaxStippleHeight;
+} D3DDEVICEDESC_V2, *LPD3DDEVICEDESC_V2;
+
+typedef struct _D3DDeviceDesc_V3
+{
+  DWORD dwSize;
+  DWORD dwFlags;
+  D3DCOLORMODEL dcmColorModel;
+  DWORD dwDevCaps;
+  D3DTRANSFORMCAPS dtcTransformCaps;
+  BOOL bClipping;
+  D3DLIGHTINGCAPS dlcLightingCaps;
+  D3DPRIMCAPS dpcLineCaps;
+  D3DPRIMCAPS dpcTriCaps;
+  DWORD dwDeviceRenderBitDepth;
+  DWORD dwDeviceZBufferBitDepth;
+  DWORD dwMaxBufferSize;
+  DWORD dwMaxVertexCount;
+
+  /* DirectX 5 */
+  DWORD dwMinTextureWidth;
+  DWORD dwMinTextureHeight;
+  DWORD dwMaxTextureWidth;
+  DWORD dwMaxTextureHeight;
+  DWORD dwMinStippleWidth;
+  DWORD dwMaxStippleWidth;
+  DWORD dwMinStippleHeight;
+  DWORD dwMaxStippleHeight;
+
+  /* DirectX 6 */
+  DWORD dwMaxTextureRepeat;
+  DWORD dwMaxTextureAspectRatio;
+  DWORD dwMaxAnisotropy;
+  D3DVALUE dvGuardBandLeft;
+  D3DVALUE dvGuardBandTop;
+  D3DVALUE dvGuardBandRight;
+  D3DVALUE dvGuardBandBottom;
+  D3DVALUE dvExtentsAdjust;
+  DWORD dwStencilCaps;
+  DWORD dwFVFCaps;
+  DWORD dwTextureOpCaps;
+  WORD wMaxTextureBlendStages;
+  WORD wMaxSimultaneousTextures;
+} D3DDEVICEDESC_V3, *LPD3DDEVICEDESC_V3;
 
 typedef struct _D3DHAL_GLOBALDRIVERDATA {
   DWORD			dwSize;
@@ -302,7 +368,6 @@ typedef enum _D3DHAL_DP2OPERATION {
   D3DDP2OP_POINTS		= 1,
   D3DDP2OP_INDEXEDLINELIST	= 2,
   D3DDP2OP_INDEXEDTRIANGLELIST	= 3,
-  D3DDP2OP_RESERVED0		= 4,
   D3DDP2OP_RENDERSTATE		= 8,
   D3DDP2OP_LINELIST		= 15,
   D3DDP2OP_LINESTRIP		= 16,
@@ -328,7 +393,6 @@ typedef enum _D3DHAL_DP2OPERATION {
   D3DDP2OP_SETLIGHT		= 34,
   D3DDP2OP_CREATELIGHT		= 35,
   D3DDP2OP_SETTRANSFORM		= 36,
-  D3DDP2OP_EXT			= 37,
   D3DDP2OP_TEXBLT		= 38,
   D3DDP2OP_STATESET		= 39,
   D3DDP2OP_SETPRIORITY		= 40,
@@ -522,4 +586,4 @@ typedef struct _D3DHAL_DP2SETTEXLOD {
 } /* extern "C" */
 #endif
 
-#endif /* __WINE_DDRAWI_H */
+#endif /* __WINE_D3DHAL_H */

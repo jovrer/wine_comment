@@ -14,7 +14,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 import "ocidl.idl";
@@ -169,7 +169,7 @@ interface IOleCommandTarget : IUnknown
 {
     typedef [unique] IOleCommandTarget *LPOLECOMMANDTARGET;
 
-    typedef enum
+    typedef enum OLECMDF
     {
         OLECMDF_SUPPORTED = 0x1,
         OLECMDF_ENABLED = 0x2,
@@ -193,14 +193,14 @@ interface IOleCommandTarget : IUnknown
         [size_is(cwBuf)] WCHAR rgwz[];
     } OLECMDTEXT;
 
-    typedef enum
+    typedef enum OLECMDTEXTF
     {
         OLECMDTEXTF_NONE = 0,
         OLECMDTEXTF_NAME = 1,
         OLECMDTEXTF_STATUS = 2
     } OLECMDTEXTF;
 
-    typedef enum
+    typedef enum OLECMDEXECOPT
     {
         OLECMDEXECOPT_DODEFAULT = 0,
         OLECMDEXECOPT_PROMPTUSER = 1,
@@ -262,7 +262,31 @@ interface IOleCommandTarget : IUnknown
         OLECMDID_PRINT2 = 49,
         OLECMDID_PRINTPREVIEW2 = 50,
         OLECMDID_SETPRINTTEMPLATE = 51,
-        OLECMDID_GETPRINTTEMPLATE = 52
+        OLECMDID_GETPRINTTEMPLATE = 52,
+        OLECMDID_PAGEACTIONBLOCKED = 55,
+        OLECMDID_PAGEACTIONUIQUERY = 56,
+        OLECMDID_FOCUSVIEWCONTROLS = 57,
+        OLECMDID_FOCUSVIEWCONTROLSQUERY = 58,
+        OLECMDID_SHOWPAGEACTIONMENU = 59,
+        OLECMDID_ADDTRAVELENTRY = 60,
+        OLECMDID_UPDATETRAVELENTRY = 61,
+        OLECMDID_UPDATEBACKFORWARDSTATE = 62,
+        OLECMDID_OPTICAL_ZOOM = 63,
+        OLECMDID_OPTICAL_GETZOOMRANGE = 64,
+        OLECMDID_WINDOWSTATECHANGED = 65,
+        OLECMDID_ACTIVEXINSTALLSCOPE = 66,
+        OLECMDID_UPDATETRAVELENTRY_DATARECOVERY = 67,
+        OLECMDID_SHOWTASKDLG = 68,
+        OLECMDID_POPSTATEEVENT = 69,
+        OLECMDID_VIEWPORT_MODE = 70,
+        OLECMDID_LAYOUT_VIEWPORT_WIDTH = 71,
+        OLECMDID_VISUAL_VIEWPORT_EXCLUDE_BOTTOM = 72,
+        OLECMDID_USER_OPTICAL_ZOOM = 73,
+        OLECMDID_PAGEAVAILABLE = 74,
+        OLECMDID_GETUSERSCALABLE = 75,
+        OLECMDID_UPDATE_CARET = 76,
+        OLECMDID_ENABLE_VISIBILITY = 77,
+        OLECMDID_MEDIA_PLAYBACK = 78
     } OLECMDID;
 
     HRESULT QueryStatus(
@@ -394,3 +418,5 @@ cpp_quote("#define IID_IMsoDocumentSite           IID_IOleDocumentSite")
 cpp_quote("#define IID_IMsoView                   IID_IOleDocumentView")
 cpp_quote("#define IID_IEnumMsoView               IID_IEnumOleDocumentViews")
 cpp_quote("#define IID_IMsoCommandTarget          IID_IOleCommandTarget")
+
+cpp_quote("EXTERN_C const GUID SID_SContainerDispatch;")

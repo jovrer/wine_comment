@@ -15,15 +15,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#define WIN32_LEAN_AND_MEAN
 
 #include <windows.h>
 #include "main.h"
-#include "dialog.h"
 #include "resource.h"
 
-BOOL CALLBACK CustomDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
+INT_PTR CALLBACK CustomDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
     BOOL IsRet;
     static BOARD *p_board;
@@ -55,23 +56,21 @@ BOOL CALLBACK CustomDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam 
     return FALSE;
 }
 
-BOOL CALLBACK CongratsDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
+INT_PTR CALLBACK CongratsDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
     static BOARD *p_board;
 
     switch( uMsg ) {
     case WM_INITDIALOG:
         p_board = (BOARD*) lParam;
-        SetDlgItemText( hDlg, IDC_EDITNAME,
-                p_board->best_name[p_board->difficulty] );
+        SetDlgItemTextW( hDlg, IDC_EDITNAME, p_board->best_name[p_board->difficulty] );
         return TRUE;
 
     case WM_COMMAND:
         switch( LOWORD( wParam ) ) {
         case IDOK:
-            GetDlgItemText( hDlg, IDC_EDITNAME,
-                p_board->best_name[p_board->difficulty],
-                sizeof( p_board->best_name[p_board->difficulty] ) );
+            GetDlgItemTextW( hDlg, IDC_EDITNAME, p_board->best_name[p_board->difficulty],
+                             ARRAY_SIZE(p_board->best_name[p_board->difficulty] ));
             EndDialog( hDlg, 0 );
             return TRUE;
 
@@ -84,10 +83,12 @@ BOOL CALLBACK CongratsDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
     return FALSE;
 }
 
-BOOL CALLBACK TimesDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
+INT_PTR CALLBACK TimesDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
     static BOARD *p_board;
     unsigned i;
+    int confirm_msgbox_result;
+    WCHAR confirm_title[256], confirm_text[256];
 
     switch( uMsg ) {
     case WM_INITDIALOG:
@@ -95,7 +96,7 @@ BOOL CALLBACK TimesDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
 
         /* set best names */
         for( i = 0; i < 3; i++ )
-            SetDlgItemText( hDlg, (IDC_NAME1) + i, p_board->best_name[i] );
+            SetDlgItemTextW( hDlg, (IDC_NAME1) + i, p_board->best_name[i] );
 
     	/* set best times */
         for( i = 0; i < 3; i++ )
@@ -104,24 +105,26 @@ BOOL CALLBACK TimesDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
 
     case WM_COMMAND:
         switch( LOWORD( wParam ) ) {
-        case IDOK:
-        case IDCANCEL:
-            EndDialog( hDlg, 0 );
-            return TRUE;
-        }
-        break;
-    }
-    return FALSE;
-}
+        case IDC_RESET:
+            LoadStringW( NULL, IDC_CONFIRMTITLE, confirm_title, ARRAY_SIZE(confirm_title));
+            LoadStringW( NULL, IDC_CONFIRMTEXT, confirm_text, ARRAY_SIZE(confirm_text));
+            confirm_msgbox_result = MessageBoxW( hDlg, confirm_text, confirm_title, MB_OKCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING );
+            if( confirm_msgbox_result != IDOK )
+                break;
 
-BOOL CALLBACK AboutDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam )
-{
-    switch( uMsg ) {
-    case WM_INITDIALOG:
-        return TRUE;
+            /* reset best names and times */
+            ResetResults( p_board );
 
-    case WM_COMMAND:
-        switch( LOWORD( wParam ) ) {
+            /* save to registry */
+            SaveBoard( p_board );
+
+            /* update dialog */
+            for( i = 0; i < 3; i++ ) {
+                SetDlgItemTextW( hDlg, (IDC_NAME1) + i, p_board->best_name[i] );
+                SetDlgItemInt( hDlg, (IDC_TIME1) + i, p_board->best_time[i], FALSE );
+            }
+            break;
+
         case IDOK:
         case IDCANCEL:
             EndDialog( hDlg, 0 );

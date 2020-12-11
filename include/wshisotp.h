@@ -13,15 +13,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _WINE_WSHISOTP_
 #define _WINE_WSHISOTP_
 
-#ifdef __cplusplus
-extern "C" {
-#endif /* defined(__cplusplus) */
 
 /*
  * constants
@@ -29,9 +26,5 @@ extern "C" {
 #define ISOPROTO_TP4       29
 #define ISOPROTO_TP        ISOPROTO_TP4
 
-
-#ifdef __cplusplus
-}      /* extern "C" */
-#endif /* defined(__cplusplus) */
 
 #endif /* _WINE_WSHISOTP_ */

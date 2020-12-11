@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -87,11 +87,10 @@
  * for normal character strings and 1 for unicode strings.
  */
 
-static char str_header[] =
+static const char str_header[] =
 	"/* This file is generated with wmc version " PACKAGE_VERSION ". Do not edit! */\n"
 	"/* Source : %s */\n"
 	"/* Cmdline: %s */\n"
-	"/* Date   : %s */\n"
 	"\n"
         ;
 
@@ -100,12 +99,18 @@ static char *dup_u2c(int cp, const WCHAR *uc)
 	int len;
 	char *cptr;
 	const union cptable *cpdef = find_codepage(cp);
-	if(!cpdef)
-		internal_error(__FILE__, __LINE__, "Codepage %d not found (vanished?)", cp);
-	len = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, NULL, 0, NULL, NULL);
+
+	if(cpdef)
+            len = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, NULL, 0, NULL, NULL);
+        else
+            len = wine_utf8_wcstombs(0, uc, unistrlen(uc)+1, NULL, 0);
 	cptr = xmalloc(len);
-	if((len = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, cptr, len, NULL, NULL)) < 0)
-		internal_error(__FILE__, __LINE__, "Buffer overflow? code %d.", len);
+        if (cpdef)
+            len = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, cptr, len, NULL, NULL);
+        else
+            len = wine_utf8_wcstombs(0, uc, unistrlen(uc)+1, cptr, len);
+	if (len < 0)
+		internal_error(__FILE__, __LINE__, "Buffer overflow? code %d\n", len);
 	return cptr;
 }
 
@@ -172,11 +177,9 @@ void write_h_file(const char *fname)
 		perror(fname);
 		exit(1);
 	}
-	cptr = ctime(&now);
-	killnl(cptr, 0);
-	fprintf(fp, str_header, input_name ? input_name : "<stdin>", cmdline, cptr);
-	fprintf(fp, "#ifndef __WMCGENERATED_%08lx_H\n", (long)now);
-	fprintf(fp, "#define __WMCGENERATED_%08lx_H\n", (long)now);
+	fprintf(fp, str_header, input_name ? input_name : "<stdin>", cmdline);
+	fprintf(fp, "#ifndef __WMCGENERATED_H\n");
+	fprintf(fp, "#define __WMCGENERATED_H\n");
 	fprintf(fp, "\n");
 
 	/* Write severity and facility aliases */
@@ -225,7 +228,7 @@ void write_h_file(const char *fname)
 			if(!once)
 			{
 				/*
-				 * Search for an english text.
+				 * Search for an English text.
 				 * If not found, then use the first in the list
 				 */
 				once++;
@@ -243,7 +246,7 @@ void write_h_file(const char *fname)
 			cptr = dup_u2c(ndp->u.msg->msgs[idx_en]->cp, ndp->u.msg->msgs[idx_en]->msg);
 			killnl(cptr, 0);
 			killcomment(cptr);
-			fprintf(fp, "/* Approx. msg: %s */\n", cptr);
+			fprintf(fp, "/* Approximate msg: %s */\n", cptr);
 			free(cptr);
 			cptr = dup_u2c(WMC_DEFAULT_CODEPAGE, ndp->u.msg->sym);
 			if(ndp->u.msg->cast)
@@ -271,14 +274,13 @@ void write_h_file(const char *fname)
 					fprintf(fp, "#define %s\t0x%08xL\n\n", cptr, ndp->u.msg->realid);
 				break;
 			default:
-				internal_error(__FILE__, __LINE__, "Invalid base for number print");
+				internal_error(__FILE__, __LINE__, "Invalid base for number print\n");
 			}
 			free(cptr);
-			if(cast)
-				free(cast);
+			free(cast);
 			break;
 		default:
-			internal_error(__FILE__, __LINE__, "Invalid node type %d", ndp->type);
+			internal_error(__FILE__, __LINE__, "Invalid node type %d\n", ndp->type);
 		}
 	}
 	fprintf(fp, "\n#endif\n");
@@ -308,7 +310,7 @@ static void write_rcbin(FILE *fp)
 			}
 		}
 		if(!cptr)
-			internal_error(__FILE__, __LINE__, "Filename vanished for language 0x%0x", lbp->lan);
+			internal_error(__FILE__, __LINE__, "Filename vanished for language 0x%0x\n", lbp->lan);
 		fprintf(fp, "1 MESSAGETABLE \"%s.bin\"\n", cptr);
 		free(cptr);
 	}
@@ -386,11 +388,18 @@ static char *make_string(WCHAR *uc, int len, int codepage)
 		int mlen;
 		const union cptable *cpdef = find_codepage(codepage);
 
-		assert(cpdef != NULL);
-		mlen = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, NULL, 0, NULL, NULL);
+                if (cpdef)
+                    mlen = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, NULL, 0, NULL, NULL);
+                else
+                    mlen = wine_utf8_wcstombs(0, uc, unistrlen(uc)+1, NULL, 0);
 		cc = tmp = xmalloc(mlen);
-		if((i = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, tmp, mlen, NULL, NULL)) < 0)
-			internal_error(__FILE__, __LINE__, "Buffer overflow? code %d.", i);
+                if (cpdef) {
+                    if((i = wine_cp_wcstombs(cpdef, 0, uc, unistrlen(uc)+1, tmp, mlen, NULL, NULL)) < 0)
+                        internal_error(__FILE__, __LINE__, "Buffer overflow? code %d\n", i);
+                } else {
+                    if((i = wine_utf8_wcstombs(0, uc, unistrlen(uc)+1, tmp, mlen)) < 0)
+                        internal_error(__FILE__, __LINE__, "Buffer overflow? code %d\n", i);
+                }
 		*cptr++ = ' ';
 		*cptr++ = '"';
 		for(i = b = 0; i < len; i++, cc++)
@@ -489,18 +498,14 @@ static void write_rcinline(FILE *fp)
 
 void write_rc_file(const char *fname)
 {
-	FILE *fp;
-	char *cptr;
+	FILE *fp = fopen(fname, "w");
 
-	fp = fopen(fname, "w");
 	if(!fp)
 	{
 		perror(fname);
 		exit(1);
 	}
-	cptr = ctime(&now);
-	killnl(cptr, 0);
-	fprintf(fp, str_header, input_name ? input_name : "<stdin>", cmdline, cptr);
+	fprintf(fp, str_header, input_name ? input_name : "<stdin>", cmdline);
 
 	if(rcinline)
 		write_rcinline(fp);
@@ -509,7 +514,109 @@ void write_rc_file(const char *fname)
 	fclose(fp);
 }
 
+static void output_bin_data( lan_blk_t *lbp )
+{
+    unsigned int offs = 4 * (lbp->nblk * 3 + 1);
+    int i, j, k;
+
+    put_dword( lbp->nblk );  /* NBlocks */
+    for (i = 0; i < lbp->nblk; i++)
+    {
+        put_dword( lbp->blks[i].idlo );  /* Lo */
+        put_dword( lbp->blks[i].idhi );  /* Hi */
+        put_dword( offs );               /* Offs */
+        offs += lbp->blks[i].size;
+    }
+    for (i = 0; i < lbp->nblk; i++)
+    {
+        block_t *blk = &lbp->blks[i];
+        for (j = 0; j < blk->nmsg; j++)
+        {
+            int len = (2 * blk->msgs[j]->len + 3) & ~3;
+            put_word( len + 4 );
+            put_word( 1 );
+            for (k = 0; k < blk->msgs[j]->len; k++) put_word( blk->msgs[j]->msg[k] );
+            align_output( 4 );
+        }
+    }
+}
+
 void write_bin_files(void)
 {
-	assert(rcinline == 0);
+    lan_blk_t *lbp;
+    token_t *ttab;
+    int ntab;
+    int i;
+
+    get_tokentable(&ttab, &ntab);
+
+    for (lbp = lanblockhead; lbp; lbp = lbp->next)
+    {
+        char *cptr = NULL;
+
+        for (i = 0; i < ntab; i++)
+        {
+            if (ttab[i].type == tok_language && ttab[i].token == lbp->lan)
+            {
+                if (ttab[i].alias) cptr = dup_u2c(WMC_DEFAULT_CODEPAGE, ttab[i].alias);
+                break;
+            }
+        }
+        if(!cptr)
+            internal_error(__FILE__, __LINE__, "Filename vanished for language 0x%0x\n", lbp->lan);
+        init_output_buffer();
+        output_bin_data( lbp );
+        cptr = xrealloc( cptr, strlen(cptr) + 5 );
+        strcat( cptr, ".bin" );
+        flush_output_buffer( cptr );
+        free(cptr);
+    }
+}
+
+void write_res_file( const char *name )
+{
+    lan_blk_t *lbp;
+    int i, j;
+
+    init_output_buffer();
+
+    put_dword( 0 );      /* ResSize */
+    put_dword( 32 );     /* HeaderSize */
+    put_word( 0xffff );  /* ResType */
+    put_word( 0x0000 );
+    put_word( 0xffff );  /* ResName */
+    put_word( 0x0000 );
+    put_dword( 0 );      /* DataVersion */
+    put_word( 0 );       /* Memory options */
+    put_word( 0 );       /* Language */
+    put_dword( 0 );      /* Version */
+    put_dword( 0 );      /* Characteristics */
+
+    for (lbp = lanblockhead; lbp; lbp = lbp->next)
+    {
+        unsigned int data_size = 4 * (lbp->nblk * 3 + 1);
+        unsigned int header_size = 5 * sizeof(unsigned int) + 6 * sizeof(unsigned short);
+
+        for (i = 0; i < lbp->nblk; i++)
+        {
+            block_t *blk = &lbp->blks[i];
+            for (j = 0; j < blk->nmsg; j++) data_size += 4 + ((blk->msgs[j]->len * 2 + 3) & ~3);
+        }
+
+        put_dword( data_size );     /* ResSize */
+        put_dword( header_size );   /* HeaderSize */
+        put_word( 0xffff );         /* ResType */
+        put_word( 0x000b /*RT_MESSAGETABLE*/ );
+        put_word( 0xffff );         /* ResName */
+        put_word( 0x0001 );
+        align_output( 4 );
+        put_dword( 0 );             /* DataVersion */
+        put_word( 0x30 );           /* Memory options */
+        put_word( lbp->lan );       /* Language */
+        put_dword( lbp->version );  /* Version */
+        put_dword( 0 );             /* Characteristics */
+
+        output_bin_data( lbp );
+    }
+    flush_output_buffer( name );
 }

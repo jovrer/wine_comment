@@ -13,13 +13,18 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef DO_NO_IMPORTS
 import "ocidl.idl";
 import "oleidl.idl";
 import "oaidl.idl";
 import "servprov.idl";
+#endif
+
+cpp_quote("DEFINE_GUID(SID_VariantConversion, 0x1f101481,0xbccd,0x11d0,0x93,0x36,0x00,0xa0,0xc9,0xd,0xca,0xa9);")
+cpp_quote("DEFINE_GUID(SID_GetCaller, 0x4717cc40,0xbcb9,0x11d0,0x93,0x36,0x00,0xa0,0xc9,0xd,0xca,0xa9);")
 
 cpp_quote("#define fdexNameCaseSensitive       0x00000001L")
 cpp_quote("#define fdexNameEnsure              0x00000002L")
@@ -76,13 +81,13 @@ interface IDispatchEx : IDispatch
 
     [local]
     HRESULT InvokeEx(
-            [in] DISPID id,
-            [in] LCID lcid,
-            [in] WORD wFlags,
-            [in] DISPPARAMS *pdp,
-            [out] VARIANT *pvarRes,
-            [out] EXCEPINFO *pei,
-            [in, unique] IServiceProvider *pspCaller);
+            [in, annotation("__in")] DISPID id,
+            [in, annotation("__in")] LCID lcid,
+            [in, annotation("__in")] WORD wFlags,
+            [in, annotation("__in")] DISPPARAMS *pdp,
+            [out, annotation("__out_opt")] VARIANT *pvarRes,
+            [out, annotation("__out_opt")] EXCEPINFO *pei,
+            [in, unique, annotation("__in_opt")] IServiceProvider *pspCaller);
 
     [call_as(InvokeEx)]
     HRESULT RemoteInvokeEx(
@@ -119,7 +124,7 @@ interface IDispatchEx : IDispatch
             [out] DISPID *pid);
 
     HRESULT GetNameSpaceParent([out] IUnknown **ppunk);
-};
+}
 
 [
 object,
@@ -147,7 +152,7 @@ interface IDispError : IUnknown
 
     HRESULT GetDescription(
             [out] BSTR *pbstrDescription);
-};
+}
 
 [
 object,
@@ -161,7 +166,7 @@ interface IVariantChangeType : IUnknown
             [in, unique] VARIANT *pvarSrc,
             [in] LCID lcid,
             [in] VARTYPE vtNew);
-};
+}
 
 
 [
@@ -173,4 +178,28 @@ interface IObjectIdentity : IUnknown
 {
     HRESULT IsEqualObject( 
             [in] IUnknown *punk);
-};
+}
+
+[
+    object,
+    uuid(c5598e60-b307-11d1-b27d-006008c3fbfb),
+    pointer_default(unique)
+]
+interface ICanHandleException : IUnknown
+{
+    HRESULT CanHandleException(
+            [in] EXCEPINFO *pExcepInfo,
+            [in] VARIANT *pvar);
+}
+
+[
+    object,
+    uuid(10e2414a-ec59-49d2-bc51-5add2c36febc),
+    pointer_default(unique)
+]
+interface IProvideRuntimeContext : IUnknown
+{
+    HRESULT GetCurrentSourceContext(
+            [out] DWORD_PTR *pdwContext,
+            [out] VARIANT_BOOL *pfExecutingGlobalCode);
+}

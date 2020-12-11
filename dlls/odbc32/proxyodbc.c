@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES:
  *   Proxy ODBC driver manager.  This manager delegates all ODBC 
@@ -45,122 +45,144 @@
 #include "sqltypes.h"
 #include "sqlext.h"
 
-#include "proxyodbc.h"
-
 static BOOL ODBC_LoadDriverManager(void);
 static BOOL ODBC_LoadDMFunctions(void);
 
 WINE_DEFAULT_DEBUG_CHANNEL(odbc);
+WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
-static const DM_FUNC template_func[] =
-{
-    /* 00 */ { SQL_API_SQLALLOCCONNECT,      "SQLAllocConnect", SQLAllocConnect, NULL, NULL },
-    /* 01 */ { SQL_API_SQLALLOCENV,          "SQLAllocEnv", SQLAllocEnv, NULL, NULL },
-    /* 02 */ { SQL_API_SQLALLOCHANDLE,       "SQLAllocHandle", SQLAllocHandle, NULL, NULL },
-    /* 03 */ { SQL_API_SQLALLOCSTMT,         "SQLAllocStmt", SQLAllocStmt, NULL, NULL },
-    /* 04 */ { SQL_API_SQLALLOCHANDLESTD,    "SQLAllocHandleStd", SQLAllocHandleStd, NULL, NULL },
-    /* 05 */ { SQL_API_SQLBINDCOL,           "SQLBindCol", SQLBindCol, NULL, NULL },
-    /* 06 */ { SQL_API_SQLBINDPARAM,         "SQLBindParam", SQLBindParam, NULL, NULL },
-    /* 07 */ { SQL_API_SQLBINDPARAMETER,     "SQLBindParameter", SQLBindParameter, NULL, NULL },
-    /* 08 */ { SQL_API_SQLBROWSECONNECT,     "SQLBrowseConnect", SQLBrowseConnect, NULL, NULL },
-    /* 09 */ { SQL_API_SQLBULKOPERATIONS,    "SQLBulkOperations", SQLBulkOperations, NULL, NULL },
-    /* 10 */ { SQL_API_SQLCANCEL,            "SQLCancel", SQLCancel, NULL, NULL },
-    /* 11 */ { SQL_API_SQLCLOSECURSOR,       "SQLCloseCursor", SQLCloseCursor, NULL, NULL },
-    /* 12 */ { SQL_API_SQLCOLATTRIBUTE,      "SQLColAttribute", SQLColAttribute, NULL, NULL },
-    /* 13 */ { SQL_API_SQLCOLATTRIBUTES,     "SQLColAttributes", SQLColAttributes, NULL, NULL },
-    /* 14 */ { SQL_API_SQLCOLUMNPRIVILEGES,  "SQLColumnPrivileges", SQLColumnPrivileges, NULL, NULL },
-    /* 15 */ { SQL_API_SQLCOLUMNS,           "SQLColumns", SQLColumns, NULL, NULL },
-    /* 16 */ { SQL_API_SQLCONNECT,           "SQLConnect", SQLConnect, NULL, NULL },
-    /* 17 */ { SQL_API_SQLCOPYDESC,          "SQLCopyDesc", SQLCopyDesc, NULL, NULL },
-    /* 18 */ { SQL_API_SQLDATASOURCES,       "SQLDataSources", SQLDataSources, NULL, NULL },
-    /* 19 */ { SQL_API_SQLDESCRIBECOL,       "SQLDescribeCol", SQLDescribeCol, NULL, NULL },
-    /* 20 */ { SQL_API_SQLDESCRIBEPARAM,     "SQLDescribeParam", SQLDescribeParam, NULL, NULL },
-    /* 21 */ { SQL_API_SQLDISCONNECT,        "SQLDisconnect", SQLDisconnect, NULL, NULL },
-    /* 22 */ { SQL_API_SQLDRIVERCONNECT,     "SQLDriverConnect", SQLDriverConnect, NULL, NULL },
-    /* 23 */ { SQL_API_SQLDRIVERS,           "SQLDrivers", SQLDrivers, NULL, NULL },
-    /* 24 */ { SQL_API_SQLENDTRAN,           "SQLEndTran", SQLEndTran, NULL, NULL },
-    /* 25 */ { SQL_API_SQLERROR,             "SQLError", SQLError, NULL, NULL },
-    /* 26 */ { SQL_API_SQLEXECDIRECT,        "SQLExecDirect", SQLExecDirect, NULL, NULL },
-    /* 27 */ { SQL_API_SQLEXECUTE,           "SQLExecute", SQLExecute, NULL, NULL },
-    /* 28 */ { SQL_API_SQLEXTENDEDFETCH,     "SQLExtendedFetch", SQLExtendedFetch, NULL, NULL },
-    /* 29 */ { SQL_API_SQLFETCH,             "SQLFetch", SQLFetch, NULL, NULL },
-    /* 30 */ { SQL_API_SQLFETCHSCROLL,       "SQLFetchScroll", SQLFetchScroll, NULL, NULL },
-    /* 31 */ { SQL_API_SQLFOREIGNKEYS,       "SQLForeignKeys", SQLForeignKeys, NULL, NULL },
-    /* 32 */ { SQL_API_SQLFREEENV,           "SQLFreeEnv", SQLFreeEnv, NULL, NULL },
-    /* 33 */ { SQL_API_SQLFREEHANDLE,        "SQLFreeHandle", SQLFreeHandle, NULL, NULL },
-    /* 34 */ { SQL_API_SQLFREESTMT,          "SQLFreeStmt", SQLFreeStmt, NULL, NULL },
-    /* 35 */ { SQL_API_SQLFREECONNECT,       "SQLFreeConnect", SQLFreeConnect, NULL, NULL },
-    /* 36 */ { SQL_API_SQLGETCONNECTATTR,    "SQLGetConnectAttr", SQLGetConnectAttr, NULL, NULL },
-    /* 37 */ { SQL_API_SQLGETCONNECTOPTION,  "SQLGetConnectOption", SQLGetConnectOption, NULL, NULL },
-    /* 38 */ { SQL_API_SQLGETCURSORNAME,     "SQLGetCursorName", SQLGetCursorName, NULL, NULL },
-    /* 39 */ { SQL_API_SQLGETDATA,           "SQLGetData", SQLGetData, NULL, NULL },
-    /* 40 */ { SQL_API_SQLGETDESCFIELD,      "SQLGetDescField", SQLGetDescField, NULL, NULL },
-    /* 41 */ { SQL_API_SQLGETDESCREC,        "SQLGetDescRec", SQLGetDescRec, NULL, NULL },
-    /* 42 */ { SQL_API_SQLGETDIAGFIELD,      "SQLGetDiagField", SQLGetDiagField, NULL, NULL },
-    /* 43 */ { SQL_API_SQLGETENVATTR,        "SQLGetEnvAttr", SQLGetEnvAttr, NULL, NULL },
-    /* 44 */ { SQL_API_SQLGETFUNCTIONS,      "SQLGetFunctions", SQLGetFunctions, NULL, NULL },
-    /* 45 */ { SQL_API_SQLGETINFO,           "SQLGetInfo", SQLGetInfo, NULL, NULL },
-    /* 46 */ { SQL_API_SQLGETSTMTATTR,       "SQLGetStmtAttr", SQLGetStmtAttr, NULL, NULL },
-    /* 47 */ { SQL_API_SQLGETSTMTOPTION,     "SQLGetStmtOption", SQLGetStmtOption, NULL, NULL },
-    /* 48 */ { SQL_API_SQLGETTYPEINFO,       "SQLGetTypeInfo", SQLGetTypeInfo, NULL, NULL },
-    /* 49 */ { SQL_API_SQLMORERESULTS,       "SQLMoreResults", SQLMoreResults, NULL, NULL },
-    /* 50 */ { SQL_API_SQLNATIVESQL,         "SQLNativeSql", SQLNativeSql, NULL, NULL },
-    /* 51 */ { SQL_API_SQLNUMPARAMS,         "SQLNumParams", SQLNumParams, NULL, NULL },
-    /* 52 */ { SQL_API_SQLNUMRESULTCOLS,     "SQLNumResultCols", SQLNumResultCols, NULL, NULL },
-    /* 53 */ { SQL_API_SQLPARAMDATA,         "SQLParamData", SQLParamData, NULL, NULL },
-    /* 54 */ { SQL_API_SQLPARAMOPTIONS,      "SQLParamOptions", SQLParamOptions, NULL, NULL },
-    /* 55 */ { SQL_API_SQLPREPARE,           "SQLPrepare", SQLPrepare, NULL, NULL },
-    /* 56 */ { SQL_API_SQLPRIMARYKEYS,       "SQLPrimaryKeys", SQLPrimaryKeys, NULL, NULL },
-    /* 57 */ { SQL_API_SQLPROCEDURECOLUMNS,  "SQLProcedureColumns", SQLProcedureColumns, NULL, NULL },
-    /* 58 */ { SQL_API_SQLPROCEDURES,        "SQLProcedures", SQLProcedures, NULL, NULL },
-    /* 59 */ { SQL_API_SQLPUTDATA,           "SQLPutData", SQLPutData, NULL, NULL },
-    /* 60 */ { SQL_API_SQLROWCOUNT,          "SQLRowCount", SQLRowCount, NULL, NULL },
-    /* 61 */ { SQL_API_SQLSETCONNECTATTR,    "SQLSetConnectAttr", SQLSetConnectAttr, NULL, NULL },
-    /* 62 */ { SQL_API_SQLSETCONNECTOPTION,  "SQLSetConnectOption", SQLSetConnectOption, NULL, NULL },
-    /* 63 */ { SQL_API_SQLSETCURSORNAME,     "SQLSetCursorName", SQLSetCursorName, NULL, NULL },
-    /* 64 */ { SQL_API_SQLSETDESCFIELD,      "SQLSetDescField", SQLSetDescField, NULL, NULL },
-    /* 65 */ { SQL_API_SQLSETDESCREC,        "SQLSetDescRec", SQLSetDescRec, NULL, NULL },
-    /* 66 */ { SQL_API_SQLSETENVATTR,        "SQLSetEnvAttr", SQLSetEnvAttr, NULL, NULL },
-    /* 67 */ { SQL_API_SQLSETPARAM,          "SQLSetParam", SQLSetParam, NULL, NULL },
-    /* 68 */ { SQL_API_SQLSETPOS,            "SQLSetPos", SQLSetPos, NULL, NULL },
-    /* 69 */ { SQL_API_SQLSETSCROLLOPTIONS,  "SQLSetScrollOptions", SQLSetScrollOptions, NULL, NULL },
-    /* 70 */ { SQL_API_SQLSETSTMTATTR,       "SQLSetStmtAttr", SQLSetStmtAttr, NULL, NULL },
-    /* 71 */ { SQL_API_SQLSETSTMTOPTION,     "SQLSetStmtOption", SQLSetStmtOption, NULL, NULL },
-    /* 72 */ { SQL_API_SQLSPECIALCOLUMNS,    "SQLSpecialColumns", SQLSpecialColumns, NULL, NULL },
-    /* 73 */ { SQL_API_SQLSTATISTICS,        "SQLStatistics", SQLStatistics, NULL, NULL },
-    /* 74 */ { SQL_API_SQLTABLEPRIVILEGES,   "SQLTablePrivileges", SQLTablePrivileges, NULL, NULL },
-    /* 75 */ { SQL_API_SQLTABLES,            "SQLTables", SQLTables, NULL, NULL },
-    /* 76 */ { SQL_API_SQLTRANSACT,          "SQLTransact", SQLTransact, NULL, NULL },
-    /* 77 */ { SQL_API_SQLGETDIAGREC,        "SQLGetDiagRec", SQLGetDiagRec, NULL, NULL },
-};
+static SQLRETURN (*pSQLAllocConnect)(SQLHENV,SQLHDBC*);
+static SQLRETURN (*pSQLAllocEnv)(SQLHENV*);
+static SQLRETURN (*pSQLAllocHandle)(SQLSMALLINT,SQLHANDLE,SQLHANDLE*);
+static SQLRETURN (*pSQLAllocHandleStd)(SQLSMALLINT,SQLHANDLE,SQLHANDLE*);
+static SQLRETURN (*pSQLAllocStmt)(SQLHDBC,SQLHSTMT*);
+static SQLRETURN (*pSQLBindCol)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLPOINTER,SQLLEN,SQLLEN*);
+static SQLRETURN (*pSQLBindParam)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLULEN,SQLSMALLINT,SQLPOINTER,SQLLEN*);
+static SQLRETURN (*pSQLBindParameter)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLULEN,SQLSMALLINT,SQLPOINTER,SQLLEN,SQLLEN*);
+static SQLRETURN (*pSQLBrowseConnect)(SQLHDBC,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLBrowseConnectW)(SQLHDBC,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLBulkOperations)(SQLHSTMT,SQLSMALLINT);
+static SQLRETURN (*pSQLCancel)(SQLHSTMT);
+static SQLRETURN (*pSQLCloseCursor)(SQLHSTMT);
+static SQLRETURN (*pSQLColAttribute)(SQLHSTMT,SQLUSMALLINT,SQLUSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*,SQLLEN*);
+static SQLRETURN (*pSQLColAttributeW)(SQLHSTMT,SQLUSMALLINT,SQLUSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*,SQLLEN*);
+static SQLRETURN (*pSQLColAttributes)(SQLHSTMT,SQLUSMALLINT,SQLUSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*,SQLLEN*);
+static SQLRETURN (*pSQLColAttributesW)(SQLHSTMT,SQLUSMALLINT,SQLUSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*,SQLLEN*);
+static SQLRETURN (*pSQLColumnPrivileges)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLColumnPrivilegesW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLColumns)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLColumnsW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLConnect)(SQLHDBC,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLConnectW)(SQLHDBC,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLCopyDesc)(SQLHDESC,SQLHDESC);
+static SQLRETURN (*pSQLDataSources)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLDataSourcesA)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLDataSourcesW)(SQLHENV,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLDescribeCol)(SQLHSTMT,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLULEN*,SQLSMALLINT*,SQLSMALLINT*);
+static SQLRETURN (*pSQLDescribeColW)(SQLHSTMT,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLULEN*,SQLSMALLINT*,SQLSMALLINT*);
+static SQLRETURN (*pSQLDescribeParam)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT*,SQLULEN*,SQLSMALLINT*,SQLSMALLINT*);
+static SQLRETURN (*pSQLDisconnect)(SQLHDBC);
+static SQLRETURN (*pSQLDriverConnect)(SQLHDBC,SQLHWND,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLUSMALLINT);
+static SQLRETURN (*pSQLDriverConnectW)(SQLHDBC,SQLHWND,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLUSMALLINT);
+static SQLRETURN (*pSQLDrivers)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLDriversW)(SQLHENV,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLEndTran)(SQLSMALLINT,SQLHANDLE,SQLSMALLINT);
+static SQLRETURN (*pSQLError)(SQLHENV,SQLHDBC,SQLHSTMT,SQLCHAR*,SQLINTEGER*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLErrorW)(SQLHENV,SQLHDBC,SQLHSTMT,SQLWCHAR*,SQLINTEGER*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLExecDirect)(SQLHSTMT,SQLCHAR*,SQLINTEGER);
+static SQLRETURN (*pSQLExecDirectW)(SQLHSTMT,SQLWCHAR*,SQLINTEGER);
+static SQLRETURN (*pSQLExecute)(SQLHSTMT);
+static SQLRETURN (*pSQLExtendedFetch)(SQLHSTMT,SQLUSMALLINT,SQLLEN,SQLULEN*,SQLUSMALLINT*);
+static SQLRETURN (*pSQLFetch)(SQLHSTMT);
+static SQLRETURN (*pSQLFetchScroll)(SQLHSTMT,SQLSMALLINT,SQLLEN);
+static SQLRETURN (*pSQLForeignKeys)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLForeignKeysW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLFreeConnect)(SQLHDBC);
+static SQLRETURN (*pSQLFreeEnv)(SQLHENV);
+static SQLRETURN (*pSQLFreeHandle)(SQLSMALLINT,SQLHANDLE);
+static SQLRETURN (*pSQLFreeStmt)(SQLHSTMT,SQLUSMALLINT);
+static SQLRETURN (*pSQLGetConnectAttr)(SQLHDBC,SQLINTEGER,SQLPOINTER,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLGetConnectAttrW)(SQLHDBC,SQLINTEGER,SQLPOINTER,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLGetConnectOption)(SQLHDBC,SQLUSMALLINT,SQLPOINTER);
+static SQLRETURN (*pSQLGetConnectOptionW)(SQLHDBC,SQLUSMALLINT,SQLPOINTER);
+static SQLRETURN (*pSQLGetCursorName)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetCursorNameW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetData)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLPOINTER,SQLLEN,SQLLEN*);
+static SQLRETURN (*pSQLGetDescField)(SQLHDESC,SQLSMALLINT,SQLSMALLINT,SQLPOINTER,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLGetDescFieldW)(SQLHDESC,SQLSMALLINT,SQLSMALLINT,SQLPOINTER,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLGetDescRec)(SQLHDESC,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLSMALLINT*,SQLLEN*,SQLSMALLINT*,SQLSMALLINT*,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetDescRecW)(SQLHDESC,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLSMALLINT*,SQLLEN*,SQLSMALLINT*,SQLSMALLINT*,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetDiagField)(SQLSMALLINT,SQLHANDLE,SQLSMALLINT,SQLSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetDiagFieldW)(SQLSMALLINT,SQLHANDLE,SQLSMALLINT,SQLSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetDiagRec)(SQLSMALLINT,SQLHANDLE,SQLSMALLINT,SQLCHAR*,SQLINTEGER*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetDiagRecW)(SQLSMALLINT,SQLHANDLE,SQLSMALLINT,SQLWCHAR*,SQLINTEGER*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetEnvAttr)(SQLHENV,SQLINTEGER,SQLPOINTER,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLGetFunctions)(SQLHDBC,SQLUSMALLINT,SQLUSMALLINT*);
+static SQLRETURN (*pSQLGetInfo)(SQLHDBC,SQLUSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetInfoW)(SQLHDBC,SQLUSMALLINT,SQLPOINTER,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLGetStmtAttr)(SQLHSTMT,SQLINTEGER,SQLPOINTER,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLGetStmtAttrW)(SQLHSTMT,SQLINTEGER,SQLPOINTER,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLGetStmtOption)(SQLHSTMT,SQLUSMALLINT,SQLPOINTER);
+static SQLRETURN (*pSQLGetTypeInfo)(SQLHSTMT,SQLSMALLINT);
+static SQLRETURN (*pSQLGetTypeInfoW)(SQLHSTMT,SQLSMALLINT);
+static SQLRETURN (*pSQLMoreResults)(SQLHSTMT);
+static SQLRETURN (*pSQLNativeSql)(SQLHDBC,SQLCHAR*,SQLINTEGER,SQLCHAR*,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLNativeSqlW)(SQLHDBC,SQLWCHAR*,SQLINTEGER,SQLWCHAR*,SQLINTEGER,SQLINTEGER*);
+static SQLRETURN (*pSQLNumParams)(SQLHSTMT,SQLSMALLINT*);
+static SQLRETURN (*pSQLNumResultCols)(SQLHSTMT,SQLSMALLINT*);
+static SQLRETURN (*pSQLParamData)(SQLHSTMT,SQLPOINTER*);
+static SQLRETURN (*pSQLParamOptions)(SQLHSTMT,SQLULEN,SQLULEN*);
+static SQLRETURN (*pSQLPrepare)(SQLHSTMT,SQLCHAR*,SQLINTEGER);
+static SQLRETURN (*pSQLPrepareW)(SQLHSTMT,SQLWCHAR*,SQLINTEGER);
+static SQLRETURN (*pSQLPrimaryKeys)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLPrimaryKeysW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLProcedureColumns)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLProcedureColumnsW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLProcedures)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLProceduresW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLPutData)(SQLHSTMT,SQLPOINTER,SQLLEN);
+static SQLRETURN (*pSQLRowCount)(SQLHSTMT,SQLLEN*);
+static SQLRETURN (*pSQLSetConnectAttr)(SQLHDBC,SQLINTEGER,SQLPOINTER,SQLINTEGER);
+static SQLRETURN (*pSQLSetConnectAttrW)(SQLHDBC,SQLINTEGER,SQLPOINTER,SQLINTEGER);
+static SQLRETURN (*pSQLSetConnectOption)(SQLHDBC,SQLUSMALLINT,SQLULEN);
+static SQLRETURN (*pSQLSetConnectOptionW)(SQLHDBC,SQLUSMALLINT,SQLULEN);
+static SQLRETURN (*pSQLSetCursorName)(SQLHSTMT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLSetCursorNameW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLSetDescField)(SQLHDESC,SQLSMALLINT,SQLSMALLINT,SQLPOINTER,SQLINTEGER);
+static SQLRETURN (*pSQLSetDescFieldW)(SQLHDESC,SQLSMALLINT,SQLSMALLINT,SQLPOINTER,SQLINTEGER);
+static SQLRETURN (*pSQLSetDescRec)(SQLHDESC,SQLSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLLEN,SQLSMALLINT,SQLSMALLINT,SQLPOINTER,SQLLEN*,SQLLEN*);
+static SQLRETURN (*pSQLSetEnvAttr)(SQLHENV,SQLINTEGER,SQLPOINTER,SQLINTEGER);
+static SQLRETURN (*pSQLSetParam)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLULEN,SQLSMALLINT,SQLPOINTER,SQLLEN*);
+static SQLRETURN (*pSQLSetPos)(SQLHSTMT,SQLSETPOSIROW,SQLUSMALLINT,SQLUSMALLINT);
+static SQLRETURN (*pSQLSetScrollOptions)(SQLHSTMT,SQLUSMALLINT,SQLLEN,SQLUSMALLINT);
+static SQLRETURN (*pSQLSetStmtAttr)(SQLHSTMT,SQLINTEGER,SQLPOINTER,SQLINTEGER);
+static SQLRETURN (*pSQLSetStmtAttrW)(SQLHSTMT,SQLINTEGER,SQLPOINTER,SQLINTEGER);
+static SQLRETURN (*pSQLSetStmtOption)(SQLHSTMT,SQLUSMALLINT,SQLULEN);
+static SQLRETURN (*pSQLSpecialColumns)(SQLHSTMT,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLUSMALLINT,SQLUSMALLINT);
+static SQLRETURN (*pSQLSpecialColumnsW)(SQLHSTMT,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLUSMALLINT,SQLUSMALLINT);
+static SQLRETURN (*pSQLStatistics)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLUSMALLINT,SQLUSMALLINT);
+static SQLRETURN (*pSQLStatisticsW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLUSMALLINT,SQLUSMALLINT);
+static SQLRETURN (*pSQLTablePrivileges)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLTablePrivilegesW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLTables)(SQLHSTMT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLTablesW)(SQLHSTMT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
+static SQLRETURN (*pSQLTransact)(SQLHENV,SQLHDBC,SQLUSMALLINT);
+static SQLRETURN (*pSQLGetDiagRecA)(SQLSMALLINT,SQLHANDLE,SQLSMALLINT,SQLCHAR*,SQLINTEGER*,
+                                    SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
 
-static PROXYHANDLE gProxyHandle;
+#define ERROR_FREE 0
+#define ERROR_SQLERROR  1
+#define ERROR_LIBRARY_NOT_FOUND 2
 
-/* What is the difference between these two (dmHandle cf READY_AND_dmHandle)? When does one use one and when the other? */
+static void *dmHandle;
+static int nErrorType;
 
-#define CHECK_dmHandle() \
-{ \
-        if (gProxyHandle.dmHandle == NULL) \
-        { \
-                TRACE ("Not ready\n"); \
-                return SQL_ERROR; \
-        } \
-}
-
-#define CHECK_READY_AND_dmHandle() \
-{ \
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL) \
-        { \
-                TRACE ("Not ready\n"); \
-                return SQL_ERROR; \
-        } \
-}
-
-SQLRETURN SQLDummyFunc()
-{
-    TRACE("SQLDummyFunc: \n");
-    return SQL_SUCCESS;
-}
+SQLRETURN WINAPI ODBC32_SQLAllocEnv(SQLHENV *);
+SQLRETURN WINAPI ODBC32_SQLFreeEnv(SQLHENV);
+SQLRETURN WINAPI ODBC32_SQLDataSources(SQLHENV, SQLUSMALLINT, SQLCHAR *, SQLSMALLINT,
+                                       SQLSMALLINT *, SQLCHAR *, SQLSMALLINT, SQLSMALLINT *);
+SQLRETURN WINAPI ODBC32_SQLDrivers(SQLHENV, SQLUSMALLINT, SQLCHAR *, SQLSMALLINT, SQLSMALLINT *,
+                                   SQLCHAR *, SQLSMALLINT, SQLSMALLINT *);
 
 /***********************************************************************
  * ODBC_ReplicateODBCInstToRegistry
@@ -182,9 +204,9 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
 {
     HKEY hODBCInst;
     LONG reg_ret;
-    int success;
+    BOOL success;
 
-    success = 0;
+    success = FALSE;
     TRACE ("Driver settings are not currently replicated to the registry\n");
     if ((reg_ret = RegCreateKeyExA (HKEY_LOCAL_MACHINE,
             "Software\\ODBC\\ODBCINST.INI", 0, NULL,
@@ -203,33 +225,33 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
             CHAR desc [256];
             SQLSMALLINT sizedesc;
 
-            success = 1;
+            success = TRUE;
             dirn = SQL_FETCH_FIRST;
-            while ((sql_ret = SQLDrivers (hEnv, dirn, (SQLCHAR*)desc, sizeof(desc),
+            while ((sql_ret = ODBC32_SQLDrivers (hEnv, dirn, (SQLCHAR*)desc, sizeof(desc),
                     &sizedesc, NULL, 0, NULL)) == SQL_SUCCESS ||
                     sql_ret == SQL_SUCCESS_WITH_INFO)
             {
                 /* FIXME Do some proper handling of the SUCCESS_WITH_INFO */
                 dirn = SQL_FETCH_NEXT;
-                if (sizedesc == strlen(desc))
+                if (sizedesc == lstrlenA(desc))
                 {
                     HKEY hThis;
                     if ((reg_ret = RegQueryValueExA (hDrivers, desc, NULL,
                             NULL, NULL, NULL)) == ERROR_FILE_NOT_FOUND)
                     {
                         if ((reg_ret = RegSetValueExA (hDrivers, desc, 0,
-                                REG_SZ, (LPBYTE)"Installed", 10)) != ERROR_SUCCESS)
+                                REG_SZ, (const BYTE *)"Installed", 10)) != ERROR_SUCCESS)
                         {
-                            TRACE ("Error %ld replicating driver %s\n",
+                            TRACE ("Error %d replicating driver %s\n",
                                     reg_ret, desc);
-                            success = 0;
+                            success = FALSE;
                         }
                     }
                     else if (reg_ret != ERROR_SUCCESS)
                     {
-                        TRACE ("Error %ld checking for %s in drivers\n",
+                        TRACE ("Error %d checking for %s in drivers\n",
                                 reg_ret, desc);
-                        success = 0;
+                        success = FALSE;
                     }
                     if ((reg_ret = RegCreateKeyExA (hODBCInst, desc, 0,
                             NULL, REG_OPTION_NON_VOLATILE,
@@ -244,45 +266,45 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
                          */
                         if ((reg_ret = RegCloseKey (hThis)) !=
                                 ERROR_SUCCESS)
-                            TRACE ("Error %ld closing %s key\n", reg_ret,
+                            TRACE ("Error %d closing %s key\n", reg_ret,
                                     desc);
                     }
                     else
                     {
-                        TRACE ("Error %ld ensuring driver key %s\n",
+                        TRACE ("Error %d ensuring driver key %s\n",
                                 reg_ret, desc);
-                        success = 0;
+                        success = FALSE;
                     }
                 }
                 else
                 {
                     WARN ("Unusually long driver name %s not replicated\n",
                             desc);
-                    success = 0;
+                    success = FALSE;
                 }
             }
             if (sql_ret != SQL_NO_DATA)
             {
                 TRACE ("Error %d enumerating drivers\n", (int)sql_ret);
-                success = 0;
+                success = FALSE;
             }
             if ((reg_ret = RegCloseKey (hDrivers)) != ERROR_SUCCESS)
             {
-                TRACE ("Error %ld closing hDrivers\n", reg_ret);
+                TRACE ("Error %d closing hDrivers\n", reg_ret);
             }
         }
         else
         {
-            TRACE ("Error %ld opening HKLM\\S\\O\\OI\\Drivers\n", reg_ret);
+            TRACE ("Error %d opening HKLM\\S\\O\\OI\\Drivers\n", reg_ret);
         }
         if ((reg_ret = RegCloseKey (hODBCInst)) != ERROR_SUCCESS)
         {
-            TRACE ("Error %ld closing HKLM\\S\\O\\ODBCINST.INI\n", reg_ret);
+            TRACE ("Error %d closing HKLM\\S\\O\\ODBCINST.INI\n", reg_ret);
         }
     }
     else
     {
-        TRACE ("Error %ld opening HKLM\\S\\O\\ODBCINST.INI\n", reg_ret);
+        TRACE ("Error %d opening HKLM\\S\\O\\ODBCINST.INI\n", reg_ret);
     }
     if (!success)
     {
@@ -310,7 +332,7 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
  * that this will add a requirement that this function be called after
  * ODBC_ReplicateODBCInstToRegistry)
  */
-static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
+static void ODBC_ReplicateODBCToRegistry (BOOL is_user, SQLHENV hEnv)
 {
     HKEY hODBC;
     LONG reg_ret;
@@ -320,26 +342,26 @@ static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
     SQLSMALLINT sizedsn;
     CHAR desc [256];
     SQLSMALLINT sizedesc;
-    int success;
+    BOOL success;
     const char *which = is_user ? "user" : "system";
 
-    success = 0;
+    success = FALSE;
     if ((reg_ret = RegCreateKeyExA (
             is_user ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE,
             "Software\\ODBC\\ODBC.INI", 0, NULL, REG_OPTION_NON_VOLATILE,
             KEY_ALL_ACCESS /* a couple more than we need */, NULL, &hODBC,
             NULL)) == ERROR_SUCCESS)
     {
-        success = 1;
+        success = TRUE;
         dirn = is_user ? SQL_FETCH_FIRST_USER : SQL_FETCH_FIRST_SYSTEM;
-        while ((sql_ret = SQLDataSources (hEnv, dirn,
+        while ((sql_ret = ODBC32_SQLDataSources (hEnv, dirn,
                 (SQLCHAR*)dsn, sizeof(dsn), &sizedsn,
                 (SQLCHAR*)desc, sizeof(desc), &sizedesc)) == SQL_SUCCESS
                 || sql_ret == SQL_SUCCESS_WITH_INFO)
         {
             /* FIXME Do some proper handling of the SUCCESS_WITH_INFO */
             dirn = SQL_FETCH_NEXT;
-            if (sizedsn == strlen(dsn) && sizedesc == strlen(desc))
+            if (sizedsn == lstrlenA(dsn) && sizedesc == lstrlenA(desc))
             {
                 HKEY hDSN;
                 if ((reg_ret = RegCreateKeyExA (hODBC, dsn, 0,
@@ -347,7 +369,7 @@ static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
                         KEY_ALL_ACCESS, NULL, &hDSN, NULL))
                         == ERROR_SUCCESS)
                 {
-                    static const char *DRIVERKEY = "Driver";
+                    static const char DRIVERKEY[] = "Driver";
                     if ((reg_ret = RegQueryValueExA (hDSN, DRIVERKEY,
                             NULL, NULL, NULL, NULL))
                             == ERROR_FILE_NOT_FOUND)
@@ -355,52 +377,52 @@ static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
                         if ((reg_ret = RegSetValueExA (hDSN, DRIVERKEY, 0,
                                 REG_SZ, (LPBYTE)desc, sizedesc)) != ERROR_SUCCESS)
                         {
-                            TRACE ("Error %ld replicating description of "
+                            TRACE ("Error %d replicating description of "
                                     "%s(%s)\n", reg_ret, dsn, desc);
-                            success = 0;
+                            success = FALSE;
                         }
                     }
                     else if (reg_ret != ERROR_SUCCESS)
                     {
-                        TRACE ("Error %ld checking for description of %s\n",
+                        TRACE ("Error %d checking for description of %s\n",
                                 reg_ret, dsn);
-                        success = 0;
+                        success = FALSE;
                     }
                     if ((reg_ret = RegCloseKey (hDSN)) != ERROR_SUCCESS)
                     {
-                        TRACE ("Error %ld closing %s DSN key %s\n",
+                        TRACE ("Error %d closing %s DSN key %s\n",
                                 reg_ret, which, dsn);
                     }
                 }
                 else
                 {
-                    TRACE ("Error %ld opening %s DSN key %s\n",
+                    TRACE ("Error %d opening %s DSN key %s\n",
                             reg_ret, which, dsn);
-                    success = 0;
+                    success = FALSE;
                 }
             }
             else
             {
                 WARN ("Unusually long %s data source name %s (%s) not "
                         "replicated\n", which, dsn, desc);
-                success = 0;
+                success = FALSE;
             }
         }
         if (sql_ret != SQL_NO_DATA)
         {
             TRACE ("Error %d enumerating %s datasources\n",
                     (int)sql_ret, which);
-            success = 0;
+            success = FALSE;
         }
         if ((reg_ret = RegCloseKey (hODBC)) != ERROR_SUCCESS)
         {
-            TRACE ("Error %ld closing %s ODBC.INI registry key\n", reg_ret,
+            TRACE ("Error %d closing %s ODBC.INI registry key\n", reg_ret,
                     which);
         }
     }
     else
     {
-        TRACE ("Error %ld creating/opening %s ODBC.INI registry key\n",
+        TRACE ("Error %d creating/opening %s ODBC.INI registry key\n",
                 reg_ret, which);
     }
     if (!success)
@@ -432,13 +454,13 @@ static void ODBC_ReplicateToRegistry (void)
     SQLRETURN sql_ret;
     SQLHENV hEnv;
 
-    if ((sql_ret = SQLAllocEnv (&hEnv)) == SQL_SUCCESS)
+    if ((sql_ret = ODBC32_SQLAllocEnv (&hEnv)) == SQL_SUCCESS)
     {
         ODBC_ReplicateODBCInstToRegistry (hEnv);
-        ODBC_ReplicateODBCToRegistry (0 /* system dsns */, hEnv);
-        ODBC_ReplicateODBCToRegistry (1 /* user dsns */, hEnv);
+        ODBC_ReplicateODBCToRegistry (FALSE /* system dsns */, hEnv);
+        ODBC_ReplicateODBCToRegistry (TRUE /* user dsns */, hEnv);
 
-        if ((sql_ret = SQLFreeEnv (hEnv)) != SQL_SUCCESS)
+        if ((sql_ret = ODBC32_SQLFreeEnv (hEnv)) != SQL_SUCCESS)
         {
             TRACE ("Error %d freeing the SQL environment.\n", (int)sql_ret);
         }
@@ -453,48 +475,25 @@ static void ODBC_ReplicateToRegistry (void)
 
 /***********************************************************************
  * DllMain [Internal] Initializes the internal 'ODBC32.DLL'.
- *
- * PARAMS
- *     hinstDLL    [I] handle to the DLL's instance
- *     fdwReason   [I]
- *     lpvReserved [I] reserved, must be NULL
- *
- * RETURNS
- *     Success: TRUE
- *     Failure: FALSE
  */
-
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
 {
-    int i;
-    TRACE("Initializing or Finalizing proxy ODBC: %p,%lx,%p\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("proxy ODBC: %p,%x,%p\n", hinstDLL, reason, reserved);
 
-    if (fdwReason == DLL_PROCESS_ATTACH)
+    switch (reason)
     {
-       TRACE("Loading ODBC...\n");
+    case DLL_PROCESS_ATTACH:
        DisableThreadLibraryCalls(hinstDLL);
        if (ODBC_LoadDriverManager())
        {
           ODBC_LoadDMFunctions();
           ODBC_ReplicateToRegistry();
        }
-    }
-    else if (fdwReason == DLL_PROCESS_DETACH)
-    {
-      TRACE("Unloading ODBC...\n");
-      if (gProxyHandle.bFunctionReady)
-      {
-         for ( i = 0; i < NUM_SQLFUNC; i ++ )
-         {
-            gProxyHandle.functions[i].func = SQLDummyFunc;
-         }
-      }
+       break;
 
-      if (gProxyHandle.dmHandle)
-      {
-         wine_dlclose(gProxyHandle.dmHandle,NULL,0);
-         gProxyHandle.dmHandle = NULL;
-      }
+    case DLL_PROCESS_DETACH:
+      if (reserved) break;
+      if (dmHandle) wine_dlclose(dmHandle,NULL,0);
     }
 
     return TRUE;
@@ -515,34 +514,23 @@ static BOOL ODBC_LoadDriverManager(void)
    const char *s = getenv("LIB_ODBC_DRIVER_MANAGER");
    char error[256];
 
-   TRACE("\n");
+#ifdef SONAME_LIBODBC
+   if (!s || !s[0]) s = SONAME_LIBODBC;
+#endif
+   if (!s || !s[0]) goto failed;
 
-   gProxyHandle.bFunctionReady = FALSE;
-   gProxyHandle.nErrorType = ERROR_LIBRARY_NOT_FOUND;
+   dmHandle = wine_dlopen(s, RTLD_LAZY | RTLD_GLOBAL, error, sizeof(error));
 
-   if (s!= NULL && strlen (s) >= sizeof(gProxyHandle.dmLibName))
+   if (dmHandle != NULL)
    {
-          ERR("Driver name too long (%s)\n",s);
-          return FALSE;
-   }
-   if (s == NULL || strlen(s) == 0)
-          s = "libodbc.so";
-   strcpy(gProxyHandle.dmLibName, s);
-
-   gProxyHandle.dmHandle = wine_dlopen(gProxyHandle.dmLibName, RTLD_LAZY | RTLD_GLOBAL, error, sizeof(error));
-
-   if (gProxyHandle.dmHandle == NULL)           /* fail to load unixODBC driver manager */
-   {
-           WARN("failed to open library %s: %s\n", gProxyHandle.dmLibName, error);
-           gProxyHandle.dmLibName[0] = '\0';
-           gProxyHandle.nErrorType = ERROR_LIBRARY_NOT_FOUND;
-           return FALSE;
-   }
-   else
-   {
-      gProxyHandle.nErrorType = ERROR_FREE;
+      TRACE("Opened library %s\n", s);
+      nErrorType = ERROR_FREE;
       return TRUE;
    }
+failed:
+   ERR_(winediag)("failed to open library %s: %s\n", debugstr_a(s), error);
+   nErrorType = ERROR_LIBRARY_NOT_FOUND;
+   return FALSE;
 }
 
 
@@ -558,45 +546,133 @@ static BOOL ODBC_LoadDriverManager(void)
 
 static BOOL ODBC_LoadDMFunctions(void)
 {
-    int i;
     char error[256];
 
-    if (gProxyHandle.dmHandle == NULL)
+    if (dmHandle == NULL)
         return FALSE;
 
-    for ( i = 0; i < NUM_SQLFUNC; i ++ )
-    {
-        char * pFuncNameW;
+#define LOAD_FUNC(name) \
+    if ((p##name = wine_dlsym( dmHandle, #name, error, sizeof(error) ))); \
+    else WARN( "Failed to load %s: %s\n", #name, error )
 
-        gProxyHandle.functions[i] = template_func[i];
-        gProxyHandle.functions[i].func = wine_dlsym(gProxyHandle.dmHandle,
-                gProxyHandle.functions[i].name, error, sizeof(error));
-
-        if (error[0])
-        {
-            ERR("Failed to load function %s\n",gProxyHandle.functions[i].name);
-            gProxyHandle.functions[i].func = SQLDummyFunc;
-        }
-        else
-        {
-            /* Build Unicode function name for this function */
-            pFuncNameW = HeapAlloc(GetProcessHeap(), 0, strlen(gProxyHandle.functions[i].name) + 2);
-            strcpy(pFuncNameW, gProxyHandle.functions[i].name);
-            pFuncNameW[strlen(gProxyHandle.functions[i].name) + 1] = '\0';
-            pFuncNameW[strlen(gProxyHandle.functions[i].name)] = 'W';
-
-            gProxyHandle.functions[i].funcW = wine_dlsym(gProxyHandle.dmHandle,
-                pFuncNameW, error, sizeof(error));
-            if (error[0])
-            {
-/*                TRACE("Failed to load function %s, possibly no Unicode version is required\n", pFuncNameW); */
-                gProxyHandle.functions[i].funcW = NULL;
-            }
-            HeapFree(GetProcessHeap(), 0, pFuncNameW);
-        }
-    }
-
-    gProxyHandle.bFunctionReady = TRUE;
+    LOAD_FUNC(SQLAllocConnect);
+    LOAD_FUNC(SQLAllocEnv);
+    LOAD_FUNC(SQLAllocHandle);
+    LOAD_FUNC(SQLAllocHandleStd);
+    LOAD_FUNC(SQLAllocStmt);
+    LOAD_FUNC(SQLBindCol);
+    LOAD_FUNC(SQLBindParam);
+    LOAD_FUNC(SQLBindParameter);
+    LOAD_FUNC(SQLBrowseConnect);
+    LOAD_FUNC(SQLBrowseConnectW);
+    LOAD_FUNC(SQLBulkOperations);
+    LOAD_FUNC(SQLCancel);
+    LOAD_FUNC(SQLCloseCursor);
+    LOAD_FUNC(SQLColAttribute);
+    LOAD_FUNC(SQLColAttributeW);
+    LOAD_FUNC(SQLColAttributes);
+    LOAD_FUNC(SQLColAttributesW);
+    LOAD_FUNC(SQLColumnPrivileges);
+    LOAD_FUNC(SQLColumnPrivilegesW);
+    LOAD_FUNC(SQLColumns);
+    LOAD_FUNC(SQLColumnsW);
+    LOAD_FUNC(SQLConnect);
+    LOAD_FUNC(SQLConnectW);
+    LOAD_FUNC(SQLCopyDesc);
+    LOAD_FUNC(SQLDataSources);
+    LOAD_FUNC(SQLDataSourcesA);
+    LOAD_FUNC(SQLDataSourcesW);
+    LOAD_FUNC(SQLDescribeCol);
+    LOAD_FUNC(SQLDescribeColW);
+    LOAD_FUNC(SQLDescribeParam);
+    LOAD_FUNC(SQLDisconnect);
+    LOAD_FUNC(SQLDriverConnect);
+    LOAD_FUNC(SQLDriverConnectW);
+    LOAD_FUNC(SQLDrivers);
+    LOAD_FUNC(SQLDriversW);
+    LOAD_FUNC(SQLEndTran);
+    LOAD_FUNC(SQLError);
+    LOAD_FUNC(SQLErrorW);
+    LOAD_FUNC(SQLExecDirect);
+    LOAD_FUNC(SQLExecDirectW);
+    LOAD_FUNC(SQLExecute);
+    LOAD_FUNC(SQLExtendedFetch);
+    LOAD_FUNC(SQLFetch);
+    LOAD_FUNC(SQLFetchScroll);
+    LOAD_FUNC(SQLForeignKeys);
+    LOAD_FUNC(SQLForeignKeysW);
+    LOAD_FUNC(SQLFreeConnect);
+    LOAD_FUNC(SQLFreeEnv);
+    LOAD_FUNC(SQLFreeHandle);
+    LOAD_FUNC(SQLFreeStmt);
+    LOAD_FUNC(SQLGetConnectAttr);
+    LOAD_FUNC(SQLGetConnectAttrW);
+    LOAD_FUNC(SQLGetConnectOption);
+    LOAD_FUNC(SQLGetConnectOptionW);
+    LOAD_FUNC(SQLGetCursorName);
+    LOAD_FUNC(SQLGetCursorNameW);
+    LOAD_FUNC(SQLGetData);
+    LOAD_FUNC(SQLGetDescField);
+    LOAD_FUNC(SQLGetDescFieldW);
+    LOAD_FUNC(SQLGetDescRec);
+    LOAD_FUNC(SQLGetDescRecW);
+    LOAD_FUNC(SQLGetDiagField);
+    LOAD_FUNC(SQLGetDiagFieldW);
+    LOAD_FUNC(SQLGetDiagRec);
+    LOAD_FUNC(SQLGetDiagRecA);
+    LOAD_FUNC(SQLGetDiagRecW);
+    LOAD_FUNC(SQLGetEnvAttr);
+    LOAD_FUNC(SQLGetFunctions);
+    LOAD_FUNC(SQLGetInfo);
+    LOAD_FUNC(SQLGetInfoW);
+    LOAD_FUNC(SQLGetStmtAttr);
+    LOAD_FUNC(SQLGetStmtAttrW);
+    LOAD_FUNC(SQLGetStmtOption);
+    LOAD_FUNC(SQLGetTypeInfo);
+    LOAD_FUNC(SQLGetTypeInfoW);
+    LOAD_FUNC(SQLMoreResults);
+    LOAD_FUNC(SQLNativeSql);
+    LOAD_FUNC(SQLNativeSqlW);
+    LOAD_FUNC(SQLNumParams);
+    LOAD_FUNC(SQLNumResultCols);
+    LOAD_FUNC(SQLParamData);
+    LOAD_FUNC(SQLParamOptions);
+    LOAD_FUNC(SQLPrepare);
+    LOAD_FUNC(SQLPrepareW);
+    LOAD_FUNC(SQLPrimaryKeys);
+    LOAD_FUNC(SQLPrimaryKeysW);
+    LOAD_FUNC(SQLProcedureColumns);
+    LOAD_FUNC(SQLProcedureColumnsW);
+    LOAD_FUNC(SQLProcedures);
+    LOAD_FUNC(SQLProceduresW);
+    LOAD_FUNC(SQLPutData);
+    LOAD_FUNC(SQLRowCount);
+    LOAD_FUNC(SQLSetConnectAttr);
+    LOAD_FUNC(SQLSetConnectAttrW);
+    LOAD_FUNC(SQLSetConnectOption);
+    LOAD_FUNC(SQLSetConnectOptionW);
+    LOAD_FUNC(SQLSetCursorName);
+    LOAD_FUNC(SQLSetCursorNameW);
+    LOAD_FUNC(SQLSetDescField);
+    LOAD_FUNC(SQLSetDescFieldW);
+    LOAD_FUNC(SQLSetDescRec);
+    LOAD_FUNC(SQLSetEnvAttr);
+    LOAD_FUNC(SQLSetParam);
+    LOAD_FUNC(SQLSetPos);
+    LOAD_FUNC(SQLSetScrollOptions);
+    LOAD_FUNC(SQLSetStmtAttr);
+    LOAD_FUNC(SQLSetStmtAttrW);
+    LOAD_FUNC(SQLSetStmtOption);
+    LOAD_FUNC(SQLSpecialColumns);
+    LOAD_FUNC(SQLSpecialColumnsW);
+    LOAD_FUNC(SQLStatistics);
+    LOAD_FUNC(SQLStatisticsW);
+    LOAD_FUNC(SQLTablePrivileges);
+    LOAD_FUNC(SQLTablePrivilegesW);
+    LOAD_FUNC(SQLTables);
+    LOAD_FUNC(SQLTablesW);
+    LOAD_FUNC(SQLTransact);
+#undef LOAD_FUNC
 
     return TRUE;
 }
@@ -605,22 +681,20 @@ static BOOL ODBC_LoadDMFunctions(void)
 /*************************************************************************
  *				SQLAllocConnect           [ODBC32.001]
  */
-SQLRETURN WINAPI SQLAllocConnect(SQLHENV EnvironmentHandle, SQLHDBC *ConnectionHandle)
+SQLRETURN WINAPI ODBC32_SQLAllocConnect(SQLHENV EnvironmentHandle, SQLHDBC *ConnectionHandle)
 {
         SQLRETURN ret;
-        TRACE("Env=%lx\n",EnvironmentHandle);
+        TRACE("(EnvironmentHandle %p)\n",EnvironmentHandle);
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
+        if (!pSQLAllocConnect)
         {
            *ConnectionHandle = SQL_NULL_HDBC;
            TRACE("Not ready\n");
            return SQL_ERROR;
         }
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCCONNECT].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCCONNECT].func)
-            (EnvironmentHandle, ConnectionHandle);
-        TRACE("Returns ret=%d, Handle %lx\n",ret, *ConnectionHandle);
+        ret = pSQLAllocConnect(EnvironmentHandle, ConnectionHandle);
+        TRACE("Returns %d, Handle %p\n", ret, *ConnectionHandle);
         return ret;
 }
 
@@ -628,21 +702,20 @@ SQLRETURN WINAPI SQLAllocConnect(SQLHENV EnvironmentHandle, SQLHDBC *ConnectionH
 /*************************************************************************
  *				SQLAllocEnv           [ODBC32.002]
  */
-SQLRETURN WINAPI  SQLAllocEnv(SQLHENV *EnvironmentHandle)
+SQLRETURN WINAPI ODBC32_SQLAllocEnv(SQLHENV *EnvironmentHandle)
 {
         SQLRETURN ret;
         TRACE("\n");
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
+        if (!pSQLAllocEnv)
         {
            *EnvironmentHandle = SQL_NULL_HENV;
            TRACE("Not ready\n");
            return SQL_ERROR;
         }
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCENV].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCENV].func) (EnvironmentHandle);
-        TRACE("Returns ret=%d, Env=%lx\n",ret, *EnvironmentHandle);
+        ret = pSQLAllocEnv(EnvironmentHandle);
+        TRACE("Returns %d, EnvironmentHandle %p\n", ret, *EnvironmentHandle);
         return ret;
 }
 
@@ -650,14 +723,14 @@ SQLRETURN WINAPI  SQLAllocEnv(SQLHENV *EnvironmentHandle)
 /*************************************************************************
  *				SQLAllocHandle           [ODBC32.024]
  */
-SQLRETURN WINAPI SQLAllocHandle(SQLSMALLINT HandleType, SQLHANDLE InputHandle, SQLHANDLE *OutputHandle)
+SQLRETURN WINAPI ODBC32_SQLAllocHandle(SQLSMALLINT HandleType, SQLHANDLE InputHandle, SQLHANDLE *OutputHandle)
 {
         SQLRETURN ret;
-        TRACE("(Type=%d, Handle=%lx)\n",HandleType,InputHandle);
+        TRACE("(Type %d, Handle %p)\n", HandleType, InputHandle);
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
+        if (!pSQLAllocHandle)
         {
-            if (gProxyHandle.nErrorType == ERROR_LIBRARY_NOT_FOUND)
+            if (nErrorType == ERROR_LIBRARY_NOT_FOUND)
                 WARN("ProxyODBC: Cannot load ODBC driver manager library.\n");
 
             if (HandleType == SQL_HANDLE_ENV)
@@ -673,10 +746,8 @@ SQLRETURN WINAPI SQLAllocHandle(SQLSMALLINT HandleType, SQLHANDLE InputHandle, S
             return SQL_ERROR;
         }
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCHANDLE].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCHANDLE].func)
-                   (HandleType, InputHandle, OutputHandle);
-        TRACE("Returns ret=%d, Handle=%lx\n",ret, *OutputHandle);
+        ret = pSQLAllocHandle(HandleType, InputHandle, OutputHandle);
+        TRACE("Returns %d, Handle %p\n", ret, *OutputHandle);
         return ret;
 }
 
@@ -684,23 +755,21 @@ SQLRETURN WINAPI SQLAllocHandle(SQLSMALLINT HandleType, SQLHANDLE InputHandle, S
 /*************************************************************************
  *				SQLAllocStmt           [ODBC32.003]
  */
-SQLRETURN WINAPI SQLAllocStmt(SQLHDBC ConnectionHandle, SQLHSTMT *StatementHandle)
+SQLRETURN WINAPI ODBC32_SQLAllocStmt(SQLHDBC ConnectionHandle, SQLHSTMT *StatementHandle)
 {
         SQLRETURN ret;
 
-        TRACE("(Connection=%lx)\n",ConnectionHandle);
+        TRACE("(Connection %p)\n", ConnectionHandle);
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
+        if (!pSQLAllocStmt)
         {
            *StatementHandle = SQL_NULL_HSTMT;
            TRACE ("Not ready\n");
            return SQL_ERROR;
         }
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCSTMT].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCSTMT].func)
-            (ConnectionHandle, StatementHandle);
-        TRACE ("Returns ret=%d, Handle=%lx\n", ret, *StatementHandle);
+        ret = pSQLAllocStmt(ConnectionHandle, StatementHandle);
+        TRACE ("Returns %d, Handle %p\n", ret, *StatementHandle);
         return ret;
 }
 
@@ -708,14 +777,14 @@ SQLRETURN WINAPI SQLAllocStmt(SQLHDBC ConnectionHandle, SQLHSTMT *StatementHandl
 /*************************************************************************
  *				SQLAllocHandleStd           [ODBC32.077]
  */
-SQLRETURN WINAPI SQLAllocHandleStd( SQLSMALLINT HandleType,
-                                                         SQLHANDLE InputHandle, SQLHANDLE *OutputHandle)
+SQLRETURN WINAPI ODBC32_SQLAllocHandleStd( SQLSMALLINT HandleType,
+                                    SQLHANDLE InputHandle, SQLHANDLE *OutputHandle)
 {
-        TRACE("ProxyODBC: SQLAllocHandelStd.\n");
+        TRACE("ProxyODBC: SQLAllocHandleStd.\n");
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
+        if (!pSQLAllocHandleStd)
         {
-            if (gProxyHandle.nErrorType == ERROR_LIBRARY_NOT_FOUND)
+            if (nErrorType == ERROR_LIBRARY_NOT_FOUND)
                 WARN("ProxyODBC: Cannot load ODBC driver manager library.\n");
 
             if (HandleType == SQL_HANDLE_ENV)
@@ -730,82 +799,73 @@ SQLRETURN WINAPI SQLAllocHandleStd( SQLSMALLINT HandleType,
             return SQL_ERROR;
         }
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCHANDLESTD].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLALLOCHANDLESTD].func)
-                   (HandleType, InputHandle, OutputHandle);
+        return pSQLAllocHandleStd(HandleType, InputHandle, OutputHandle);
 }
 
 
 /*************************************************************************
  *				SQLBindCol           [ODBC32.004]
  */
-SQLRETURN WINAPI SQLBindCol(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLBindCol(SQLHSTMT StatementHandle,
                      SQLUSMALLINT ColumnNumber, SQLSMALLINT TargetType,
-                     SQLPOINTER TargetValue, SQLINTEGER BufferLength,
-                     SQLINTEGER *StrLen_or_Ind)
+                     SQLPOINTER TargetValue, SQLLEN BufferLength,
+                     SQLLEN *StrLen_or_Ind)
 {
         TRACE("\n");
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
+        if (!pSQLBindCol)
         {
                 TRACE ("Not ready\n");
                 return SQL_ERROR;
         }
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLBINDCOL].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLBINDCOL].func)
-            (StatementHandle, ColumnNumber, TargetType,
-            TargetValue, BufferLength, StrLen_or_Ind);
+        return pSQLBindCol(StatementHandle, ColumnNumber, TargetType,
+                           TargetValue, BufferLength, StrLen_or_Ind);
 }
 
 
 /*************************************************************************
  *				SQLBindParam           [ODBC32.025]
  */
-SQLRETURN WINAPI SQLBindParam(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLBindParam(SQLHSTMT StatementHandle,
              SQLUSMALLINT ParameterNumber, SQLSMALLINT ValueType,
-             SQLSMALLINT ParameterType, SQLUINTEGER LengthPrecision,
+             SQLSMALLINT ParameterType, SQLULEN LengthPrecision,
              SQLSMALLINT ParameterScale, SQLPOINTER ParameterValue,
-             SQLINTEGER *StrLen_or_Ind)
+             SQLLEN *StrLen_or_Ind)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLBINDPARAM].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLBINDPARAM].func)
-                   (StatementHandle, ParameterNumber, ValueType,
-                    ParameterScale, ParameterValue, StrLen_or_Ind);
+        if (!pSQLBindParam) return SQL_ERROR;
+        return pSQLBindParam(StatementHandle, ParameterNumber, ValueType,
+                             ParameterType, LengthPrecision, ParameterScale,
+                             ParameterValue, StrLen_or_Ind);
 }
 
 
 /*************************************************************************
  *				SQLCancel           [ODBC32.005]
  */
-SQLRETURN WINAPI SQLCancel(SQLHSTMT StatementHandle)
+SQLRETURN WINAPI ODBC32_SQLCancel(SQLHSTMT StatementHandle)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCANCEL].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCANCEL].func) (StatementHandle);
+        if (!pSQLCancel) return SQL_ERROR;
+        return pSQLCancel(StatementHandle);
 }
 
 
 /*************************************************************************
  *				SQLCloseCursor           [ODBC32.026]
  */
-SQLRETURN WINAPI  SQLCloseCursor(SQLHSTMT StatementHandle)
+SQLRETURN WINAPI ODBC32_SQLCloseCursor(SQLHSTMT StatementHandle)
 {
         SQLRETURN ret;
-        TRACE("(Handle=%lx)\n",StatementHandle);
+        TRACE("(Handle %p)\n", StatementHandle);
 
-        CHECK_READY_AND_dmHandle();
+        if (!pSQLCloseCursor) return SQL_ERROR;
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLCLOSECURSOR].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLCLOSECURSOR].func) (StatementHandle);
-        TRACE("returns %d\n",ret);
+        ret = pSQLCloseCursor(StatementHandle);
+        TRACE("Returns %d\n", ret);
         return ret;
 }
 
@@ -813,26 +873,23 @@ SQLRETURN WINAPI  SQLCloseCursor(SQLHSTMT StatementHandle)
 /*************************************************************************
  *				SQLColAttribute           [ODBC32.027]
  */
-SQLRETURN WINAPI SQLColAttribute (SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLColAttribute (SQLHSTMT StatementHandle,
              SQLUSMALLINT ColumnNumber, SQLUSMALLINT FieldIdentifier,
              SQLPOINTER CharacterAttribute, SQLSMALLINT BufferLength,
-             SQLSMALLINT *StringLength, SQLPOINTER NumericAttribute)
+             SQLSMALLINT *StringLength, SQLLEN *NumericAttribute)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTE].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTE].func)
-            (StatementHandle, ColumnNumber, FieldIdentifier,
-            CharacterAttribute, BufferLength, StringLength, NumericAttribute);
+        if (!pSQLColAttribute) return SQL_ERROR;
+        return pSQLColAttribute(StatementHandle, ColumnNumber, FieldIdentifier,
+                                CharacterAttribute, BufferLength, StringLength, NumericAttribute);
 }
 
 
 /*************************************************************************
  *				SQLColumns           [ODBC32.040]
  */
-SQLRETURN WINAPI SQLColumns(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLColumns(SQLHSTMT StatementHandle,
              SQLCHAR *CatalogName, SQLSMALLINT NameLength1,
              SQLCHAR *SchemaName, SQLSMALLINT NameLength2,
              SQLCHAR *TableName, SQLSMALLINT NameLength3,
@@ -840,19 +897,16 @@ SQLRETURN WINAPI SQLColumns(SQLHSTMT StatementHandle,
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNS].func)
-            (StatementHandle, CatalogName, NameLength1,
-            SchemaName, NameLength2, TableName, NameLength3, ColumnName, NameLength4);
+        if (!pSQLColumns) return SQL_ERROR;
+        return pSQLColumns(StatementHandle, CatalogName, NameLength1,
+                           SchemaName, NameLength2, TableName, NameLength3, ColumnName, NameLength4);
 }
 
 
 /*************************************************************************
  *				SQLConnect           [ODBC32.007]
  */
-SQLRETURN WINAPI SQLConnect(SQLHDBC ConnectionHandle,
+SQLRETURN WINAPI ODBC32_SQLConnect(SQLHDBC ConnectionHandle,
              SQLCHAR *ServerName, SQLSMALLINT NameLength1,
              SQLCHAR *UserName, SQLSMALLINT NameLength2,
              SQLCHAR *Authentication, SQLSMALLINT NameLength3)
@@ -860,17 +914,12 @@ SQLRETURN WINAPI SQLConnect(SQLHDBC ConnectionHandle,
         SQLRETURN ret;
         TRACE("(Server=%.*s)\n",NameLength1, ServerName);
 
-        CHECK_READY_AND_dmHandle();
+        if (!pSQLConnect) return SQL_ERROR;
 
-        strcpy( (LPSTR)gProxyHandle.ServerName, (LPSTR)ServerName );
-        strcpy( (LPSTR)gProxyHandle.UserName, (LPSTR)UserName );
+        ret = pSQLConnect(ConnectionHandle, ServerName, NameLength1,
+                          UserName, NameLength2, Authentication, NameLength3);
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLCONNECT].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLCONNECT].func)
-            (ConnectionHandle, ServerName, NameLength1,
-            UserName, NameLength2, Authentication, NameLength3);
-
-        TRACE("returns %d\n",ret);
+        TRACE("Returns %d\n", ret);
         return ret;
 }
 
@@ -878,22 +927,19 @@ SQLRETURN WINAPI SQLConnect(SQLHDBC ConnectionHandle,
 /*************************************************************************
  *				SQLCopyDesc           [ODBC32.028]
  */
-SQLRETURN WINAPI SQLCopyDesc(SQLHDESC SourceDescHandle, SQLHDESC TargetDescHandle)
+SQLRETURN WINAPI ODBC32_SQLCopyDesc(SQLHDESC SourceDescHandle, SQLHDESC TargetDescHandle)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOPYDESC].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCOPYDESC].func)
-            (SourceDescHandle, TargetDescHandle);
+        if (!pSQLCopyDesc) return SQL_ERROR;
+        return pSQLCopyDesc(SourceDescHandle, TargetDescHandle);
 }
 
 
 /*************************************************************************
  *				SQLDataSources           [ODBC32.057]
  */
-SQLRETURN WINAPI SQLDataSources(SQLHENV EnvironmentHandle,
+SQLRETURN WINAPI ODBC32_SQLDataSources(SQLHENV EnvironmentHandle,
              SQLUSMALLINT Direction, SQLCHAR *ServerName,
              SQLSMALLINT BufferLength1, SQLSMALLINT *NameLength1,
              SQLCHAR *Description, SQLSMALLINT BufferLength2,
@@ -901,25 +947,19 @@ SQLRETURN WINAPI SQLDataSources(SQLHENV EnvironmentHandle,
 {
         SQLRETURN ret;
 
-        TRACE("EnvironmentHandle = %p\n", (LPVOID)EnvironmentHandle);
+        TRACE("(EnvironmentHandle %p)\n", EnvironmentHandle);
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
-        {
-            ERR("Error: empty dm handle (gProxyHandle.dmHandle == NULL)\n");
-            return SQL_ERROR;
-        }
+        if (!pSQLDataSources) return SQL_ERROR;
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLDATASOURCES].func);
-        ret = (gProxyHandle.functions[SQLAPI_INDEX_SQLDATASOURCES].func)
-            (EnvironmentHandle, Direction, ServerName,
-            BufferLength1, NameLength1, Description, BufferLength2, NameLength2);
+        ret = pSQLDataSources(EnvironmentHandle, Direction, ServerName,
+                              BufferLength1, NameLength1, Description, BufferLength2, NameLength2);
 
         if (TRACE_ON(odbc))
         {
-           TRACE("returns: %d \t", ret);
-           if (*NameLength1 > 0)
+           TRACE("Returns %d \t", ret);
+           if (NameLength1 && *NameLength1 > 0)
              TRACE("DataSource = %s,", ServerName);
-           if (*NameLength2 > 0)
+           if (NameLength2 && *NameLength2 > 0)
              TRACE(" Description = %s", Description);
            TRACE("\n");
         }
@@ -927,43 +967,62 @@ SQLRETURN WINAPI SQLDataSources(SQLHENV EnvironmentHandle,
         return ret;
 }
 
+SQLRETURN WINAPI ODBC32_SQLDataSourcesA(SQLHENV EnvironmentHandle,
+             SQLUSMALLINT Direction, SQLCHAR *ServerName,
+             SQLSMALLINT BufferLength1, SQLSMALLINT *NameLength1,
+             SQLCHAR *Description, SQLSMALLINT BufferLength2,
+             SQLSMALLINT *NameLength2)
+{
+    SQLRETURN ret;
+
+    TRACE("EnvironmentHandle = %p\n", EnvironmentHandle);
+
+    if (!pSQLDataSourcesA) return SQL_ERROR;
+
+    ret = pSQLDataSourcesA(EnvironmentHandle, Direction, ServerName,
+                           BufferLength1, NameLength1, Description, BufferLength2, NameLength2);
+    if (TRACE_ON(odbc))
+    {
+       TRACE("Returns %d \t", ret);
+       if (NameLength1 && *NameLength1 > 0)
+         TRACE("DataSource = %s,", ServerName);
+       if (NameLength2 && *NameLength2 > 0)
+         TRACE(" Description = %s", Description);
+       TRACE("\n");
+    }
+
+    return ret;
+}
 
 /*************************************************************************
  *				SQLDescribeCol           [ODBC32.008]
  */
-SQLRETURN WINAPI SQLDescribeCol(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLDescribeCol(SQLHSTMT StatementHandle,
              SQLUSMALLINT ColumnNumber, SQLCHAR *ColumnName,
              SQLSMALLINT BufferLength, SQLSMALLINT *NameLength,
-             SQLSMALLINT *DataType, SQLUINTEGER *ColumnSize,
+             SQLSMALLINT *DataType, SQLULEN *ColumnSize,
              SQLSMALLINT *DecimalDigits, SQLSMALLINT *Nullable)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLDESCRIBECOL].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLDESCRIBECOL].func)
-            (StatementHandle, ColumnNumber, ColumnName,
-            BufferLength, NameLength, DataType, ColumnSize, DecimalDigits, Nullable);
+        if (!pSQLDescribeCol) return SQL_ERROR;
+        return pSQLDescribeCol(StatementHandle, ColumnNumber, ColumnName,
+                               BufferLength, NameLength, DataType, ColumnSize, DecimalDigits, Nullable);
 }
 
 
 /*************************************************************************
  *				SQLDisconnect           [ODBC32.009]
  */
-SQLRETURN WINAPI SQLDisconnect(SQLHDBC ConnectionHandle)
+SQLRETURN WINAPI ODBC32_SQLDisconnect(SQLHDBC ConnectionHandle)
 {
         SQLRETURN ret;
-        TRACE("(Handle=%lx)\n", ConnectionHandle);
+        TRACE("(Handle %p)\n", ConnectionHandle);
 
-        CHECK_READY_AND_dmHandle();
+        if (!pSQLDisconnect) return SQL_ERROR;
 
-        gProxyHandle.ServerName[0] = '\0';
-        gProxyHandle.UserName[0]   = '\0';
-
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLDISCONNECT].func);
-        ret = (gProxyHandle.functions[SQLAPI_INDEX_SQLDISCONNECT].func) (ConnectionHandle);
-        TRACE("returns %d\n",ret);
+        ret = pSQLDisconnect(ConnectionHandle);
+        TRACE("Returns %d\n", ret);
         return ret;
 }
 
@@ -971,108 +1030,102 @@ SQLRETURN WINAPI SQLDisconnect(SQLHDBC ConnectionHandle)
 /*************************************************************************
  *				SQLEndTran           [ODBC32.029]
  */
-SQLRETURN WINAPI SQLEndTran(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMALLINT CompletionType)
+SQLRETURN WINAPI ODBC32_SQLEndTran(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMALLINT CompletionType)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLENDTRAN].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLENDTRAN].func) (HandleType, Handle, CompletionType);
+        if (!pSQLEndTran) return SQL_ERROR;
+        return pSQLEndTran(HandleType, Handle, CompletionType);
 }
 
 
 /*************************************************************************
  *				SQLError           [ODBC32.010]
  */
-SQLRETURN WINAPI SQLError(SQLHENV EnvironmentHandle,
+SQLRETURN WINAPI ODBC32_SQLError(SQLHENV EnvironmentHandle,
              SQLHDBC ConnectionHandle, SQLHSTMT StatementHandle,
              SQLCHAR *Sqlstate, SQLINTEGER *NativeError,
              SQLCHAR *MessageText, SQLSMALLINT BufferLength,
              SQLSMALLINT *TextLength)
 {
-        TRACE("\n");
+        SQLRETURN ret;
 
-        CHECK_READY_AND_dmHandle();
+        TRACE("(EnvironmentHandle %p, ConnectionHandle %p, StatementHandle %p, BufferLength %d)\n",
+              EnvironmentHandle, ConnectionHandle, StatementHandle, BufferLength);
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLERROR].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLERROR].func)
-            (EnvironmentHandle, ConnectionHandle, StatementHandle,
-            Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+        if (!pSQLError) return SQL_ERROR;
+        ret = pSQLError(EnvironmentHandle, ConnectionHandle, StatementHandle,
+                        Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+        if (ret == SQL_SUCCESS)
+                TRACE("SQLState %s, Error %d, Text %s, Textlen %d\n",
+                       debugstr_an((char *)Sqlstate, 5), *NativeError,
+                       debugstr_an((char *)MessageText, *TextLength), *TextLength);
+        else
+                TRACE("Returns %d\n", ret);
+        return ret;
 }
 
 
 /*************************************************************************
  *				SQLExecDirect           [ODBC32.011]
  */
-SQLRETURN WINAPI SQLExecDirect(SQLHSTMT StatementHandle, SQLCHAR *StatementText, SQLINTEGER TextLength)
+SQLRETURN WINAPI ODBC32_SQLExecDirect(SQLHSTMT StatementHandle, SQLCHAR *StatementText, SQLINTEGER TextLength)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLEXECDIRECT].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLEXECDIRECT].func)
-            (StatementHandle, StatementText, TextLength);
+        if (!pSQLExecDirect) return SQL_ERROR;
+        return pSQLExecDirect(StatementHandle, StatementText, TextLength);
 }
 
 
 /*************************************************************************
  *				SQLExecute           [ODBC32.012]
  */
-SQLRETURN WINAPI SQLExecute(SQLHSTMT StatementHandle)
+SQLRETURN WINAPI ODBC32_SQLExecute(SQLHSTMT StatementHandle)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLEXECUTE].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLEXECUTE].func) (StatementHandle);
+        if (!pSQLExecute) return SQL_ERROR;
+        return pSQLExecute(StatementHandle);
 }
 
 
 /*************************************************************************
  *				SQLFetch           [ODBC32.013]
  */
-SQLRETURN WINAPI SQLFetch(SQLHSTMT StatementHandle)
+SQLRETURN WINAPI ODBC32_SQLFetch(SQLHSTMT StatementHandle)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFETCH].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLFETCH].func) (StatementHandle);
+        if (!pSQLFetch) return SQL_ERROR;
+        return pSQLFetch(StatementHandle);
 }
 
 
 /*************************************************************************
  *				SQLFetchScroll          [ODBC32.030]
  */
-SQLRETURN WINAPI SQLFetchScroll(SQLHSTMT StatementHandle, SQLSMALLINT FetchOrientation, SQLINTEGER FetchOffset)
+SQLRETURN WINAPI ODBC32_SQLFetchScroll(SQLHSTMT StatementHandle, SQLSMALLINT FetchOrientation, SQLLEN FetchOffset)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFETCHSCROLL].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLFETCHSCROLL].func)
-            (StatementHandle, FetchOrientation, FetchOffset);
+        if (!pSQLFetchScroll) return SQL_ERROR;
+        return pSQLFetchScroll(StatementHandle, FetchOrientation, FetchOffset);
 }
 
 
 /*************************************************************************
  *				SQLFreeConnect           [ODBC32.014]
  */
-SQLRETURN WINAPI SQLFreeConnect(SQLHDBC ConnectionHandle)
+SQLRETURN WINAPI ODBC32_SQLFreeConnect(SQLHDBC ConnectionHandle)
 {
         SQLRETURN ret;
-        TRACE("(Handle=%lx)\n",ConnectionHandle);
+        TRACE("(Handle %p)\n", ConnectionHandle);
 
-        CHECK_dmHandle();
+        if (!pSQLFreeConnect) return SQL_ERROR;
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFREECONNECT].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLFREECONNECT].func) (ConnectionHandle);
-        TRACE("Returns %d\n",ret);
+        ret = pSQLFreeConnect(ConnectionHandle);
+        TRACE("Returns %d\n", ret);
         return ret;
 }
 
@@ -1080,16 +1133,15 @@ SQLRETURN WINAPI SQLFreeConnect(SQLHDBC ConnectionHandle)
 /*************************************************************************
  *				SQLFreeEnv           [ODBC32.015]
  */
-SQLRETURN WINAPI SQLFreeEnv(SQLHENV EnvironmentHandle)
+SQLRETURN WINAPI ODBC32_SQLFreeEnv(SQLHENV EnvironmentHandle)
 {
         SQLRETURN ret;
-        TRACE("(Env=%lx)\n",EnvironmentHandle);
+        TRACE("(EnvironmentHandle %p)\n",EnvironmentHandle);
 
-        CHECK_dmHandle();
+        if (!pSQLFreeEnv) return SQL_ERROR;
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFREEENV].func);
-        ret = (gProxyHandle.functions[SQLAPI_INDEX_SQLFREEENV].func) (EnvironmentHandle);
-        TRACE("Returns %d\n",ret);
+        ret = pSQLFreeEnv(EnvironmentHandle);
+        TRACE("Returns %d\n", ret);
         return ret;
 }
 
@@ -1097,17 +1149,15 @@ SQLRETURN WINAPI SQLFreeEnv(SQLHENV EnvironmentHandle)
 /*************************************************************************
  *				SQLFreeHandle           [ODBC32.031]
  */
-SQLRETURN WINAPI SQLFreeHandle(SQLSMALLINT HandleType, SQLHANDLE Handle)
+SQLRETURN WINAPI ODBC32_SQLFreeHandle(SQLSMALLINT HandleType, SQLHANDLE Handle)
 {
         SQLRETURN ret;
-        TRACE("(Type=%d, Handle=%lx)\n",HandleType,Handle);
+        TRACE("(Type %d, Handle %p)\n", HandleType, Handle);
 
-        CHECK_dmHandle();
+        if (!pSQLFreeHandle) return SQL_ERROR;
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFREEHANDLE].func);
-        ret = (gProxyHandle.functions[SQLAPI_INDEX_SQLFREEHANDLE].func)
-            (HandleType, Handle);
-        TRACE ("Returns %d\n",ret);
+        ret = pSQLFreeHandle(HandleType, Handle);
+        TRACE ("Returns %d\n", ret);
         return ret;
 }
 
@@ -1115,17 +1165,15 @@ SQLRETURN WINAPI SQLFreeHandle(SQLSMALLINT HandleType, SQLHANDLE Handle)
 /*************************************************************************
  *				SQLFreeStmt           [ODBC32.016]
  */
-SQLRETURN WINAPI SQLFreeStmt(SQLHSTMT StatementHandle, SQLUSMALLINT Option)
+SQLRETURN WINAPI ODBC32_SQLFreeStmt(SQLHSTMT StatementHandle, SQLUSMALLINT Option)
 {
         SQLRETURN ret;
-        TRACE("(Handle %lx, Option=%d)\n",StatementHandle, Option);
+        TRACE("(Handle %p, Option %d)\n", StatementHandle, Option);
 
-        CHECK_dmHandle();
+        if (!pSQLFreeStmt) return SQL_ERROR;
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFREESTMT].func);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLFREESTMT].func)
-            (StatementHandle, Option);
-        TRACE("Returns %d\n",ret);
+        ret = pSQLFreeStmt(StatementHandle, Option);
+        TRACE("Returns %d\n", ret);
         return ret;
 }
 
@@ -1133,478 +1181,394 @@ SQLRETURN WINAPI SQLFreeStmt(SQLHSTMT StatementHandle, SQLUSMALLINT Option)
 /*************************************************************************
  *				SQLGetConnectAttr           [ODBC32.032]
  */
-SQLRETURN WINAPI SQLGetConnectAttr(SQLHDBC ConnectionHandle,
+SQLRETURN WINAPI ODBC32_SQLGetConnectAttr(SQLHDBC ConnectionHandle,
              SQLINTEGER Attribute, SQLPOINTER Value,
              SQLINTEGER BufferLength, SQLINTEGER *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTATTR].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTATTR].func)
-            (ConnectionHandle, Attribute, Value,
-            BufferLength, StringLength);
+        if (!pSQLGetConnectAttr) return SQL_ERROR;
+        return pSQLGetConnectAttr(ConnectionHandle, Attribute, Value,
+                                  BufferLength, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLGetConnectOption       [ODBC32.042]
  */
-SQLRETURN WINAPI SQLGetConnectOption(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLPOINTER Value)
+SQLRETURN WINAPI ODBC32_SQLGetConnectOption(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLPOINTER Value)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTOPTION].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTOPTION].func)
-            (ConnectionHandle, Option, Value);
+        if (!pSQLGetConnectOption) return SQL_ERROR;
+        return pSQLGetConnectOption(ConnectionHandle, Option, Value);
 }
 
 
 /*************************************************************************
  *				SQLGetCursorName           [ODBC32.017]
  */
-SQLRETURN WINAPI SQLGetCursorName(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLGetCursorName(SQLHSTMT StatementHandle,
              SQLCHAR *CursorName, SQLSMALLINT BufferLength,
              SQLSMALLINT *NameLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCURSORNAME].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCURSORNAME].func)
-            (StatementHandle, CursorName, BufferLength, NameLength);
+        if (!pSQLGetCursorName) return SQL_ERROR;
+        return pSQLGetCursorName(StatementHandle, CursorName, BufferLength, NameLength);
 }
 
 
 /*************************************************************************
  *				SQLGetData           [ODBC32.043]
  */
-SQLRETURN WINAPI SQLGetData(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLGetData(SQLHSTMT StatementHandle,
              SQLUSMALLINT ColumnNumber, SQLSMALLINT TargetType,
-             SQLPOINTER TargetValue, SQLINTEGER BufferLength,
-             SQLINTEGER *StrLen_or_Ind)
+             SQLPOINTER TargetValue, SQLLEN BufferLength,
+             SQLLEN *StrLen_or_Ind)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDATA].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDATA].func)
-            (StatementHandle, ColumnNumber, TargetType,
-            TargetValue, BufferLength, StrLen_or_Ind);
+        if (!pSQLGetData) return SQL_ERROR;
+        return pSQLGetData(StatementHandle, ColumnNumber, TargetType,
+                           TargetValue, BufferLength, StrLen_or_Ind);
 }
 
 
 /*************************************************************************
  *				SQLGetDescField           [ODBC32.033]
  */
-SQLRETURN WINAPI SQLGetDescField(SQLHDESC DescriptorHandle,
+SQLRETURN WINAPI ODBC32_SQLGetDescField(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, SQLSMALLINT FieldIdentifier,
              SQLPOINTER Value, SQLINTEGER BufferLength,
              SQLINTEGER *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCFIELD].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCFIELD].func)
-            (DescriptorHandle, RecNumber, FieldIdentifier,
-            Value, BufferLength, StringLength);
+        if (!pSQLGetDescField) return SQL_ERROR;
+        return pSQLGetDescField(DescriptorHandle, RecNumber, FieldIdentifier,
+                                Value, BufferLength, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLGetDescRec           [ODBC32.034]
  */
-SQLRETURN WINAPI SQLGetDescRec(SQLHDESC DescriptorHandle,
+SQLRETURN WINAPI ODBC32_SQLGetDescRec(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, SQLCHAR *Name,
              SQLSMALLINT BufferLength, SQLSMALLINT *StringLength,
              SQLSMALLINT *Type, SQLSMALLINT *SubType,
-             SQLINTEGER *Length, SQLSMALLINT *Precision,
+             SQLLEN *Length, SQLSMALLINT *Precision,
              SQLSMALLINT *Scale, SQLSMALLINT *Nullable)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCREC].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCREC].func)
-            (DescriptorHandle, RecNumber, Name, BufferLength,
-            StringLength, Type, SubType, Length, Precision, Scale, Nullable);
+        if (!pSQLGetDescRec) return SQL_ERROR;
+        return pSQLGetDescRec(DescriptorHandle, RecNumber, Name, BufferLength,
+                              StringLength, Type, SubType, Length, Precision, Scale, Nullable);
 }
 
 
 /*************************************************************************
  *				SQLGetDiagField           [ODBC32.035]
  */
-SQLRETURN WINAPI SQLGetDiagField(SQLSMALLINT HandleType, SQLHANDLE Handle,
+SQLRETURN WINAPI ODBC32_SQLGetDiagField(SQLSMALLINT HandleType, SQLHANDLE Handle,
              SQLSMALLINT RecNumber, SQLSMALLINT DiagIdentifier,
              SQLPOINTER DiagInfo, SQLSMALLINT BufferLength,
              SQLSMALLINT *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGFIELD].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGFIELD].func)
-            (HandleType, Handle, RecNumber, DiagIdentifier,
-            DiagInfo, BufferLength, StringLength);
+        if (!pSQLGetDiagField) return SQL_ERROR;
+        return pSQLGetDiagField(HandleType, Handle, RecNumber, DiagIdentifier,
+                                DiagInfo, BufferLength, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLGetDiagRec           [ODBC32.036]
  */
-SQLRETURN WINAPI SQLGetDiagRec(SQLSMALLINT HandleType, SQLHANDLE Handle,
+SQLRETURN WINAPI ODBC32_SQLGetDiagRec(SQLSMALLINT HandleType, SQLHANDLE Handle,
              SQLSMALLINT RecNumber, SQLCHAR *Sqlstate,
              SQLINTEGER *NativeError, SQLCHAR *MessageText,
              SQLSMALLINT BufferLength, SQLSMALLINT *TextLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGREC].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGREC].func)
-            (HandleType, Handle, RecNumber, Sqlstate, NativeError,
-            MessageText, BufferLength, TextLength);
+        if (!pSQLGetDiagRec) return SQL_ERROR;
+        return pSQLGetDiagRec(HandleType, Handle, RecNumber, Sqlstate, NativeError,
+                              MessageText, BufferLength, TextLength);
 }
 
 
 /*************************************************************************
  *				SQLGetEnvAttr           [ODBC32.037]
  */
-SQLRETURN WINAPI SQLGetEnvAttr(SQLHENV EnvironmentHandle,
+SQLRETURN WINAPI ODBC32_SQLGetEnvAttr(SQLHENV EnvironmentHandle,
              SQLINTEGER Attribute, SQLPOINTER Value,
              SQLINTEGER BufferLength, SQLINTEGER *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETENVATTR].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETENVATTR].func)
-            (EnvironmentHandle, Attribute, Value, BufferLength, StringLength);
+        if (!pSQLGetEnvAttr) return SQL_ERROR;
+        return pSQLGetEnvAttr(EnvironmentHandle, Attribute, Value, BufferLength, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLGetFunctions           [ODBC32.044]
  */
-SQLRETURN WINAPI SQLGetFunctions(SQLHDBC ConnectionHandle, SQLUSMALLINT FunctionId, SQLUSMALLINT *Supported)
+SQLRETURN WINAPI ODBC32_SQLGetFunctions(SQLHDBC ConnectionHandle, SQLUSMALLINT FunctionId, SQLUSMALLINT *Supported)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETFUNCTIONS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETFUNCTIONS].func)
-            (ConnectionHandle, FunctionId, Supported);
+        if (!pSQLGetFunctions) return SQL_ERROR;
+        return pSQLGetFunctions(ConnectionHandle, FunctionId, Supported);
 }
 
 
 /*************************************************************************
  *				SQLGetInfo           [ODBC32.045]
  */
-SQLRETURN WINAPI SQLGetInfo(SQLHDBC ConnectionHandle,
+SQLRETURN WINAPI ODBC32_SQLGetInfo(SQLHDBC ConnectionHandle,
              SQLUSMALLINT InfoType, SQLPOINTER InfoValue,
              SQLSMALLINT BufferLength, SQLSMALLINT *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETINFO].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETINFO].func)
-            (ConnectionHandle, InfoType, InfoValue, BufferLength, StringLength);
+        if (!pSQLGetInfo) return SQL_ERROR;
+        return pSQLGetInfo(ConnectionHandle, InfoType, InfoValue, BufferLength, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLGetStmtAttr           [ODBC32.038]
  */
-SQLRETURN WINAPI SQLGetStmtAttr(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLGetStmtAttr(SQLHSTMT StatementHandle,
              SQLINTEGER Attribute, SQLPOINTER Value,
              SQLINTEGER BufferLength, SQLINTEGER *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETSTMTATTR].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETSTMTATTR].func)
-            (StatementHandle, Attribute, Value, BufferLength, StringLength);
+        if (!pSQLGetStmtAttr) return SQL_ERROR;
+        return pSQLGetStmtAttr(StatementHandle, Attribute, Value, BufferLength, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLGetStmtOption           [ODBC32.046]
  */
-SQLRETURN WINAPI SQLGetStmtOption(SQLHSTMT StatementHandle, SQLUSMALLINT Option, SQLPOINTER Value)
+SQLRETURN WINAPI ODBC32_SQLGetStmtOption(SQLHSTMT StatementHandle, SQLUSMALLINT Option, SQLPOINTER Value)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETSTMTOPTION].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETSTMTOPTION].func)
-                (StatementHandle, Option, Value);
+        if (!pSQLGetStmtOption) return SQL_ERROR;
+        return pSQLGetStmtOption(StatementHandle, Option, Value);
 }
 
 
 /*************************************************************************
  *				SQLGetTypeInfo           [ODBC32.047]
  */
-SQLRETURN WINAPI SQLGetTypeInfo(SQLHSTMT StatementHandle, SQLSMALLINT DataType)
+SQLRETURN WINAPI ODBC32_SQLGetTypeInfo(SQLHSTMT StatementHandle, SQLSMALLINT DataType)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETTYPEINFO].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETTYPEINFO].func)
-            (StatementHandle, DataType);
+        if (!pSQLGetTypeInfo) return SQL_ERROR;
+        return pSQLGetTypeInfo(StatementHandle, DataType);
 }
 
 
 /*************************************************************************
  *				SQLNumResultCols           [ODBC32.018]
  */
-SQLRETURN WINAPI SQLNumResultCols(SQLHSTMT StatementHandle, SQLSMALLINT *ColumnCount)
+SQLRETURN WINAPI ODBC32_SQLNumResultCols(SQLHSTMT StatementHandle, SQLSMALLINT *ColumnCount)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLNUMRESULTCOLS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLNUMRESULTCOLS].func)
-            (StatementHandle, ColumnCount);
+        if (!pSQLNumResultCols) return SQL_ERROR;
+        return pSQLNumResultCols(StatementHandle, ColumnCount);
 }
 
 
 /*************************************************************************
  *				SQLParamData           [ODBC32.048]
  */
-SQLRETURN WINAPI SQLParamData(SQLHSTMT StatementHandle, SQLPOINTER *Value)
+SQLRETURN WINAPI ODBC32_SQLParamData(SQLHSTMT StatementHandle, SQLPOINTER *Value)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPARAMDATA].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPARAMDATA].func)
-            (StatementHandle, Value);
+        if (!pSQLParamData) return SQL_ERROR;
+        return pSQLParamData(StatementHandle, Value);
 }
 
 
 /*************************************************************************
  *				SQLPrepare           [ODBC32.019]
  */
-SQLRETURN WINAPI SQLPrepare(SQLHSTMT StatementHandle, SQLCHAR *StatementText, SQLINTEGER TextLength)
+SQLRETURN WINAPI ODBC32_SQLPrepare(SQLHSTMT StatementHandle, SQLCHAR *StatementText, SQLINTEGER TextLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPREPARE].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPREPARE].func)
-            (StatementHandle, StatementText, TextLength);
+        if (!pSQLPrepare) return SQL_ERROR;
+        return pSQLPrepare(StatementHandle, StatementText, TextLength);
 }
 
 
 /*************************************************************************
  *				SQLPutData           [ODBC32.049]
  */
-SQLRETURN WINAPI SQLPutData(SQLHSTMT StatementHandle, SQLPOINTER Data, SQLINTEGER StrLen_or_Ind)
+SQLRETURN WINAPI ODBC32_SQLPutData(SQLHSTMT StatementHandle, SQLPOINTER Data, SQLLEN StrLen_or_Ind)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPUTDATA].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPUTDATA].func)
-            (StatementHandle, Data, StrLen_or_Ind);
+        if (!pSQLPutData) return SQL_ERROR;
+        return pSQLPutData(StatementHandle, Data, StrLen_or_Ind);
 }
 
 
 /*************************************************************************
  *				SQLRowCount           [ODBC32.020]
  */
-SQLRETURN WINAPI SQLRowCount(SQLHSTMT StatementHandle, SQLINTEGER *RowCount)
+SQLRETURN WINAPI ODBC32_SQLRowCount(SQLHSTMT StatementHandle, SQLLEN *RowCount)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLROWCOUNT].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLROWCOUNT].func)
-            (StatementHandle, RowCount);
+        if (!pSQLRowCount) return SQL_ERROR;
+        return pSQLRowCount(StatementHandle, RowCount);
 }
 
 
 /*************************************************************************
  *				SQLSetConnectAttr           [ODBC32.039]
  */
-SQLRETURN WINAPI SQLSetConnectAttr(SQLHDBC ConnectionHandle, SQLINTEGER Attribute,
+SQLRETURN WINAPI ODBC32_SQLSetConnectAttr(SQLHDBC ConnectionHandle, SQLINTEGER Attribute,
         SQLPOINTER Value, SQLINTEGER StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTATTR].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTATTR].func)
-            (ConnectionHandle, Attribute, Value, StringLength);
+        if (!pSQLSetConnectAttr) return SQL_ERROR;
+        return pSQLSetConnectAttr(ConnectionHandle, Attribute, Value, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLSetConnectOption           [ODBC32.050]
  */
-SQLRETURN WINAPI SQLSetConnectOption(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLUINTEGER Value)
+SQLRETURN WINAPI ODBC32_SQLSetConnectOption(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLULEN Value)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTOPTION].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTOPTION].func)
-            (ConnectionHandle, Option, Value);
+        if (!pSQLSetConnectOption) return SQL_ERROR;
+        return pSQLSetConnectOption(ConnectionHandle, Option, Value);
 }
 
 
 /*************************************************************************
  *				SQLSetCursorName           [ODBC32.021]
  */
-SQLRETURN WINAPI SQLSetCursorName(SQLHSTMT StatementHandle, SQLCHAR *CursorName, SQLSMALLINT NameLength)
+SQLRETURN WINAPI ODBC32_SQLSetCursorName(SQLHSTMT StatementHandle, SQLCHAR *CursorName, SQLSMALLINT NameLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCURSORNAME].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCURSORNAME].func)
-            (StatementHandle, CursorName, NameLength);
+        if (!pSQLSetCursorName) return SQL_ERROR;
+        return pSQLSetCursorName(StatementHandle, CursorName, NameLength);
 }
 
 
 /*************************************************************************
  *				SQLSetDescField           [ODBC32.073]
  */
-SQLRETURN WINAPI SQLSetDescField(SQLHDESC DescriptorHandle,
+SQLRETURN WINAPI ODBC32_SQLSetDescField(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, SQLSMALLINT FieldIdentifier,
              SQLPOINTER Value, SQLINTEGER BufferLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETDESCFIELD].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETDESCFIELD].func)
-            (DescriptorHandle, RecNumber, FieldIdentifier, Value, BufferLength);
+        if (!pSQLSetDescField) return SQL_ERROR;
+        return pSQLSetDescField(DescriptorHandle, RecNumber, FieldIdentifier, Value, BufferLength);
 }
 
 
 /*************************************************************************
  *				SQLSetDescRec           [ODBC32.074]
  */
-SQLRETURN WINAPI SQLSetDescRec(SQLHDESC DescriptorHandle,
+SQLRETURN WINAPI ODBC32_SQLSetDescRec(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, SQLSMALLINT Type,
-             SQLSMALLINT SubType, SQLINTEGER Length,
+             SQLSMALLINT SubType, SQLLEN Length,
              SQLSMALLINT Precision, SQLSMALLINT Scale,
-             SQLPOINTER Data, SQLINTEGER *StringLength,
-             SQLINTEGER *Indicator)
+             SQLPOINTER Data, SQLLEN *StringLength,
+             SQLLEN *Indicator)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETDESCREC].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETDESCREC].func)
-            (DescriptorHandle, RecNumber, Type, SubType, Length,
-            Precision, Scale, Data, StringLength, Indicator);
+        if (!pSQLSetDescRec) return SQL_ERROR;
+        return pSQLSetDescRec(DescriptorHandle, RecNumber, Type, SubType, Length,
+                              Precision, Scale, Data, StringLength, Indicator);
 }
 
 
 /*************************************************************************
  *				SQLSetEnvAttr           [ODBC32.075]
  */
-SQLRETURN WINAPI SQLSetEnvAttr(SQLHENV EnvironmentHandle,
+SQLRETURN WINAPI ODBC32_SQLSetEnvAttr(SQLHENV EnvironmentHandle,
              SQLINTEGER Attribute, SQLPOINTER Value,
              SQLINTEGER StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETENVATTR].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETENVATTR].func)
-            (EnvironmentHandle, Attribute, Value, StringLength);
+        if (!pSQLSetEnvAttr) return SQL_ERROR;
+        return pSQLSetEnvAttr(EnvironmentHandle, Attribute, Value, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLSetParam           [ODBC32.022]
  */
-SQLRETURN WINAPI SQLSetParam(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLSetParam(SQLHSTMT StatementHandle,
              SQLUSMALLINT ParameterNumber, SQLSMALLINT ValueType,
-             SQLSMALLINT ParameterType, SQLUINTEGER LengthPrecision,
+             SQLSMALLINT ParameterType, SQLULEN LengthPrecision,
              SQLSMALLINT ParameterScale, SQLPOINTER ParameterValue,
-             SQLINTEGER *StrLen_or_Ind)
+             SQLLEN *StrLen_or_Ind)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETPARAM].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETPARAM].func)
-            (StatementHandle, ParameterNumber, ValueType, ParameterType, LengthPrecision,
-             ParameterScale, ParameterValue, StrLen_or_Ind);
+        if (!pSQLSetParam) return SQL_ERROR;
+        return pSQLSetParam(StatementHandle, ParameterNumber, ValueType, ParameterType, LengthPrecision,
+                            ParameterScale, ParameterValue, StrLen_or_Ind);
 }
 
 
 /*************************************************************************
  *				SQLSetStmtAttr           [ODBC32.076]
  */
-SQLRETURN WINAPI SQLSetStmtAttr(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLSetStmtAttr(SQLHSTMT StatementHandle,
                  SQLINTEGER Attribute, SQLPOINTER Value,
                  SQLINTEGER StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSTMTATTR].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSTMTATTR].func)
-            (StatementHandle, Attribute, Value, StringLength);
+        if (!pSQLSetStmtAttr) return SQL_ERROR;
+        return pSQLSetStmtAttr(StatementHandle, Attribute, Value, StringLength);
 }
 
 
 /*************************************************************************
  *				SQLSetStmtOption           [ODBC32.051]
  */
-SQLRETURN WINAPI SQLSetStmtOption(SQLHSTMT StatementHandle, SQLUSMALLINT Option, SQLUINTEGER Value)
+SQLRETURN WINAPI ODBC32_SQLSetStmtOption(SQLHSTMT StatementHandle, SQLUSMALLINT Option, SQLULEN Value)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSTMTOPTION].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSTMTOPTION].func)
-            (StatementHandle, Option, Value);
+        if (!pSQLSetStmtOption) return SQL_ERROR;
+        return pSQLSetStmtOption(StatementHandle, Option, Value);
 }
 
 
 /*************************************************************************
  *				SQLSpecialColumns           [ODBC32.052]
  */
-SQLRETURN WINAPI SQLSpecialColumns(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLSpecialColumns(SQLHSTMT StatementHandle,
              SQLUSMALLINT IdentifierType, SQLCHAR *CatalogName,
              SQLSMALLINT NameLength1, SQLCHAR *SchemaName,
              SQLSMALLINT NameLength2, SQLCHAR *TableName,
@@ -1612,19 +1576,16 @@ SQLRETURN WINAPI SQLSpecialColumns(SQLHSTMT StatementHandle,
              SQLUSMALLINT Nullable)
 {
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSPECIALCOLUMNS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSPECIALCOLUMNS].func)
-            (StatementHandle, IdentifierType, CatalogName, NameLength1, SchemaName,
-             NameLength2, TableName, NameLength3, Scope, Nullable);
+        if (!pSQLSpecialColumns) return SQL_ERROR;
+        return pSQLSpecialColumns(StatementHandle, IdentifierType, CatalogName, NameLength1, SchemaName,
+                                  NameLength2, TableName, NameLength3, Scope, Nullable);
 }
 
 
 /*************************************************************************
  *				SQLStatistics           [ODBC32.053]
  */
-SQLRETURN WINAPI SQLStatistics(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLStatistics(SQLHSTMT StatementHandle,
              SQLCHAR *CatalogName, SQLSMALLINT NameLength1,
              SQLCHAR *SchemaName, SQLSMALLINT NameLength2,
              SQLCHAR *TableName, SQLSMALLINT NameLength3,
@@ -1632,19 +1593,16 @@ SQLRETURN WINAPI SQLStatistics(SQLHSTMT StatementHandle,
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSTATISTICS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSTATISTICS].func)
-            (StatementHandle, CatalogName, NameLength1, SchemaName, NameLength2,
-             TableName, NameLength3, Unique, Reserved);
+        if (!pSQLStatistics) return SQL_ERROR;
+        return pSQLStatistics(StatementHandle, CatalogName, NameLength1, SchemaName, NameLength2,
+                              TableName, NameLength3, Unique, Reserved);
 }
 
 
 /*************************************************************************
  *				SQLTables           [ODBC32.054]
  */
-SQLRETURN WINAPI SQLTables(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLTables(SQLHSTMT StatementHandle,
              SQLCHAR *CatalogName, SQLSMALLINT NameLength1,
              SQLCHAR *SchemaName, SQLSMALLINT NameLength2,
              SQLCHAR *TableName, SQLSMALLINT NameLength3,
@@ -1652,35 +1610,29 @@ SQLRETURN WINAPI SQLTables(SQLHSTMT StatementHandle,
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLES].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLES].func)
-                (StatementHandle, CatalogName, NameLength1,
-                SchemaName, NameLength2, TableName, NameLength3, TableType, NameLength4);
+        if (!pSQLTables) return SQL_ERROR;
+        return pSQLTables(StatementHandle, CatalogName, NameLength1,
+                          SchemaName, NameLength2, TableName, NameLength3, TableType, NameLength4);
 }
 
 
 /*************************************************************************
  *				SQLTransact           [ODBC32.023]
  */
-SQLRETURN WINAPI SQLTransact(SQLHENV EnvironmentHandle, SQLHDBC ConnectionHandle,
+SQLRETURN WINAPI ODBC32_SQLTransact(SQLHENV EnvironmentHandle, SQLHDBC ConnectionHandle,
         SQLUSMALLINT CompletionType)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLTRANSACT].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLTRANSACT].func)
-            (EnvironmentHandle, ConnectionHandle, CompletionType);
+        if (!pSQLTransact) return SQL_ERROR;
+        return pSQLTransact(EnvironmentHandle, ConnectionHandle, CompletionType);
 }
 
 
 /*************************************************************************
  *				SQLBrowseConnect           [ODBC32.055]
  */
-SQLRETURN WINAPI SQLBrowseConnect(
+SQLRETURN WINAPI ODBC32_SQLBrowseConnect(
     SQLHDBC            hdbc,
     SQLCHAR               *szConnStrIn,
     SQLSMALLINT        cbConnStrIn,
@@ -1690,57 +1642,48 @@ SQLRETURN WINAPI SQLBrowseConnect(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLBROWSECONNECT].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLBROWSECONNECT].func)
-                (hdbc, szConnStrIn, cbConnStrIn, szConnStrOut, cbConnStrOutMax, pcbConnStrOut);
+        if (!pSQLBrowseConnect) return SQL_ERROR;
+        return pSQLBrowseConnect(hdbc, szConnStrIn, cbConnStrIn, szConnStrOut, cbConnStrOutMax, pcbConnStrOut);
 }
 
 
 /*************************************************************************
  *				SQLBulkOperations           [ODBC32.078]
  */
-SQLRETURN WINAPI  SQLBulkOperations(
+SQLRETURN WINAPI ODBC32_SQLBulkOperations(
         SQLHSTMT                        StatementHandle,
         SQLSMALLINT                     Operation)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLBULKOPERATIONS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLBULKOPERATIONS].func)
-                   (StatementHandle, Operation);
+        if (!pSQLBulkOperations) return SQL_ERROR;
+        return pSQLBulkOperations(StatementHandle, Operation);
 }
 
 
 /*************************************************************************
  *				SQLColAttributes           [ODBC32.006]
  */
-SQLRETURN WINAPI SQLColAttributes(
+SQLRETURN WINAPI ODBC32_SQLColAttributes(
     SQLHSTMT           hstmt,
     SQLUSMALLINT       icol,
     SQLUSMALLINT       fDescType,
     SQLPOINTER         rgbDesc,
     SQLSMALLINT        cbDescMax,
     SQLSMALLINT           *pcbDesc,
-    SQLINTEGER            *pfDesc)
+    SQLLEN                *pfDesc)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTES].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTES].func)
-                   (hstmt, icol, fDescType, rgbDesc, cbDescMax, pcbDesc, pfDesc);
+        if (!pSQLColAttributes) return SQL_ERROR;
+        return pSQLColAttributes(hstmt, icol, fDescType, rgbDesc, cbDescMax, pcbDesc, pfDesc);
 }
 
 
 /*************************************************************************
  *				SQLColumnPrivileges           [ODBC32.056]
  */
-SQLRETURN WINAPI SQLColumnPrivileges(
+SQLRETURN WINAPI ODBC32_SQLColumnPrivileges(
     SQLHSTMT           hstmt,
     SQLCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
@@ -1753,60 +1696,51 @@ SQLRETURN WINAPI SQLColumnPrivileges(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNPRIVILEGES].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNPRIVILEGES].func)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szTableName, cbTableName, szColumnName, cbColumnName);
+        if (!pSQLColumnPrivileges) return SQL_ERROR;
+        return pSQLColumnPrivileges(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                                    szTableName, cbTableName, szColumnName, cbColumnName);
 }
 
 
 /*************************************************************************
  *				SQLDescribeParam          [ODBC32.058]
  */
-SQLRETURN WINAPI SQLDescribeParam(
+SQLRETURN WINAPI ODBC32_SQLDescribeParam(
     SQLHSTMT           hstmt,
     SQLUSMALLINT       ipar,
     SQLSMALLINT           *pfSqlType,
-    SQLUINTEGER           *pcbParamDef,
+    SQLULEN               *pcbParamDef,
     SQLSMALLINT           *pibScale,
     SQLSMALLINT           *pfNullable)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLDESCRIBEPARAM].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLDESCRIBEPARAM].func)
-                   (hstmt, ipar, pfSqlType, pcbParamDef, pibScale, pfNullable);
+        if (!pSQLDescribeParam) return SQL_ERROR;
+        return pSQLDescribeParam(hstmt, ipar, pfSqlType, pcbParamDef, pibScale, pfNullable);
 }
 
 
 /*************************************************************************
  *				SQLExtendedFetch           [ODBC32.059]
  */
-SQLRETURN WINAPI SQLExtendedFetch(
+SQLRETURN WINAPI ODBC32_SQLExtendedFetch(
     SQLHSTMT           hstmt,
     SQLUSMALLINT       fFetchType,
-    SQLINTEGER         irow,
-    SQLUINTEGER           *pcrow,
+    SQLLEN             irow,
+    SQLULEN               *pcrow,
     SQLUSMALLINT          *rgfRowStatus)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLEXTENDEDFETCH].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLEXTENDEDFETCH].func)
-                   (hstmt, fFetchType, irow, pcrow, rgfRowStatus);
+        if (!pSQLExtendedFetch) return SQL_ERROR;
+        return pSQLExtendedFetch(hstmt, fFetchType, irow, pcrow, rgfRowStatus);
 }
 
 
 /*************************************************************************
  *				SQLForeignKeys           [ODBC32.060]
  */
-SQLRETURN WINAPI SQLForeignKeys(
+SQLRETURN WINAPI ODBC32_SQLForeignKeys(
     SQLHSTMT           hstmt,
     SQLCHAR               *szPkCatalogName,
     SQLSMALLINT        cbPkCatalogName,
@@ -1823,34 +1757,29 @@ SQLRETURN WINAPI SQLForeignKeys(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFOREIGNKEYS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLFOREIGNKEYS].func)
-                   (hstmt, szPkCatalogName, cbPkCatalogName, szPkSchemaName, cbPkSchemaName,
-                    szPkTableName, cbPkTableName, szFkCatalogName, cbFkCatalogName, szFkSchemaName,
-                        cbFkSchemaName, szFkTableName, cbFkTableName);
+        if (!pSQLForeignKeys) return SQL_ERROR;
+        return pSQLForeignKeys(hstmt, szPkCatalogName, cbPkCatalogName, szPkSchemaName, cbPkSchemaName,
+                               szPkTableName, cbPkTableName, szFkCatalogName, cbFkCatalogName,
+                               szFkSchemaName, cbFkSchemaName, szFkTableName, cbFkTableName);
 }
 
 
 /*************************************************************************
  *				SQLMoreResults           [ODBC32.061]
  */
-SQLRETURN WINAPI SQLMoreResults(SQLHSTMT hstmt)
+SQLRETURN WINAPI ODBC32_SQLMoreResults(SQLHSTMT hstmt)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLMORERESULTS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLMORERESULTS].func) (hstmt);
+        if (!pSQLMoreResults) return SQL_ERROR;
+        return pSQLMoreResults(hstmt);
 }
 
 
 /*************************************************************************
  *				SQLNativeSql           [ODBC32.062]
  */
-SQLRETURN WINAPI SQLNativeSql(
+SQLRETURN WINAPI ODBC32_SQLNativeSql(
     SQLHDBC            hdbc,
     SQLCHAR               *szSqlStrIn,
     SQLINTEGER         cbSqlStrIn,
@@ -1860,51 +1789,44 @@ SQLRETURN WINAPI SQLNativeSql(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLNATIVESQL].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLNATIVESQL].func)
-                   (hdbc, szSqlStrIn, cbSqlStrIn, szSqlStr, cbSqlStrMax, pcbSqlStr);
+        if (!pSQLNativeSql) return SQL_ERROR;
+        return pSQLNativeSql(hdbc, szSqlStrIn, cbSqlStrIn, szSqlStr, cbSqlStrMax, pcbSqlStr);
 }
 
 
 /*************************************************************************
  *				SQLNumParams           [ODBC32.063]
  */
-SQLRETURN WINAPI SQLNumParams(
+SQLRETURN WINAPI ODBC32_SQLNumParams(
     SQLHSTMT           hstmt,
     SQLSMALLINT           *pcpar)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLNUMPARAMS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLNUMPARAMS].func) (hstmt, pcpar);
+        if (!pSQLNumParams) return SQL_ERROR;
+        return pSQLNumParams(hstmt, pcpar);
 }
 
 
 /*************************************************************************
  *				SQLParamOptions           [ODBC32.064]
  */
-SQLRETURN WINAPI SQLParamOptions(
+SQLRETURN WINAPI ODBC32_SQLParamOptions(
     SQLHSTMT           hstmt,
-    SQLUINTEGER        crow,
-    SQLUINTEGER           *pirow)
+    SQLULEN            crow,
+    SQLULEN               *pirow)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPARAMOPTIONS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPARAMOPTIONS].func) (hstmt, crow, pirow);
+        if (!pSQLParamOptions) return SQL_ERROR;
+        return pSQLParamOptions(hstmt, crow, pirow);
 }
 
 
 /*************************************************************************
  *				SQLPrimaryKeys           [ODBC32.065]
  */
-SQLRETURN WINAPI SQLPrimaryKeys(
+SQLRETURN WINAPI ODBC32_SQLPrimaryKeys(
     SQLHSTMT           hstmt,
     SQLCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
@@ -1915,19 +1837,16 @@ SQLRETURN WINAPI SQLPrimaryKeys(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPRIMARYKEYS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPRIMARYKEYS].func)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szTableName, cbTableName);
+        if (!pSQLPrimaryKeys) return SQL_ERROR;
+        return pSQLPrimaryKeys(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                               szTableName, cbTableName);
 }
 
 
 /*************************************************************************
  *				SQLProcedureColumns           [ODBC32.066]
  */
-SQLRETURN WINAPI SQLProcedureColumns(
+SQLRETURN WINAPI ODBC32_SQLProcedureColumns(
     SQLHSTMT           hstmt,
     SQLCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
@@ -1940,19 +1859,16 @@ SQLRETURN WINAPI SQLProcedureColumns(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURECOLUMNS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURECOLUMNS].func)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szProcName, cbProcName, szColumnName, cbColumnName);
+        if (!pSQLProcedureColumns) return SQL_ERROR;
+        return pSQLProcedureColumns(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                                    szProcName, cbProcName, szColumnName, cbColumnName);
 }
 
 
 /*************************************************************************
  *				SQLProcedures           [ODBC32.067]
  */
-SQLRETURN WINAPI SQLProcedures(
+SQLRETURN WINAPI ODBC32_SQLProcedures(
     SQLHSTMT           hstmt,
     SQLCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
@@ -1963,38 +1879,32 @@ SQLRETURN WINAPI SQLProcedures(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURES].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURES].func)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szProcName, cbProcName);
+        if (!pSQLProcedures) return SQL_ERROR;
+        return pSQLProcedures(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                              szProcName, cbProcName);
 }
 
 
 /*************************************************************************
  *				SQLSetPos           [ODBC32.068]
  */
-SQLRETURN WINAPI SQLSetPos(
+SQLRETURN WINAPI ODBC32_SQLSetPos(
     SQLHSTMT           hstmt,
-    SQLUSMALLINT       irow,
+	SQLSETPOSIROW      irow,
     SQLUSMALLINT       fOption,
     SQLUSMALLINT       fLock)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETPOS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETPOS].func)
-                   (hstmt, irow, fOption, fLock);
+        if (!pSQLSetPos) return SQL_ERROR;
+        return pSQLSetPos(hstmt, irow, fOption, fLock);
 }
 
 
 /*************************************************************************
  *				SQLTablePrivileges           [ODBC32.070]
  */
-SQLRETURN WINAPI SQLTablePrivileges(
+SQLRETURN WINAPI ODBC32_SQLTablePrivileges(
     SQLHSTMT           hstmt,
     SQLCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
@@ -2005,19 +1915,16 @@ SQLRETURN WINAPI SQLTablePrivileges(
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLEPRIVILEGES].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLEPRIVILEGES].func)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szTableName, cbTableName);
+        if (!pSQLTablePrivileges) return SQL_ERROR;
+        return pSQLTablePrivileges(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                                   szTableName, cbTableName);
 }
 
 
 /*************************************************************************
  *				SQLDrivers           [ODBC32.071]
  */
-SQLRETURN WINAPI SQLDrivers(
+SQLRETURN WINAPI ODBC32_SQLDrivers(
     SQLHENV            henv,
     SQLUSMALLINT       fDirection,
     SQLCHAR               *szDriverDesc,
@@ -2027,47 +1934,49 @@ SQLRETURN WINAPI SQLDrivers(
     SQLSMALLINT        cbDriverAttrMax,
     SQLSMALLINT           *pcbDriverAttr)
 {
-        TRACE("\n");
+        SQLRETURN ret;
 
-        CHECK_dmHandle();
+        TRACE("(Direction %d)\n", fDirection);
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERS].func)
-                (henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
-                 szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+        if (!pSQLDrivers) return SQL_ERROR;
+        ret = pSQLDrivers(henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
+                          szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+
+        if (ret == SQL_NO_DATA && fDirection == SQL_FETCH_FIRST)
+            ERR_(winediag)("No ODBC drivers could be found. "
+                           "Check the settings for your libodbc provider.\n");
+
+        return ret;
 }
 
 
 /*************************************************************************
  *				SQLBindParameter           [ODBC32.072]
  */
-SQLRETURN WINAPI SQLBindParameter(
+SQLRETURN WINAPI ODBC32_SQLBindParameter(
     SQLHSTMT           hstmt,
     SQLUSMALLINT       ipar,
     SQLSMALLINT        fParamType,
     SQLSMALLINT        fCType,
     SQLSMALLINT        fSqlType,
-    SQLUINTEGER        cbColDef,
+    SQLULEN            cbColDef,
     SQLSMALLINT        ibScale,
     SQLPOINTER         rgbValue,
-    SQLINTEGER         cbValueMax,
-    SQLINTEGER            *pcbValue)
+    SQLLEN             cbValueMax,
+    SQLLEN                *pcbValue)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLBINDPARAMETER].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLBINDPARAMETER].func)
-                (hstmt, ipar, fParamType, fCType, fSqlType, cbColDef, ibScale,
-                 rgbValue, cbValueMax, pcbValue);
+        if (!pSQLBindParameter) return SQL_ERROR;
+        return pSQLBindParameter(hstmt, ipar, fParamType, fCType, fSqlType, cbColDef, ibScale,
+                                 rgbValue, cbValueMax, pcbValue);
 }
 
 
 /*************************************************************************
  *				SQLDriverConnect           [ODBC32.041]
  */
-SQLRETURN WINAPI SQLDriverConnect(
+SQLRETURN WINAPI ODBC32_SQLDriverConnect(
     SQLHDBC            hdbc,
     SQLHWND            hwnd,
     SQLCHAR            *conn_str_in,
@@ -2077,38 +1986,37 @@ SQLRETURN WINAPI SQLDriverConnect(
     SQLSMALLINT        *ptr_conn_str_out,
     SQLUSMALLINT       driver_completion )
 {
-        TRACE("\n");
+        SQLRETURN ret;
 
-        CHECK_dmHandle();
+        TRACE("(ConnectionString %s, Length %d)\n",
+              debugstr_a((char *)conn_str_in), len_conn_str_in);
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERCONNECT].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERCONNECT].func)
-                 (hdbc, hwnd, conn_str_in, len_conn_str_in, conn_str_out,
-                  conn_str_out_max, ptr_conn_str_out, driver_completion);
+        if (!pSQLDriverConnect) return SQL_ERROR;
+        ret = pSQLDriverConnect(hdbc, hwnd, conn_str_in, len_conn_str_in, conn_str_out,
+                                 conn_str_out_max, ptr_conn_str_out, driver_completion);
+        TRACE("Returns %d\n", ret);
+        return ret;
 }
 
 
 /*************************************************************************
  *				SQLSetScrollOptions           [ODBC32.069]
  */
-SQLRETURN WINAPI SQLSetScrollOptions(
+SQLRETURN WINAPI ODBC32_SQLSetScrollOptions(
     SQLHSTMT           statement_handle,
     SQLUSMALLINT       f_concurrency,
-    SQLINTEGER         crow_keyset,
+    SQLLEN             crow_keyset,
     SQLUSMALLINT       crow_rowset )
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSCROLLOPTIONS].func);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSCROLLOPTIONS].func)
-                   (statement_handle, f_concurrency, crow_keyset, crow_rowset);
+        if (!pSQLSetScrollOptions) return SQL_ERROR;
+        return pSQLSetScrollOptions(statement_handle, f_concurrency, crow_keyset, crow_rowset);
 }
 
-static int SQLColAttributes_KnownStringAttribute(SQLUSMALLINT fDescType)
+static BOOL SQLColAttributes_KnownStringAttribute(SQLUSMALLINT fDescType)
 {
-    static SQLUSMALLINT attrList[] =
+    static const SQLUSMALLINT attrList[] =
     {
         SQL_COLUMN_OWNER_NAME,
         SQL_COLUMN_QUALIFIER_NAME,
@@ -2130,42 +2038,41 @@ static int SQLColAttributes_KnownStringAttribute(SQLUSMALLINT fDescType)
     };
     unsigned int i;
 
-    for (i = 0; i < sizeof(attrList) / sizeof(SQLUSMALLINT); i++) {
-        if (attrList[i] == fDescType) return 1;
+    for (i = 0; i < ARRAY_SIZE(attrList); i++) {
+        if (attrList[i] == fDescType) return TRUE;
     }
-    return 0;
+    return FALSE;
 }
 
 /*************************************************************************
  *				SQLColAttributesW          [ODBC32.106]
  */
-SQLRETURN WINAPI SQLColAttributesW(
+SQLRETURN WINAPI ODBC32_SQLColAttributesW(
     SQLHSTMT           hstmt,
     SQLUSMALLINT       icol,
     SQLUSMALLINT       fDescType,
     SQLPOINTER         rgbDesc,
     SQLSMALLINT        cbDescMax,
     SQLSMALLINT           *pcbDesc,
-    SQLINTEGER            *pfDesc)
+    SQLLEN                *pfDesc)
 {
         SQLRETURN iResult;
 
-        TRACE("hstmt=0x%08lx icol=%d fDescType=%d rgbDesc=%p cbDescMax=%d pcbDesc=%p pfDesc=%p\n",
+        TRACE("hstmt=%p icol=%d fDescType=%d rgbDesc=%p cbDescMax=%d pcbDesc=%p pfDesc=%p\n",
             hstmt, icol, fDescType, rgbDesc, cbDescMax, pcbDesc, pfDesc);
 
-        CHECK_dmHandle();
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTES].funcW);
-        iResult = (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTES].funcW)
-                   (hstmt, icol, fDescType, rgbDesc, cbDescMax, pcbDesc, pfDesc);
+        if (!pSQLColAttributesW) return SQL_ERROR;
+
+        iResult = pSQLColAttributesW(hstmt, icol, fDescType, rgbDesc, cbDescMax, pcbDesc, pfDesc);
         if (iResult == SQL_SUCCESS && rgbDesc != NULL && SQLColAttributes_KnownStringAttribute(fDescType)) {
         /*
             TRACE("Dumping values fetched via SQLColAttributesW:\n");
             TRACE("    Attribute name : %s\n", debugstr_w(rgbDesc));
             TRACE("    Declared length: %d\n", *pcbDesc);
         */
-            if (*pcbDesc != strlenW(rgbDesc) * 2) {
+            if (*pcbDesc != lstrlenW(rgbDesc) * 2) {
                 TRACE("CHEAT: resetting name length for ADO\n");
-                *pcbDesc = strlenW(rgbDesc) * 2;
+                *pcbDesc = lstrlenW(rgbDesc) * 2;
             }
         }
         return iResult;
@@ -2174,7 +2081,7 @@ SQLRETURN WINAPI SQLColAttributesW(
 /*************************************************************************
  *				SQLConnectW          [ODBC32.107]
  */
-SQLRETURN WINAPI SQLConnectW(SQLHDBC ConnectionHandle,
+SQLRETURN WINAPI ODBC32_SQLConnectW(SQLHDBC ConnectionHandle,
              WCHAR *ServerName, SQLSMALLINT NameLength1,
              WCHAR *UserName, SQLSMALLINT NameLength2,
              WCHAR *Authentication, SQLSMALLINT NameLength3)
@@ -2182,46 +2089,32 @@ SQLRETURN WINAPI SQLConnectW(SQLHDBC ConnectionHandle,
         SQLRETURN ret;
         TRACE("(Server=%.*s)\n",NameLength1+3, debugstr_w(ServerName));
 
-        CHECK_READY_AND_dmHandle();
+        if (!pSQLConnectW) return SQL_ERROR;
 
-        WideCharToMultiByte(
-            CP_UTF8, 0,
-            ServerName, NameLength1,
-            gProxyHandle.ServerName, sizeof(gProxyHandle.ServerName),
-            NULL, NULL);
-        WideCharToMultiByte(
-            CP_UTF8, 0,
-            UserName, NameLength2,
-            gProxyHandle.UserName, sizeof(gProxyHandle.UserName),
-            NULL, NULL);
+        ret = pSQLConnectW(ConnectionHandle, ServerName, NameLength1,
+                           UserName, NameLength2, Authentication, NameLength3);
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLCONNECT].funcW);
-        ret=(gProxyHandle.functions[SQLAPI_INDEX_SQLCONNECT].funcW)
-            (ConnectionHandle, ServerName, NameLength1,
-            UserName, NameLength2, Authentication, NameLength3);
-
-        TRACE("returns %d\n",ret);
+        TRACE("Returns %d\n", ret);
         return ret;
 }
 
 /*************************************************************************
  *				SQLDescribeColW          [ODBC32.108]
  */
-SQLRETURN WINAPI SQLDescribeColW(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLDescribeColW(SQLHSTMT StatementHandle,
              SQLUSMALLINT ColumnNumber, WCHAR *ColumnName,
              SQLSMALLINT BufferLength, SQLSMALLINT *NameLength,
-             SQLSMALLINT *DataType, SQLUINTEGER *ColumnSize,
+             SQLSMALLINT *DataType, SQLULEN *ColumnSize,
              SQLSMALLINT *DecimalDigits, SQLSMALLINT *Nullable)
 {
         SQLRETURN iResult;
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
+        if (!pSQLDescribeColW) return SQL_ERROR;
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLDESCRIBECOL].funcW);
-        iResult = (gProxyHandle.functions[SQLAPI_INDEX_SQLDESCRIBECOL].funcW)
-            (StatementHandle, ColumnNumber, ColumnName,
-            BufferLength, NameLength, DataType, ColumnSize, DecimalDigits, Nullable);
+        iResult = pSQLDescribeColW(StatementHandle, ColumnNumber, ColumnName,
+                                   BufferLength, NameLength, DataType, ColumnSize,
+                                   DecimalDigits, Nullable);
         if (iResult >= 0) {
             TRACE("Successfully recovered the following column information:\n");
             TRACE("\tRequested column index: %d\n", ColumnNumber);
@@ -2237,7 +2130,7 @@ SQLRETURN WINAPI SQLDescribeColW(SQLHSTMT StatementHandle,
 /*************************************************************************
  *				SQLErrorW          [ODBC32.110]
  */
-SQLRETURN WINAPI SQLErrorW(SQLHENV EnvironmentHandle,
+SQLRETURN WINAPI ODBC32_SQLErrorW(SQLHENV EnvironmentHandle,
              SQLHDBC ConnectionHandle, SQLHSTMT StatementHandle,
              WCHAR *Sqlstate, SQLINTEGER *NativeError,
              WCHAR *MessageText, SQLSMALLINT BufferLength,
@@ -2245,103 +2138,86 @@ SQLRETURN WINAPI SQLErrorW(SQLHENV EnvironmentHandle,
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLERROR].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLERROR].funcW)
-            (EnvironmentHandle, ConnectionHandle, StatementHandle,
-            Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+        if (!pSQLErrorW) return SQL_ERROR;
+        return pSQLErrorW(EnvironmentHandle, ConnectionHandle, StatementHandle,
+                          Sqlstate, NativeError, MessageText, BufferLength, TextLength);
 }
 
 /*************************************************************************
  *				SQLExecDirectW          [ODBC32.111]
  */
-SQLRETURN WINAPI SQLExecDirectW(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLExecDirectW(SQLHSTMT StatementHandle,
     WCHAR *StatementText, SQLINTEGER TextLength)
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLEXECDIRECT].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLEXECDIRECT].funcW)
-            (StatementHandle, StatementText, TextLength);
+        if (!pSQLExecDirectW) return SQL_ERROR;
+        return pSQLExecDirectW(StatementHandle, StatementText, TextLength);
 }
 
 /*************************************************************************
  *				SQLGetCursorNameW          [ODBC32.117]
  */
-SQLRETURN WINAPI SQLGetCursorNameW(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLGetCursorNameW(SQLHSTMT StatementHandle,
              WCHAR *CursorName, SQLSMALLINT BufferLength,
              SQLSMALLINT *NameLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCURSORNAME].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCURSORNAME].funcW)
-            (StatementHandle, CursorName, BufferLength, NameLength);
+        if (!pSQLGetCursorNameW) return SQL_ERROR;
+        return pSQLGetCursorNameW(StatementHandle, CursorName, BufferLength, NameLength);
 }
 
 /*************************************************************************
  *				SQLPrepareW          [ODBC32.119]
  */
-SQLRETURN WINAPI SQLPrepareW(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLPrepareW(SQLHSTMT StatementHandle,
     WCHAR *StatementText, SQLINTEGER TextLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPREPARE].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPREPARE].funcW)
-            (StatementHandle, StatementText, TextLength);
+        if (!pSQLPrepareW) return SQL_ERROR;
+        return pSQLPrepareW(StatementHandle, StatementText, TextLength);
 }
 
 /*************************************************************************
  *				SQLSetCursorNameW          [ODBC32.121]
  */
-SQLRETURN WINAPI SQLSetCursorNameW(SQLHSTMT StatementHandle, WCHAR *CursorName, SQLSMALLINT NameLength)
+SQLRETURN WINAPI ODBC32_SQLSetCursorNameW(SQLHSTMT StatementHandle, WCHAR *CursorName, SQLSMALLINT NameLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCURSORNAME].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCURSORNAME].funcW)
-            (StatementHandle, CursorName, NameLength);
+        if (!pSQLSetCursorNameW) return SQL_ERROR;
+        return pSQLSetCursorNameW(StatementHandle, CursorName, NameLength);
 }
 
 /*************************************************************************
  *				SQLColAttributeW          [ODBC32.127]
  */
-SQLRETURN WINAPI SQLColAttributeW (SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLColAttributeW (SQLHSTMT StatementHandle,
              SQLUSMALLINT ColumnNumber, SQLUSMALLINT FieldIdentifier,
              SQLPOINTER CharacterAttribute, SQLSMALLINT BufferLength,
-             SQLSMALLINT *StringLength, SQLPOINTER NumericAttribute)
+             SQLSMALLINT *StringLength, SQLLEN *NumericAttribute)
 {
         SQLRETURN iResult;
 
-        TRACE("StatementHandle=0x%08lx ColumnNumber=%d FieldIdentifier=%d CharacterAttribute=%p BufferLength=%d StringLength=%p NumericAttribute=%p\n",
+        TRACE("StatementHandle=%p ColumnNumber=%d FieldIdentifier=%d CharacterAttribute=%p BufferLength=%d StringLength=%p NumericAttribute=%p\n",
             StatementHandle, ColumnNumber, FieldIdentifier,
             CharacterAttribute, BufferLength, StringLength, NumericAttribute);
 
-        CHECK_READY_AND_dmHandle();
+        if (!pSQLColAttributeW) return SQL_ERROR;
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTE].funcW);
-        iResult = (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLATTRIBUTE].funcW)
-            (StatementHandle, ColumnNumber, FieldIdentifier,
-            CharacterAttribute, BufferLength, StringLength, NumericAttribute);
+        iResult = pSQLColAttributeW(StatementHandle, ColumnNumber, FieldIdentifier,
+                                    CharacterAttribute, BufferLength, StringLength, NumericAttribute);
         if (iResult == SQL_SUCCESS && CharacterAttribute != NULL && SQLColAttributes_KnownStringAttribute(FieldIdentifier)) {
         /*
             TRACE("Dumping values fetched via SQLColAttributeW:\n");
             TRACE("    Attribute name : %s\n", debugstr_w(rgbDesc));
             TRACE("    Declared length: %d\n", *pcbDesc);
         */
-            if (*StringLength != strlenW(CharacterAttribute) * 2) {
+            if (*StringLength != lstrlenW(CharacterAttribute) * 2) {
                 TRACE("CHEAT: resetting name length for ADO\n");
-                *StringLength = strlenW(CharacterAttribute) * 2;
+                *StringLength = lstrlenW(CharacterAttribute) * 2;
             }
         }
         return iResult;
@@ -2350,104 +2226,89 @@ SQLRETURN WINAPI SQLColAttributeW (SQLHSTMT StatementHandle,
 /*************************************************************************
  *				SQLGetConnectAttrW          [ODBC32.132]
  */
-SQLRETURN WINAPI SQLGetConnectAttrW(SQLHDBC ConnectionHandle,
+SQLRETURN WINAPI ODBC32_SQLGetConnectAttrW(SQLHDBC ConnectionHandle,
              SQLINTEGER Attribute, SQLPOINTER Value,
              SQLINTEGER BufferLength, SQLINTEGER *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTATTR].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTATTR].funcW)
-            (ConnectionHandle, Attribute, Value,
-            BufferLength, StringLength);
+        if (!pSQLGetConnectAttrW) return SQL_ERROR;
+        return pSQLGetConnectAttrW(ConnectionHandle, Attribute, Value,
+                                   BufferLength, StringLength);
 }
 
 /*************************************************************************
  *				SQLGetDescFieldW          [ODBC32.133]
  */
-SQLRETURN WINAPI SQLGetDescFieldW(SQLHDESC DescriptorHandle,
+SQLRETURN WINAPI ODBC32_SQLGetDescFieldW(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, SQLSMALLINT FieldIdentifier,
              SQLPOINTER Value, SQLINTEGER BufferLength,
              SQLINTEGER *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCFIELD].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCFIELD].funcW)
-            (DescriptorHandle, RecNumber, FieldIdentifier,
-            Value, BufferLength, StringLength);
+        if (!pSQLGetDescFieldW) return SQL_ERROR;
+        return pSQLGetDescFieldW(DescriptorHandle, RecNumber, FieldIdentifier,
+                                 Value, BufferLength, StringLength);
 }
 
 /*************************************************************************
  *				SQLGetDescRecW          [ODBC32.134]
  */
-SQLRETURN WINAPI SQLGetDescRecW(SQLHDESC DescriptorHandle,
+SQLRETURN WINAPI ODBC32_SQLGetDescRecW(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, WCHAR *Name,
              SQLSMALLINT BufferLength, SQLSMALLINT *StringLength,
              SQLSMALLINT *Type, SQLSMALLINT *SubType,
-             SQLINTEGER *Length, SQLSMALLINT *Precision,
+             SQLLEN *Length, SQLSMALLINT *Precision,
              SQLSMALLINT *Scale, SQLSMALLINT *Nullable)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCREC].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDESCREC].funcW)
-            (DescriptorHandle, RecNumber, Name, BufferLength,
-            StringLength, Type, SubType, Length, Precision, Scale, Nullable);
+        if (!pSQLGetDescRecW) return SQL_ERROR;
+        return pSQLGetDescRecW(DescriptorHandle, RecNumber, Name, BufferLength,
+                               StringLength, Type, SubType, Length, Precision, Scale, Nullable);
 }
 
 /*************************************************************************
  *				SQLGetDiagFieldW          [ODBC32.135]
  */
-SQLRETURN WINAPI SQLGetDiagFieldW(SQLSMALLINT HandleType, SQLHANDLE Handle,
+SQLRETURN WINAPI ODBC32_SQLGetDiagFieldW(SQLSMALLINT HandleType, SQLHANDLE Handle,
              SQLSMALLINT RecNumber, SQLSMALLINT DiagIdentifier,
              SQLPOINTER DiagInfo, SQLSMALLINT BufferLength,
              SQLSMALLINT *StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGFIELD].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGFIELD].funcW)
-            (HandleType, Handle, RecNumber, DiagIdentifier,
-            DiagInfo, BufferLength, StringLength);
+        if (!pSQLGetDiagFieldW) return SQL_ERROR;
+        return pSQLGetDiagFieldW(HandleType, Handle, RecNumber, DiagIdentifier,
+                                 DiagInfo, BufferLength, StringLength);
 }
 
 /*************************************************************************
  *				SQLGetDiagRecW           [ODBC32.136]
  */
-SQLRETURN WINAPI SQLGetDiagRecW(SQLSMALLINT HandleType, SQLHANDLE Handle,
+SQLRETURN WINAPI ODBC32_SQLGetDiagRecW(SQLSMALLINT HandleType, SQLHANDLE Handle,
              SQLSMALLINT RecNumber, WCHAR *Sqlstate,
              SQLINTEGER *NativeError, WCHAR *MessageText,
              SQLSMALLINT BufferLength, SQLSMALLINT *TextLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGREC].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETDIAGREC].funcW)
-            (HandleType, Handle, RecNumber, Sqlstate, NativeError,
-            MessageText, BufferLength, TextLength);
+        if (!pSQLGetDiagRecW) return SQL_ERROR;
+        return pSQLGetDiagRecW(HandleType, Handle, RecNumber, Sqlstate, NativeError,
+                               MessageText, BufferLength, TextLength);
 }
 
 /*************************************************************************
  *				SQLGetStmtAttrW          [ODBC32.138]
  */
-SQLRETURN WINAPI SQLGetStmtAttrW(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLGetStmtAttrW(SQLHSTMT StatementHandle,
              SQLINTEGER Attribute, SQLPOINTER Value,
              SQLINTEGER BufferLength, SQLINTEGER *StringLength)
 {
         SQLRETURN iResult;
 
-        TRACE("Attribute = (%02ld) Value = %p BufferLength = (%ld) StringLength = %p\n",
+        TRACE("Attribute = (%02d) Value = %p BufferLength = (%d) StringLength = %p\n",
             Attribute, Value, BufferLength, StringLength);
 
         if (Value == NULL) {
@@ -2459,11 +2320,8 @@ SQLRETURN WINAPI SQLGetStmtAttrW(SQLHSTMT StatementHandle,
             iResult = SQL_ERROR;
 */
         } else {
-            CHECK_dmHandle();
-
-            assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETSTMTATTR].funcW);
-            iResult = (gProxyHandle.functions[SQLAPI_INDEX_SQLGETSTMTATTR].funcW)
-                (StatementHandle, Attribute, Value, BufferLength, StringLength);
+            if (!pSQLGetStmtAttrW) return SQL_ERROR;
+            iResult = pSQLGetStmtAttrW(StatementHandle, Attribute, Value, BufferLength, StringLength);
             TRACE("returning %d...\n", iResult);
         }
         return iResult;
@@ -2472,22 +2330,19 @@ SQLRETURN WINAPI SQLGetStmtAttrW(SQLHSTMT StatementHandle,
 /*************************************************************************
  *				SQLSetConnectAttrW          [ODBC32.139]
  */
-SQLRETURN WINAPI SQLSetConnectAttrW(SQLHDBC ConnectionHandle, SQLINTEGER Attribute,
+SQLRETURN WINAPI ODBC32_SQLSetConnectAttrW(SQLHDBC ConnectionHandle, SQLINTEGER Attribute,
         SQLPOINTER Value, SQLINTEGER StringLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTATTR].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTATTR].funcW)
-            (ConnectionHandle, Attribute, Value, StringLength);
+        if (!pSQLSetConnectAttrW) return SQL_ERROR;
+        return pSQLSetConnectAttrW(ConnectionHandle, Attribute, Value, StringLength);
 }
 
 /*************************************************************************
  *				SQLColumnsW          [ODBC32.140]
  */
-SQLRETURN WINAPI SQLColumnsW(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLColumnsW(SQLHSTMT StatementHandle,
              WCHAR *CatalogName, SQLSMALLINT NameLength1,
              WCHAR *SchemaName, SQLSMALLINT NameLength2,
              WCHAR *TableName, SQLSMALLINT NameLength3,
@@ -2495,18 +2350,15 @@ SQLRETURN WINAPI SQLColumnsW(SQLHSTMT StatementHandle,
 {
         TRACE("\n");
 
-        CHECK_READY_AND_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNS].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNS].funcW)
-            (StatementHandle, CatalogName, NameLength1,
-            SchemaName, NameLength2, TableName, NameLength3, ColumnName, NameLength4);
+        if (!pSQLColumnsW) return SQL_ERROR;
+        return pSQLColumnsW(StatementHandle, CatalogName, NameLength1,
+                            SchemaName, NameLength2, TableName, NameLength3, ColumnName, NameLength4);
 }
 
 /*************************************************************************
  *				SQLDriverConnectW          [ODBC32.141]
  */
-SQLRETURN WINAPI SQLDriverConnectW(
+SQLRETURN WINAPI ODBC32_SQLDriverConnectW(
     SQLHDBC            hdbc,
     SQLHWND            hwnd,
     WCHAR              *conn_str_in,
@@ -2516,34 +2368,29 @@ SQLRETURN WINAPI SQLDriverConnectW(
     SQLSMALLINT        *ptr_conn_str_out,
     SQLUSMALLINT       driver_completion )
 {
-        TRACE("ConnStrIn (%d bytes) --> %s\n", len_conn_str_in, debugstr_w(conn_str_in));
+        TRACE("(ConnectionString %s, Length %d)\n",
+              debugstr_w(conn_str_in), len_conn_str_in);
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERCONNECT].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERCONNECT].funcW)
-                 (hdbc, hwnd, conn_str_in, len_conn_str_in, conn_str_out,
-                  conn_str_out_max, ptr_conn_str_out, driver_completion);
+        if (!pSQLDriverConnectW) return SQL_ERROR;
+        return pSQLDriverConnectW(hdbc, hwnd, conn_str_in, len_conn_str_in, conn_str_out,
+                                  conn_str_out_max, ptr_conn_str_out, driver_completion);
 }
 
 /*************************************************************************
  *				SQLGetConnectOptionW      [ODBC32.142]
  */
-SQLRETURN WINAPI SQLGetConnectOptionW(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLPOINTER Value)
+SQLRETURN WINAPI ODBC32_SQLGetConnectOptionW(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLPOINTER Value)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTOPTION].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETCONNECTOPTION].funcW)
-            (ConnectionHandle, Option, Value);
+        if (!pSQLGetConnectOptionW) return SQL_ERROR;
+        return pSQLGetConnectOptionW(ConnectionHandle, Option, Value);
 }
 
 /*************************************************************************
  *				SQLGetInfoW          [ODBC32.145]
  */
-SQLRETURN WINAPI SQLGetInfoW(SQLHDBC ConnectionHandle,
+SQLRETURN WINAPI ODBC32_SQLGetInfoW(SQLHDBC ConnectionHandle,
              SQLUSMALLINT InfoType, SQLPOINTER InfoValue,
              SQLSMALLINT BufferLength, SQLSMALLINT *StringLength)
 {
@@ -2554,11 +2401,8 @@ SQLRETURN WINAPI SQLGetInfoW(SQLHDBC ConnectionHandle,
                 WARN("Unexpected NULL in InfoValue address\n");
                 iResult = SQL_ERROR;
         } else {
-                CHECK_dmHandle();
-
-                assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETINFO].funcW);
-                iResult = (gProxyHandle.functions[SQLAPI_INDEX_SQLGETINFO].funcW)
-                    (ConnectionHandle, InfoType, InfoValue, BufferLength, StringLength);
+                if (!pSQLGetInfoW) return SQL_ERROR;
+                iResult = pSQLGetInfoW(ConnectionHandle, InfoType, InfoValue, BufferLength, StringLength);
                 TRACE("returning %d...\n", iResult);
         }
         return iResult;
@@ -2567,136 +2411,115 @@ SQLRETURN WINAPI SQLGetInfoW(SQLHDBC ConnectionHandle,
 /*************************************************************************
  *				SQLGetTypeInfoW          [ODBC32.147]
  */
-SQLRETURN WINAPI SQLGetTypeInfoW(SQLHSTMT StatementHandle, SQLSMALLINT DataType)
+SQLRETURN WINAPI ODBC32_SQLGetTypeInfoW(SQLHSTMT StatementHandle, SQLSMALLINT DataType)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLGETTYPEINFO].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLGETTYPEINFO].funcW)
-            (StatementHandle, DataType);
+        if (!pSQLGetTypeInfoW) return SQL_ERROR;
+        return pSQLGetTypeInfoW(StatementHandle, DataType);
 }
 
 /*************************************************************************
  *				SQLSetConnectOptionW          [ODBC32.150]
  */
-SQLRETURN WINAPI SQLSetConnectOptionW(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLUINTEGER Value)
+SQLRETURN WINAPI ODBC32_SQLSetConnectOptionW(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLLEN Value)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTOPTION].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETCONNECTOPTION].funcW)
-            (ConnectionHandle, Option, Value);
+        if (!pSQLSetConnectOptionW) return SQL_ERROR;
+        return pSQLSetConnectOptionW(ConnectionHandle, Option, Value);
 }
 
 /*************************************************************************
  *				SQLSpecialColumnsW          [ODBC32.152]
  */
-SQLRETURN WINAPI SQLSpecialColumnsW(SQLHSTMT StatementHandle,
-             SQLUSMALLINT IdentifierType, SQLCHAR *CatalogName,
-             SQLSMALLINT NameLength1, SQLCHAR *SchemaName,
-             SQLSMALLINT NameLength2, SQLCHAR *TableName,
+SQLRETURN WINAPI ODBC32_SQLSpecialColumnsW(SQLHSTMT StatementHandle,
+             SQLUSMALLINT IdentifierType, SQLWCHAR *CatalogName,
+             SQLSMALLINT NameLength1, SQLWCHAR *SchemaName,
+             SQLSMALLINT NameLength2, SQLWCHAR *TableName,
              SQLSMALLINT NameLength3, SQLUSMALLINT Scope,
              SQLUSMALLINT Nullable)
 {
-
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSPECIALCOLUMNS].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSPECIALCOLUMNS].funcW)
-            (StatementHandle, IdentifierType, CatalogName, NameLength1, SchemaName,
-             NameLength2, TableName, NameLength3, Scope, Nullable);
+        if (!pSQLSpecialColumnsW) return SQL_ERROR;
+        return pSQLSpecialColumnsW(StatementHandle, IdentifierType, CatalogName, NameLength1, SchemaName,
+                                   NameLength2, TableName, NameLength3, Scope, Nullable);
 }
 
 /*************************************************************************
  *				SQLStatisticsW          [ODBC32.153]
  */
-SQLRETURN WINAPI SQLStatisticsW(SQLHSTMT StatementHandle,
-             SQLCHAR *CatalogName, SQLSMALLINT NameLength1,
-             SQLCHAR *SchemaName, SQLSMALLINT NameLength2,
-             SQLCHAR *TableName, SQLSMALLINT NameLength3,
+SQLRETURN WINAPI ODBC32_SQLStatisticsW(SQLHSTMT StatementHandle,
+             SQLWCHAR *CatalogName, SQLSMALLINT NameLength1,
+             SQLWCHAR *SchemaName, SQLSMALLINT NameLength2,
+             SQLWCHAR *TableName, SQLSMALLINT NameLength3,
              SQLUSMALLINT Unique, SQLUSMALLINT Reserved)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSTATISTICS].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSTATISTICS].funcW)
-            (StatementHandle, CatalogName, NameLength1, SchemaName, NameLength2,
-             TableName, NameLength3, Unique, Reserved);
+        if (!pSQLStatisticsW) return SQL_ERROR;
+        return pSQLStatisticsW(StatementHandle, CatalogName, NameLength1, SchemaName, NameLength2,
+                               TableName, NameLength3, Unique, Reserved);
 }
 
 /*************************************************************************
  *				SQLTablesW          [ODBC32.154]
  */
-SQLRETURN WINAPI SQLTablesW(SQLHSTMT StatementHandle,
-             SQLCHAR *CatalogName, SQLSMALLINT NameLength1,
-             SQLCHAR *SchemaName, SQLSMALLINT NameLength2,
-             SQLCHAR *TableName, SQLSMALLINT NameLength3,
-             SQLCHAR *TableType, SQLSMALLINT NameLength4)
+SQLRETURN WINAPI ODBC32_SQLTablesW(SQLHSTMT StatementHandle,
+             SQLWCHAR *CatalogName, SQLSMALLINT NameLength1,
+             SQLWCHAR *SchemaName, SQLSMALLINT NameLength2,
+             SQLWCHAR *TableName, SQLSMALLINT NameLength3,
+             SQLWCHAR *TableType, SQLSMALLINT NameLength4)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLES].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLES].funcW)
-                (StatementHandle, CatalogName, NameLength1,
-                SchemaName, NameLength2, TableName, NameLength3, TableType, NameLength4);
+        if (!pSQLTablesW) return SQL_ERROR;
+        return pSQLTablesW(StatementHandle, CatalogName, NameLength1,
+                           SchemaName, NameLength2, TableName, NameLength3, TableType, NameLength4);
 }
 
 /*************************************************************************
  *				SQLBrowseConnectW          [ODBC32.155]
  */
-SQLRETURN WINAPI SQLBrowseConnectW(
+SQLRETURN WINAPI ODBC32_SQLBrowseConnectW(
     SQLHDBC            hdbc,
-    SQLCHAR               *szConnStrIn,
+    SQLWCHAR               *szConnStrIn,
     SQLSMALLINT        cbConnStrIn,
-    SQLCHAR               *szConnStrOut,
+    SQLWCHAR               *szConnStrOut,
     SQLSMALLINT        cbConnStrOutMax,
     SQLSMALLINT       *pcbConnStrOut)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLBROWSECONNECT].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLBROWSECONNECT].funcW)
-                (hdbc, szConnStrIn, cbConnStrIn, szConnStrOut, cbConnStrOutMax, pcbConnStrOut);
+        if (!pSQLBrowseConnectW) return SQL_ERROR;
+        return pSQLBrowseConnectW(hdbc, szConnStrIn, cbConnStrIn, szConnStrOut,
+                                  cbConnStrOutMax, pcbConnStrOut);
 }
 
 /*************************************************************************
  *				SQLColumnPrivilegesW          [ODBC32.156]
  */
-SQLRETURN WINAPI SQLColumnPrivilegesW(
+SQLRETURN WINAPI ODBC32_SQLColumnPrivilegesW(
     SQLHSTMT           hstmt,
-    SQLCHAR               *szCatalogName,
+    SQLWCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
-    SQLCHAR               *szSchemaName,
+    SQLWCHAR               *szSchemaName,
     SQLSMALLINT        cbSchemaName,
-    SQLCHAR               *szTableName,
+    SQLWCHAR               *szTableName,
     SQLSMALLINT        cbTableName,
-    SQLCHAR               *szColumnName,
+    SQLWCHAR               *szColumnName,
     SQLSMALLINT        cbColumnName)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNPRIVILEGES].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLCOLUMNPRIVILEGES].funcW)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szTableName, cbTableName, szColumnName, cbColumnName);
+        if (!pSQLColumnPrivilegesW) return SQL_ERROR;
+        return pSQLColumnPrivilegesW(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                                     szTableName, cbTableName, szColumnName, cbColumnName);
 }
 
 /*************************************************************************
  *				SQLDataSourcesW          [ODBC32.157]
  */
-SQLRETURN WINAPI SQLDataSourcesW(SQLHENV EnvironmentHandle,
+SQLRETURN WINAPI ODBC32_SQLDataSourcesW(SQLHENV EnvironmentHandle,
              SQLUSMALLINT Direction, WCHAR *ServerName,
              SQLSMALLINT BufferLength1, SQLSMALLINT *NameLength1,
              WCHAR *Description, SQLSMALLINT BufferLength2,
@@ -2704,22 +2527,16 @@ SQLRETURN WINAPI SQLDataSourcesW(SQLHENV EnvironmentHandle,
 {
         SQLRETURN ret;
 
-        TRACE("EnvironmentHandle = %p\n", (LPVOID)EnvironmentHandle);
+        TRACE("EnvironmentHandle = %p\n", EnvironmentHandle);
 
-        if (!gProxyHandle.bFunctionReady || gProxyHandle.dmHandle == NULL)
-        {
-            ERR("Error: empty dm handle (gProxyHandle.dmHandle == NULL)\n");
-            return SQL_ERROR;
-        }
+        if (!pSQLDataSourcesW) return SQL_ERROR;
 
-        assert(gProxyHandle.functions[SQLAPI_INDEX_SQLDATASOURCES].funcW);
-        ret = (gProxyHandle.functions[SQLAPI_INDEX_SQLDATASOURCES].funcW)
-            (EnvironmentHandle, Direction, ServerName,
-            BufferLength1, NameLength1, Description, BufferLength2, NameLength2);
+        ret = pSQLDataSourcesW(EnvironmentHandle, Direction, ServerName,
+                               BufferLength1, NameLength1, Description, BufferLength2, NameLength2);
 
         if (TRACE_ON(odbc))
         {
-           TRACE("returns: %d \t", ret);
+           TRACE("Returns %d \t", ret);
            if (*NameLength1 > 0)
              TRACE("DataSource = %s,", debugstr_w(ServerName));
            if (*NameLength2 > 0)
@@ -2733,197 +2550,178 @@ SQLRETURN WINAPI SQLDataSourcesW(SQLHENV EnvironmentHandle,
 /*************************************************************************
  *				SQLForeignKeysW          [ODBC32.160]
  */
-SQLRETURN WINAPI SQLForeignKeysW(
+SQLRETURN WINAPI ODBC32_SQLForeignKeysW(
     SQLHSTMT           hstmt,
-    SQLCHAR               *szPkCatalogName,
+    SQLWCHAR               *szPkCatalogName,
     SQLSMALLINT        cbPkCatalogName,
-    SQLCHAR               *szPkSchemaName,
+    SQLWCHAR               *szPkSchemaName,
     SQLSMALLINT        cbPkSchemaName,
-    SQLCHAR               *szPkTableName,
+    SQLWCHAR               *szPkTableName,
     SQLSMALLINT        cbPkTableName,
-    SQLCHAR               *szFkCatalogName,
+    SQLWCHAR               *szFkCatalogName,
     SQLSMALLINT        cbFkCatalogName,
-    SQLCHAR               *szFkSchemaName,
+    SQLWCHAR               *szFkSchemaName,
     SQLSMALLINT        cbFkSchemaName,
-    SQLCHAR               *szFkTableName,
+    SQLWCHAR               *szFkTableName,
     SQLSMALLINT        cbFkTableName)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLFOREIGNKEYS].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLFOREIGNKEYS].funcW)
-                   (hstmt, szPkCatalogName, cbPkCatalogName, szPkSchemaName, cbPkSchemaName,
-                    szPkTableName, cbPkTableName, szFkCatalogName, cbFkCatalogName, szFkSchemaName,
-                        cbFkSchemaName, szFkTableName, cbFkTableName);
+        if (!pSQLForeignKeysW) return SQL_ERROR;
+        return pSQLForeignKeysW(hstmt, szPkCatalogName, cbPkCatalogName, szPkSchemaName, cbPkSchemaName,
+                                szPkTableName, cbPkTableName, szFkCatalogName, cbFkCatalogName,
+                                szFkSchemaName, cbFkSchemaName, szFkTableName, cbFkTableName);
 }
 
 /*************************************************************************
  *				SQLNativeSqlW          [ODBC32.162]
  */
-SQLRETURN WINAPI SQLNativeSqlW(
+SQLRETURN WINAPI ODBC32_SQLNativeSqlW(
     SQLHDBC            hdbc,
-    SQLCHAR               *szSqlStrIn,
+    SQLWCHAR               *szSqlStrIn,
     SQLINTEGER         cbSqlStrIn,
-    SQLCHAR               *szSqlStr,
+    SQLWCHAR               *szSqlStr,
     SQLINTEGER         cbSqlStrMax,
     SQLINTEGER            *pcbSqlStr)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLNATIVESQL].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLNATIVESQL].funcW)
-                   (hdbc, szSqlStrIn, cbSqlStrIn, szSqlStr, cbSqlStrMax, pcbSqlStr);
+        if (!pSQLNativeSqlW) return SQL_ERROR;
+        return pSQLNativeSqlW(hdbc, szSqlStrIn, cbSqlStrIn, szSqlStr, cbSqlStrMax, pcbSqlStr);
 }
 
 /*************************************************************************
  *				SQLPrimaryKeysW          [ODBC32.165]
  */
-SQLRETURN WINAPI SQLPrimaryKeysW(
+SQLRETURN WINAPI ODBC32_SQLPrimaryKeysW(
     SQLHSTMT           hstmt,
-    SQLCHAR               *szCatalogName,
+    SQLWCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
-    SQLCHAR               *szSchemaName,
+    SQLWCHAR               *szSchemaName,
     SQLSMALLINT        cbSchemaName,
-    SQLCHAR               *szTableName,
+    SQLWCHAR               *szTableName,
     SQLSMALLINT        cbTableName)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPRIMARYKEYS].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPRIMARYKEYS].funcW)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szTableName, cbTableName);
+        if (!pSQLPrimaryKeysW) return SQL_ERROR;
+        return pSQLPrimaryKeysW(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                                szTableName, cbTableName);
 }
 
 /*************************************************************************
  *				SQLProcedureColumnsW          [ODBC32.166]
  */
-SQLRETURN WINAPI SQLProcedureColumnsW(
+SQLRETURN WINAPI ODBC32_SQLProcedureColumnsW(
     SQLHSTMT           hstmt,
-    SQLCHAR               *szCatalogName,
+    SQLWCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
-    SQLCHAR               *szSchemaName,
+    SQLWCHAR               *szSchemaName,
     SQLSMALLINT        cbSchemaName,
-    SQLCHAR               *szProcName,
+    SQLWCHAR               *szProcName,
     SQLSMALLINT        cbProcName,
-    SQLCHAR               *szColumnName,
+    SQLWCHAR               *szColumnName,
     SQLSMALLINT        cbColumnName)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURECOLUMNS].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURECOLUMNS].funcW)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szProcName, cbProcName, szColumnName, cbColumnName);
+        if (!pSQLProcedureColumnsW) return SQL_ERROR;
+        return pSQLProcedureColumnsW(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                                     szProcName, cbProcName, szColumnName, cbColumnName);
 }
 
 /*************************************************************************
  *				SQLProceduresW          [ODBC32.167]
  */
-SQLRETURN WINAPI SQLProceduresW(
+SQLRETURN WINAPI ODBC32_SQLProceduresW(
     SQLHSTMT           hstmt,
-    SQLCHAR               *szCatalogName,
+    SQLWCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
-    SQLCHAR               *szSchemaName,
+    SQLWCHAR               *szSchemaName,
     SQLSMALLINT        cbSchemaName,
-    SQLCHAR               *szProcName,
+    SQLWCHAR               *szProcName,
     SQLSMALLINT        cbProcName)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURES].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLPROCEDURES].funcW)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szProcName, cbProcName);
+        if (!pSQLProceduresW) return SQL_ERROR;
+        return pSQLProceduresW(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                               szProcName, cbProcName);
 }
 
 /*************************************************************************
  *				SQLTablePrivilegesW          [ODBC32.170]
  */
-SQLRETURN WINAPI SQLTablePrivilegesW(
+SQLRETURN WINAPI ODBC32_SQLTablePrivilegesW(
     SQLHSTMT           hstmt,
-    SQLCHAR               *szCatalogName,
+    SQLWCHAR               *szCatalogName,
     SQLSMALLINT        cbCatalogName,
-    SQLCHAR               *szSchemaName,
+    SQLWCHAR               *szSchemaName,
     SQLSMALLINT        cbSchemaName,
-    SQLCHAR               *szTableName,
+    SQLWCHAR               *szTableName,
     SQLSMALLINT        cbTableName)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLEPRIVILEGES].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLTABLEPRIVILEGES].funcW)
-                   (hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
-                    szTableName, cbTableName);
+        if (!pSQLTablePrivilegesW) return SQL_ERROR;
+        return pSQLTablePrivilegesW(hstmt, szCatalogName, cbCatalogName, szSchemaName, cbSchemaName,
+                                    szTableName, cbTableName);
 }
 
 /*************************************************************************
  *				SQLDriversW          [ODBC32.171]
  */
-SQLRETURN WINAPI SQLDriversW(
+SQLRETURN WINAPI ODBC32_SQLDriversW(
     SQLHENV            henv,
     SQLUSMALLINT       fDirection,
-    SQLCHAR               *szDriverDesc,
+    SQLWCHAR               *szDriverDesc,
     SQLSMALLINT        cbDriverDescMax,
     SQLSMALLINT           *pcbDriverDesc,
-    SQLCHAR               *szDriverAttributes,
+    SQLWCHAR               *szDriverAttributes,
     SQLSMALLINT        cbDriverAttrMax,
     SQLSMALLINT           *pcbDriverAttr)
 {
-        TRACE("\n");
+        SQLRETURN ret;
 
-        CHECK_dmHandle();
+        TRACE("(Direction %d)\n", fDirection);
 
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERS].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLDRIVERS].funcW)
-                (henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
-                 szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+        if (!pSQLDriversW) return SQL_ERROR;
+        ret = pSQLDriversW(henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
+                           szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+
+        if (ret == SQL_NO_DATA && fDirection == SQL_FETCH_FIRST)
+            ERR_(winediag)("No ODBC drivers could be found. "
+                           "Check the settings for your libodbc provider.\n");
+
+        return ret;
 }
 
 /*************************************************************************
  *				SQLSetDescFieldW          [ODBC32.173]
  */
-SQLRETURN WINAPI SQLSetDescFieldW(SQLHDESC DescriptorHandle,
+SQLRETURN WINAPI ODBC32_SQLSetDescFieldW(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, SQLSMALLINT FieldIdentifier,
              SQLPOINTER Value, SQLINTEGER BufferLength)
 {
         TRACE("\n");
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETDESCFIELD].funcW);
-        return (gProxyHandle.functions[SQLAPI_INDEX_SQLSETDESCFIELD].funcW)
-            (DescriptorHandle, RecNumber, FieldIdentifier, Value, BufferLength);
+        if (!pSQLSetDescFieldW) return SQL_ERROR;
+        return pSQLSetDescFieldW(DescriptorHandle, RecNumber, FieldIdentifier, Value, BufferLength);
 }
 
 /*************************************************************************
  *				SQLSetStmtAttrW          [ODBC32.176]
  */
-SQLRETURN WINAPI SQLSetStmtAttrW(SQLHSTMT StatementHandle,
+SQLRETURN WINAPI ODBC32_SQLSetStmtAttrW(SQLHSTMT StatementHandle,
                  SQLINTEGER Attribute, SQLPOINTER Value,
                  SQLINTEGER StringLength)
 {
         SQLRETURN iResult;
-        TRACE("Attribute = (%02ld) Value = %p StringLength = (%ld)\n",
+        TRACE("Attribute = (%02d) Value = %p StringLength = (%d)\n",
             Attribute, Value, StringLength);
 
-        CHECK_dmHandle();
-
-        assert (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSTMTATTR].funcW);
-        iResult = (gProxyHandle.functions[SQLAPI_INDEX_SQLSETSTMTATTR].funcW)
-            (StatementHandle, Attribute, Value, StringLength);
+        if (!pSQLSetStmtAttrW) return SQL_ERROR;
+        iResult = pSQLSetStmtAttrW(StatementHandle, Attribute, Value, StringLength);
         if (iResult == SQL_ERROR && (Attribute == SQL_ROWSET_SIZE || Attribute == SQL_ATTR_ROW_ARRAY_SIZE)) {
             TRACE("CHEAT: returning SQL_SUCCESS to ADO...\n");
             iResult = SQL_SUCCESS;
@@ -2933,5 +2731,19 @@ SQLRETURN WINAPI SQLSetStmtAttrW(SQLHSTMT StatementHandle,
         return iResult;
 }
 
+/*************************************************************************
+ *				SQLGetDiagRecA           [ODBC32.236]
+ */
+SQLRETURN WINAPI ODBC32_SQLGetDiagRecA(SQLSMALLINT handle_type, SQLHANDLE handle, SQLSMALLINT record,
+                                       SQLCHAR *sql_state, SQLINTEGER *native_error,
+                                       SQLCHAR *error_msg, SQLSMALLINT error_msg_max,
+                                       SQLSMALLINT *error_msg_size)
+{
+    TRACE("\n");
+
+    if (!pSQLGetDiagRecA) return SQL_ERROR;
+    return pSQLGetDiagRecA(handle_type, handle, record, sql_state, native_error, error_msg,
+                           error_msg_max, error_msg_size);
+}
 
 /* End of file */

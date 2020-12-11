@@ -17,10 +17,9 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define COM_NO_WINDOWS_H
 #include <stdarg.h>
 
 #include "wine/debug.h"
@@ -34,18 +33,18 @@ WINE_DEFAULT_DEBUG_CHANNEL(ole);
 /***********************************************************************
  *		DllUnregisterServer (OLEPRO32.258)
  */
-HRESULT WINAPI DllUnregisterServer()
+HRESULT WINAPI DllUnregisterServer(void)
 {
-	FIXME("not implemented (olepro32.dll) \n");
+	FIXME("stub\n");
 	return S_OK;
 }
 
 /***********************************************************************
  *		DllRegisterServer (OLEPRO32.257)
  */
-HRESULT WINAPI DllRegisterServer()
+HRESULT WINAPI DllRegisterServer(void)
 {
-	FIXME("not implemented (olepro32.dll) \n");
+	FIXME("stub\n");
 	return S_OK;
 }
 
@@ -54,8 +53,7 @@ HRESULT WINAPI DllRegisterServer()
  */
 HRESULT WINAPI DllCanUnloadNow(void)
 {
-	FIXME("not implemented (olepro32.dll) \n");
-	return S_OK;
+	return S_FALSE;
 }
 
 /***********************************************************************
@@ -63,6 +61,6 @@ HRESULT WINAPI DllCanUnloadNow(void)
  */
 HRESULT WINAPI DllGetClassObject( REFCLSID rclsid, REFIID riid, LPVOID* ppv )
 {
-	FIXME("not implemented (olepro32.dll) \n");
+	FIXME("stub\n");
 	return S_OK;
 }

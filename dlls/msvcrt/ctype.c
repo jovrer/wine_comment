@@ -15,12 +15,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-#include "msvcrt.h"
-#include "wine/debug.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
+#include "msvcrt.h"
+#include "winnls.h"
+#include "wine/unicode.h"
 
 /* Some abbreviations to make the following table readable */
 #define _C_ MSVCRT__CONTROL
@@ -51,154 +51,267 @@ WORD MSVCRT__ctype [257] = {
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-/* Internal: Current ctype table for locale */
-WORD MSVCRT_current_ctype[257];
-
-/* pctype is used by macros in the Win32 headers. It must point
- * To a table of flags exactly like ctype. To allow locale
- * changes to affect ctypes (i.e. isleadbyte), we use a second table
- * and update its flags whenever the current locale changes.
- */
-WORD* MSVCRT__pctype = MSVCRT_current_ctype + 1;
-
-/* mbctype data */
-extern int MSVCRT___mb_cur_max;
-extern LCID MSVCRT_current_lc_all_lcid;
-
 /*********************************************************************
  *		__p__pctype (MSVCRT.@)
  */
-WORD** __p__pctype(void)
+unsigned short** CDECL MSVCRT___p__pctype(void)
 {
-  return &MSVCRT__pctype;
+    return &get_locinfo()->pctype;
 }
 
 /*********************************************************************
- *		_isctype (MSVCRT.@)
+ *		__pctype_func (MSVCRT.@)
  */
-int _isctype(int c, int type)
+const unsigned short* CDECL MSVCRT___pctype_func(void)
 {
-  if (c >= -1 && c <= 255)
-    return MSVCRT__pctype[c] & type;
+    return get_locinfo()->pctype;
+}
 
-  if (MSVCRT___mb_cur_max != 1 && c > 0)
+/*********************************************************************
+ *		_isctype_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isctype_l(int c, int type, MSVCRT__locale_t locale)
+{
+  MSVCRT_pthreadlocinfo locinfo;
+
+  if(!locale)
+    locinfo = get_locinfo();
+  else
+    locinfo = locale->locinfo;
+
+  if (c >= -1 && c <= 255)
+    return locinfo->pctype[c] & type;
+
+  if (locinfo->mb_cur_max != 1 && c > 0)
   {
     /* FIXME: Is there a faster way to do this? */
     WORD typeInfo;
     char convert[3], *pconv = convert;
 
-    if (MSVCRT__pctype[(UINT)c >> 8] & MSVCRT__LEADBYTE)
+    if (locinfo->pctype[(UINT)c >> 8] & MSVCRT__LEADBYTE)
       *pconv++ = (UINT)c >> 8;
     *pconv++ = c & 0xff;
     *pconv = 0;
-    /* FIXME: Use ctype LCID, not lc_all */
-    if (GetStringTypeExA(MSVCRT_current_lc_all_lcid, CT_CTYPE1,
-                         convert, convert[1] ? 2 : 1, &typeInfo))
+
+    if (GetStringTypeExA(locinfo->lc_handle[MSVCRT_LC_CTYPE],
+                CT_CTYPE1, convert, convert[1] ? 2 : 1, &typeInfo))
       return typeInfo & type;
   }
   return 0;
 }
 
 /*********************************************************************
+ *              _isctype (MSVCRT.@)
+ */
+int CDECL MSVCRT__isctype(int c, int type)
+{
+    return MSVCRT__isctype_l(c, type, NULL);
+}
+
+/*********************************************************************
+ *		_isalnum_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isalnum_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__ALPHA | MSVCRT__DIGIT, locale );
+}
+
+/*********************************************************************
  *		isalnum (MSVCRT.@)
  */
-int MSVCRT_isalnum(int c)
+int CDECL MSVCRT_isalnum(int c)
 {
-  return _isctype( c, MSVCRT__ALPHA | MSVCRT__DIGIT );
+  return MSVCRT__isctype( c, MSVCRT__ALPHA | MSVCRT__DIGIT );
+}
+
+/*********************************************************************
+ *		_isalpha_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isalpha_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__ALPHA, locale );
 }
 
 /*********************************************************************
  *		isalpha (MSVCRT.@)
  */
-int MSVCRT_isalpha(int c)
+int CDECL MSVCRT_isalpha(int c)
 {
-  return _isctype( c, MSVCRT__ALPHA );
+  return MSVCRT__isctype( c, MSVCRT__ALPHA );
+}
+
+/*********************************************************************
+ *		_iscntrl_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__iscntrl_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__CONTROL, locale );
 }
 
 /*********************************************************************
  *		iscntrl (MSVCRT.@)
  */
-int MSVCRT_iscntrl(int c)
+int CDECL MSVCRT_iscntrl(int c)
 {
-  return _isctype( c, MSVCRT__CONTROL );
+  return MSVCRT__isctype( c, MSVCRT__CONTROL );
+}
+
+/*********************************************************************
+ *		_isdigit_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isdigit_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__DIGIT, locale );
 }
 
 /*********************************************************************
  *		isdigit (MSVCRT.@)
  */
-int MSVCRT_isdigit(int c)
+int CDECL MSVCRT_isdigit(int c)
 {
-  return _isctype( c, MSVCRT__DIGIT );
+  return MSVCRT__isctype( c, MSVCRT__DIGIT );
+}
+
+/*********************************************************************
+ *		_isgraph_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isgraph_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__ALPHA | MSVCRT__DIGIT | MSVCRT__PUNCT, locale );
 }
 
 /*********************************************************************
  *		isgraph (MSVCRT.@)
  */
-int MSVCRT_isgraph(int c)
+int CDECL MSVCRT_isgraph(int c)
 {
-  return _isctype( c, MSVCRT__ALPHA | MSVCRT__DIGIT | MSVCRT__PUNCT );
+  return MSVCRT__isctype( c, MSVCRT__ALPHA | MSVCRT__DIGIT | MSVCRT__PUNCT );
+}
+
+/*********************************************************************
+ *		_isleadbyte_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isleadbyte_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__LEADBYTE, locale );
 }
 
 /*********************************************************************
  *		isleadbyte (MSVCRT.@)
  */
-int MSVCRT_isleadbyte(int c)
+int CDECL MSVCRT_isleadbyte(int c)
 {
-  return _isctype( c, MSVCRT__LEADBYTE );
+  return MSVCRT__isctype( c, MSVCRT__LEADBYTE );
+}
+
+/*********************************************************************
+ *		_islower_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__islower_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__LOWER, locale );
 }
 
 /*********************************************************************
  *		islower (MSVCRT.@)
  */
-int MSVCRT_islower(int c)
+int CDECL MSVCRT_islower(int c)
 {
-  return _isctype( c, MSVCRT__LOWER );
+  return MSVCRT__isctype( c, MSVCRT__LOWER );
+}
+
+/*********************************************************************
+ *		_isprint_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isprint_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__ALPHA | MSVCRT__DIGIT | MSVCRT__BLANK | MSVCRT__PUNCT, locale );
 }
 
 /*********************************************************************
  *		isprint (MSVCRT.@)
  */
-int MSVCRT_isprint(int c)
+int CDECL MSVCRT_isprint(int c)
 {
-  return _isctype( c, MSVCRT__ALPHA | MSVCRT__DIGIT | MSVCRT__BLANK | MSVCRT__PUNCT );
+  return MSVCRT__isctype( c, MSVCRT__ALPHA | MSVCRT__DIGIT | MSVCRT__BLANK | MSVCRT__PUNCT );
 }
 
 /*********************************************************************
  *		ispunct (MSVCRT.@)
  */
-int MSVCRT_ispunct(int c)
+int CDECL MSVCRT_ispunct(int c)
 {
-  return _isctype( c, MSVCRT__PUNCT );
+  return MSVCRT__isctype( c, MSVCRT__PUNCT );
+}
+
+/*********************************************************************
+ *		_isspace_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isspace_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__SPACE, locale );
 }
 
 /*********************************************************************
  *		isspace (MSVCRT.@)
  */
-int MSVCRT_isspace(int c)
+int CDECL MSVCRT_isspace(int c)
 {
-  return _isctype( c, MSVCRT__SPACE );
+  return MSVCRT__isctype( c, MSVCRT__SPACE );
+}
+
+/*********************************************************************
+ *		_isupper_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isupper_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__UPPER, locale );
 }
 
 /*********************************************************************
  *		isupper (MSVCRT.@)
  */
-int MSVCRT_isupper(int c)
+int CDECL MSVCRT_isupper(int c)
 {
-  return _isctype( c, MSVCRT__UPPER );
+  return MSVCRT__isctype( c, MSVCRT__UPPER );
+}
+
+/*********************************************************************
+ *		_isxdigit_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isxdigit_l(int c, MSVCRT__locale_t locale)
+{
+  return MSVCRT__isctype_l( c, MSVCRT__HEX, locale );
 }
 
 /*********************************************************************
  *		isxdigit (MSVCRT.@)
  */
-int MSVCRT_isxdigit(int c)
+int CDECL MSVCRT_isxdigit(int c)
 {
-  return _isctype( c, MSVCRT__HEX );
+  return MSVCRT__isctype( c, MSVCRT__HEX );
+}
+
+/*********************************************************************
+ *		_isblank_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isblank_l(int c, MSVCRT__locale_t locale)
+{
+  return c == '\t' || MSVCRT__isctype_l( c, MSVCRT__BLANK, locale );
+}
+
+/*********************************************************************
+ *		isblank (MSVCRT.@)
+ */
+int CDECL MSVCRT_isblank(int c)
+{
+  return c == '\t' || MSVCRT__isctype( c, MSVCRT__BLANK );
 }
 
 /*********************************************************************
  *		__isascii (MSVCRT.@)
  */
-int MSVCRT___isascii(int c)
+int CDECL MSVCRT___isascii(int c)
 {
   return isascii((unsigned)c);
 }
@@ -206,7 +319,7 @@ int MSVCRT___isascii(int c)
 /*********************************************************************
  *		__toascii (MSVCRT.@)
  */
-int MSVCRT___toascii(int c)
+int CDECL MSVCRT___toascii(int c)
 {
   return (unsigned)c & 0x7f;
 }
@@ -215,7 +328,7 @@ int MSVCRT___toascii(int c)
  *		iswascii (MSVCRT.@)
  *
  */
-int MSVCRT_iswascii(MSVCRT_wchar_t c)
+int CDECL MSVCRT_iswascii(MSVCRT_wchar_t c)
 {
   return ((unsigned)c < 0x80);
 }
@@ -223,7 +336,7 @@ int MSVCRT_iswascii(MSVCRT_wchar_t c)
 /*********************************************************************
  *		__iscsym (MSVCRT.@)
  */
-int MSVCRT___iscsym(int c)
+int CDECL MSVCRT___iscsym(int c)
 {
   return (c < 127 && (isalnum(c) || c == '_'));
 }
@@ -231,23 +344,163 @@ int MSVCRT___iscsym(int c)
 /*********************************************************************
  *		__iscsymf (MSVCRT.@)
  */
-int MSVCRT___iscsymf(int c)
+int CDECL MSVCRT___iscsymf(int c)
 {
   return (c < 127 && (isalpha(c) || c == '_'));
 }
 
 /*********************************************************************
+ *		_toupper_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__toupper_l(int c, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+    unsigned char str[2], *p = str;
+    WCHAR wide, upper;
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if((unsigned)c < 256)
+        return locinfo->pcumap[c];
+
+    if(locinfo->pctype[(c>>8)&255] & MSVCRT__LEADBYTE)
+        *p++ = (c>>8) & 255;
+    else {
+        *MSVCRT__errno() = MSVCRT_EILSEQ;
+        str[1] = 0;
+    }
+    *p++ = c & 255;
+
+    if(!MultiByteToWideChar(locinfo->lc_codepage,
+                MB_ERR_INVALID_CHARS, (char*)str, p-str, &wide, 1))
+        return c;
+
+    upper = toupperW(wide);
+    if(upper == wide)
+        return str[0] + (str[1]<<8);
+
+    switch(WideCharToMultiByte(locinfo->lc_codepage, 0,
+                &upper, 1, (char*)str, 2, NULL, NULL)) {
+    case 0:
+        return c;
+    case 1:
+        return str[0];
+    default:
+        return str[0] + (str[1]<<8);
+    }
+}
+
+/*********************************************************************
+ *		toupper (MSVCRT.@)
+ */
+int CDECL MSVCRT_toupper(int c)
+{
+    if(initial_locale)
+        return c>='a' && c<='z' ? c-'a'+'A' : c;
+    return MSVCRT__toupper_l(c, NULL);
+}
+
+/*********************************************************************
  *		_toupper (MSVCRT.@)
  */
-int MSVCRT__toupper(int c)
+int CDECL MSVCRT__toupper(int c)
 {
     return c - 0x20;  /* sic */
 }
 
 /*********************************************************************
+ *              _tolower_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__tolower_l(int c, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+    unsigned char str[2], *p = str;
+    WCHAR wide, lower;
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if((unsigned)c < 256)
+        return locinfo->pclmap[c];
+
+    if(locinfo->pctype[(c>>8)&255] & MSVCRT__LEADBYTE)
+        *p++ = (c>>8) & 255;
+    else {
+        *MSVCRT__errno() = MSVCRT_EILSEQ;
+        str[1] = 0;
+    }
+    *p++ = c & 255;
+
+    if(!MultiByteToWideChar(locinfo->lc_codepage,
+                MB_ERR_INVALID_CHARS, (char*)str, p-str, &wide, 1))
+        return c;
+
+    lower = tolowerW(wide);
+    if(lower == wide)
+        return str[0] + (str[1]<<8);
+
+    switch(WideCharToMultiByte(locinfo->lc_codepage, 0,
+                &lower, 1, (char*)str, 2, NULL, NULL)) {
+    case 0:
+        return c;
+    case 1:
+        return str[0];
+    default:
+        return str[0] + (str[1]<<8);
+    }
+}
+
+/*********************************************************************
+ *              tolower (MSVCRT.@)
+ */
+int CDECL MSVCRT_tolower(int c)
+{
+    if(initial_locale)
+        return c>='A' && c<='Z' ? c-'A'+'a' : c;
+    return MSVCRT__tolower_l(c, NULL);
+}
+
+/*********************************************************************
  *		_tolower (MSVCRT.@)
  */
-int MSVCRT__tolower(int c)
+int CDECL MSVCRT__tolower(int c)
 {
     return c + 0x20;  /* sic */
 }
+
+#if _MSVCR_VER>=120
+/*********************************************************************
+ *              wctype (MSVCR120.@)
+ */
+unsigned short __cdecl wctype(const char *property)
+{
+    static const struct {
+        const char *name;
+        unsigned short mask;
+    } properties[] = {
+        { "alnum", MSVCRT__DIGIT|MSVCRT__ALPHA },
+        { "alpha", MSVCRT__ALPHA },
+        { "cntrl", MSVCRT__CONTROL },
+        { "digit", MSVCRT__DIGIT },
+        { "graph", MSVCRT__DIGIT|MSVCRT__PUNCT|MSVCRT__ALPHA },
+        { "lower", MSVCRT__LOWER },
+        { "print", MSVCRT__DIGIT|MSVCRT__PUNCT|MSVCRT__BLANK|MSVCRT__ALPHA },
+        { "punct", MSVCRT__PUNCT },
+        { "space", MSVCRT__SPACE },
+        { "upper", MSVCRT__UPPER },
+        { "xdigit", MSVCRT__HEX }
+    };
+    unsigned int i;
+
+    for(i=0; i<ARRAY_SIZE(properties); i++)
+        if(!strcmp(property, properties[i].name))
+            return properties[i].mask;
+
+    return 0;
+}
+#endif

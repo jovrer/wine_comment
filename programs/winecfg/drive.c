@@ -17,17 +17,24 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
+
+#include "config.h"
+#include "wine/port.h"
 
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
+#include <ntstatus.h>
+#define WIN32_NO_STATUS
 #include <windef.h>
 #include <winbase.h>
+#include <winternl.h>
+#include <winioctl.h>
 #include <winreg.h>
 #include <wine/debug.h>
 #include <shellapi.h>
@@ -35,6 +42,9 @@
 #include <shlguid.h>
 #include <shlwapi.h>
 #include <shlobj.h>
+#define WINE_MOUNTMGR_EXTENSIONS
+#include <ddk/mountmgr.h>
+#include <wine/library.h>
 
 #include "winecfg.h"
 #include "resource.h"
@@ -62,9 +72,9 @@ static inline int letter_to_index(char letter)
  * so the edit dialog can display the currently used drive letter
  * alongside the available ones.
  */
-long drive_available_mask(char letter)
+ULONG drive_available_mask(char letter)
 {
-  long result = 0;
+  ULONG result = 0;
   int i;
 
   WINE_TRACE("\n");
@@ -73,32 +83,36 @@ long drive_available_mask(char letter)
   for(i = 0; i < 26; i++)
   {
       if (!drives[i].in_use) continue;
-      result |= (1 << (toupper(drives[i].letter) - 'A'));
+      result |= (1 << (letter_to_index(drives[i].letter)));
   }
 
   result = ~result;
   if (letter) result |= DRIVE_MASK_BIT(letter);
 
-  WINE_TRACE("finished drive letter loop with %lx\n", result);
+  WINE_TRACE("finished drive letter loop with %x\n", result);
   return result;
 }
 
-BOOL add_drive(const char letter, const char *targetpath, const char *label, const char *serial, unsigned int type)
+BOOL add_drive(char letter, const char *targetpath, const char *device, const WCHAR *label,
+               DWORD serial, DWORD type)
 {
     int driveIndex = letter_to_index(letter);
 
     if(drives[driveIndex].in_use)
         return FALSE;
 
-    WINE_TRACE("letter == '%c', unixpath == '%s', label == '%s', serial == '%s', type == %d\n",
-               letter, targetpath, label, serial, type);
+    WINE_TRACE("letter == '%c', unixpath == %s, device == %s, label == %s, serial == %08x, type == %d\n",
+               letter, wine_dbgstr_a(targetpath), wine_dbgstr_a(device),
+               wine_dbgstr_w(label), serial, type);
 
     drives[driveIndex].letter   = toupper(letter);
     drives[driveIndex].unixpath = strdupA(targetpath);
-    drives[driveIndex].label    = strdupA(label);
-    drives[driveIndex].serial   = strdupA(serial);
+    drives[driveIndex].device   = device ? strdupA(device) : NULL;
+    drives[driveIndex].label    = label ? strdupW(label) : NULL;
+    drives[driveIndex].serial   = serial;
     drives[driveIndex].type     = type;
     drives[driveIndex].in_use   = TRUE;
+    drives[driveIndex].modified = TRUE;
 
     return TRUE;
 }
@@ -108,42 +122,13 @@ void delete_drive(struct drive *d)
 {
     HeapFree(GetProcessHeap(), 0, d->unixpath);
     d->unixpath = NULL;
+    HeapFree(GetProcessHeap(), 0, d->device);
+    d->device = NULL;
     HeapFree(GetProcessHeap(), 0, d->label);
     d->label = NULL;
-    HeapFree(GetProcessHeap(), 0, d->serial);
-    d->serial = NULL;
-
+    d->serial = 0;
     d->in_use = FALSE;
-}
-
-static void set_drive_type( char letter, DWORD type )
-{
-    HKEY hKey;
-    char driveValue[4];
-    const char *typeText = NULL;
-
-    sprintf(driveValue, "%c:", letter);
-
-    /* Set the drive type in the registry */
-    if (type == DRIVE_FIXED)
-        typeText = "hd";
-    else if (type == DRIVE_REMOTE)
-        typeText = "network";
-    else if (type == DRIVE_REMOVABLE)
-        typeText = "floppy";
-    else if (type == DRIVE_CDROM)
-        typeText = "cdrom";
-
-    if (RegCreateKey(HKEY_LOCAL_MACHINE, "Software\\Wine\\Drives", &hKey) != ERROR_SUCCESS)
-        WINE_TRACE("  Unable to open '%s'\n", "Software\\Wine\\Drives");
-    else
-    {
-        if (typeText)
-            RegSetValueEx( hKey, driveValue, 0, REG_SZ, (LPBYTE)typeText, strlen(typeText) + 1 );
-        else
-            RegDeleteValue( hKey, driveValue );
-        RegCloseKey(hKey);
-    }
+    d->modified = TRUE;
 }
 
 static DWORD get_drive_type( char letter )
@@ -154,7 +139,7 @@ static DWORD get_drive_type( char letter )
 
     sprintf(driveValue, "%c:", letter);
 
-    if (RegOpenKey(HKEY_LOCAL_MACHINE, "Software\\Wine\\Drives", &hKey) != ERROR_SUCCESS)
+    if (RegOpenKeyA(HKEY_LOCAL_MACHINE, "Software\\Wine\\Drives", &hKey) != ERROR_SUCCESS)
         WINE_TRACE("  Unable to open Software\\Wine\\Drives\n" );
     else
     {
@@ -164,14 +149,56 @@ static DWORD get_drive_type( char letter )
         if (!RegQueryValueExA( hKey, driveValue, NULL, NULL, (LPBYTE)buffer, &size ))
         {
             WINE_TRACE("Got type '%s' for %s\n", buffer, driveValue );
-            if (!strcasecmp( buffer, "hd" )) ret = DRIVE_FIXED;
-            else if (!strcasecmp( buffer, "network" )) ret = DRIVE_REMOTE;
-            else if (!strcasecmp( buffer, "floppy" )) ret = DRIVE_REMOVABLE;
-            else if (!strcasecmp( buffer, "cdrom" )) ret = DRIVE_CDROM;
+            if (!lstrcmpiA( buffer, "hd" )) ret = DRIVE_FIXED;
+            else if (!lstrcmpiA( buffer, "network" )) ret = DRIVE_REMOTE;
+            else if (!lstrcmpiA( buffer, "floppy" )) ret = DRIVE_REMOVABLE;
+            else if (!lstrcmpiA( buffer, "cdrom" )) ret = DRIVE_CDROM;
         }
         RegCloseKey(hKey);
     }
     return ret;
+}
+
+
+static void set_drive_label( char letter, const WCHAR *label )
+{
+    static const WCHAR emptyW[1];
+    WCHAR device[] = {'a',':','\\',0};  /* SetVolumeLabel() requires a trailing slash */
+    device[0] = letter;
+
+    if (!label) label = emptyW;
+    if(!SetVolumeLabelW(device, label))
+    {
+        WINE_WARN("unable to set volume label for devicename of %s, label of %s\n",
+                  wine_dbgstr_w(device), wine_dbgstr_w(label));
+        PRINTERROR();
+    }
+    else
+    {
+        WINE_TRACE("  set volume label for devicename of %s, label of %s\n",
+                  wine_dbgstr_w(device), wine_dbgstr_w(label));
+    }
+}
+
+/* set the drive serial number via a .windows-serial file */
+static void set_drive_serial( WCHAR letter, DWORD serial )
+{
+    WCHAR filename[] = {'a',':','\\','.','w','i','n','d','o','w','s','-','s','e','r','i','a','l',0};
+    HANDLE hFile;
+
+    filename[0] = letter;
+    WINE_TRACE("Putting serial number of %08X into file %s\n", serial, wine_dbgstr_w(filename));
+    hFile = CreateFileW(filename, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE)
+    {
+        DWORD w;
+        char buffer[16];
+
+        sprintf( buffer, "%X\n", serial );
+        WriteFile(hFile, buffer, strlen(buffer), &w, NULL);
+        CloseHandle(hFile);
+    }
 }
 
 #if 0
@@ -217,114 +244,69 @@ BOOL moveDrive(struct drive *pSrc, struct drive *pDst)
 
 #endif
 
-/* Load currently defined drives into the drives array  */
-void load_drives()
+static HANDLE open_mountmgr(void)
 {
-    char *devices, *dev;
-    int len;
-    int drivecount = 0, i;
-    int retval;
-    static const int arraysize = 512;
+    HANDLE ret;
 
-    WINE_TRACE("\n");
+    if ((ret = CreateFileW( MOUNTMGR_DOS_DEVICE_NAME, GENERIC_READ|GENERIC_WRITE,
+                            FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+                            0, 0 )) == INVALID_HANDLE_VALUE)
+        WINE_ERR( "failed to open mount manager err %u\n", GetLastError() );
+    return ret;
+}
 
-    /* FIXME: broken symlinks in $WINEPREFIX/dosdevices will not be
-       returned by this API, so we need to handle that  */
+/* Load currently defined drives into the drives array  */
+BOOL load_drives(void)
+{
+    DWORD i, size = 1024;
+    HANDLE mgr;
+    WCHAR root[] = {'A',':','\\',0};
 
-    /* setup the drives array */
-    dev = devices = HeapAlloc(GetProcessHeap(), 0, arraysize);
-    len = GetLogicalDriveStrings(arraysize, devices);
+    if ((mgr = open_mountmgr()) == INVALID_HANDLE_VALUE) return FALSE;
 
-    /* make all devices unused */
-    for (i = 0; i < 26; i++)
+    while (root[0] <= 'Z')
     {
-        drives[i].letter = 'A' + i;
-        drives[i].in_use = FALSE;
+        struct mountmgr_unix_drive input;
+        struct mountmgr_unix_drive *data;
 
-        HeapFree(GetProcessHeap(), 0, drives[i].unixpath);
-        drives[i].unixpath = NULL;
+        if (!(data = HeapAlloc( GetProcessHeap(), 0, size ))) break;
 
-        HeapFree(GetProcessHeap(), 0, drives[i].label);
-        drives[i].label = NULL;
+        memset( &input, 0, sizeof(input) );
+        input.letter = root[0];
 
-        HeapFree(GetProcessHeap(), 0, drives[i].serial);
-        drives[i].serial = NULL;
+        if (DeviceIoControl( mgr, IOCTL_MOUNTMGR_QUERY_UNIX_DRIVE, &input, sizeof(input),
+                             data, size, NULL, NULL ))
+        {
+            char *unixpath = NULL, *device = NULL;
+            WCHAR volname[MAX_PATH];
+            DWORD serial;
+
+            if (data->mount_point_offset) unixpath = (char *)data + data->mount_point_offset;
+            if (data->device_offset) device = (char *)data + data->device_offset;
+
+            if (!GetVolumeInformationW( root, volname, ARRAY_SIZE(volname),
+                                        &serial, NULL, NULL, NULL, 0 ))
+            {
+                volname[0] = 0;
+                serial = 0;
+            }
+            if (unixpath)  /* FIXME: handle unmounted drives too */
+                add_drive( root[0], unixpath, device, volname, serial, get_drive_type(root[0]) );
+            root[0]++;
+        }
+        else
+        {
+            if (GetLastError() == ERROR_MORE_DATA) size = data->size;
+            else root[0]++;  /* skip this drive */
+        }
+        HeapFree( GetProcessHeap(), 0, data );
     }
 
-    /* work backwards through the result of GetLogicalDriveStrings  */
-    while (len)
-    {
-        char volname[512]; /* volume name  */
-        DWORD serial;
-        char serialstr[256];
-        char rootpath[256];
-        char simplepath[3];
-        int pathlen;
-        char targetpath[256];
-        char *c;
+    /* reset modified flags */
+    for (i = 0; i < 26; i++) drives[i].modified = FALSE;
 
-        *devices = toupper(*devices);
-
-        WINE_TRACE("devices == '%s'\n", devices);
-
-        volname[0] = 0;
-
-        retval = GetVolumeInformation(devices,
-                                      volname,
-                                      sizeof(volname),
-                                      &serial,
-                                      NULL,
-                                      NULL,
-                                      NULL,
-                                      0);
-        if(!retval)
-        {
-            WINE_ERR("GetVolumeInformation() for '%s' failed, setting serial to 0\n", devices);
-            PRINTERROR();
-            serial = 0;
-        }
-
-        WINE_TRACE("serial: '0x%lX'\n", serial);
-
-        /* build rootpath for GetDriveType() */
-        lstrcpynA(rootpath, devices, sizeof(rootpath));
-        pathlen = strlen(rootpath);
-
-        /* ensure that we have a backslash on the root path */
-        if ((rootpath[pathlen - 1] != '\\') && (pathlen < sizeof(rootpath)))
-        {
-            rootpath[pathlen] = '\\';
-            rootpath[pathlen + 1] = 0;
-        }
-
-	/* QueryDosDevice() requires no trailing backslash */
-        lstrcpynA(simplepath, devices, 3);
-        QueryDosDevice(simplepath, targetpath, sizeof(targetpath));
-
-        /* targetpath may have forward slashes rather than backslashes, so correct */
-        c = targetpath;
-        do if (*c == '\\') *c = '/'; while (*c++);
-
-        snprintf(serialstr, sizeof(serialstr), "%lX", serial);
-        WINE_TRACE("serialstr: '%s'\n", serialstr);
-        add_drive(*devices, targetpath, volname, serialstr, get_drive_type(devices[0]) );
-
-        len -= strlen(devices);
-        devices += strlen(devices);
-
-        /* skip over any nulls */
-        while ((*devices == 0) && (len))
-        {
-            len--;
-            devices++;
-        }
-
-        drivecount++;
-    }
-
-    WINE_TRACE("found %d drives\n", drivecount);
-
-    HeapFree(GetProcessHeap(), 0, dev);
+    CloseHandle( mgr );
+    return TRUE;
 }
 
 /* some of this code appears to be broken by bugs in Wine: the label
@@ -332,179 +314,60 @@ void load_drives()
 void apply_drive_changes(void)
 {
     int i;
-    CHAR devicename[4];
-    CHAR targetpath[256];
-    BOOL foundDrive;
-    CHAR volumeNameBuffer[512];
-    DWORD serialNumber;
-    DWORD maxComponentLength;
-    DWORD fileSystemFlags;
-    CHAR fileSystemName[128];
-    int retval;
-    BOOL defineDevice;
+    HANDLE mgr;
+    DWORD len;
+    struct mountmgr_unix_drive *ioctl;
 
     WINE_TRACE("\n");
+
+    if ((mgr = open_mountmgr()) == INVALID_HANDLE_VALUE) return;
 
     /* add each drive and remove as we go */
     for(i = 0; i < 26; i++)
     {
-        defineDevice = FALSE;
-        foundDrive = FALSE;
-        snprintf(devicename, sizeof(devicename), "%c:", 'A' + i);
+        if (!drives[i].modified) continue;
+        drives[i].modified = FALSE;
 
-        /* get a drive */
-        if(QueryDosDevice(devicename, targetpath, sizeof(targetpath)))
+        len = sizeof(*ioctl);
+        if (drives[i].in_use)
         {
-            char *cursor;
-            
-            /* correct the slashes in the path to be UNIX style */
-            while ((cursor = strchr(targetpath, '\\'))) *cursor = '/';
-
-            foundDrive = TRUE;
+            len += strlen(drives[i].unixpath) + 1;
+            if (drives[i].device) len += strlen(drives[i].device) + 1;
         }
-
-        /* if we found a drive and have a drive then compare things */
-        if(foundDrive && drives[i].in_use)
+        if (!(ioctl = HeapAlloc( GetProcessHeap(), 0, len ))) continue;
+        ioctl->size = len;
+        ioctl->letter = 'a' + i;
+        ioctl->device_offset = 0;
+        if (drives[i].in_use)
         {
-            char newSerialNumberText[256];
+            char *ptr = (char *)(ioctl + 1);
 
-            volumeNameBuffer[0] = 0;
-
-            WINE_TRACE("drives[i].letter: '%c'\n", drives[i].letter);
-
-            snprintf(devicename, sizeof(devicename), "%c:\\", 'A' + i);
-            retval = GetVolumeInformation(devicename,
-                         volumeNameBuffer,
-                         sizeof(volumeNameBuffer),
-                         &serialNumber,
-                         &maxComponentLength,
-                         &fileSystemFlags,
-                         fileSystemName,
-                         sizeof(fileSystemName));
-            if(!retval)
+            ioctl->type = drives[i].type;
+            strcpy( ptr, drives[i].unixpath );
+            ioctl->mount_point_offset = ptr - (char *)ioctl;
+            if (drives[i].device)
             {
-                WINE_TRACE("  GetVolumeInformation() for '%s' failed\n", devicename);
-                WINE_TRACE("  Skipping this drive\n");
-                PRINTERROR();
-                continue; /* skip this drive */
-            }
-
-            snprintf(newSerialNumberText, sizeof(newSerialNumberText), "%lX", serialNumber);
-
-            WINE_TRACE("  current path:   '%s', new path:   '%s'\n",
-                       targetpath, drives[i].unixpath);
-            WINE_TRACE("  current label:  '%s', new label:  '%s'\n",
-                       volumeNameBuffer, drives[i].label);
-            WINE_TRACE("  current serial: '%s', new serial: '%s'\n",
-                       newSerialNumberText, drives[i].serial);
-
-            /* compare to what we have */
-            /* do we have the same targetpath? */
-            if(strcmp(drives[i].unixpath, targetpath) ||
-               strcmp(drives[i].label, volumeNameBuffer) ||
-               strcmp(drives[i].serial, newSerialNumberText))
-            {
-                defineDevice = TRUE;
-                WINE_TRACE("  making changes to drive '%s'\n", devicename);
-            }
-            else
-            {
-                WINE_TRACE("  no changes to drive '%s'\n", devicename);
+                ptr += strlen(ptr) + 1;
+                strcpy( ptr, drives[i].device );
+                ioctl->device_offset = ptr - (char *)ioctl;
             }
         }
-        else if(foundDrive && !drives[i].in_use)
+        else
         {
-            /* remove this drive */
-            if(!DefineDosDevice(DDD_REMOVE_DEFINITION, devicename, drives[i].unixpath))
-            {
-                WINE_ERR("unable to remove devicename of '%s', targetpath of '%s'\n",
-                    devicename, drives[i].unixpath);
-                PRINTERROR();
-            }
-            else
-            {
-                WINE_TRACE("removed devicename of '%s', targetpath of '%s'\n",
-                           devicename, drives[i].unixpath);
-            }
-
-            set_drive_type( drives[i].letter, DRIVE_UNKNOWN );
-            continue;
-        }
-        else if(drives[i].in_use) /* foundDrive must be false from the above check */
-        {
-            defineDevice = TRUE;
+            ioctl->type = DRIVE_NO_ROOT_DIR;
+            ioctl->mount_point_offset = 0;
         }
 
-        /* adding and modifying are the same steps */
-        if(defineDevice)
+        if (DeviceIoControl( mgr, IOCTL_MOUNTMGR_DEFINE_UNIX_DRIVE, ioctl, len, NULL, 0, NULL, NULL ))
         {
-            char filename[256];
-            HANDLE hFile;
-
-            /* define this drive */
-            /* DefineDosDevice() requires that NO trailing slash be present */
-            snprintf(devicename, sizeof(devicename), "%c:", 'A' + i);
-            if(!DefineDosDevice(DDD_RAW_TARGET_PATH, devicename, drives[i].unixpath))
-            {
-                WINE_ERR("  unable to define devicename of '%s', targetpath of '%s'\n",
-                    devicename, drives[i].unixpath);
-                PRINTERROR();
-            }
-            else
-            {
-                WINE_TRACE("  added devicename of '%s', targetpath of '%s'\n",
-                           devicename, drives[i].unixpath);
-
-                /* SetVolumeLabel() requires a trailing slash */
-                snprintf(devicename, sizeof(devicename), "%c:\\", 'A' + i);
-                if(!SetVolumeLabel(devicename, drives[i].label))
-                {
-                    WINE_WARN("unable to set volume label for devicename of '%s', label of '%s'\n",
-                        devicename, drives[i].label);
-                    PRINTERROR();
-                }
-                else
-                {
-                    WINE_TRACE("  set volume label for devicename of '%s', label of '%s'\n",
-                        devicename, drives[i].label);
-                }
-            }
-
-
-            /* Set the drive serial number via a .windows-serial file in */
-            /* the targetpath directory */
-            snprintf(filename, sizeof(filename), "%c:\\.windows-serial", drives[i].letter);
-            WINE_TRACE("  Putting serial number of '%ld' into file '%s'\n",
-                       serialNumber, filename);
-            hFile = CreateFile(filename,
-                       GENERIC_WRITE,
-                       FILE_SHARE_READ,
-                       NULL,
-                       CREATE_ALWAYS,
-                       FILE_ATTRIBUTE_NORMAL,
-                       NULL);
-            if (hFile != INVALID_HANDLE_VALUE)
-            {
-                DWORD w;
-                WINE_TRACE("  writing serial number of '%s'\n", drives[i].serial);
-                WriteFile(hFile,
-                          drives[i].serial,
-                          strlen(drives[i].serial),
-                          &w,
-                          NULL);
-                WriteFile(hFile,
-                          "\n",
-                          strlen("\n"),
-                          &w,
-                          NULL);
-                CloseHandle(hFile);
-            }
-            else
-            {
-                WINE_TRACE("  CreateFile() error with file '%s'\n", filename);
-            }
+            set_drive_label( drives[i].letter, drives[i].label );
+            if (drives[i].in_use) set_drive_serial( drives[i].letter, drives[i].serial );
+            WINE_TRACE( "set drive %c: to %s type %u\n", 'a' + i,
+                        wine_dbgstr_a(drives[i].unixpath), drives[i].type );
         }
-
-        set_drive_type( drives[i].letter, drives[i].type );
+        else WINE_WARN( "failed to set drive %c: to %s type %u err %u\n", 'a' + i,
+                       wine_dbgstr_a(drives[i].unixpath), drives[i].type, GetLastError() );
+        HeapFree( GetProcessHeap(), 0, ioctl );
     }
+    CloseHandle( mgr );
 }

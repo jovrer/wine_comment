@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * Notes:
  * The System Event Notification Service reports the status of network
@@ -43,28 +43,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(sensapi);
-
-HMODULE SENSAPI_hModule = 0;
-
-BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-{
-    TRACE("%p,%lx,%p\n", hinstDLL, fdwReason, lpvReserved);
-
-    switch (fdwReason) {
-        case DLL_PROCESS_ATTACH:
-        {
-            DisableThreadLibraryCalls(hinstDLL);
-            SENSAPI_hModule = hinstDLL;
-            break;
-        }
-        case DLL_PROCESS_DETACH:
-        {
-            break;
-        }
-    }
-
-    return TRUE;
-}
 
 BOOL WINAPI IsDestinationReachableA(LPCSTR lpszDestination, LPQOCINFO lpQOCInfo)
 {

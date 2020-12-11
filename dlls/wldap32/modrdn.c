@@ -15,34 +15,35 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
-
 #include "wine/port.h"
-#include "wine/debug.h"
 
 #include <stdarg.h>
+#ifdef HAVE_LDAP_H
+#include <ldap.h>
+#endif
 
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
 
-#ifdef HAVE_LDAP_H
-#include <ldap.h>
-#else
-#define LDAP_NOT_SUPPORTED  0x5c
-#endif
-
 #include "winldap_private.h"
 #include "wldap32.h"
+#include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wldap32);
 
-ULONG ldap_modrdnA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn )
+/***********************************************************************
+ *      ldap_modrdnA     (WLDAP32.@)
+ *
+ * See ldap_modrdnW.
+ */
+ULONG CDECL ldap_modrdnA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *dnW = NULL, *newdnW = NULL;
 
@@ -50,7 +51,7 @@ ULONG ldap_modrdnA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn )
 
     TRACE( "(%p, %s, %s)\n", ld, debugstr_a(dn), debugstr_a(newdn) );
 
-    if (!ld || !newdn) return ~0UL;
+    if (!ld || !newdn) return ~0u;
 
     if (dn) {
         dnW = strAtoW( dn );
@@ -70,17 +71,37 @@ exit:
     return ret;
 }
 
-ULONG ldap_modrdnW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn )
+/***********************************************************************
+ *      ldap_modrdnW     (WLDAP32.@)
+ *
+ * Change the RDN of a directory entry (asynchronous operation).
+ *
+ * PARAMS
+ *  ld      [I] Pointer to an LDAP context.
+ *  dn      [I] DN of the entry to change.
+ *  newdn   [I] New DN for the entry. 
+ *
+ * RETURNS
+ *  Success: Message ID of the modrdn operation.
+ *  Failure: An LDAP error code.
+ *
+ * NOTES
+ *  Call ldap_result with the message ID to get the result of
+ *  the operation. Cancel the operation by calling ldap_abandon
+ *  with the message ID.
+ */
+ULONG CDECL ldap_modrdnW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *dnU = NULL, *newdnU = NULL;
+    int msg;
 
     ret = WLDAP32_LDAP_NO_MEMORY;
 
     TRACE( "(%p, %s, %s)\n", ld, debugstr_w(dn), debugstr_w(newdn) );
 
-    if (!ld || !newdn) return ~0UL;
+    if (!ld || !newdn) return ~0u;
 
     if (dn) {
         dnU = strWtoU( dn );
@@ -90,7 +111,12 @@ ULONG ldap_modrdnW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn )
     newdnU = strWtoU( newdn );
     if (!newdnU) goto exit;
 
-    ret = ldap_modrdn( ld, dn ? dnU : "", newdnU );
+    ret = ldap_rename( ld, dn ? dnU : "", newdnU, NULL, 1, NULL, NULL, &msg );
+
+    if (ret == LDAP_SUCCESS)
+        ret = msg;
+    else
+        ret = ~0u;
 
 exit:
     strfreeU( dnU );
@@ -100,9 +126,14 @@ exit:
     return ret;
 }
 
-ULONG ldap_modrdn2A( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn, INT delete )
+/***********************************************************************
+ *      ldap_modrdn2A     (WLDAP32.@)
+ *
+ * See ldap_modrdn2W.
+ */
+ULONG CDECL ldap_modrdn2A( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn, INT delete )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *dnW = NULL, *newdnW = NULL;
 
@@ -110,7 +141,7 @@ ULONG ldap_modrdn2A( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn, INT delete )
 
     TRACE( "(%p, %s, %p, 0x%02x)\n", ld, debugstr_a(dn), newdn, delete );
 
-    if (!ld || !newdn) return ~0UL;
+    if (!ld || !newdn) return ~0u;
 
     if (dn) {
         dnW = strAtoW( dn );
@@ -130,17 +161,38 @@ exit:
     return ret;
 }
 
-ULONG ldap_modrdn2W( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn, INT delete )
+/***********************************************************************
+ *      ldap_modrdn2W     (WLDAP32.@)
+ *
+ * Change the RDN of a directory entry (asynchronous operation).
+ *
+ * PARAMS
+ *  ld      [I] Pointer to an LDAP context.
+ *  dn      [I] DN of the entry to change.
+ *  newdn   [I] New DN for the entry. 
+ *  delete  [I] Delete old DN?
+ *
+ * RETURNS
+ *  Success: Message ID of the modrdn operation.
+ *  Failure: An LDAP error code.
+ *
+ * NOTES
+ *  Call ldap_result with the message ID to get the result of
+ *  the operation. Cancel the operation by calling ldap_abandon
+ *  with the message ID.
+ */
+ULONG CDECL ldap_modrdn2W( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn, INT delete )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *dnU = NULL, *newdnU = NULL;
+    int msg;
 
     ret = WLDAP32_LDAP_NO_MEMORY;
 
     TRACE( "(%p, %s, %p, 0x%02x)\n", ld, debugstr_w(dn), newdn, delete );
 
-    if (!ld || !newdn) return ~0UL;
+    if (!ld || !newdn) return ~0u;
 
     if (dn) {
         dnU = strWtoU( dn );
@@ -150,7 +202,12 @@ ULONG ldap_modrdn2W( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn, INT delete )
     newdnU = strWtoU( newdn );
     if (!newdnU) goto exit;
 
-    ret = ldap_modrdn2( ld, dn ? dnU : "", newdnU, delete );
+    ret = ldap_rename( ld, dn ? dnU : "", newdnU, NULL, delete, NULL, NULL, &msg );
+
+    if (ret == LDAP_SUCCESS)
+        ret = msg;
+    else
+        ret = ~0u;
 
 exit:
     strfreeU( dnU );
@@ -160,9 +217,14 @@ exit:
     return ret;
 }
 
-ULONG ldap_modrdn2_sA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn, INT delete )
+/***********************************************************************
+ *      ldap_modrdn2_sA     (WLDAP32.@)
+ *
+ * See ldap_modrdn2_sW.
+ */
+ULONG CDECL ldap_modrdn2_sA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn, INT delete )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *dnW = NULL, *newdnW = NULL;
 
@@ -190,9 +252,24 @@ exit:
     return ret;
 }
 
-ULONG ldap_modrdn2_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn, INT delete )
+/***********************************************************************
+ *      ldap_modrdn2_sW     (WLDAP32.@)
+ *
+ * Change the RDN of a directory entry (synchronous operation).
+ *
+ * PARAMS
+ *  ld      [I] Pointer to an LDAP context.
+ *  dn      [I] DN of the entry to change.
+ *  newdn   [I] New DN for the entry. 
+ *  delete  [I] Delete old DN?
+ *
+ * RETURNS
+ *  Success: LDAP_SUCCESS
+ *  Failure: An LDAP error code.
+ */
+ULONG CDECL ldap_modrdn2_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn, INT delete )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *dnU = NULL, *newdnU = NULL;
 
@@ -210,7 +287,7 @@ ULONG ldap_modrdn2_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn, INT delete )
     newdnU = strWtoU( newdn );
     if (!newdnU) goto exit;
 
-    ret = ldap_modrdn2_s( ld, dn ? dnU : "", newdnU, delete );
+    ret = map_error( ldap_rename_s( ld, dn ? dnU : "", newdnU, NULL, delete, NULL, NULL ));
 
 exit:
     strfreeU( dnU );
@@ -220,9 +297,14 @@ exit:
     return ret;
 }
 
-ULONG ldap_modrdn_sA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn )
+/***********************************************************************
+ *      ldap_modrdn_sA     (WLDAP32.@)
+ *
+ * See ldap_modrdn_sW.
+ */
+ULONG CDECL ldap_modrdn_sA( WLDAP32_LDAP *ld, PCHAR dn, PCHAR newdn )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     WCHAR *dnW = NULL, *newdnW = NULL;
 
@@ -250,9 +332,23 @@ exit:
     return ret;
 }
 
-ULONG ldap_modrdn_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn )
+/***********************************************************************
+ *      ldap_modrdn_sW     (WLDAP32.@)
+ *
+ * Change the RDN of a directory entry (synchronous operation).
+ *
+ * PARAMS
+ *  ld      [I] Pointer to an LDAP context.
+ *  dn      [I] DN of the entry to change.
+ *  newdn   [I] New DN for the entry. 
+ *
+ * RETURNS
+ *  Success: LDAP_SUCCESS
+ *  Failure: An LDAP error code.
+ */
+ULONG CDECL ldap_modrdn_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn )
 {
-    ULONG ret = LDAP_NOT_SUPPORTED;
+    ULONG ret = WLDAP32_LDAP_NOT_SUPPORTED;
 #ifdef HAVE_LDAP
     char *dnU = NULL, *newdnU = NULL;
 
@@ -270,7 +366,7 @@ ULONG ldap_modrdn_sW( WLDAP32_LDAP *ld, PWCHAR dn, PWCHAR newdn )
     newdnU = strWtoU( newdn );
     if (!newdnU) goto exit;
 
-    ret = ldap_modrdn_s( ld, dn ? dnU : "", newdnU );
+    ret = map_error( ldap_rename_s( ld, dn ? dnU : "", newdnU, NULL, 1, NULL, NULL ));
 
 exit:
     strfreeU( dnU );

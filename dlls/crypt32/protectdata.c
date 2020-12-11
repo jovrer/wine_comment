@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 
@@ -42,14 +42,15 @@
 #include "windef.h"
 #include "winbase.h"
 #include "wincrypt.h"
-#include "winreg.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(crypt);
 
 #define CRYPT32_PROTECTDATA_PROV      PROV_RSA_FULL
-#define CRYPT32_PROTECTDATA_HASH_CALG CALG_MD5
-#define CRYPT32_PROTECTDATA_KEY_CALG  CALG_RC2
+#define CRYPT32_PROTECTDATA_HASH_CALG CALG_SHA1
+#define CRYPT32_PROTECTDATA_HASH_LEN  160
+#define CRYPT32_PROTECTDATA_KEY_CALG  CALG_3DES
+#define CRYPT32_PROTECTDATA_KEY_LEN   168
 #define CRYPT32_PROTECTDATA_SALT_LEN  16
 
 static const BYTE crypt32_protectdata_secret[] = {
@@ -62,21 +63,22 @@ static const BYTE crypt32_protectdata_secret[] = {
  * to be something like this:
 
  DWORD  count0;         - how many "info0_*[16]" blocks follow (was always 1)
- BYTE   info0_0[16];    - unknown information
- ...
+ BYTE   info0_0[16];    - unknown information - persistent across invocations,
+ ...                      reboots, password changes, and users
  DWORD  count1;         - how many "info1_*[16]" blocks follow (was always 1)
- BYTE   info1_0[16];    - unknown information
- ...
+ BYTE   info1_0[16];    - unknown information - unique to each user, but
+ ...                      persistent across reboots and password changes
  DWORD  null0;          - NULL "end of records"?
- DWORD  str_len;        - length of WCHAR string including term
- WCHAR  str[str_len];   - The "dataDescription" value
- DWORD  unknown0;       - unknown value (seems large, but only WORD large)
- DWORD  unknown1;       - unknown value (seems small, less than a BYTE)
+ DWORD  str_len;        - byte length of WCHAR string including term
+ BYTE   str[str_len];   - The "dataDescription" value as a NULL-terminated
+                          little-endian WCHAR string
+ ALG_ID cipher_alg;     - cipher algo - was CALG_3DES
+ DWORD  cipher_key_len; - cipher key bit length - was 0xa8==168
  DWORD  data_len;       - length of data (was 16 in samples)
  BYTE   data[data_len]; - unknown data (fingerprint?)
  DWORD  null1;          - NULL ?
- DWORD  unknown2;       - unknown value (seems large, but only WORD large)
- DWORD  unknown3;       - unknown value (seems small, less than a BYTE)
+ ALG_ID hash_alg;       - hash algo - was CALG_SHA1
+ DWORD  hash_len;       - bit length of hash - was 0xa0==160
  DWORD  salt_len;       - length of salt(?) data
  BYTE   salt[salt_len]; - salt(?) for symmetric encryption
  DWORD  cipher_len;     - length of cipher(?) data - was close to plain len
@@ -95,23 +97,23 @@ struct protect_data_t
     DATA_BLOB   info1;
     DWORD       null0;
     WCHAR *     szDataDescr;  /* serialized differently than the DATA_BLOBs */
-    DWORD       unknown0;     /* perhaps the HASH alg const should go here? */
-    DWORD       unknown1;
+    ALG_ID      cipher_alg;
+    DWORD       cipher_key_len;
     DATA_BLOB   data0;
     DWORD       null1;
-    DWORD       unknown2;     /* perhaps the KEY alg const should go here? */
-    DWORD       unknown3;
+    ALG_ID      hash_alg;
+    DWORD       hash_len;
     DATA_BLOB   salt;
     DATA_BLOB   cipher;
     DATA_BLOB   fingerprint;
 };
 
 /* this is used to check if an incoming structure was built by Wine */
-static const char * crypt_magic_str = "Wine Crypt32 ok";
+static const char crypt_magic_str[] = "Wine Crypt32 ok";
 
 /* debugging tool to print strings of hex chars */
 static const char *
-hex_str(unsigned char *p, int n)
+hex_str(const unsigned char *p, int n)
 {
     const char * ptr;
     char report[80];
@@ -146,7 +148,7 @@ void serialize_dword(DWORD value,BYTE ** ptr)
 }
 
 static
-void serialize_string(BYTE * str,BYTE ** ptr,DWORD len, DWORD width,
+void serialize_string(const BYTE *str, BYTE **ptr, DWORD len, DWORD width,
                       BOOL prepend_len)
 {
     /*TRACE("called %ux%u\n",(unsigned int)len,(unsigned int)width);*/
@@ -160,7 +162,7 @@ void serialize_string(BYTE * str,BYTE ** ptr,DWORD len, DWORD width,
 }
 
 static
-BOOL unserialize_dword(BYTE * ptr, DWORD *index, DWORD size, DWORD * value)
+BOOL unserialize_dword(const BYTE *ptr, DWORD *index, DWORD size, DWORD *value)
 {
     /*TRACE("called\n");*/
 
@@ -178,7 +180,7 @@ BOOL unserialize_dword(BYTE * ptr, DWORD *index, DWORD size, DWORD * value)
 }
 
 static
-BOOL unserialize_string(BYTE * ptr, DWORD *index, DWORD size,
+BOOL unserialize_string(const BYTE *ptr, DWORD *index, DWORD size,
                         DWORD len, DWORD width, BOOL inline_len,
                         BYTE ** data, DWORD * stored)
 {
@@ -212,7 +214,7 @@ BOOL unserialize_string(BYTE * ptr, DWORD *index, DWORD size,
 }
 
 static
-BOOL serialize(struct protect_data_t * pInfo, DATA_BLOB * pSerial)
+BOOL serialize(const struct protect_data_t *pInfo, DATA_BLOB *pSerial)
 {
     BYTE * ptr;
     DWORD dwStrLen;
@@ -288,11 +290,11 @@ BOOL serialize(struct protect_data_t * pInfo, DATA_BLOB * pSerial)
                      (dwStrLen+1)*sizeof(WCHAR),sizeof(BYTE),TRUE);
     /*TRACE("used %u\n",ptr-pSerial->pbData);*/
 
-    /* unknown0 */
-    serialize_dword(pInfo->unknown0,&ptr);
+    /* cipher_alg */
+    serialize_dword(pInfo->cipher_alg,&ptr);
     /*TRACE("used %u\n",ptr-pSerial->pbData);*/
-    /* unknown1 */
-    serialize_dword(pInfo->unknown1,&ptr);
+    /* cipher_key_len */
+    serialize_dword(pInfo->cipher_key_len,&ptr);
     /*TRACE("used %u\n",ptr-pSerial->pbData);*/
     
     /* data0 */
@@ -304,11 +306,11 @@ BOOL serialize(struct protect_data_t * pInfo, DATA_BLOB * pSerial)
     serialize_dword(pInfo->null1,&ptr);
     /*TRACE("used %u\n",ptr-pSerial->pbData);*/
     
-    /* unknown2 */
-    serialize_dword(pInfo->unknown2,&ptr);
+    /* hash_alg */
+    serialize_dword(pInfo->hash_alg,&ptr);
     /*TRACE("used %u\n",ptr-pSerial->pbData);*/
-    /* unknown3 */
-    serialize_dword(pInfo->unknown3,&ptr);
+    /* hash_len */
+    serialize_dword(pInfo->hash_len,&ptr);
     /*TRACE("used %u\n",ptr-pSerial->pbData);*/
     
     /* salt */
@@ -328,8 +330,7 @@ BOOL serialize(struct protect_data_t * pInfo, DATA_BLOB * pSerial)
 
     if (ptr - pSerial->pbData != dwStruct)
     {
-        ERR("struct size changed!? %u != expected %u\n",
-            ptr - pSerial->pbData, (unsigned int)dwStruct);
+        ERR("struct size changed!? expected %u\n", dwStruct);
         LocalFree(pSerial->pbData);
         pSerial->pbData=NULL;
         pSerial->cbData=0;
@@ -340,7 +341,7 @@ BOOL serialize(struct protect_data_t * pInfo, DATA_BLOB * pSerial)
 }
 
 static
-BOOL unserialize(DATA_BLOB * pSerial, struct protect_data_t * pInfo)
+BOOL unserialize(const DATA_BLOB *pSerial, struct protect_data_t *pInfo)
 {
     BYTE * ptr;
     DWORD index;
@@ -401,17 +402,17 @@ BOOL unserialize(DATA_BLOB * pSerial, struct protect_data_t * pInfo)
         return FALSE;
     }
 
-    /* unknown0 */
-    if (!unserialize_dword(ptr,&index,size,&pInfo->unknown0))
+    /* cipher_alg */
+    if (!unserialize_dword(ptr,&index,size,&pInfo->cipher_alg))
     {
-        ERR("reading unknown0 failed!\n");
+        ERR("reading cipher_alg failed!\n");
         return FALSE;
     }
     
-    /* unknown1 */
-    if (!unserialize_dword(ptr,&index,size,&pInfo->unknown1))
+    /* cipher_key_len */
+    if (!unserialize_dword(ptr,&index,size,&pInfo->cipher_key_len))
     {
-        ERR("reading unknown1 failed!\n");
+        ERR("reading cipher_key_len failed!\n");
         return FALSE;
     }
     
@@ -430,17 +431,17 @@ BOOL unserialize(DATA_BLOB * pSerial, struct protect_data_t * pInfo)
         return FALSE;
     }
     
-    /* unknown2 */
-    if (!unserialize_dword(ptr,&index,size,&pInfo->unknown2))
+    /* hash_alg */
+    if (!unserialize_dword(ptr,&index,size,&pInfo->hash_alg))
     {
-        ERR("reading unknown2 failed!\n");
+        ERR("reading hash_alg failed!\n");
         return FALSE;
     }
     
-    /* unknown3 */
-    if (!unserialize_dword(ptr,&index,size,&pInfo->unknown3))
+    /* hash_len */
+    if (!unserialize_dword(ptr,&index,size,&pInfo->hash_len))
     {
-        ERR("reading unknown3 failed!\n");
+        ERR("reading hash_len failed!\n");
         return FALSE;
     }
     
@@ -474,8 +475,7 @@ BOOL unserialize(DATA_BLOB * pSerial, struct protect_data_t * pInfo)
     {
         /* this is an impossible-to-reach test, but if the padding
          * issue is ever understood, this may become more useful */
-        ERR("loaded corrupt structure! (used %u expected %u)\n",
-                (unsigned int)index, (unsigned int)size);
+        ERR("loaded corrupt structure! (used %u expected %u)\n", index, size);
         status=FALSE;
     }
 
@@ -484,7 +484,7 @@ BOOL unserialize(DATA_BLOB * pSerial, struct protect_data_t * pInfo)
 
 /* perform sanity checks */
 static
-BOOL valid_protect_data(struct protect_data_t * pInfo)
+BOOL valid_protect_data(const struct protect_data_t *pInfo)
 {
     BOOL status=TRUE;
 
@@ -537,25 +537,18 @@ void free_protect_data(struct protect_data_t * pInfo)
 
     if (!pInfo) return;
 
-    if (pInfo->info0.pbData)
-        CryptMemFree(pInfo->info0.pbData);
-    if (pInfo->info1.pbData)
-        CryptMemFree(pInfo->info1.pbData);
-    if (pInfo->szDataDescr)
-        CryptMemFree(pInfo->szDataDescr);
-    if (pInfo->data0.pbData)
-        CryptMemFree(pInfo->data0.pbData);
-    if (pInfo->salt.pbData)
-        CryptMemFree(pInfo->salt.pbData);
-    if (pInfo->cipher.pbData)
-        CryptMemFree(pInfo->cipher.pbData);
-    if (pInfo->fingerprint.pbData)
-        CryptMemFree(pInfo->fingerprint.pbData);
+    CryptMemFree(pInfo->info0.pbData);
+    CryptMemFree(pInfo->info1.pbData);
+    CryptMemFree(pInfo->szDataDescr);
+    CryptMemFree(pInfo->data0.pbData);
+    CryptMemFree(pInfo->salt.pbData);
+    CryptMemFree(pInfo->cipher.pbData);
+    CryptMemFree(pInfo->fingerprint.pbData);
 }
 
 /* copies a string into a data blob */
 static
-BYTE * convert_str_to_blob(char* str, DATA_BLOB* blob)
+BYTE *convert_str_to_blob(LPCSTR str, DATA_BLOB *blob)
 {
     if (!str || !blob) return NULL;
 
@@ -590,11 +583,11 @@ BOOL fill_protect_data(struct protect_data_t * pInfo, LPCWSTR szDataDescr,
 
     pInfo->count0=0x0001;
 
-    convert_str_to_blob((char*)crypt_magic_str,&pInfo->info0);
+    convert_str_to_blob(crypt_magic_str, &pInfo->info0);
 
     pInfo->count1=0x0001;
 
-    convert_str_to_blob((char*)crypt_magic_str,&pInfo->info1);
+    convert_str_to_blob(crypt_magic_str, &pInfo->info1);
 
     pInfo->null0=0x0000;
 
@@ -603,31 +596,29 @@ BOOL fill_protect_data(struct protect_data_t * pInfo, LPCWSTR szDataDescr,
         memcpy(pInfo->szDataDescr,szDataDescr,(dwStrLen+1)*sizeof(WCHAR));
     }
 
-    pInfo->unknown0=0x0000;
-    pInfo->unknown1=0x0000;
+    pInfo->cipher_alg=CRYPT32_PROTECTDATA_KEY_CALG;
+    pInfo->cipher_key_len=CRYPT32_PROTECTDATA_KEY_LEN;
 
-    convert_str_to_blob((char*)crypt_magic_str,&pInfo->data0);
+    convert_str_to_blob(crypt_magic_str, &pInfo->data0);
 
     pInfo->null1=0x0000;
-    pInfo->unknown2=0x0000;
-    pInfo->unknown3=0x0000;
+    pInfo->hash_alg=CRYPT32_PROTECTDATA_HASH_CALG;
+    pInfo->hash_len=CRYPT32_PROTECTDATA_HASH_LEN;
 
     /* allocate memory to hold a salt */
-    pInfo->salt.cbData=CRYPT32_PROTECTDATA_SALT_LEN;
-    if ((pInfo->salt.pbData=CryptMemAlloc(pInfo->salt.cbData)))
+    if ((pInfo->salt.pbData=CryptMemAlloc(CRYPT32_PROTECTDATA_SALT_LEN)))
     {
         /* generate random salt */
-        if (!CryptGenRandom(hProv, pInfo->salt.cbData, pInfo->salt.pbData))
+        if (!CryptGenRandom(hProv, CRYPT32_PROTECTDATA_SALT_LEN, pInfo->salt.pbData))
         {
             ERR("CryptGenRandom\n");
             free_protect_data(pInfo);
             return FALSE;
         }
+        pInfo->salt.cbData=CRYPT32_PROTECTDATA_SALT_LEN;
+        /* debug: show our salt */
+        TRACE_DATA_BLOB(&pInfo->salt);
     }
-
-    /* debug: show our salt */
-    TRACE_DATA_BLOB(&pInfo->salt);
-
     pInfo->cipher.cbData=0;
     pInfo->cipher.pbData=NULL;
 
@@ -688,7 +679,7 @@ BOOL convert_hash_to_blob(HCRYPTHASH hHash, DATA_BLOB * blob)
 
 /* test that a given hash matches an exported-to-blob hash value */
 static
-BOOL hash_matches_blob(HCRYPTHASH hHash, DATA_BLOB * two)
+BOOL hash_matches_blob(HCRYPTHASH hHash, const DATA_BLOB *two)
 {
     BOOL rc = FALSE;
     DATA_BLOB one;
@@ -711,8 +702,8 @@ BOOL hash_matches_blob(HCRYPTHASH hHash, DATA_BLOB * two)
 
 /* create an encryption key from a given salt and optional entropy */
 static
-BOOL load_encryption_key(HCRYPTPROV hProv, DATA_BLOB * salt,
-                         DATA_BLOB * pOptionalEntropy, HCRYPTKEY * phKey)
+BOOL load_encryption_key(HCRYPTPROV hProv, DWORD key_len, const DATA_BLOB *salt,
+                         const DATA_BLOB *pOptionalEntropy, HCRYPTKEY *phKey)
 {
     BOOL rc = TRUE;
     HCRYPTHASH hSaltHash;
@@ -731,8 +722,8 @@ BOOL load_encryption_key(HCRYPTPROV hProv, DATA_BLOB * salt,
     /* This should be the "logon credentials" instead of username */
     dwError=GetLastError();
     dwUsernameLen = 0;
-    if (!GetUserNameA(NULL,&dwUsernameLen) &&
-        GetLastError()==ERROR_MORE_DATA && dwUsernameLen &&
+    if (!GetUserNameA(NULL, &dwUsernameLen) &&
+        GetLastError() == ERROR_INSUFFICIENT_BUFFER && dwUsernameLen &&
         (szUsername = CryptMemAlloc(dwUsernameLen)))
     {
         szUsername[0]='\0';
@@ -760,7 +751,7 @@ BOOL load_encryption_key(HCRYPTPROV hProv, DATA_BLOB * salt,
 
     /* produce a symmetric key */
     if (rc && !CryptDeriveKey(hProv,CRYPT32_PROTECTDATA_KEY_CALG,
-                              hSaltHash,CRYPT_EXPORTABLE,phKey))
+                              hSaltHash,key_len << 16 | CRYPT_EXPORTABLE,phKey))
     {
         ERR("CryptDeriveKey\n");
         rc = FALSE;
@@ -768,28 +759,28 @@ BOOL load_encryption_key(HCRYPTPROV hProv, DATA_BLOB * salt,
 
     /* clean up */
     CryptDestroyHash(hSaltHash);
-    if (szUsername) CryptMemFree(szUsername);
+    CryptMemFree(szUsername);
 
     return rc;
 }
 
 /* debugging tool to print the structures of a ProtectData call */
 static void
-report(DATA_BLOB* pDataIn, DATA_BLOB* pOptionalEntropy,
+report(const DATA_BLOB* pDataIn, const DATA_BLOB* pOptionalEntropy,
        CRYPTPROTECT_PROMPTSTRUCT* pPromptStruct, DWORD dwFlags)
 {
     TRACE("pPromptStruct: %p\n", pPromptStruct);
     if (pPromptStruct)
     {
-        TRACE("  cbSize: 0x%x\n",(unsigned int)pPromptStruct->cbSize);
-        TRACE("  dwPromptFlags: 0x%x\n",(unsigned int)pPromptStruct->dwPromptFlags);
+        TRACE("  cbSize: 0x%x\n", pPromptStruct->cbSize);
+        TRACE("  dwPromptFlags: 0x%x\n", pPromptStruct->dwPromptFlags);
         TRACE("  hwndApp: %p\n", pPromptStruct->hwndApp);
         TRACE("  szPrompt: %p %s\n",
               pPromptStruct->szPrompt,
               pPromptStruct->szPrompt ? debugstr_w(pPromptStruct->szPrompt)
               : "");
     }
-    TRACE("dwFlags: 0x%04x\n",(unsigned int)dwFlags);
+    TRACE("dwFlags: 0x%04x\n", dwFlags);
     TRACE_DATA_BLOB(pDataIn);
     if (pOptionalEntropy)
     {
@@ -835,8 +826,8 @@ BOOL WINAPI CryptProtectData(DATA_BLOB* pDataIn,
                              DWORD dwFlags,
                              DATA_BLOB* pDataOut)
 {
+    static const WCHAR empty_str[1];
     BOOL rc = FALSE;
-
     HCRYPTPROV hProv;
     struct protect_data_t protect_data;
     HCRYPTHASH hHash;
@@ -861,10 +852,10 @@ BOOL WINAPI CryptProtectData(DATA_BLOB* pDataIn,
     /* Windows appears to create an empty szDataDescr instead of maintaining
      * a NULL */
     if (!szDataDescr)
-        szDataDescr=(WCHAR[]){'\0'};
+        szDataDescr = empty_str;
 
     /* get crypt context */
-    if (!CryptAcquireContextW(&hProv,NULL,NULL,CRYPT32_PROTECTDATA_PROV,CRYPT_VERIFYCONTEXT))
+    if (!CryptAcquireContextW(&hProv,NULL,MS_ENHANCED_PROV_W,CRYPT32_PROTECTDATA_PROV,CRYPT_VERIFYCONTEXT))
     {
         ERR("CryptAcquireContextW failed\n");
         goto finished;
@@ -878,7 +869,7 @@ BOOL WINAPI CryptProtectData(DATA_BLOB* pDataIn,
     }
 
     /* load key */
-    if (!load_encryption_key(hProv,&protect_data.salt,pOptionalEntropy,&hKey))
+    if (!load_encryption_key(hProv,protect_data.cipher_key_len,&protect_data.salt,pOptionalEntropy,&hKey))
     {
         goto free_protect_data;
     }
@@ -898,7 +889,7 @@ BOOL WINAPI CryptProtectData(DATA_BLOB* pDataIn,
         ERR("CryptEncrypt\n");
         goto free_hash;
     }
-    TRACE("required encrypted storage: %u\n",(unsigned int)dwLength);
+    TRACE("required encrypted storage: %u\n", dwLength);
 
     /* copy plain text into cipher area for CryptEncrypt call */
     protect_data.cipher.cbData=dwLength;
@@ -915,7 +906,7 @@ BOOL WINAPI CryptProtectData(DATA_BLOB* pDataIn,
     if (!CryptEncrypt(hKey, hHash, TRUE, 0, protect_data.cipher.pbData,
                       &dwLength, protect_data.cipher.cbData))
     {
-        ERR("CryptEncrypt %u\n",(unsigned int)GetLastError());
+        ERR("CryptEncrypt %u\n", GetLastError());
         goto free_hash;
     }
     protect_data.cipher.cbData=dwLength;
@@ -1023,6 +1014,11 @@ BOOL WINAPI CryptUnprotectData(DATA_BLOB* pDataIn,
         SetLastError(ERROR_INVALID_PARAMETER);
         goto finished;
     }
+    if (!pDataIn->cbData)
+    {
+        SetLastError(ERROR_INVALID_DATA);
+        goto finished;
+    }
 
     /* debug: show our arguments */
     report(pDataIn,pOptionalEntropy,pPromptStruct,dwFlags);
@@ -1045,14 +1041,14 @@ BOOL WINAPI CryptUnprotectData(DATA_BLOB* pDataIn,
     }
 
     /* get a crypt context */
-    if (!CryptAcquireContextW(&hProv,NULL,NULL,CRYPT32_PROTECTDATA_PROV,CRYPT_VERIFYCONTEXT))
+    if (!CryptAcquireContextW(&hProv,NULL,MS_ENHANCED_PROV_W,CRYPT32_PROTECTDATA_PROV,CRYPT_VERIFYCONTEXT))
     {
         ERR("CryptAcquireContextW failed\n");
         goto free_protect_data;
     }
 
     /* load key */
-    if (!load_encryption_key(hProv,&protect_data.salt,pOptionalEntropy,&hKey))
+    if (!load_encryption_key(hProv,protect_data.cipher_key_len,&protect_data.salt,pOptionalEntropy,&hKey))
     {
         goto free_context;
     }

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_SERVER_HANDLE_H
@@ -28,29 +28,31 @@
 struct process;
 struct object_ops;
 struct namespace;
+struct unicode_str;
 
 /* handle functions */
 
 /* alloc_handle takes a void *obj for convenience, but you better make sure */
 /* that the thing pointed to starts with a struct object... */
 extern obj_handle_t alloc_handle( struct process *process, void *obj,
-                              unsigned int access, int inherit );
-extern int close_handle( struct process *process, obj_handle_t handle, int *fd );
+                                  unsigned int access, unsigned int attr );
+extern obj_handle_t alloc_handle_no_access_check( struct process *process, void *ptr,
+                                                  unsigned int access, unsigned int attr );
+extern unsigned int close_handle( struct process *process, obj_handle_t handle );
 extern struct object *get_handle_obj( struct process *process, obj_handle_t handle,
                                       unsigned int access, const struct object_ops *ops );
 extern unsigned int get_handle_access( struct process *process, obj_handle_t handle );
-extern int get_handle_unix_fd( struct process *process, obj_handle_t handle, unsigned int access );
-extern int set_handle_unix_fd( struct process *process, obj_handle_t handle, int fd );
 extern obj_handle_t duplicate_handle( struct process *src, obj_handle_t src_handle, struct process *dst,
-                                  unsigned int access, int inherit, int options );
-extern obj_handle_t open_object( const struct namespace *namespace, const WCHAR *name, size_t len,
-                                 const struct object_ops *ops, unsigned int access, unsigned int attr );
+                                      unsigned int access, unsigned int attr, unsigned int options );
+extern obj_handle_t open_object( struct process *process, obj_handle_t parent, unsigned int access,
+                                 const struct object_ops *ops, const struct unicode_str *name,
+                                 unsigned int attr );
 extern obj_handle_t find_inherited_handle( struct process *process, const struct object_ops *ops );
+extern obj_handle_t enumerate_handles( struct process *process, const struct object_ops *ops,
+                                       unsigned int *index );
+extern void close_process_handles( struct process *process );
 extern struct handle_table *alloc_handle_table( struct process *process, int count );
 extern struct handle_table *copy_handle_table( struct process *process, struct process *parent );
 extern unsigned int get_handle_table_count( struct process *process);
-extern int flush_cached_fd( struct process *process, obj_handle_t handle );
-
-extern void close_global_handles(void);
 
 #endif  /* __WINE_SERVER_HANDLE_H */

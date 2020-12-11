@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -41,7 +41,7 @@ char *str_create(size_t num_str, ...)
       len += strlen (t);
   va_end (args);
 
-  if (!(tmp = (char *) malloc (len)))
+  if (!(tmp = malloc (len)))
     fatal ("Out of memory");
 
   tmp[0] = '\0';
@@ -72,7 +72,7 @@ char *str_create_num(size_t num_str, int num, ...)
       len += strlen (t);
   va_end (args);
 
-  if (!(tmp = (char *) malloc (len)))
+  if (!(tmp = malloc (len)))
     fatal ("Out of memory");
 
   tmp[0] = '\0';
@@ -98,7 +98,7 @@ char *str_substring(const char *start, const char *end)
 
   assert (start && end && end > start);
 
-  if (!(newstr = (char *) malloc (end - start + 1)))
+  if (!(newstr = malloc (end - start + 1)))
     fatal ("Out of memory");
 
   memcpy (newstr, start, end - start);
@@ -134,19 +134,19 @@ char *str_replace (char *str, const char *oldstr, const char *newstr)
  *
  * Locate one string in another, ignoring spaces
  */
-const char *str_match (const char *str, const char *match, int *found)
+const char *str_match (const char *str, const char *match, BOOL *found)
 {
   assert(str && match && found);
 
   while (*str == ' ') str++;
   if (!strncmp (str, match, strlen (match)))
   {
-    *found = 1;
+    *found = TRUE;
     str += strlen (match);
     while (*str == ' ') str++;
   }
   else
-    *found = 0;
+    *found = FALSE;
   return str;
 }
 

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -32,15 +32,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(wldap32);
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 {
-    TRACE( "(%p, %ld, %p)\n", hinst, reason, reserved );
+    TRACE( "(%p, %d, %p)\n", hinst, reason, reserved );
 
     switch (reason)
     {
     case DLL_PROCESS_ATTACH:
         hwldap32 = hinst;
         DisableThreadLibraryCalls( hinst );
-        break;
-    case DLL_PROCESS_DETACH:
         break;
     }
     return TRUE;

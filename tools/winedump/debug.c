@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -44,8 +44,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winedump.h"
-#include "pe.h"
-#include "cvinclude.h"
+#include "wine/mscvpdb.h"
 
 /*
  * .DBG File Layout:
@@ -70,7 +69,7 @@
  * (hdr)  IMAGE_SECTION_HEADER - list of COFF sections copied verbatim from .EXE;
  *        although this directory contains file offsets, these offsets are meaningless
  *        in the context of the .DBG file, because only the section headers are copied
- *        to the .DBG file...not the binary data it points to.
+ *        to the .DBG file... not the binary data it points to.
  * (hdr)  IMAGE_DEBUG_DIRECTORY - list of different formats of debug info contained in file
  *        (see IMAGE_DEBUG_TYPE_* descriptions below); tells where each section starts
  * (hdr)  OMFSignature (CV) - Contains "NBxx" signature, plus file offset telling how far
@@ -99,14 +98,13 @@
  *    (OMFDirHeader.cDir)
  */
 
-extern IMAGE_NT_HEADERS*        PE_nt_headers;
+extern const IMAGE_NT_HEADERS*  PE_nt_headers;
+static const void*	        cv_base /* = 0 */;
 
-static	void*		cv_base /* = 0 */;
-
-static int dump_cv_sst_module(OMFDirEntry* omfde)
+static BOOL dump_cv_sst_module(const OMFDirEntry* omfde)
 {
-    OMFModule*	module;
-    OMFSegDesc*	segDesc;
+    const OMFModule*	module;
+    const OMFSegDesc*	segDesc;
     int		i;
 
     module = PRD(Offset(cv_base) + omfde->lfo, sizeof(OMFModule));
@@ -117,38 +115,32 @@ static int dump_cv_sst_module(OMFDirEntry* omfde)
     printf("    cSeg:               %u\n", module->cSeg);
     printf("    Style:              %c%c\n", module->Style[0], module->Style[1]);
     printf("    Name:               %.*s\n",
-	   *(BYTE*)((char*)(module + 1) + sizeof(OMFSegDesc) * module->cSeg),
-	   (char*)(module + 1) + sizeof(OMFSegDesc) * module->cSeg + 1);
+	   *(const BYTE*)((const char*)(module + 1) + sizeof(OMFSegDesc) * module->cSeg),
+	   (const char*)(module + 1) + sizeof(OMFSegDesc) * module->cSeg + 1);
 
     segDesc = PRD(Offset(module + 1), sizeof(OMFSegDesc) * module->cSeg);
     if (!segDesc) {printf("Can't get the OMF-SegDesc, aborting\n"); return FALSE;}
 
     for (i = 0; i < module->cSeg; i++)
     {
-	printf ("      segment #%2d: offset = [0x%8lx], size = [0x%8lx]\n",
+	printf ("      segment #%2d: offset = [0x%8x], size = [0x%8x]\n",
 		segDesc->Seg, segDesc->Off, segDesc->cbSeg);
 	segDesc++;
     }
     return TRUE;
 }
 
-static int dump_cv_sst_global_pub(OMFDirEntry* omfde)
+static BOOL dump_cv_sst_global_pub(const OMFDirEntry* omfde)
 {
-    long	fileoffset;
-    OMFSymHash* header;
-    BYTE*	symbols;
-    BYTE*	curpos;
-    PUBSYM32*	sym;
-    unsigned 	symlen;
-    int		recordlen;
-    char 	nametmp[256];
+    long	        fileoffset;
+    const OMFSymHash*   header;
+    const BYTE*	        symbols;
 
     fileoffset = Offset(cv_base) + omfde->lfo;
     printf ("    GlobalPub section starts at file offset 0x%lx\n", fileoffset);
     printf ("    Symbol table starts at 0x%lx\n", fileoffset + sizeof (OMFSymHash));
 
     printf ("\n                           ----- Begin Symbol Table -----\n");
-    printf ("      (type)      (symbol name)                 (offset)      (len) (seg) (ind)\n");
 
     header = PRD(fileoffset, sizeof(OMFSymHash));
     if (!header) {printf("Can't get OMF-SymHash, aborting\n");return FALSE;}
@@ -156,67 +148,62 @@ static int dump_cv_sst_global_pub(OMFDirEntry* omfde)
     symbols = PRD(fileoffset + sizeof(OMFSymHash), header->cbSymbol);
     if (!symbols) {printf("Can't OMF-SymHash details, aborting\n"); return FALSE;}
 
-    /* We don't know how many symbols are in this block of memory...only what
-     * the total size of the block is.  Because the symbol's name is tacked
-     * on to the end of the PUBSYM32 struct, each symbol may take up a different
-     * # of bytes.  This makes it harder to parse through the symbol table,
-     * since we won't know the exact location of the following symbol until we've
-     * already parsed the current one.
+    codeview_dump_symbols(symbols, header->cbSymbol);
+
+    return TRUE;
+}
+
+static BOOL dump_cv_sst_global_sym(const OMFDirEntry* omfde)
+{
+    /*** NOT YET IMPLEMENTED ***/
+    return TRUE;
+}
+
+static BOOL dump_cv_sst_static_sym(const OMFDirEntry* omfde)
+{
+    /*** NOT YET IMPLEMENTED ***/
+    return TRUE;
+}
+
+static BOOL dump_cv_sst_libraries(const OMFDirEntry* omfde)
+{
+    /*** NOT YET IMPLEMENTED ***/
+    return TRUE;
+}
+
+static BOOL dump_cv_sst_global_types(const OMFDirEntry* omfde)
+{
+    long	        fileoffset;
+    const OMFGlobalTypes*types;
+    const BYTE*         data;
+    unsigned            sz;
+
+    fileoffset = Offset(cv_base) + omfde->lfo;
+    printf ("    GlobalTypes section starts at file offset 0x%lx\n", fileoffset);
+
+    printf ("\n                           ----- Begin Global Types Table -----\n");
+
+    types = PRD(fileoffset, sizeof(OMFGlobalTypes));
+    if (!types) {printf("Can't get OMF-GlobalTypes, aborting\n");return FALSE;}
+
+    sz = omfde->cb - sizeof(OMFGlobalTypes) - sizeof(DWORD) * types->cTypes;
+    data = PRD(fileoffset + sizeof(OMFGlobalTypes) + sizeof(DWORD) * types->cTypes, sz);
+    if (!data) {printf("Can't OMF-SymHash details, aborting\n"); return FALSE;}
+
+    /* doc says:
+     * - for NB07 & NB08 (that we don't support yet), offsets are from types
+     * - for NB09, offsets are from data
+     * For now, we only support the latter
      */
-    for (curpos = symbols; curpos < symbols + header->cbSymbol; curpos += recordlen)
-    {
-	/* Point to the next PUBSYM32 in the table.
-	 */
-	sym = (PUBSYM32*)curpos;
-
-	if (sym->reclen < sizeof(PUBSYM32)) break;
-
-	symlen = sym->reclen - sizeof(PUBSYM32) + 1;
-	if (symlen > sizeof(nametmp)) {printf("\nsqueeze%d\n", symlen);symlen = sizeof(nametmp) - 1;}
-
-	memcpy(nametmp, curpos + sizeof (PUBSYM32) + 1, symlen);
-	nametmp[symlen] = '\0';
-
-	printf ("      0x%04x  %-30.30s  [0x%8lx]  [0x%4x]  %d     %ld\n",
-		sym->rectyp, nametmp, sym->off, sym->reclen, sym->seg, sym->typind);
-
-	/* The entire record is null-padded to the nearest 4-byte
-	 * boundary, so we must do a little extra math to keep things straight.
-	 */
-	recordlen = (sym->reclen + 3) & ~3;
-    }
+    codeview_dump_types_from_offsets(data, (const DWORD*)(types + 1), types->cTypes);
 
     return TRUE;
 }
 
-static int dump_cv_sst_global_sym(OMFDirEntry* omfde)
+static BOOL dump_cv_sst_seg_map(const OMFDirEntry* omfde)
 {
-    /*** NOT YET IMPLEMENTED ***/
-    return TRUE;
-}
-
-static int dump_cv_sst_static_sym(OMFDirEntry* omfde)
-{
-    /*** NOT YET IMPLEMENTED ***/
-    return TRUE;
-}
-
-static int dump_cv_sst_libraries(OMFDirEntry* omfde)
-{
-    /*** NOT YET IMPLEMENTED ***/
-    return TRUE;
-}
-
-static int dump_cv_sst_global_types(OMFDirEntry* omfde)
-{
-    /*** NOT YET IMPLEMENTED ***/
-    return TRUE;
-}
-
-static int dump_cv_sst_seg_map(OMFDirEntry* omfde)
-{
-    OMFSegMap*		segMap;
-    OMFSegMapDesc*	segMapDesc;
+    const OMFSegMap*		segMap;
+    const OMFSegMapDesc*	segMapDesc;
     int		i;
 
     segMap = PRD(Offset(cv_base) + omfde->lfo, sizeof(OMFSegMap));
@@ -244,28 +231,28 @@ static int dump_cv_sst_seg_map(OMFDirEntry* omfde)
     return TRUE;
 }
 
-static int dump_cv_sst_file_index(OMFDirEntry* omfde)
+static BOOL dump_cv_sst_file_index(const OMFDirEntry* omfde)
 {
     /*** NOT YET IMPLEMENTED ***/
     return TRUE;
 }
 
-static int dump_cv_sst_src_module(OMFDirEntry* omfde)
+static BOOL dump_cv_sst_src_module(const OMFDirEntry* omfde)
 {
-    int 		i, j;
-    BYTE*		rawdata;
-    unsigned long*	seg_info_dw;
-    unsigned short*	seg_info_w;
-    unsigned		ofs;
-    OMFSourceModule*	sourceModule;
-    OMFSourceFile*	sourceFile;
-    OMFSourceLine*	sourceLine;
+    int 		        i, j;
+    const BYTE*		        rawdata;
+    const unsigned long*	seg_info_dw;
+    const unsigned short*	seg_info_w;
+    unsigned		        ofs;
+    const OMFSourceModule*	sourceModule;
+    const OMFSourceFile*	sourceFile;
+    const OMFSourceLine*	sourceLine;
 
     rawdata = PRD(Offset(cv_base) + omfde->lfo, omfde->cb);
     if (!rawdata) {printf("Can't get srcModule subsection details, aborting\n");return FALSE;}
 
     /* FIXME: check ptr validity */
-    sourceModule = (void*)rawdata;
+    sourceModule = (const void*)rawdata;
     printf ("    Module table: Found %d file(s) and %d segment(s)\n",
 	    sourceModule->cFile, sourceModule->cSeg);
     for (i = 0; i < sourceModule->cFile; i++)
@@ -275,9 +262,9 @@ static int dump_cv_sst_src_module(OMFDirEntry* omfde)
     }
 
     /* FIXME: check ptr validity */
-    seg_info_dw = (void*)((char*)(sourceModule + 1) +
+    seg_info_dw = (const void*)((const char*)(sourceModule + 1) +
 			  sizeof(unsigned long) * (sourceModule->cFile - 1));
-    seg_info_w = (unsigned short*)(&seg_info_dw[sourceModule->cSeg * 2]);
+    seg_info_w = (const unsigned short*)(&seg_info_dw[sourceModule->cSeg * 2]);
     for (i = 0; i <  sourceModule->cSeg; i++)
     {
 	printf ("      Segment #%2d start = 0x%lx, end = 0x%lx, seg index = %u\n",
@@ -291,7 +278,7 @@ static int dump_cv_sst_src_module(OMFDirEntry* omfde)
     /* the OMFSourceFile is quite unpleasant to use:
      * we have first:
      * 	unsigned short	number of segments
-     *	unsigned short	reservered
+     *	unsigned short	reserved
      *	unsigned long	baseSrcLn[# segments]
      *  unsigned long	offset[2 * #segments]
      *				odd indices are start offsets
@@ -300,14 +287,14 @@ static int dump_cv_sst_src_module(OMFDirEntry* omfde)
      *	char		file name (length is previous field)
      */
     /* FIXME: check ptr validity */
-    sourceFile = (void*)(rawdata + ofs);
-    seg_info_dw = (void*)((char*)sourceFile + 2 * sizeof(unsigned short) +
+    sourceFile = (const void*)(rawdata + ofs);
+    seg_info_dw = (const void*)((const char*)sourceFile + 2 * sizeof(unsigned short) +
 			  sourceFile->cSeg * sizeof(unsigned long));
 
     ofs += 2 * sizeof(unsigned short) + 3 * sourceFile->cSeg * sizeof(unsigned long);
 
     printf("    File table: %.*s\n",
-	   *(BYTE*)((char*)sourceModule + ofs), (char*)sourceModule + ofs + 1);
+	   *(const BYTE*)((const char*)sourceModule + ofs), (const char*)sourceModule + ofs + 1);
 
     for (i = 0; i < sourceFile->cSeg; i++)
     {
@@ -315,14 +302,14 @@ static int dump_cv_sst_src_module(OMFDirEntry* omfde)
 		i + 1, seg_info_dw[i * 2], seg_info_dw[(i * 2) + 1], sourceFile->baseSrcLn[i]);
     }
     /* add file name length */
-    ofs += *(BYTE*)((char*)sourceModule + ofs) + 1;
+    ofs += *(const BYTE*)((const char*)sourceModule + ofs) + 1;
     ofs = (ofs + 3) & ~3;
 
     for (i = 0; i < sourceModule->cSeg; i++)
     {
-	sourceLine = (void*)(rawdata + ofs);
-	seg_info_dw = (void*)((char*)sourceLine + 2 * sizeof(unsigned short));
-	seg_info_w = (void*)(&seg_info_dw[sourceLine->cLnOff]);
+        sourceLine = (const void*)(rawdata + ofs);
+        seg_info_dw = (const void*)((const char*)sourceLine + 2 * sizeof(unsigned short));
+        seg_info_w = (const void*)(&seg_info_dw[sourceLine->cLnOff]);
 
 	printf ("    Line table #%2d: Found %d line numbers for segment index %d\n",
 		i, sourceLine->cLnOff, sourceLine->Seg);
@@ -340,17 +327,21 @@ static int dump_cv_sst_src_module(OMFDirEntry* omfde)
     return TRUE;
 }
 
-static int dump_cv_sst_align_sym(OMFDirEntry* omfde)
+static BOOL dump_cv_sst_align_sym(const OMFDirEntry* omfde)
 {
-    /*** NOT YET IMPLEMENTED ***/
+    const char* rawdata = PRD(Offset(cv_base) + omfde->lfo, omfde->cb);
+
+    if (!rawdata) {printf("Can't get srcAlignSym subsection details, aborting\n");return FALSE;}
+    if (omfde->cb < sizeof(DWORD)) return TRUE;
+    codeview_dump_symbols(rawdata + sizeof(DWORD), omfde->cb - sizeof(DWORD));
 
     return TRUE;
 }
 
-static void dump_codeview_all_modules(OMFDirHeader *omfdh)
+static void dump_codeview_all_modules(const OMFDirHeader *omfdh)
 {
     unsigned 		i;
-    OMFDirEntry	       *dirEntry;
+    const OMFDirEntry*  dirEntry;
     const char*		str;
 
     if (!omfdh || !omfdh->cDir) return;
@@ -377,8 +368,8 @@ static void dump_codeview_all_modules(OMFDirHeader *omfdh)
 	printf("Module #%2d (%p)\n", i + 1, &dirEntry[i]);
 	printf("  SubSection:            %04X (%s)\n", dirEntry[i].SubSection, str);
 	printf("  iMod:                  %d\n", dirEntry[i].iMod);
-	printf("  lfo:                   %ld\n", dirEntry[i].lfo);
-	printf("  cb:                    %lu\n", dirEntry[i].cb);
+	printf("  lfo:                   %d\n", dirEntry[i].lfo);
+	printf("  cb:                    %u\n", dirEntry[i].cb);
 
 	switch (dirEntry[i].SubSection)
 	{
@@ -402,9 +393,10 @@ static void dump_codeview_all_modules(OMFDirHeader *omfdh)
 
 static void dump_codeview_headers(unsigned long base, unsigned long len)
 {
-    OMFDirHeader	*dirHeader;
-    OMFSignature	*signature;
-    OMFDirEntry		*dirEntry;
+    const OMFDirHeader* dirHeader;
+    const char*         signature;
+    const OMFDirEntry*  dirEntry;
+    const OMFSignature* sig;
     unsigned		i;
     int modulecount = 0, alignsymcount = 0, srcmodulecount = 0, librariescount = 0;
     int globalsymcount = 0, globalpubcount = 0, globaltypescount = 0;
@@ -416,36 +408,49 @@ static void dump_codeview_headers(unsigned long base, unsigned long len)
     signature = cv_base;
 
     printf("    CodeView Data\n");
+    printf("      Signature:         %.4s\n", signature);
 
-    printf("      Signature:         %.4s\n", signature->Signature);
-    printf("      Filepos:           0x%08lX\n", signature->filepos);
-
-    if (memcmp(signature->Signature, "NB10", 4) == 0)
+    if (memcmp(signature, "NB10", 4) == 0)
     {
-	struct {DWORD TimeStamp; DWORD  Dunno; char Name[1];}* pdb_data;
-	pdb_data = (void*)(signature + 1);
+	const CODEVIEW_PDB_DATA* pdb_data;
+	pdb_data = (const void *)cv_base;
 
-	printf("        TimeStamp:            %08lX (%s)\n",
-	       pdb_data->TimeStamp, get_time_str(pdb_data->TimeStamp));
-	printf("        Dunno:                %08lX\n", pdb_data->Dunno);
-	printf("        Filename:             %s\n", pdb_data->Name);
+        printf("      Filepos:           0x%08lX\n", pdb_data->filepos);
+	printf("      TimeStamp:         %08X (%s)\n",
+	       pdb_data->timestamp, get_time_str(pdb_data->timestamp));
+	printf("      Age:               %08X\n", pdb_data->age);
+	printf("      Filename:          %s\n", pdb_data->name);
+	return;
+    }
+    if (memcmp(signature, "RSDS", 4) == 0)
+    {
+	const OMFSignatureRSDS* rsds_data;
+
+	rsds_data = (const void *)cv_base;
+	printf("      Guid:              %s\n", get_guid_str(&rsds_data->guid));
+	printf("      Age:               %08X\n", rsds_data->age);
+	printf("      Filename:          %s\n", rsds_data->name);
 	return;
     }
 
-    if (memcmp(signature->Signature, "NB09", 4) != 0 && memcmp(signature->Signature, "NB11", 4) != 0)
+    if (memcmp(signature, "NB09", 4) != 0 && memcmp(signature, "NB11", 4) != 0)
     {
-	printf("Unsupported signature, aborting\n");
+	printf("Unsupported signature (%.4s), aborting\n", signature);
 	return;
     }
 
-    dirHeader = PRD(Offset(cv_base) + signature->filepos, sizeof(OMFDirHeader));
+    sig = cv_base;
+
+    printf("      Filepos:           0x%08lX\n", sig->filepos);
+
+    dirHeader = PRD(Offset(cv_base) + sig->filepos, sizeof(OMFDirHeader));
     if (!dirHeader) {printf("Can't get debug header, aborting\n"); return;}
 
     printf("      Size of header:    0x%4X\n", dirHeader->cbDirHeader);
     printf("      Size per entry:    0x%4X\n", dirHeader->cbDirEntry);
-    printf("      # of entries:      0x%8lX (%ld)\n", dirHeader->cDir, dirHeader->cDir);
-    printf("      Offset to NextDir: 0x%8lX\n", dirHeader->lfoNextDir);
-    printf("      Flags:             0x%8lX\n", dirHeader->flags);
+    printf("      # of entries:      0x%8X (%d)\n", dirHeader->cDir, dirHeader->cDir);
+    printf("      Offset to NextDir: 0x%8X\n", dirHeader->lfoNextDir);
+    printf("      Flags:             0x%8X\n", dirHeader->flags);
 
     if (!dirHeader->cDir) return;
 
@@ -486,7 +491,7 @@ static void dump_codeview_headers(unsigned long base, unsigned long len)
     dump_codeview_all_modules(dirHeader);
 }
 
-static const char*   get_coff_name( PIMAGE_SYMBOL coff_sym, const char* coff_strtab )
+static const char *get_coff_name( const IMAGE_SYMBOL *coff_sym, const char *coff_strtab )
 {
    static       char    namebuff[9];
    const char*          nampnt;
@@ -495,7 +500,7 @@ static const char*   get_coff_name( PIMAGE_SYMBOL coff_sym, const char* coff_str
       {
          memcpy(namebuff, coff_sym->N.ShortName, 8);
          namebuff[8] = '\0';
-         nampnt = &namebuff[0];
+         nampnt = namebuff;
       }
    else
       {
@@ -507,76 +512,71 @@ static const char*   get_coff_name( PIMAGE_SYMBOL coff_sym, const char* coff_str
    return nampnt;
 }
 
-void	dump_coff(unsigned long coffbase, unsigned long len, void* pmt)
+static const char* storage_class(BYTE sc)
 {
-    PIMAGE_COFF_SYMBOLS_HEADER coff;
-    PIMAGE_SYMBOL                 coff_sym;
-    PIMAGE_SYMBOL                 coff_symbols;
-    PIMAGE_LINENUMBER             coff_linetab;
-    char                        * coff_strtab;
-    IMAGE_SECTION_HEADER        * sectHead = pmt;
-    unsigned int i;
-    const char                  * nampnt;
-    int naux;
-
-    coff = (PIMAGE_COFF_SYMBOLS_HEADER)PRD(coffbase, len);
-
-    coff_symbols = (PIMAGE_SYMBOL) ((char *)coff + coff->LvaToFirstSymbol);
-    coff_linetab = (PIMAGE_LINENUMBER) ((char *)coff + coff->LvaToFirstLinenumber);
-    coff_strtab = (char *) (coff_symbols + coff->NumberOfSymbols);
-
-    printf("\nDebug table: COFF format. modbase %p, coffbase %p\n", PRD(0, 0), coff);
-    printf("  ID  | seg:offs    [  abs   ] | symbol/function name\n");
-    for(i=0; i < coff->NumberOfSymbols; i++ )
+    static char tmp[7];
+    switch (sc)
     {
-      coff_sym = coff_symbols + i;
-      naux = coff_sym->NumberOfAuxSymbols;
-
-      if( coff_sym->StorageClass == IMAGE_SYM_CLASS_FILE )
-        {
-	  printf("file %s\n", (char *) (coff_sym + 1));
-          i += naux;
-          continue;
-        }
-
-      if(    (coff_sym->StorageClass == IMAGE_SYM_CLASS_STATIC)
-          && (naux == 0)
-          && (coff_sym->SectionNumber == 1) )
-        {
-          DWORD base = sectHead[coff_sym->SectionNumber - 1].VirtualAddress;
-          /*
-           * This is a normal static function when naux == 0.
-           * Just register it.  The current file is the correct
-           * one in this instance.
-           */
-          nampnt = get_coff_name( coff_sym, coff_strtab );
-
-	  printf("%05d | %02d:%08lx [%08lx] | %s\n", i, coff_sym->SectionNumber - 1, coff_sym->Value - base, coff_sym->Value, nampnt);
-	  i += naux;
-	  continue;
-	}
-
-      if(    (coff_sym->StorageClass == IMAGE_SYM_CLASS_EXTERNAL)
-          && ISFCN(coff_sym->Type)
-          && (coff_sym->SectionNumber > 0) )
-        {
-          DWORD base = sectHead[coff_sym->SectionNumber - 1].VirtualAddress;
-
-          nampnt = get_coff_name( coff_sym, coff_strtab );
-
-	  /* FIXME: add code to find out the file this symbol belongs to,
-	   * see winedbg */
-	  printf("%05d | %02d:%08lx [%08lx] | %s\n", i, coff_sym->SectionNumber - 1, coff_sym->Value - base, coff_sym->Value, nampnt);
-          i += naux;
-          continue;
-	}
-
-      /*
-       * For now, skip past the aux entries.
-       */
-      i += naux;
-
+    case IMAGE_SYM_CLASS_STATIC:        return "static";
+    case IMAGE_SYM_CLASS_EXTERNAL:      return "extrnl";
+    case IMAGE_SYM_CLASS_LABEL:         return "label ";
     }
+    sprintf(tmp, "#%d", sc);
+    return tmp;
+}
+
+void    dump_coff_symbol_table(const IMAGE_SYMBOL *coff_symbols, unsigned num_sym,
+                               const IMAGE_SECTION_HEADER *sectHead)
+{
+    const IMAGE_SYMBOL              *coff_sym;
+    const char                      *coff_strtab = (const char *) (coff_symbols + num_sym);
+    unsigned int                    i;
+    const char                      *nampnt;
+    int                             naux;
+
+    printf("\nDebug table: COFF format.\n");
+    printf("  ID  | seg:offs    [  abs   ] |  Kind  | symbol/function name\n");
+    for (i=0; i < num_sym; i++)
+    {
+        coff_sym = coff_symbols + i;
+        naux = coff_sym->NumberOfAuxSymbols;
+
+        switch (coff_sym->StorageClass)
+        {
+        case IMAGE_SYM_CLASS_FILE:
+            printf("file %s\n", (const char *) (coff_sym + 1));
+            break;
+        case IMAGE_SYM_CLASS_STATIC:
+        case IMAGE_SYM_CLASS_EXTERNAL:
+        case IMAGE_SYM_CLASS_LABEL:
+            if (coff_sym->SectionNumber > 0)
+            {
+                DWORD base = sectHead[coff_sym->SectionNumber - 1].VirtualAddress;
+                nampnt = get_coff_name( coff_sym, coff_strtab );
+
+                printf("%05d | %02d:%08x [%08x] | %s | %s\n",
+                       i, coff_sym->SectionNumber - 1, coff_sym->Value,
+                       base + coff_sym->Value,
+                       storage_class(coff_sym->StorageClass), nampnt);
+            }
+            break;
+        default:
+            printf("%05d | %s\n", i, storage_class(coff_sym->StorageClass));
+        }
+        /*
+         * For now, skip past the aux entries.
+         */
+        i += naux;
+    }
+}
+
+void	dump_coff(unsigned long coffbase, unsigned long len, const IMAGE_SECTION_HEADER* sectHead)
+{
+    const IMAGE_COFF_SYMBOLS_HEADER *coff = PRD(coffbase, len);
+    const IMAGE_SYMBOL              *coff_symbols =
+                                        (const IMAGE_SYMBOL *) ((const char *)coff + coff->LvaToFirstSymbol);
+
+    dump_coff_symbol_table(coff_symbols, coff->NumberOfSymbols, sectHead);
 }
 
 void	dump_codeview(unsigned long base, unsigned long len)
@@ -586,6 +586,144 @@ void	dump_codeview(unsigned long base, unsigned long len)
 
 void	dump_frame_pointer_omission(unsigned long base, unsigned long len)
 {
-	/* FPO is used to describe nonstandard stack frames */
-	printf("FIXME: FPO (frame pointer omission) debug symbol dumping not implemented yet.\n");
+    const FPO_DATA*     fpo;
+    const FPO_DATA*     last;
+    const char*         x;
+    /* FPO is used to describe nonstandard stack frames */
+    printf("Range             #loc #pmt Prlg #reg Info\n"
+           "-----------------+----+----+----+----+------------\n");
+
+    fpo = PRD(base, len);
+    if (!fpo) {printf("Couldn't get FPO blob\n"); return;}
+    last = (const FPO_DATA*)((const char*)fpo + len);
+
+    while (fpo < last && fpo->ulOffStart)
+    {
+        switch (fpo->cbFrame)
+        {
+        case FRAME_FPO: x = "FRAME_FPO"; break;
+        case FRAME_NONFPO: x = "FRAME_NONFPO"; break;
+        case FRAME_TRAP: x = "FRAME_TRAP"; break;
+        case FRAME_TSS: x = "case FRAME_TSS"; break;
+        default: x = NULL; break;
+        }
+        printf("%08x-%08x %4u %4u %4u %4u %s%s%s\n",
+               fpo->ulOffStart, fpo->ulOffStart + fpo->cbProcSize,
+               fpo->cdwLocals, fpo->cdwParams, fpo->cbProlog, fpo->cbRegs,
+               x, fpo->fHasSEH ? " SEH" : "", fpo->fUseBP ? " UseBP" : "");
+        fpo++;
+    }
+}
+
+struct stab_nlist
+{
+    union
+    {
+        char*                   n_name;
+        struct stab_nlist*      n_next;
+        long                    n_strx;
+    } n_un;
+    unsigned char       n_type;
+    char                n_other;
+    short               n_desc;
+    unsigned long       n_value;
+};
+
+static const char * const stabs_defs[] = {
+    NULL,NULL,NULL,NULL,                /* 00 */
+    NULL,NULL,NULL,NULL,                /* 08 */
+    NULL,NULL,NULL,NULL,                /* 10 */
+    NULL,NULL,NULL,NULL,                /* 18 */
+    "GSYM","FNAME","FUN","STSYM",       /* 20 */
+    "LCSYM","MAIN","ROSYM","PC",        /* 28 */
+    NULL,"NSYMS","NOMAP",NULL,          /* 30 */
+    "OBJ",NULL,"OPT",NULL,              /* 38 */
+    "RSYM","M2C","SLINE","DSLINE",      /* 40 */
+    "BSLINE","DEFD","FLINE",NULL,       /* 48 */
+    "EHDECL",NULL,"CATCH",NULL,         /* 50 */
+    NULL,NULL,NULL,NULL,                /* 58 */
+    "SSYM","ENDM","SO",NULL,            /* 60 */
+    NULL,NULL,NULL,NULL,                /* 68 */
+    NULL,NULL,NULL,NULL,                /* 70 */
+    NULL,NULL,NULL,NULL,                /* 78 */
+    "LSYM","BINCL","SOL",NULL,          /* 80 */
+    NULL,NULL,NULL,NULL,                /* 88 */
+    NULL,NULL,NULL,NULL,                /* 90 */
+    NULL,NULL,NULL,NULL,                /* 98 */
+    "PSYM","EINCL","ENTRY",NULL,        /* a0 */
+    NULL,NULL,NULL,NULL,                /* a8 */
+    NULL,NULL,NULL,NULL,                /* b0 */
+    NULL,NULL,NULL,NULL,                /* b8 */
+    "LBRAC","EXCL","SCOPE",NULL,        /* c0 */
+    NULL,NULL,NULL,NULL,                /* c8 */
+    NULL,NULL,NULL,NULL,                /* d0 */
+    NULL,NULL,NULL,NULL,                /* d8 */
+    "RBRAC","BCOMM","ECOMM",NULL,       /* e0 */
+    "ECOML","WITH",NULL,NULL,           /* e8 */
+    "NBTEXT","NBDATA","NBBSS","NBSTS",  /* f0 */
+    "NBLCS",NULL,NULL,NULL              /* f8 */
+};
+
+void    dump_stabs(const void* pv_stabs, unsigned szstabs, const char* stabstr, unsigned szstr)
+{
+    int                         i;
+    int                         nstab;
+    const char*                 ptr;
+    char*                       stabbuff;
+    unsigned int                stabbufflen;
+    const struct stab_nlist*    stab_ptr = pv_stabs;
+    const char*                 strs_end;
+    char                        n_buffer[16];
+
+    nstab = szstabs / sizeof(struct stab_nlist);
+    strs_end = stabstr + szstr;
+
+    /*
+     * Allocate a buffer into which we can build stab strings for cases
+     * where the stab is continued over multiple lines.
+     */
+    stabbufflen = 65536;
+    stabbuff = malloc(stabbufflen);
+
+    stabbuff[0] = '\0';
+
+    printf("#Sym n_type n_othr   n_desc n_value  n_strx String\n");
+
+    for (i = 0; i < nstab; i++, stab_ptr++)
+    {
+        ptr = stabstr + stab_ptr->n_un.n_strx;
+        if ((ptr > strs_end) || (ptr + strlen(ptr) > strs_end))
+        {
+            ptr = "[[*** bad string ***]]";
+        }
+        else if (ptr[strlen(ptr) - 1] == '\\')
+        {
+            /*
+             * Indicates continuation.  Append this to the buffer, and go onto the
+             * next record.  Repeat the process until we find a stab without the
+             * '/' character, as this indicates we have the whole thing.
+             */
+            unsigned    len = strlen(ptr);
+            if (strlen(stabbuff) + len > stabbufflen)
+            {
+                stabbufflen += 65536;
+                stabbuff = realloc(stabbuff, stabbufflen);
+            }
+            strcat(stabbuff, ptr);
+            continue;
+        }
+        else if (stabbuff[0] != '\0')
+        {
+            strcat(stabbuff, ptr);
+            ptr = stabbuff;
+        }
+        if ((stab_ptr->n_type & 1) || !stabs_defs[stab_ptr->n_type / 2])
+            sprintf(n_buffer, "<0x%02x>", stab_ptr->n_type);
+        else
+            sprintf(n_buffer, "%-6s", stabs_defs[stab_ptr->n_type / 2]);
+        printf("%4d %s %-8x % 6d %-8lx %-6lx %s\n", 
+               i, n_buffer, stab_ptr->n_other, stab_ptr->n_desc, stab_ptr->n_value,
+               stab_ptr->n_un.n_strx, ptr);
+    }
+    free(stabbuff);
 }

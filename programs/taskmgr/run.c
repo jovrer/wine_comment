@@ -17,18 +17,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-    
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <malloc.h>
-#include <memory.h>
-#include <tchar.h>
-#include <stdio.h>
-    
+
 #include "taskmgr.h"
 
 typedef	void (WINAPI *RUNFILEDLG)(
@@ -53,29 +50,31 @@ void TaskManager_OnFileNew(void)
 {
     HMODULE            hShell32;
     RUNFILEDLG        RunFileDlg;
-    OSVERSIONINFO    versionInfo;
-    WCHAR            wTitle[40];
-    WCHAR            wText[256];
-    char            szTitle[40] = "Create New Task";
-    char            szText[256] = "Type the name of a program, folder, document, or Internet resource, and Task Manager will open it for you.";
+    OSVERSIONINFOW    versionInfo;
+    static const WCHAR wszShell32[] = {'S','H','E','L','L','3','2','.','D','L','L',0};
 
-    hShell32 = LoadLibrary(_T("SHELL32.DLL"));
-    RunFileDlg = (RUNFILEDLG)(FARPROC)GetProcAddress(hShell32, (char*)((long)0x3D));
+    hShell32 = LoadLibraryW(wszShell32);
+    RunFileDlg = (void *)GetProcAddress(hShell32, (LPCSTR)61);
 
     /* Show "Run..." dialog */
     if (RunFileDlg)
     {
-        versionInfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-        GetVersionEx(&versionInfo);
+        HICON hIcon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDI_TASKMANAGER));
+        versionInfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFOW);
+        GetVersionExW(&versionInfo);
 
         if (versionInfo.dwPlatformId == VER_PLATFORM_WIN32_NT)
         {
-            MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, szTitle, -1, wTitle, 40);
-            MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, szText, -1, wText, 256);
-            RunFileDlg(hMainWnd, 0, NULL, (LPCSTR)wTitle, (LPCSTR)wText, RFF_CALCDIRECTORY);
+            WCHAR wTitle[64];
+            LoadStringW(GetModuleHandleW(NULL), IDS_RUNDLG_CAPTION, wTitle, 64);
+            RunFileDlg(hMainWnd, hIcon, NULL, (LPCSTR)wTitle, NULL, RFF_CALCDIRECTORY);
         }
         else
-            RunFileDlg(hMainWnd, 0, NULL, szTitle, szText, RFF_CALCDIRECTORY);
+        {
+            char szTitle[64];
+            LoadStringA(GetModuleHandleW(NULL), IDS_RUNDLG_CAPTION, szTitle, 64);
+            RunFileDlg(hMainWnd, hIcon, NULL, szTitle, NULL, RFF_CALCDIRECTORY);
+        }
     }
 
     FreeLibrary(hShell32);

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -24,14 +24,14 @@
 
 struct ImgDelayDescr
 {
-    DWORD                   grAttrs;
+    DWORD_PTR               grAttrs;
     LPCSTR                  szName;
     HMODULE                *phmod;
     IMAGE_THUNK_DATA       *pIAT;
     const IMAGE_THUNK_DATA *pINT;
     const IMAGE_THUNK_DATA *pBoundIAT;
     const IMAGE_THUNK_DATA *pUnloadIAT;
-    DWORD                   dwTimeStamp;
+    DWORD_PTR               dwTimeStamp;
 };
 
 extern struct ImgDelayDescr __wine_spec_delay_imports[];
@@ -52,7 +52,7 @@ FARPROC WINAPI DECLSPEC_HIDDEN __wine_spec_delay_load( unsigned int id )
     return proc;
 }
 
-#ifdef __GNUC__
+#if defined(__GNUC__) && !defined(__APPLE__)  /* we can't support destructors properly on Mac OS */
 static void free_delay_imports(void) __attribute__((destructor));
 static void free_delay_imports(void)
 {

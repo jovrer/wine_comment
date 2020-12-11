@@ -3,9 +3,6 @@
  *
  * Copyright 2004 Christian Costa
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -18,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __AMSTREAM_PRIVATE_INCLUDED__
@@ -33,8 +30,15 @@
 #include "winuser.h"
 #include "dshow.h"
 #include "mmstream.h"
+#include "austream.h"
+#include "amstream.h"
 
-HRESULT AM_create(IUnknown *pUnkOuter, LPVOID *ppObj);
-HRESULT MediaStream_create(IMultiMediaStream* Parent, const MSPID* pPurposeId, STREAM_TYPE StreamType, IMediaStream** ppMediaStream);
+HRESULT AM_create(IUnknown *pUnkOuter, LPVOID *ppObj) DECLSPEC_HIDDEN;
+HRESULT AMAudioData_create(IUnknown *pUnkOuter, LPVOID *ppObj) DECLSPEC_HIDDEN;
+HRESULT MediaStreamFilter_create(IUnknown *pUnkOuter, LPVOID *ppObj) DECLSPEC_HIDDEN;
+HRESULT ddrawmediastream_create(IMultiMediaStream *Parent, const MSPID *pPurposeId,
+        IUnknown *stream_object, STREAM_TYPE StreamType, IAMMediaStream **ppMediaStream) DECLSPEC_HIDDEN;
+HRESULT audiomediastream_create(IMultiMediaStream *parent, const MSPID *purpose_id,
+        IUnknown *stream_object, STREAM_TYPE stream_type, IAMMediaStream **media_stream) DECLSPEC_HIDDEN;
 
 #endif /* __AMSTREAM_PRIVATE_INCLUDED__ */

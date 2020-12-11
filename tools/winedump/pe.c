@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -44,11 +44,10 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winedump.h"
-#include "pe.h"
 
-static IMAGE_NT_HEADERS32*	PE_nt_headers;
+static const IMAGE_NT_HEADERS32*        PE_nt_headers;
 
-static	const char* get_machine_str(DWORD mach)
+const char *get_machine_str(int mach)
 {
     switch (mach)
     {
@@ -62,11 +61,15 @@ static	const char* get_machine_str(DWORD mach)
     case IMAGE_FILE_MACHINE_POWERPC:	return "PowerPC";
     case IMAGE_FILE_MACHINE_AMD64:      return "AMD64";
     case IMAGE_FILE_MACHINE_IA64:       return "IA64";
+    case IMAGE_FILE_MACHINE_ARM64:      return "ARM64";
+    case IMAGE_FILE_MACHINE_ARM:        return "ARM";
+    case IMAGE_FILE_MACHINE_ARMNT:      return "ARMNT";
+    case IMAGE_FILE_MACHINE_THUMB:      return "ARM Thumb";
     }
     return "???";
 }
 
-static void*	RVA(unsigned long rva, unsigned long len)
+static const void*	RVA(unsigned long rva, unsigned long len)
 {
     IMAGE_SECTION_HEADER*	sectHead;
     int				i;
@@ -87,11 +90,31 @@ static void*	RVA(unsigned long rva, unsigned long len)
     return NULL;
 }
 
-static void *get_dir_and_size(unsigned int idx, unsigned int *size)
+static const IMAGE_NT_HEADERS32 *get_nt_header( void )
+{
+    const IMAGE_DOS_HEADER *dos;
+    dos = PRD(0, sizeof(*dos));
+    if (!dos) return NULL;
+    return PRD(dos->e_lfanew, sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER));
+}
+
+static BOOL is_fake_dll( void )
+{
+    static const char fakedll_signature[] = "Wine placeholder DLL";
+    const IMAGE_DOS_HEADER *dos;
+
+    dos = PRD(0, sizeof(*dos) + sizeof(fakedll_signature));
+
+    if (dos && dos->e_lfanew >= sizeof(*dos) + sizeof(fakedll_signature) &&
+        !memcmp( dos + 1, fakedll_signature, sizeof(fakedll_signature) )) return TRUE;
+    return FALSE;
+}
+
+static const void *get_dir_and_size(unsigned int idx, unsigned int *size)
 {
     if(PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
     {
-        IMAGE_OPTIONAL_HEADER64 *opt = (IMAGE_OPTIONAL_HEADER64*)&PE_nt_headers->OptionalHeader;
+        const IMAGE_OPTIONAL_HEADER64 *opt = (const IMAGE_OPTIONAL_HEADER64*)&PE_nt_headers->OptionalHeader;
         if (idx >= opt->NumberOfRvaAndSizes)
             return NULL;
         if(size)
@@ -101,7 +124,7 @@ static void *get_dir_and_size(unsigned int idx, unsigned int *size)
     }
     else
     {
-        IMAGE_OPTIONAL_HEADER32 *opt = (IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader;
+        const IMAGE_OPTIONAL_HEADER32 *opt = (const IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader;
         if (idx >= opt->NumberOfRvaAndSizes)
             return NULL;
         if(size)
@@ -111,7 +134,7 @@ static void *get_dir_and_size(unsigned int idx, unsigned int *size)
     }
 }
 
-static	void*	get_dir(unsigned idx)
+static	const void*	get_dir(unsigned idx)
 {
     return get_dir_and_size(idx, 0);
 }
@@ -120,10 +143,10 @@ static const char * const DirectoryNames[16] = {
     "EXPORT",		"IMPORT",	"RESOURCE", 	"EXCEPTION",
     "SECURITY", 	"BASERELOC", 	"DEBUG", 	"ARCHITECTURE",
     "GLOBALPTR", 	"TLS", 		"LOAD_CONFIG",	"Bound IAT",
-    "IAT", 		"Delay IAT",	"COM Descript", ""
+    "IAT", 		"Delay IAT",	"CLR Header", ""
 };
 
-static char *get_magic_type(WORD magic)
+static const char *get_magic_type(WORD magic)
 {
     switch(magic) {
         case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
@@ -143,7 +166,7 @@ static inline void print_word(const char *title, WORD value)
 
 static inline void print_dword(const char *title, DWORD value)
 {
-    printf("  %-34s 0x%-8lx     %lu\n", title, value, value);
+    printf("  %-34s 0x%-8x     %u\n", title, value, value);
 }
 
 static inline void print_longlong(const char *title, ULONGLONG value)
@@ -172,6 +195,14 @@ static inline void print_subsys(const char *title, WORD value)
         case IMAGE_SUBSYSTEM_WINDOWS_CUI:   str = "Windows CUI";    break;
         case IMAGE_SUBSYSTEM_OS2_CUI:       str = "OS/2 CUI";       break;
         case IMAGE_SUBSYSTEM_POSIX_CUI:     str = "Posix CUI";      break;
+        case IMAGE_SUBSYSTEM_NATIVE_WINDOWS:           str = "native Win9x driver";  break;
+        case IMAGE_SUBSYSTEM_WINDOWS_CE_GUI:           str = "Windows CE GUI";       break;
+        case IMAGE_SUBSYSTEM_EFI_APPLICATION:          str = "EFI application";      break;
+        case IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER:  str = "EFI driver (boot)";    break;
+        case IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER:       str = "EFI driver (runtime)"; break;
+        case IMAGE_SUBSYSTEM_EFI_ROM:                  str = "EFI ROM";              break;
+        case IMAGE_SUBSYSTEM_XBOX:                     str = "Xbox application";     break;
+        case IMAGE_SUBSYSTEM_WINDOWS_BOOT_APPLICATION: str = "Boot application";     break;
     }
     printf("  %-34s 0x%X (%s)\n", title, value, str);
 }
@@ -180,6 +211,9 @@ static inline void print_dllflags(const char *title, WORD value)
 {
     printf("  %-34s 0x%X\n", title, value);
 #define X(f,s) if (value & f) printf("    %s\n", s)
+    X(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE,          "DYNAMIC_BASE");
+    X(IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY,       "FORCE_INTEGRITY");
+    X(IMAGE_DLLCHARACTERISTICS_NX_COMPAT,             "NX_COMPAT");
     X(IMAGE_DLLCHARACTERISTICS_NO_ISOLATION,          "NO_ISOLATION");
     X(IMAGE_DLLCHARACTERISTICS_NO_SEH,                "NO_SEH");
     X(IMAGE_DLLCHARACTERISTICS_NO_BIND,               "NO_BIND");
@@ -188,22 +222,29 @@ static inline void print_dllflags(const char *title, WORD value)
 #undef X
 }
 
-static inline void print_datadirectory(DWORD n, IMAGE_DATA_DIRECTORY *directory)
+static inline void print_datadirectory(DWORD n, const IMAGE_DATA_DIRECTORY *directory)
 {
     unsigned i;
     printf("Data Directory\n");
-    printf("%ld\n", n * sizeof(IMAGE_DATA_DIRECTORY));
 
     for (i = 0; i < n && i < 16; i++)
     {
-        printf("  %-12s rva: 0x%-8lX  size: %8lu\n",
+        printf("  %-12s rva: 0x%-8x  size: 0x%-8x\n",
                DirectoryNames[i], directory[i].VirtualAddress,
                directory[i].Size);
     }
 }
 
-static void dump_optional_header32(IMAGE_OPTIONAL_HEADER32 *optionalHeader)
+static void dump_optional_header32(const IMAGE_OPTIONAL_HEADER32 *image_oh, UINT header_size)
 {
+    IMAGE_OPTIONAL_HEADER32 oh;
+    const IMAGE_OPTIONAL_HEADER32 *optionalHeader;
+
+    /* in case optional header is missing or partial */
+    memset(&oh, 0, sizeof(oh));
+    memcpy(&oh, image_oh, min(header_size, sizeof(oh)));
+    optionalHeader = &oh;
+
     print_word("Magic", optionalHeader->Magic);
     print_ver("linker version",
               optionalHeader->MajorLinkerVersion, optionalHeader->MinorLinkerVersion);
@@ -236,10 +277,19 @@ static void dump_optional_header32(IMAGE_OPTIONAL_HEADER32 *optionalHeader)
     print_dword("RVAs & sizes", optionalHeader->NumberOfRvaAndSizes);
     printf("\n");
     print_datadirectory(optionalHeader->NumberOfRvaAndSizes, optionalHeader->DataDirectory);
+    printf("\n");
 }
 
-static void dump_optional_header64(IMAGE_OPTIONAL_HEADER64 *optionalHeader)
+static void dump_optional_header64(const IMAGE_OPTIONAL_HEADER64 *image_oh, UINT header_size)
 {
+    IMAGE_OPTIONAL_HEADER64 oh;
+    const IMAGE_OPTIONAL_HEADER64 *optionalHeader;
+
+    /* in case optional header is missing or partial */
+    memset(&oh, 0, sizeof(oh));
+    memcpy(&oh, image_oh, min(header_size, sizeof(oh)));
+    optionalHeader = &oh;
+
     print_word("Magic", optionalHeader->Magic);
     print_ver("linker version",
               optionalHeader->MajorLinkerVersion, optionalHeader->MinorLinkerVersion);
@@ -271,23 +321,38 @@ static void dump_optional_header64(IMAGE_OPTIONAL_HEADER64 *optionalHeader)
     print_dword("RVAs & sizes", optionalHeader->NumberOfRvaAndSizes);
     printf("\n");
     print_datadirectory(optionalHeader->NumberOfRvaAndSizes, optionalHeader->DataDirectory);
+    printf("\n");
 }
 
-static	void	dump_pe_header(void)
+void dump_optional_header(const IMAGE_OPTIONAL_HEADER32 *optionalHeader, UINT header_size)
 {
-    IMAGE_FILE_HEADER		*fileHeader;
+    printf("Optional Header (%s)\n", get_magic_type(optionalHeader->Magic));
 
+    switch(optionalHeader->Magic) {
+        case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
+            dump_optional_header32(optionalHeader, header_size);
+            break;
+        case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
+            dump_optional_header64((const IMAGE_OPTIONAL_HEADER64 *)optionalHeader, header_size);
+            break;
+        default:
+            printf("  Unknown optional header magic: 0x%-4X\n", optionalHeader->Magic);
+            break;
+    }
+}
+
+void dump_file_header(const IMAGE_FILE_HEADER *fileHeader)
+{
     printf("File Header\n");
-    fileHeader = &PE_nt_headers->FileHeader;
 
     printf("  Machine:                      %04X (%s)\n",
 	   fileHeader->Machine, get_machine_str(fileHeader->Machine));
     printf("  Number of Sections:           %d\n", fileHeader->NumberOfSections);
-    printf("  TimeDateStamp:                %08lX (%s) offset %lu\n",
+    printf("  TimeDateStamp:                %08X (%s) offset %lu\n",
 	   fileHeader->TimeDateStamp, get_time_str(fileHeader->TimeDateStamp),
 	   Offset(&(fileHeader->TimeDateStamp)));
-    printf("  PointerToSymbolTable:         %08lX\n", fileHeader->PointerToSymbolTable);
-    printf("  NumberOfSymbols:              %08lX\n", fileHeader->NumberOfSymbols);
+    printf("  PointerToSymbolTable:         %08X\n", fileHeader->PointerToSymbolTable);
+    printf("  NumberOfSymbols:              %08X\n", fileHeader->NumberOfSymbols);
     printf("  SizeOfOptionalHeader:         %04X\n", fileHeader->SizeOfOptionalHeader);
     printf("  Characteristics:              %04X\n", fileHeader->Characteristics);
 #define	X(f,s)	if (fileHeader->Characteristics & f) printf("    %s\n", s)
@@ -309,43 +374,35 @@ static	void	dump_pe_header(void)
     X(IMAGE_FILE_BYTES_REVERSED_HI, 	"BYTES_REVERSED_HI");
 #undef X
     printf("\n");
-
-    /* hope we have the right size */
-    printf("Optional Header (%s)\n", get_magic_type(PE_nt_headers->OptionalHeader.Magic));
-    switch(PE_nt_headers->OptionalHeader.Magic) {
-        case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
-            dump_optional_header32((IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader);
-            break;
-        case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-            dump_optional_header64((IMAGE_OPTIONAL_HEADER64*)&PE_nt_headers->OptionalHeader);
-            break;
-        default:
-            printf("  Unknown header magic: 0x%-4X\n", PE_nt_headers->OptionalHeader.Magic);
-            break;
-    }
-    printf("\n");
 }
 
-static	void	dump_sections(void* addr, unsigned num_sect)
+static	void	dump_pe_header(void)
 {
-    IMAGE_SECTION_HEADER*	sectHead = addr;
-    unsigned			i;
+    dump_file_header(&PE_nt_headers->FileHeader);
+    dump_optional_header((const IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader, PE_nt_headers->FileHeader.SizeOfOptionalHeader);
+}
 
-    printf("Section Table\n");
-    for (i = 0; i < num_sect; i++, sectHead++)
-    {
-	printf("  %02d %-8.8s   VirtSize: %-8lu  VirtAddr:  %-8lu 0x%08lx\n",
-	       i + 1, sectHead->Name, sectHead->Misc.VirtualSize, sectHead->VirtualAddress,
-	       sectHead->VirtualAddress);
-	printf("    raw data offs: %-8lu raw data size: %-8lu\n",
+void dump_section(const IMAGE_SECTION_HEADER *sectHead, const char* strtable)
+{
+        unsigned offset;
+
+        /* long section name ? */
+        if (strtable && sectHead->Name[0] == '/' &&
+            ((offset = atoi((const char*)sectHead->Name + 1)) < *(const DWORD*)strtable))
+            printf("  %.8s (%s)", sectHead->Name, strtable + offset);
+        else
+	    printf("  %-8.8s", sectHead->Name);
+	printf("   VirtSize: 0x%08x  VirtAddr:  0x%08x\n",
+               sectHead->Misc.VirtualSize, sectHead->VirtualAddress);
+	printf("    raw data offs:   0x%08x  raw data size: 0x%08x\n",
 	       sectHead->PointerToRawData, sectHead->SizeOfRawData);
-	printf("    relocation offs: %-8lu  relocations:   %-8u\n",
+	printf("    relocation offs: 0x%08x  relocations:   0x%08x\n",
 	       sectHead->PointerToRelocations, sectHead->NumberOfRelocations);
-	printf("    line # offs:     %-8lu  line #'s:      %-8u\n",
+	printf("    line # offs:     %-8u  line #'s:      %-8u\n",
 	       sectHead->PointerToLinenumbers, sectHead->NumberOfLinenumbers);
-	printf("    characteristics: 0x%08lx\n", sectHead->Characteristics);
-	printf("      ");
-#define X(b,s)	if (sectHead->Characteristics & b) printf(s "  ")
+	printf("    characteristics: 0x%08x\n", sectHead->Characteristics);
+	printf("    ");
+#define X(b,s)	if (sectHead->Characteristics & b) printf("  " s)
 /* #define IMAGE_SCN_TYPE_REG			0x00000000 - Reserved */
 /* #define IMAGE_SCN_TYPE_DSECT			0x00000001 - Reserved */
 /* #define IMAGE_SCN_TYPE_NOLOAD		0x00000002 - Reserved */
@@ -373,14 +430,25 @@ static	void	dump_sections(void* addr, unsigned num_sect)
 	X(IMAGE_SCN_MEM_LOCKED, 		"MEM_LOCKED");
 	X(IMAGE_SCN_MEM_PRELOAD, 		"MEM_PRELOAD");
 
-	X(IMAGE_SCN_ALIGN_1BYTES, 		"ALIGN_1BYTES");
-	X(IMAGE_SCN_ALIGN_2BYTES, 		"ALIGN_2BYTES");
-	X(IMAGE_SCN_ALIGN_4BYTES, 		"ALIGN_4BYTES");
-	X(IMAGE_SCN_ALIGN_8BYTES, 		"ALIGN_8BYTES");
-	X(IMAGE_SCN_ALIGN_16BYTES, 		"ALIGN_16BYTES");
-	X(IMAGE_SCN_ALIGN_32BYTES, 		"ALIGN_32BYTES");
-	X(IMAGE_SCN_ALIGN_64BYTES, 		"ALIGN_64BYTES");
-/* 						0x00800000 - Unused */
+        switch (sectHead->Characteristics & IMAGE_SCN_ALIGN_MASK)
+        {
+#define X2(b,s)	case b: printf("  " s); break
+        X2(IMAGE_SCN_ALIGN_1BYTES, 		"ALIGN_1BYTES");
+        X2(IMAGE_SCN_ALIGN_2BYTES, 		"ALIGN_2BYTES");
+        X2(IMAGE_SCN_ALIGN_4BYTES, 		"ALIGN_4BYTES");
+        X2(IMAGE_SCN_ALIGN_8BYTES, 		"ALIGN_8BYTES");
+        X2(IMAGE_SCN_ALIGN_16BYTES, 		"ALIGN_16BYTES");
+        X2(IMAGE_SCN_ALIGN_32BYTES, 		"ALIGN_32BYTES");
+        X2(IMAGE_SCN_ALIGN_64BYTES, 		"ALIGN_64BYTES");
+        X2(IMAGE_SCN_ALIGN_128BYTES, 		"ALIGN_128BYTES");
+        X2(IMAGE_SCN_ALIGN_256BYTES, 		"ALIGN_256BYTES");
+        X2(IMAGE_SCN_ALIGN_512BYTES, 		"ALIGN_512BYTES");
+        X2(IMAGE_SCN_ALIGN_1024BYTES, 		"ALIGN_1024BYTES");
+        X2(IMAGE_SCN_ALIGN_2048BYTES, 		"ALIGN_2048BYTES");
+        X2(IMAGE_SCN_ALIGN_4096BYTES, 		"ALIGN_4096BYTES");
+        X2(IMAGE_SCN_ALIGN_8192BYTES, 		"ALIGN_8192BYTES");
+#undef X2
+        }
 
 	X(IMAGE_SCN_LNK_NRELOC_OVFL, 		"LNK_NRELOC_OVFL");
 
@@ -393,161 +461,789 @@ static	void	dump_sections(void* addr, unsigned num_sect)
 	X(IMAGE_SCN_MEM_WRITE, 			"MEM_WRITE");
 #undef X
 	printf("\n\n");
+}
+
+static void dump_sections(const void *base, const void* addr, unsigned num_sect)
+{
+    const IMAGE_SECTION_HEADER*	sectHead = addr;
+    unsigned			i;
+    const char*                 strtable;
+
+    if (PE_nt_headers->FileHeader.PointerToSymbolTable && PE_nt_headers->FileHeader.NumberOfSymbols)
+    {
+        strtable = (const char*)base +
+            PE_nt_headers->FileHeader.PointerToSymbolTable +
+            PE_nt_headers->FileHeader.NumberOfSymbols * sizeof(IMAGE_SYMBOL);
     }
-    printf("\n");
+    else strtable = NULL;
+
+    printf("Section Table\n");
+    for (i = 0; i < num_sect; i++, sectHead++)
+    {
+        dump_section(sectHead, strtable);
+
+        if (globals.do_dump_rawdata)
+        {
+            dump_data((const unsigned char *)base + sectHead->PointerToRawData, sectHead->SizeOfRawData, "    " );
+            printf("\n");
+        }
+    }
 }
 
 static	void	dump_dir_exported_functions(void)
 {
     unsigned int size = 0;
-    IMAGE_EXPORT_DIRECTORY	*exportDir = get_dir_and_size(IMAGE_FILE_EXPORT_DIRECTORY, &size);
+    const IMAGE_EXPORT_DIRECTORY*exportDir = get_dir_and_size(IMAGE_FILE_EXPORT_DIRECTORY, &size);
     unsigned int		i;
-    DWORD*			pFunc;
-    DWORD*			pName;
-    WORD*			pOrdl;
-    DWORD*			map;
-    parsed_symbol		symbol;
+    const DWORD*		pFunc;
+    const DWORD*		pName;
+    const WORD* 		pOrdl;
+    DWORD*		        funcs;
 
     if (!exportDir) return;
 
     printf("Exports table:\n");
     printf("\n");
-    printf("  Name:            %s\n", (char*)RVA(exportDir->Name, sizeof(DWORD)));
-    printf("  Characteristics: %08lx\n", exportDir->Characteristics);
-    printf("  TimeDateStamp:   %08lX %s\n",
+    printf("  Name:            %s\n", (const char*)RVA(exportDir->Name, sizeof(DWORD)));
+    printf("  Characteristics: %08x\n", exportDir->Characteristics);
+    printf("  TimeDateStamp:   %08X %s\n",
 	   exportDir->TimeDateStamp, get_time_str(exportDir->TimeDateStamp));
     printf("  Version:         %u.%02u\n", exportDir->MajorVersion, exportDir->MinorVersion);
-    printf("  Ordinal base:    %lu\n", exportDir->Base);
-    printf("  # of functions:  %lu\n", exportDir->NumberOfFunctions);
-    printf("  # of Names:      %lu\n", exportDir->NumberOfNames);
-    printf("Addresses of functions: %08lX\n", exportDir->AddressOfFunctions);
-    printf("Addresses of name ordinals: %08lX\n", exportDir->AddressOfNameOrdinals);
-    printf("Addresses of names: %08lX\n", exportDir->AddressOfNames);
+    printf("  Ordinal base:    %u\n", exportDir->Base);
+    printf("  # of functions:  %u\n", exportDir->NumberOfFunctions);
+    printf("  # of Names:      %u\n", exportDir->NumberOfNames);
+    printf("Addresses of functions: %08X\n", exportDir->AddressOfFunctions);
+    printf("Addresses of name ordinals: %08X\n", exportDir->AddressOfNameOrdinals);
+    printf("Addresses of names: %08X\n", exportDir->AddressOfNames);
     printf("\n");
     printf("  Entry Pt  Ordn  Name\n");
 
     pFunc = RVA(exportDir->AddressOfFunctions, exportDir->NumberOfFunctions * sizeof(DWORD));
     if (!pFunc) {printf("Can't grab functions' address table\n"); return;}
     pName = RVA(exportDir->AddressOfNames, exportDir->NumberOfNames * sizeof(DWORD));
-    if (!pName) {printf("Can't grab functions' name table\n"); return;}
     pOrdl = RVA(exportDir->AddressOfNameOrdinals, exportDir->NumberOfNames * sizeof(WORD));
-    if (!pOrdl) {printf("Can't grab functions' ordinal table\n"); return;}
 
-    /* bit map of used funcs */
-    map = calloc(((exportDir->NumberOfFunctions + 31) & ~31) / 32, sizeof(DWORD));
-    if (!map) fatal("no memory");
+    funcs = calloc( exportDir->NumberOfFunctions, sizeof(*funcs) );
+    if (!funcs) fatal("no memory");
 
-    for (i = 0; i < exportDir->NumberOfNames; i++, pName++, pOrdl++)
-    {
-	char*	name;
+    for (i = 0; i < exportDir->NumberOfNames; i++) funcs[pOrdl[i]] = pName[i];
 
-	map[*pOrdl / 32] |= 1 << (*pOrdl % 32);
-
-	name = (char*)RVA(*pName, sizeof(DWORD));
-	if (name && globals.do_demangle)
-	{
-	    printf("  %08lX  %4lu ", pFunc[*pOrdl], exportDir->Base + *pOrdl);
-
-	    symbol_init(&symbol, name);
-	    if (symbol_demangle(&symbol) == -1)
-		printf(name);
-	    else if (symbol.flags & SYM_DATA)
-		printf(symbol.arg_text[0]);
-	    else
-		output_prototype(stdout, &symbol);
-	    symbol_clear(&symbol);
-	}
-	else
-	{
-	    printf("  %08lX  %4lu %s", pFunc[*pOrdl], exportDir->Base + *pOrdl, name);
-	}
-        /* check for forwarded function */
-        if ((char *)RVA(pFunc[*pOrdl],sizeof(void*)) >= (char *)exportDir &&
-            (char *)RVA(pFunc[*pOrdl],sizeof(void*)) < (char *)exportDir + size)
-            printf( " (-> %s)", (char *)RVA(pFunc[*pOrdl],1));
-        printf("\n");
-    }
-    pFunc = RVA(exportDir->AddressOfFunctions, exportDir->NumberOfFunctions * sizeof(DWORD));
-    if (!pFunc) {printf("Can't grab functions' address table\n"); return;}
     for (i = 0; i < exportDir->NumberOfFunctions; i++)
     {
-	if (pFunc[i] && !(map[i / 32] & (1 << (i % 32))))
-	{
-	    printf("  %08lX  %4lu <by ordinal>\n", pFunc[i], exportDir->Base + i);
-	}
+        if (!pFunc[i]) continue;
+        printf("  %08X %5u ", pFunc[i], exportDir->Base + i);
+        if (funcs[i])
+            printf("%s", get_symbol_str((const char*)RVA(funcs[i], sizeof(DWORD))));
+        else
+            printf("<by ordinal>");
+
+        /* check for forwarded function */
+        if ((const char *)RVA(pFunc[i],1) >= (const char *)exportDir &&
+            (const char *)RVA(pFunc[i],1) < (const char *)exportDir + size)
+            printf(" (-> %s)", (const char *)RVA(pFunc[i],1));
+        printf("\n");
     }
-    free(map);
+    free(funcs);
     printf("\n");
 }
 
-static void dump_image_thunk_data64(IMAGE_THUNK_DATA64 *il)
+
+struct runtime_function_x86_64
+{
+    DWORD BeginAddress;
+    DWORD EndAddress;
+    DWORD UnwindData;
+};
+
+struct runtime_function_armnt
+{
+    DWORD BeginAddress;
+    union {
+        DWORD UnwindData;
+        struct {
+            DWORD Flag : 2;
+            DWORD FunctionLength : 11;
+            DWORD Ret : 2;
+            DWORD H : 1;
+            DWORD Reg : 3;
+            DWORD R : 1;
+            DWORD L : 1;
+            DWORD C : 1;
+            DWORD StackAdjust : 10;
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME;
+};
+
+union handler_data
+{
+    struct runtime_function_x86_64 chain;
+    DWORD handler;
+};
+
+struct opcode
+{
+    BYTE offset;
+    BYTE code : 4;
+    BYTE info : 4;
+};
+
+struct unwind_info_x86_64
+{
+    BYTE version : 3;
+    BYTE flags : 5;
+    BYTE prolog;
+    BYTE count;
+    BYTE frame_reg : 4;
+    BYTE frame_offset : 4;
+    struct opcode opcodes[1];  /* count entries */
+    /* followed by union handler_data */
+};
+
+struct unwind_info_armnt
+{
+    DWORD function_length : 18;
+    DWORD version : 2;
+    DWORD x : 1;
+    DWORD e : 1;
+    DWORD f : 1;
+    DWORD count : 5;
+    DWORD words : 4;
+};
+
+struct unwind_info_ext_armnt
+{
+    WORD excount;
+    BYTE exwords;
+    BYTE reserved;
+};
+
+struct unwind_info_epilogue_armnt
+{
+    DWORD offset : 18;
+    DWORD res : 2;
+    DWORD cond : 4;
+    DWORD index : 8;
+};
+
+#define UWOP_PUSH_NONVOL     0
+#define UWOP_ALLOC_LARGE     1
+#define UWOP_ALLOC_SMALL     2
+#define UWOP_SET_FPREG       3
+#define UWOP_SAVE_NONVOL     4
+#define UWOP_SAVE_NONVOL_FAR 5
+#define UWOP_SAVE_XMM128     8
+#define UWOP_SAVE_XMM128_FAR 9
+#define UWOP_PUSH_MACHFRAME  10
+
+#define UNW_FLAG_EHANDLER  1
+#define UNW_FLAG_UHANDLER  2
+#define UNW_FLAG_CHAININFO 4
+
+static void dump_x86_64_unwind_info( const struct runtime_function_x86_64 *function )
+{
+    static const char * const reg_names[16] =
+        { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+          "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15" };
+
+    const union handler_data *handler_data;
+    const struct unwind_info_x86_64 *info;
+    unsigned int i, count;
+
+    printf( "\nFunction %08x-%08x:\n", function->BeginAddress, function->EndAddress );
+    if (function->UnwindData & 1)
+    {
+        const struct runtime_function_x86_64 *next = RVA( function->UnwindData & ~1, sizeof(*next) );
+        printf( "  -> function %08x-%08x\n", next->BeginAddress, next->EndAddress );
+        return;
+    }
+    info = RVA( function->UnwindData, sizeof(*info) );
+
+    printf( "  unwind info at %08x\n", function->UnwindData );
+    if (info->version != 1)
+    {
+        printf( "    *** unknown version %u\n", info->version );
+        return;
+    }
+    printf( "    flags %x", info->flags );
+    if (info->flags & UNW_FLAG_EHANDLER) printf( " EHANDLER" );
+    if (info->flags & UNW_FLAG_UHANDLER) printf( " UHANDLER" );
+    if (info->flags & UNW_FLAG_CHAININFO) printf( " CHAININFO" );
+    printf( "\n    prolog 0x%x bytes\n", info->prolog );
+
+    if (info->frame_reg)
+        printf( "    frame register %s offset 0x%x(%%rsp)\n",
+                reg_names[info->frame_reg], info->frame_offset * 16 );
+
+    for (i = 0; i < info->count; i++)
+    {
+        printf( "      0x%02x: ", info->opcodes[i].offset );
+        switch (info->opcodes[i].code)
+        {
+        case UWOP_PUSH_NONVOL:
+            printf( "push %%%s\n", reg_names[info->opcodes[i].info] );
+            break;
+        case UWOP_ALLOC_LARGE:
+            if (info->opcodes[i].info)
+            {
+                count = *(const DWORD *)&info->opcodes[i+1];
+                i += 2;
+            }
+            else
+            {
+                count = *(const USHORT *)&info->opcodes[i+1] * 8;
+                i++;
+            }
+            printf( "sub $0x%x,%%rsp\n", count );
+            break;
+        case UWOP_ALLOC_SMALL:
+            count = (info->opcodes[i].info + 1) * 8;
+            printf( "sub $0x%x,%%rsp\n", count );
+            break;
+        case UWOP_SET_FPREG:
+            printf( "lea 0x%x(%%rsp),%s\n",
+                    info->frame_offset * 16, reg_names[info->frame_reg] );
+            break;
+        case UWOP_SAVE_NONVOL:
+            count = *(const USHORT *)&info->opcodes[i+1] * 8;
+            printf( "mov %%%s,0x%x(%%rsp)\n", reg_names[info->opcodes[i].info], count );
+            i++;
+            break;
+        case UWOP_SAVE_NONVOL_FAR:
+            count = *(const DWORD *)&info->opcodes[i+1];
+            printf( "mov %%%s,0x%x(%%rsp)\n", reg_names[info->opcodes[i].info], count );
+            i += 2;
+            break;
+        case UWOP_SAVE_XMM128:
+            count = *(const USHORT *)&info->opcodes[i+1] * 16;
+            printf( "movaps %%xmm%u,0x%x(%%rsp)\n", info->opcodes[i].info, count );
+            i++;
+            break;
+        case UWOP_SAVE_XMM128_FAR:
+            count = *(const DWORD *)&info->opcodes[i+1];
+            printf( "movaps %%xmm%u,0x%x(%%rsp)\n", info->opcodes[i].info, count );
+            i += 2;
+            break;
+        case UWOP_PUSH_MACHFRAME:
+            printf( "PUSH_MACHFRAME %u\n", info->opcodes[i].info );
+            break;
+        default:
+            printf( "*** unknown code %u\n", info->opcodes[i].code );
+            break;
+        }
+    }
+
+    handler_data = (const union handler_data *)&info->opcodes[(info->count + 1) & ~1];
+    if (info->flags & UNW_FLAG_CHAININFO)
+    {
+        printf( "    -> function %08x-%08x\n",
+                handler_data->chain.BeginAddress, handler_data->chain.EndAddress );
+        return;
+    }
+    if (info->flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
+        printf( "    handler %08x data at %08x\n", handler_data->handler,
+                (ULONG)(function->UnwindData + (const char *)(&handler_data->handler + 1) - (const char *)info ));
+}
+
+static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
+{
+    const struct unwind_info_armnt *info;
+    const struct unwind_info_ext_armnt *infoex;
+    const struct unwind_info_epilogue_armnt *infoepi;
+    unsigned int rva;
+    WORD i, count = 0, words = 0;
+
+    if (fnc->u.s.Flag)
+    {
+        char intregs[32] = {0}, intregspop[32] = {0}, vfpregs[32] = {0};
+        WORD pf = 0, ef = 0, sc = 0;
+
+        printf( "\nFunction %08x-%08x:\n", fnc->BeginAddress & ~1,
+                (fnc->BeginAddress & ~1) + fnc->u.s.FunctionLength * 2 );
+        printf( "    Flag           %x\n", fnc->u.s.Flag );
+        printf( "    FunctionLength %x\n", fnc->u.s.FunctionLength );
+        printf( "    Ret            %x\n", fnc->u.s.Ret );
+        printf( "    H              %x\n", fnc->u.s.H );
+        printf( "    Reg            %x\n", fnc->u.s.Reg );
+        printf( "    R              %x\n", fnc->u.s.R );
+        printf( "    L              %x\n", fnc->u.s.L );
+        printf( "    C              %x\n", fnc->u.s.C );
+        printf( "    StackAdjust    %x\n", fnc->u.s.StackAdjust );
+
+        if (fnc->u.s.StackAdjust >= 0x03f4)
+        {
+            pf = fnc->u.s.StackAdjust & 0x04;
+            ef = fnc->u.s.StackAdjust & 0x08;
+        }
+
+        if (!fnc->u.s.R && !pf)
+        {
+            if (fnc->u.s.Reg)
+            {
+                sprintf(intregs, "r4-r%u", fnc->u.s.Reg + 4);
+                sprintf(intregspop, "r4-r%u", fnc->u.s.Reg + 4);
+            }
+            else
+            {
+                strcpy(intregs, "r4");
+                strcpy(intregspop, "r4");
+            }
+            sc = fnc->u.s.Reg + 1;
+            if (fnc->u.s.C || fnc->u.s.L)
+            {
+                strcat(intregs, ", ");
+                if (fnc->u.s.C || (fnc->u.s.L && !fnc->u.s.H))
+                    strcat(intregspop, ", ");
+            }
+        }
+        else if (fnc->u.s.R && pf)
+        {
+            if (((~fnc->u.s.StackAdjust) & 3) != 3)
+            {
+                sprintf(intregs, "r%u-r3", (~fnc->u.s.StackAdjust) & 3);
+                sprintf(intregspop, "r%u-r3", (~fnc->u.s.StackAdjust) & 3);
+            }
+            else
+            {
+                sprintf(intregs, "r3");
+                sprintf(intregspop, "r3");
+            }
+            sc = 4 - ((~fnc->u.s.StackAdjust) & 3);
+            if (fnc->u.s.C || fnc->u.s.L)
+            {
+                strcat(intregs, ", ");
+                if (fnc->u.s.C || (fnc->u.s.L && !fnc->u.s.H))
+                    strcat(intregspop, ", ");
+            }
+        }
+        else if (!fnc->u.s.R && pf)
+        {
+            sprintf(intregs, "r%u-r%u", (~fnc->u.s.StackAdjust) & 3, fnc->u.s.Reg + 4);
+            sprintf(intregspop, "r%u-r%u", (~fnc->u.s.StackAdjust) & 3, fnc->u.s.Reg + 4);
+            sc = fnc->u.s.Reg + 5 - ((~fnc->u.s.StackAdjust) & 3);
+            if (fnc->u.s.C || fnc->u.s.L)
+            {
+                strcat(intregs, ", ");
+                if (fnc->u.s.C || (fnc->u.s.L && !fnc->u.s.H))
+                    strcat(intregspop, ", ");
+            }
+        }
+        else if (fnc->u.s.R && !pf)
+        {
+            if (!fnc->u.s.C && !fnc->u.s.L)
+            {
+                strcpy(intregs, "none");
+                strcpy(intregspop, "none");
+            }
+        }
+
+        if (fnc->u.s.C && !fnc->u.s.L)
+        {
+            strcat(intregs, "r11");
+            strcat(intregspop, "r11");
+        }
+        else if (fnc->u.s.C && fnc->u.s.L)
+        {
+            strcat(intregs, "r11, lr");
+            if (fnc->u.s.H)
+                strcat(intregspop, "r11");
+            else
+                strcat(intregspop, "r11, pc");
+        }
+        else if (!fnc->u.s.C && fnc->u.s.L)
+        {
+            strcat(intregs, "lr");
+            if (!fnc->u.s.H)
+                strcat(intregspop, "pc");
+        }
+
+        if (fnc->u.s.R)
+        {
+            if (fnc->u.s.Reg)
+                sprintf(vfpregs, "d8-d%u", fnc->u.s.Reg + 8);
+            else
+                strcpy(vfpregs, "d8");
+        }
+        else
+            strcpy(vfpregs, "none");
+
+        if (fnc->u.s.H)
+            printf( "    Unwind Code\tpush {r0-r3}\n" );
+
+        if (fnc->u.s.R || fnc->u.s.L || fnc->u.s.C || pf)
+            printf( "    Unwind Code\tpush {%s}\n", intregs );
+
+        if (fnc->u.s.C && fnc->u.s.R && !fnc->u.s.L && !pf)
+            printf( "    Unwind Code\tmov r11, sp\n" );
+        else if (fnc->u.s.C && (!fnc->u.s.R || fnc->u.s.L || pf))
+        {
+            if (fnc->u.s.StackAdjust >= 0x03f4 && !sc)
+                printf( "    Unwind Code\tadd r11, sp, #<unknown>\n");
+            else if (fnc->u.s.StackAdjust >= 0x03f4)
+                printf( "    Unwind Code\tadd r11, sp, #%d\n", sc * 4 );
+            else
+                printf( "    Unwind Code\tadd r11, sp, #%d\n", fnc->u.s.StackAdjust * 4 );
+        }
+
+        if (fnc->u.s.R && fnc->u.s.Reg != 0x07)
+            printf( "    Unwind Code\tvpush {%s}\n", vfpregs );
+
+        if (fnc->u.s.StackAdjust < 0x03f4 && !pf)
+            printf( "    Unwind Code\tsub sp, sp, #%d\n", fnc->u.s.StackAdjust * 4 );
+
+
+        if (fnc->u.s.StackAdjust < 0x03f4 && !ef)
+            printf( "    Unwind Code\tadd sp, sp, #%d\n", fnc->u.s.StackAdjust * 4 );
+
+        if (fnc->u.s.R && fnc->u.s.Reg != 0x07)
+            printf( "    Unwind Code\tvpop {%s}\n", vfpregs );
+
+        if (fnc->u.s.C || !fnc->u.s.R || ef || (fnc->u.s.L && !fnc->u.s.H))
+            printf( "    Unwind Code\tpop {%s}\n", intregspop );
+
+        if (fnc->u.s.H && !fnc->u.s.L)
+            printf( "    Unwind Code\tadd sp, sp, #16\n" );
+        else if (fnc->u.s.H && fnc->u.s.L)
+            printf( "    Unwind Code\tldr pc, [sp], #20\n" );
+
+        if (fnc->u.s.Ret == 1)
+            printf( "    Unwind Code\tbx <reg>\n" );
+        else if (fnc->u.s.Ret == 2)
+            printf( "    Unwind Code\tb <address>\n" );
+
+        return;
+    }
+
+    info = RVA( fnc->u.UnwindData, sizeof(*info) );
+    rva = fnc->u.UnwindData + sizeof(*info);
+    count = info->count;
+    words = info->words;
+
+    printf( "\nFunction %08x-%08x:\n", fnc->BeginAddress & ~1,
+            (fnc->BeginAddress & ~1) + info->function_length * 2 );
+    printf( "  unwind info at %08x\n", fnc->u.UnwindData );
+    printf( "    Flag           %x\n", fnc->u.s.Flag );
+    printf( "    FunctionLength %x\n", info->function_length );
+    printf( "    Version        %x\n", info->version );
+    printf( "    X              %x\n", info->x );
+    printf( "    E              %x\n", info->e );
+    printf( "    F              %x\n", info->f );
+    printf( "    Count          %x\n", count );
+    printf( "    Words          %x\n", words );
+
+    if (!info->count && !info->words)
+    {
+        infoex = RVA( rva, sizeof(*infoex) );
+        rva = rva + sizeof(*infoex);
+        count = infoex->excount;
+        words = infoex->exwords;
+        printf( "    ExtCount       %x\n", count );
+        printf( "    ExtWords       %x\n", words );
+    }
+
+    if (!info->e)
+    {
+        infoepi = RVA( rva, count * sizeof(*infoepi) );
+        rva = rva + count * sizeof(*infoepi);
+
+        for (i = 0; i < count; i++)
+        {
+            printf( "    Epilogue Scope %x\n", i );
+            printf( "      Offset       %x\n", infoepi[i].offset );
+            printf( "      Reserved     %x\n", infoepi[i].res );
+            printf( "      Condition    %x\n", infoepi[i].cond );
+            printf( "      Index        %x\n", infoepi[i].index );
+        }
+    }
+    else
+        infoepi = NULL;
+
+    if (words)
+    {
+        const unsigned int *codes;
+        BYTE b, *bytes;
+        BOOL inepilogue = FALSE;
+
+        codes = RVA( rva, words * sizeof(*codes) );
+        rva = rva + words * sizeof(*codes);
+        bytes = (BYTE*)codes;
+
+        for (b = 0; b < words * sizeof(*codes); b++)
+        {
+            BYTE code = bytes[b];
+
+            if (info->e && b == count)
+            {
+                printf( "Epilogue:\n" );
+                inepilogue = TRUE;
+            }
+            else if (!info->e && infoepi)
+            {
+                for (i = 0; i < count; i++)
+                    if (b == infoepi[i].index)
+                    {
+                        printf( "Epilogue from Scope %x at %08x:\n", i,
+                                (fnc->BeginAddress & ~1) + infoepi[i].offset * 2 );
+                        inepilogue = TRUE;
+                    }
+            }
+
+            printf( "    Unwind Code %x\t", code );
+
+            if (code == 0x00)
+                printf( "\n" );
+            else if (code <= 0x7f)
+                printf( "%s sp, sp, #%u\n", inepilogue ? "add" : "sub", code * 4 );
+            else if (code <= 0xbf)
+            {
+                WORD excode, f;
+                BOOL first = TRUE;
+                BYTE excodes = bytes[++b];
+
+                excode = (code << 8) | excodes;
+                printf( "%s {", inepilogue ? "pop" : "push" );
+
+                for (f = 0; f <= 12; f++)
+                {
+                    if ((excode >> f) & 1)
+                    {
+                        printf( "%sr%u", first ? "" : ", ", f );
+                        first = FALSE;
+                    }
+                }
+
+                if (excode & 0x2000)
+                    printf( "%s%s", first ? "" : ", ", inepilogue ? "pc" : "lr" );
+
+                printf( "}\n" );
+            }
+            else if (code <= 0xcf)
+                if (inepilogue)
+                    printf( "mov sp, r%u\n", code & 0x0f );
+                else
+                    printf( "mov r%u, sp\n", code & 0x0f );
+            else if (code <= 0xd7)
+                if (inepilogue)
+                    printf( "pop {r4-r%u%s}\n", (code & 0x03) + 4, (code & 0x04) ? ", pc" : "" );
+                else
+                    printf( "push {r4-r%u%s}\n", (code & 0x03) + 4, (code & 0x04) ? ", lr" : "" );
+            else if (code <= 0xdf)
+                if (inepilogue)
+                    printf( "pop {r4-r%u%s}\n", (code & 0x03) + 8, (code & 0x04) ? ", pc" : "" );
+                else
+                    printf( "push {r4-r%u%s}\n", (code & 0x03) + 8, (code & 0x04) ? ", lr" : "" );
+            else if (code <= 0xe7)
+                printf( "%s {d8-d%u}\n", inepilogue ? "vpop" : "vpush", (code & 0x07) + 8 );
+            else if (code <= 0xeb)
+            {
+                WORD excode;
+                BYTE excodes = bytes[++b];
+
+                excode = (code << 8) | excodes;
+                printf( "%s sp, sp, #%u\n", inepilogue ? "addw" : "subw", (excode & 0x03ff) *4 );
+            }
+            else if (code <= 0xed)
+            {
+                WORD excode, f;
+                BOOL first = TRUE;
+                BYTE excodes = bytes[++b];
+
+                excode = (code << 8) | excodes;
+                printf( "%s {", inepilogue ? "pop" : "push" );
+
+                for (f = 0; f < 8; f++)
+                {
+                    if ((excode >> f) & 1)
+                    {
+                        printf( "%sr%u", first ? "" : ", ", f );
+                        first = FALSE;
+                    }
+                }
+
+                if (excode & 0x0100)
+                    printf( "%s%s", first ? "" : ", ", inepilogue ? "pc" : "lr" );
+
+                printf( "}\n" );
+            }
+            else if (code == 0xee)
+                printf( "unknown 16\n" );
+            else if (code == 0xef)
+            {
+                WORD excode;
+                BYTE excodes = bytes[++b];
+
+                if (excodes <= 0x0f)
+                {
+                    excode = (code << 8) | excodes;
+                    if (inepilogue)
+                        printf( "ldr lr, [sp], #%u\n", (excode & 0x0f) * 4 );
+                    else
+                        printf( "unknown 32\n" );
+                }
+                else
+                    printf( "unknown 32\n" );
+            }
+            else if (code <= 0xf4)
+                printf( "unknown\n" );
+            else if (code <= 0xf6)
+            {
+                WORD excode, offset = (code == 0xf6) ? 16 : 0;
+                BYTE excodes = bytes[++b];
+
+                excode = (code << 8) | excodes;
+                printf( "%s {d%u-d%u}\n", inepilogue ? "vpop" : "vpush",
+                        ((excode & 0x00f0) >> 4) + offset, (excode & 0x0f) + offset );
+            }
+            else if (code <= 0xf7)
+            {
+                unsigned int excode;
+                BYTE excodes[2];
+
+                excodes[0] = bytes[++b];
+                excodes[1] = bytes[++b];
+                excode = (code << 16) | (excodes[0] << 8) | excodes[1];
+                printf( "%s sp, sp, #%u\n", inepilogue ? "add" : "sub", (excode & 0xffff) *4 );
+            }
+            else if (code <= 0xf8)
+            {
+                unsigned int excode;
+                BYTE excodes[3];
+
+                excodes[0] = bytes[++b];
+                excodes[1] = bytes[++b];
+                excodes[2] = bytes[++b];
+                excode = (code << 24) | (excodes[0] << 16) | (excodes[1] << 8) | excodes[2];
+                printf( "%s sp, sp, #%u\n", inepilogue ? "add" : "sub", (excode & 0xffffff) * 4 );
+            }
+            else if (code <= 0xf9)
+            {
+                unsigned int excode;
+                BYTE excodes[2];
+
+                excodes[0] = bytes[++b];
+                excodes[1] = bytes[++b];
+                excode = (code << 16) | (excodes[0] << 8) | excodes[1];
+                printf( "%s sp, sp, #%u\n", inepilogue ? "add" : "sub", (excode & 0xffff) *4 );
+            }
+            else if (code <= 0xfa)
+            {
+                unsigned int excode;
+                BYTE excodes[3];
+
+                excodes[0] = bytes[++b];
+                excodes[1] = bytes[++b];
+                excodes[2] = bytes[++b];
+                excode = (code << 24) | (excodes[0] << 16) | (excodes[1] << 8) | excodes[2];
+                printf( "%s sp, sp, #%u\n", inepilogue ? "add" : "sub", (excode & 0xffffff) * 4 );
+            }
+            else if (code <= 0xfc)
+                printf( "nop\n" );
+            else if (code <= 0xfe)
+            {
+                printf( "(end) nop\n" );
+                inepilogue = TRUE;
+            }
+            else
+            {
+                printf( "end\n" );
+                inepilogue = TRUE;
+            }
+        }
+    }
+
+    if (info->x)
+    {
+        const unsigned int *handler;
+
+        handler = RVA( rva, sizeof(*handler) );
+        rva = rva + sizeof(*handler);
+
+        printf( "    handler %08x data at %08x\n", *handler, rva);
+    }
+}
+
+static void dump_dir_exceptions(void)
+{
+    unsigned int i, size = 0;
+    const void *funcs = get_dir_and_size(IMAGE_FILE_EXCEPTION_DIRECTORY, &size);
+    const IMAGE_FILE_HEADER *file_header = &PE_nt_headers->FileHeader;
+
+    if (!funcs) return;
+
+    if (file_header->Machine == IMAGE_FILE_MACHINE_AMD64)
+    {
+        size /= sizeof(struct runtime_function_x86_64);
+        printf( "Exception info (%u functions):\n", size );
+        for (i = 0; i < size; i++) dump_x86_64_unwind_info( (struct runtime_function_x86_64*)funcs + i );
+    }
+    else if (file_header->Machine == IMAGE_FILE_MACHINE_ARMNT)
+    {
+        size /= sizeof(struct runtime_function_armnt);
+        printf( "Exception info (%u functions):\n", size );
+        for (i = 0; i < size; i++) dump_armnt_unwind_info( (struct runtime_function_armnt*)funcs + i );
+    }
+    else printf( "Exception information not supported for %s binaries\n",
+                 get_machine_str(file_header->Machine));
+}
+
+
+static void dump_image_thunk_data64(const IMAGE_THUNK_DATA64 *il, DWORD thunk_rva)
 {
     /* FIXME: This does not properly handle large images */
-    IMAGE_IMPORT_BY_NAME* iibn;
-    for (; il->u1.Ordinal; il++)
+    const IMAGE_IMPORT_BY_NAME* iibn;
+    for (; il->u1.Ordinal; il++, thunk_rva += sizeof(LONGLONG))
     {
         if (IMAGE_SNAP_BY_ORDINAL64(il->u1.Ordinal))
-            printf("  %4lu  <by ordinal>\n", (DWORD)IMAGE_ORDINAL64(il->u1.Ordinal));
+            printf("  %4u  <by ordinal>\n", (DWORD)IMAGE_ORDINAL64(il->u1.Ordinal));
         else
         {
             iibn = RVA((DWORD)il->u1.AddressOfData, sizeof(DWORD));
             if (!iibn)
                 printf("Can't grab import by name info, skipping to next ordinal\n");
             else
-                printf("  %4u  %s %lx\n", iibn->Hint, iibn->Name, (DWORD)il->u1.AddressOfData);
+                printf("  %4u  %s %x\n", iibn->Hint, iibn->Name, thunk_rva);
         }
     }
 }
 
-static void dump_image_thunk_data32(IMAGE_THUNK_DATA32 *il)
+static void dump_image_thunk_data32(const IMAGE_THUNK_DATA32 *il, int offset, DWORD thunk_rva)
 {
-    IMAGE_IMPORT_BY_NAME* iibn;
-    for (; il->u1.Ordinal; il++)
+    const IMAGE_IMPORT_BY_NAME* iibn;
+    for (; il->u1.Ordinal; il++, thunk_rva += sizeof(DWORD))
     {
         if (IMAGE_SNAP_BY_ORDINAL32(il->u1.Ordinal))
-            printf("  %4lu  <by ordinal>\n", IMAGE_ORDINAL32(il->u1.Ordinal));
+            printf("  %4u  <by ordinal>\n", IMAGE_ORDINAL32(il->u1.Ordinal));
         else
         {
-            iibn = RVA((DWORD)il->u1.AddressOfData, sizeof(DWORD));
+            iibn = RVA((DWORD)il->u1.AddressOfData - offset, sizeof(DWORD));
             if (!iibn)
                 printf("Can't grab import by name info, skipping to next ordinal\n");
             else
-                printf("  %4u  %s %lx\n", iibn->Hint, iibn->Name, (DWORD)il->u1.AddressOfData);
+                printf("  %4u  %s %x\n", iibn->Hint, iibn->Name, thunk_rva);
         }
     }
 }
 
 static	void	dump_dir_imported_functions(void)
 {
-    IMAGE_IMPORT_DESCRIPTOR	*importDesc = get_dir(IMAGE_FILE_IMPORT_DIRECTORY);
-    DWORD directorySize;
+    unsigned directorySize;
+    const IMAGE_IMPORT_DESCRIPTOR* importDesc = get_dir_and_size(IMAGE_FILE_IMPORT_DIRECTORY, &directorySize);
 
     if (!importDesc)	return;
-    if(PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-    {
-        IMAGE_OPTIONAL_HEADER64 *opt = (IMAGE_OPTIONAL_HEADER64*)&PE_nt_headers->OptionalHeader;
-        directorySize = opt->DataDirectory[IMAGE_FILE_IMPORT_DIRECTORY].Size;
-    }
-    else
-    {
-        IMAGE_OPTIONAL_HEADER32 *opt = (IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader;
-        directorySize = opt->DataDirectory[IMAGE_FILE_IMPORT_DIRECTORY].Size;
-    }
 
-    printf("Import Table size: %08lx\n", directorySize);/* FIXME */
+    printf("Import Table size: %08x\n", directorySize);/* FIXME */
 
     for (;;)
     {
-	IMAGE_THUNK_DATA32*	il;
+	const IMAGE_THUNK_DATA32*	il;
 
         if (!importDesc->Name || !importDesc->FirstThunk) break;
 
-	printf("  offset %08lx %s\n", Offset(importDesc), (char*)RVA(importDesc->Name, sizeof(DWORD)));
-	printf("  Hint/Name Table: %08lX\n", (DWORD)importDesc->u.OriginalFirstThunk);
-	printf("  TimeDataStamp:   %08lX (%s)\n",
+	printf("  offset %08lx %s\n", Offset(importDesc), (const char*)RVA(importDesc->Name, sizeof(DWORD)));
+	printf("  Hint/Name Table: %08X\n", (DWORD)importDesc->u.OriginalFirstThunk);
+	printf("  TimeDateStamp:   %08X (%s)\n",
 	       importDesc->TimeDateStamp, get_time_str(importDesc->TimeDateStamp));
-	printf("  ForwarderChain:  %08lX\n", importDesc->ForwarderChain);
-	printf("  First thunk RVA: %08lX\n", (DWORD)importDesc->FirstThunk);
+	printf("  ForwarderChain:  %08X\n", importDesc->ForwarderChain);
+	printf("  First thunk RVA: %08X\n", (DWORD)importDesc->FirstThunk);
 
 	printf("  Ordn  Name\n");
 
@@ -560,9 +1256,9 @@ static	void	dump_dir_imported_functions(void)
         else
         {
             if(PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-                dump_image_thunk_data64((IMAGE_THUNK_DATA64*)il);
+                dump_image_thunk_data64((const IMAGE_THUNK_DATA64*)il, importDesc->FirstThunk);
             else
-                dump_image_thunk_data32(il);
+                dump_image_thunk_data32(il, 0, importDesc->FirstThunk);
             printf("\n");
         }
 	importDesc++;
@@ -570,60 +1266,87 @@ static	void	dump_dir_imported_functions(void)
     printf("\n");
 }
 
-static void dump_dir_delay_imported_functions(void)
+static void dump_dir_loadconfig(void)
 {
-    struct ImgDelayDescr
-    {
-        DWORD grAttrs;
-        DWORD szName;
-        DWORD phmod;
-        DWORD pIAT;
-        DWORD pINT;
-        DWORD pBoundIAT;
-        DWORD pUnloadIAT;
-        DWORD dwTimeStamp;
-    } *importDesc = get_dir(IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT);
-    DWORD directorySize;
+    const IMAGE_LOAD_CONFIG_DIRECTORY32 *loadcfg32 = get_dir(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG);
+    const IMAGE_LOAD_CONFIG_DIRECTORY64 *loadcfg64 = (void*)loadcfg32;
 
-    if (!importDesc) return;
-    if (PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    if (!loadcfg32) return;
+
+    printf( "Loadconfig\n" );
+    print_dword( "Size",                                loadcfg32->Size );
+    print_dword( "TimeDateStamp",                       loadcfg32->TimeDateStamp );
+    print_word(  "MajorVersion",                        loadcfg32->MajorVersion );
+    print_word(  "MinorVersion",                        loadcfg32->MinorVersion );
+    print_dword( "GlobalFlagsClear",                    loadcfg32->GlobalFlagsClear );
+    print_dword( "GlobalFlagsSet",                      loadcfg32->GlobalFlagsSet );
+    print_dword( "CriticalSectionDefaultTimeout",       loadcfg32->CriticalSectionDefaultTimeout );
+
+    if(PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
     {
-        IMAGE_OPTIONAL_HEADER64 *opt = (IMAGE_OPTIONAL_HEADER64 *)&PE_nt_headers->OptionalHeader;
-        directorySize = opt->DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].Size;
+        print_longlong( "DeCommitFreeBlockThreshold",   loadcfg64->DeCommitFreeBlockThreshold );
+        print_longlong( "DeCommitTotalFreeThreshold",   loadcfg64->DeCommitTotalFreeThreshold );
+        print_longlong( "MaximumAllocationSize",        loadcfg64->MaximumAllocationSize );
+        print_longlong( "VirtualMemoryThreshold",       loadcfg64->VirtualMemoryThreshold );
+        print_dword(    "ProcessHeapFlags",             loadcfg64->ProcessHeapFlags );
+        print_longlong( "ProcessAffinityMask",          loadcfg64->ProcessAffinityMask );
+        print_word(     "CSDVersion",                   loadcfg64->CSDVersion );
+        print_word(     "Reserved",                     loadcfg64->Reserved1 );
+        print_longlong( "SecurityCookie",               loadcfg64->SecurityCookie );
+        print_longlong( "SEHandlerTable",               loadcfg64->SEHandlerTable );
+        print_longlong( "SEHandlerCount",               loadcfg64->SEHandlerCount );
     }
     else
     {
-        IMAGE_OPTIONAL_HEADER32 *opt = (IMAGE_OPTIONAL_HEADER32 *)&PE_nt_headers->OptionalHeader;
-        directorySize = opt->DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].Size;
+        print_dword( "DeCommitFreeBlockThreshold",      loadcfg32->DeCommitFreeBlockThreshold );
+        print_dword( "DeCommitTotalFreeThreshold",      loadcfg32->DeCommitTotalFreeThreshold );
+        print_dword( "MaximumAllocationSize",           loadcfg32->MaximumAllocationSize );
+        print_dword( "VirtualMemoryThreshold",          loadcfg32->VirtualMemoryThreshold );
+        print_dword( "ProcessHeapFlags",                loadcfg32->ProcessHeapFlags );
+        print_dword( "ProcessAffinityMask",             loadcfg32->ProcessAffinityMask );
+        print_word(  "CSDVersion",                      loadcfg32->CSDVersion );
+        print_word(  "Reserved",                        loadcfg32->Reserved1 );
+        print_dword( "SecurityCookie",                  loadcfg32->SecurityCookie );
+        print_dword( "SEHandlerTable",                  loadcfg32->SEHandlerTable );
+        print_dword( "SEHandlerCount",                  loadcfg32->SEHandlerCount );
     }
+}
 
-    printf("Delay Import Table size: %08lx\n", directorySize); /* FIXME */
+static void dump_dir_delay_imported_functions(void)
+{
+    unsigned  directorySize;
+    const IMAGE_DELAYLOAD_DESCRIPTOR *importDesc = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT, &directorySize);
+
+    if (!importDesc) return;
+
+    printf("Delay Import Table size: %08x\n", directorySize); /* FIXME */
 
     for (;;)
     {
-        BOOL use_rva = importDesc->grAttrs & 1;
-        IMAGE_THUNK_DATA32 *il;
+        const IMAGE_THUNK_DATA32*       il;
+        int                             offset = (importDesc->Attributes.AllAttributes & 1) ? 0 : PE_nt_headers->OptionalHeader.ImageBase;
 
-        if (!importDesc->szName || !importDesc->pIAT || !importDesc->pINT) break;
+        if (!importDesc->DllNameRVA || !importDesc->ImportAddressTableRVA || !importDesc->ImportNameTableRVA) break;
 
-        printf("  grAttrs %08lx offset %08lx %s\n", importDesc->grAttrs, Offset(importDesc),
-               use_rva ? (char *)RVA(importDesc->szName, sizeof(DWORD)) : (char *)importDesc->szName);
-        printf("  Hint/Name Table: %08lx\n", importDesc->pINT);
-        printf("  TimeDataStamp:   %08lX (%s)\n",
-               importDesc->dwTimeStamp, get_time_str(importDesc->dwTimeStamp));
+        printf("  grAttrs %08x offset %08lx %s\n", importDesc->Attributes.AllAttributes, Offset(importDesc),
+               (const char *)RVA(importDesc->DllNameRVA - offset, sizeof(DWORD)));
+        printf("  Hint/Name Table: %08x\n", importDesc->ImportNameTableRVA);
+        printf("  Address Table:   %08x\n", importDesc->ImportAddressTableRVA);
+        printf("  TimeDateStamp:   %08X (%s)\n",
+               importDesc->TimeDateStamp, get_time_str(importDesc->TimeDateStamp));
 
         printf("  Ordn  Name\n");
 
-        il = use_rva ? (IMAGE_THUNK_DATA32 *)RVA(importDesc->pINT, sizeof(DWORD)) : (IMAGE_THUNK_DATA32 *)importDesc->pINT;
+        il = RVA(importDesc->ImportNameTableRVA - offset, sizeof(DWORD));
 
         if (!il)
             printf("Can't grab thunk data, going to next imported DLL\n");
         else
         {
             if (PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-                dump_image_thunk_data64((IMAGE_THUNK_DATA64 *)il);
+                dump_image_thunk_data64((const IMAGE_THUNK_DATA64 *)il, importDesc->ImportAddressTableRVA);
             else
-                dump_image_thunk_data32(il);
+                dump_image_thunk_data32(il, offset, importDesc->ImportAddressTableRVA);
             printf("\n");
         }
         importDesc++;
@@ -631,13 +1354,13 @@ static void dump_dir_delay_imported_functions(void)
     printf("\n");
 }
 
-static	void	dump_dir_debug_dir(IMAGE_DEBUG_DIRECTORY* idd, int idx)
+static	void	dump_dir_debug_dir(const IMAGE_DEBUG_DIRECTORY* idd, int idx)
 {
     const	char*	str;
 
     printf("Directory %02u\n", idx + 1);
-    printf("  Characteristics:   %08lX\n", idd->Characteristics);
-    printf("  TimeDateStamp:     %08lX %s\n",
+    printf("  Characteristics:   %08X\n", idd->Characteristics);
+    printf("  TimeDateStamp:     %08X %s\n",
 	   idd->TimeDateStamp, get_time_str(idd->TimeDateStamp));
     printf("  Version            %u.%02u\n", idd->MajorVersion, idd->MinorVersion);
     switch (idd->Type)
@@ -654,19 +1377,25 @@ static	void	dump_dir_debug_dir(IMAGE_DEBUG_DIRECTORY* idd, int idx)
     case IMAGE_DEBUG_TYPE_OMAP_FROM_SRC:str = "OMAP_FROM_SRC"; 	break;
     case IMAGE_DEBUG_TYPE_BORLAND:	str = "BORLAND"; 	break;
     case IMAGE_DEBUG_TYPE_RESERVED10:	str = "RESERVED10"; 	break;
+    case IMAGE_DEBUG_TYPE_CLSID:	str = "CLSID"; 	break;
+    case IMAGE_DEBUG_TYPE_VC_FEATURE:  str = "VC_FEATURE"; break;
+    case IMAGE_DEBUG_TYPE_POGO:        str = "POGO";       break;
+    case IMAGE_DEBUG_TYPE_ILTCG:       str = "ILTCG";      break;
+    case IMAGE_DEBUG_TYPE_MPX:         str = "MPX";        break;
+    case IMAGE_DEBUG_TYPE_REPRO:       str = "REPRO";      break;
     }
-    printf("  Type:              %lu (%s)\n", idd->Type, str);
-    printf("  SizeOfData:        %lu\n", idd->SizeOfData);
-    printf("  AddressOfRawData:  %08lX\n", idd->AddressOfRawData);
-    printf("  PointerToRawData:  %08lX\n", idd->PointerToRawData);
+    printf("  Type:              %u (%s)\n", idd->Type, str);
+    printf("  SizeOfData:        %u\n", idd->SizeOfData);
+    printf("  AddressOfRawData:  %08X\n", idd->AddressOfRawData);
+    printf("  PointerToRawData:  %08X\n", idd->PointerToRawData);
 
     switch (idd->Type)
     {
     case IMAGE_DEBUG_TYPE_UNKNOWN:
 	break;
     case IMAGE_DEBUG_TYPE_COFF:
-	dump_coff(idd->PointerToRawData, idd->SizeOfData, 
-                  (char*)PE_nt_headers + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER) + PE_nt_headers->FileHeader.SizeOfOptionalHeader);
+	dump_coff(idd->PointerToRawData, idd->SizeOfData,
+                  IMAGE_FIRST_SECTION(PE_nt_headers));
 	break;
     case IMAGE_DEBUG_TYPE_CODEVIEW:
 	dump_codeview(idd->PointerToRawData, idd->SizeOfData);
@@ -676,41 +1405,28 @@ static	void	dump_dir_debug_dir(IMAGE_DEBUG_DIRECTORY* idd, int idx)
 	break;
     case IMAGE_DEBUG_TYPE_MISC:
     {
-	IMAGE_DEBUG_MISC* misc = PRD(idd->PointerToRawData, idd->SizeOfData);
+	const IMAGE_DEBUG_MISC* misc = PRD(idd->PointerToRawData, idd->SizeOfData);
 	if (!misc) {printf("Can't get misc debug information\n"); break;}
-	printf("    DataType:          %lu (%s)\n",
+	printf("    DataType:          %u (%s)\n",
 	       misc->DataType,
 	       (misc->DataType == IMAGE_DEBUG_MISC_EXENAME) ? "Exe name" : "Unknown");
-	printf("    Length:            %lu\n", misc->Length);
+	printf("    Length:            %u\n", misc->Length);
 	printf("    Unicode:           %s\n", misc->Unicode ? "Yes" : "No");
 	printf("    Data:              %s\n", misc->Data);
     }
     break;
-    case IMAGE_DEBUG_TYPE_EXCEPTION:
-	break;
-    case IMAGE_DEBUG_TYPE_FIXUP:
-	break;
-    case IMAGE_DEBUG_TYPE_OMAP_TO_SRC:
-	break;
-    case IMAGE_DEBUG_TYPE_OMAP_FROM_SRC:
-	break;
-    case IMAGE_DEBUG_TYPE_BORLAND:
-	break;
-    case IMAGE_DEBUG_TYPE_RESERVED10:
-	break;
+    default: break;
     }
     printf("\n");
 }
 
 static void	dump_dir_debug(void)
 {
-    IMAGE_DEBUG_DIRECTORY*	debugDir = get_dir(IMAGE_FILE_DEBUG_DIRECTORY);
     unsigned			nb_dbg, i;
+    const IMAGE_DEBUG_DIRECTORY*debugDir = get_dir_and_size(IMAGE_FILE_DEBUG_DIRECTORY, &nb_dbg);
 
-    if (!debugDir) return;
-    nb_dbg = PE_nt_headers->OptionalHeader.DataDirectory[IMAGE_FILE_DEBUG_DIRECTORY].Size /
-	sizeof(*debugDir);
-    if (!nb_dbg) return;
+    nb_dbg /= sizeof(*debugDir);
+    if (!debugDir || !nb_dbg) return;
 
     printf("Debug Table (%u directories)\n", nb_dbg);
 
@@ -718,6 +1434,93 @@ static void	dump_dir_debug(void)
     {
 	dump_dir_debug_dir(debugDir, i);
 	debugDir++;
+    }
+    printf("\n");
+}
+
+static inline void print_clrflags(const char *title, DWORD value)
+{
+    printf("  %-34s 0x%X\n", title, value);
+#define X(f,s) if (value & f) printf("    %s\n", s)
+    X(COMIMAGE_FLAGS_ILONLY,           "ILONLY");
+    X(COMIMAGE_FLAGS_32BITREQUIRED,    "32BITREQUIRED");
+    X(COMIMAGE_FLAGS_IL_LIBRARY,       "IL_LIBRARY");
+    X(COMIMAGE_FLAGS_STRONGNAMESIGNED, "STRONGNAMESIGNED");
+    X(COMIMAGE_FLAGS_TRACKDEBUGDATA,   "TRACKDEBUGDATA");
+#undef X
+}
+
+static inline void print_clrdirectory(const char *title, const IMAGE_DATA_DIRECTORY *dir)
+{
+    printf("  %-23s rva: 0x%-8x  size: 0x%-8x\n", title, dir->VirtualAddress, dir->Size);
+}
+
+static void dump_dir_clr_header(void)
+{
+    unsigned int size = 0;
+    const IMAGE_COR20_HEADER *dir = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR, &size);
+
+    if (!dir) return;
+
+    printf( "CLR Header\n" );
+    print_dword( "Header Size", dir->cb );
+    print_ver( "Required runtime version", dir->MajorRuntimeVersion, dir->MinorRuntimeVersion );
+    print_clrflags( "Flags", dir->Flags );
+    print_dword( "EntryPointToken", dir->u.EntryPointToken );
+    printf("\n");
+    printf( "CLR Data Directory\n" );
+    print_clrdirectory( "MetaData", &dir->MetaData );
+    print_clrdirectory( "Resources", &dir->Resources );
+    print_clrdirectory( "StrongNameSignature", &dir->StrongNameSignature );
+    print_clrdirectory( "CodeManagerTable", &dir->CodeManagerTable );
+    print_clrdirectory( "VTableFixups", &dir->VTableFixups );
+    print_clrdirectory( "ExportAddressTableJumps", &dir->ExportAddressTableJumps );
+    print_clrdirectory( "ManagedNativeHeader", &dir->ManagedNativeHeader );
+    printf("\n");
+}
+
+static void dump_dir_reloc(void)
+{
+    unsigned int i, size = 0;
+    const USHORT *relocs;
+    const IMAGE_BASE_RELOCATION *rel = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_BASERELOC, &size);
+    const IMAGE_BASE_RELOCATION *end = (const IMAGE_BASE_RELOCATION *)((const char *)rel + size);
+    static const char * const names[] =
+    {
+        "BASED_ABSOLUTE",
+        "BASED_HIGH",
+        "BASED_LOW",
+        "BASED_HIGHLOW",
+        "BASED_HIGHADJ",
+        "BASED_MIPS_JMPADDR",
+        "BASED_SECTION",
+        "BASED_REL",
+        "unknown 8",
+        "BASED_IA64_IMM64",
+        "BASED_DIR64",
+        "BASED_HIGH3ADJ",
+        "unknown 12",
+        "unknown 13",
+        "unknown 14",
+        "unknown 15"
+    };
+
+    if (!rel) return;
+
+    printf( "Relocations\n" );
+    while (rel < end - 1 && rel->SizeOfBlock)
+    {
+        printf( "  Page %x\n", rel->VirtualAddress );
+        relocs = (const USHORT *)(rel + 1);
+        i = (rel->SizeOfBlock - sizeof(*rel)) / sizeof(USHORT);
+        while (i--)
+        {
+            USHORT offset = *relocs & 0xfff;
+            int type = *relocs >> 12;
+            printf( "    off %04x type %s\n", offset, names[type] );
+            relocs++;
+        }
+        rel = (const IMAGE_BASE_RELOCATION *)relocs;
     }
     printf("\n");
 }
@@ -744,54 +1547,66 @@ static void dump_dir_tls(void)
 
     /* FIXME: This does not properly handle large images */
     printf( "Thread Local Storage\n" );
-    printf( "  Raw data        %08lx-%08lx (data size %lx zero fill size %lx)\n",
+    printf( "  Raw data        %08x-%08x (data size %x zero fill size %x)\n",
             (DWORD)dir.StartAddressOfRawData, (DWORD)dir.EndAddressOfRawData,
             (DWORD)(dir.EndAddressOfRawData - dir.StartAddressOfRawData),
             (DWORD)dir.SizeOfZeroFill );
-    printf( "  Index address   %08lx\n", (DWORD)dir.AddressOfIndex );
-    printf( "  Characteristics %08lx\n", dir.Characteristics );
-    printf( "  Callbacks       %08lx -> {", (DWORD)dir.AddressOfCallBacks );
+    printf( "  Index address   %08x\n", (DWORD)dir.AddressOfIndex );
+    printf( "  Characteristics %08x\n", dir.Characteristics );
+    printf( "  Callbacks       %08x -> {", (DWORD)dir.AddressOfCallBacks );
     if (dir.AddressOfCallBacks)
     {
         DWORD   addr = (DWORD)dir.AddressOfCallBacks - PE_nt_headers->OptionalHeader.ImageBase;
         while ((callbacks = RVA(addr, sizeof(DWORD))) && *callbacks)
         {
-            printf( " %08lx", *callbacks );
+            printf( " %08x", *callbacks );
             addr += sizeof(DWORD);
         }
     }
     printf(" }\n\n");
 }
 
-void	dump_separate_dbg(void)
+enum FileSig get_kind_dbg(void)
 {
-    IMAGE_SEPARATE_DEBUG_HEADER*separateDebugHead = PRD(0, sizeof(separateDebugHead));
-    unsigned			nb_dbg;
-    unsigned			i;
-    IMAGE_DEBUG_DIRECTORY*	debugDir;
+    const WORD*                pw;
 
+    pw = PRD(0, sizeof(WORD));
+    if (!pw) {printf("Can't get main signature, aborting\n"); return 0;}
+
+    if (*pw == 0x4944 /* "DI" */) return SIG_DBG;
+    return SIG_UNKNOWN;
+}
+
+void	dbg_dump(void)
+{
+    const IMAGE_SEPARATE_DEBUG_HEADER*  separateDebugHead;
+    unsigned			        nb_dbg;
+    unsigned			        i;
+    const IMAGE_DEBUG_DIRECTORY*	debugDir;
+
+    separateDebugHead = PRD(0, sizeof(*separateDebugHead));
     if (!separateDebugHead) {printf("Can't grab the separate header, aborting\n"); return;}
 
     printf ("Signature:          %.2s (0x%4X)\n",
-	    (char*)&separateDebugHead->Signature, separateDebugHead->Signature);
+	    (const char*)&separateDebugHead->Signature, separateDebugHead->Signature);
     printf ("Flags:              0x%04X\n", separateDebugHead->Flags);
     printf ("Machine:            0x%04X (%s)\n",
 	    separateDebugHead->Machine, get_machine_str(separateDebugHead->Machine));
     printf ("Characteristics:    0x%04X\n", separateDebugHead->Characteristics);
-    printf ("TimeDateStamp:      0x%08lX (%s)\n",
+    printf ("TimeDateStamp:      0x%08X (%s)\n",
 	    separateDebugHead->TimeDateStamp, get_time_str(separateDebugHead->TimeDateStamp));
-    printf ("CheckSum:           0x%08lX\n", separateDebugHead->CheckSum);
-    printf ("ImageBase:          0x%08lX\n", separateDebugHead->ImageBase);
-    printf ("SizeOfImage:        0x%08lX\n", separateDebugHead->SizeOfImage);
-    printf ("NumberOfSections:   0x%08lX\n", separateDebugHead->NumberOfSections);
-    printf ("ExportedNamesSize:  0x%08lX\n", separateDebugHead->ExportedNamesSize);
-    printf ("DebugDirectorySize: 0x%08lX\n", separateDebugHead->DebugDirectorySize);
+    printf ("CheckSum:           0x%08X\n", separateDebugHead->CheckSum);
+    printf ("ImageBase:          0x%08X\n", separateDebugHead->ImageBase);
+    printf ("SizeOfImage:        0x%08X\n", separateDebugHead->SizeOfImage);
+    printf ("NumberOfSections:   0x%08X\n", separateDebugHead->NumberOfSections);
+    printf ("ExportedNamesSize:  0x%08X\n", separateDebugHead->ExportedNamesSize);
+    printf ("DebugDirectorySize: 0x%08X\n", separateDebugHead->DebugDirectorySize);
 
     if (!PRD(sizeof(IMAGE_SEPARATE_DEBUG_HEADER),
 	     separateDebugHead->NumberOfSections * sizeof(IMAGE_SECTION_HEADER)))
     {printf("Can't get the sections, aborting\n"); return;}
 
-    dump_sections(separateDebugHead + 1, separateDebugHead->NumberOfSections);
+    dump_sections(separateDebugHead, separateDebugHead + 1, separateDebugHead->NumberOfSections);
 
     nb_dbg = separateDebugHead->DebugDirectorySize / sizeof(IMAGE_DEBUG_DIRECTORY);
     debugDir = PRD(sizeof(IMAGE_SEPARATE_DEBUG_HEADER) +
@@ -811,7 +1626,7 @@ void	dump_separate_dbg(void)
 
 static const char *get_resource_type( unsigned int id )
 {
-    static const char *types[] =
+    static const char * const types[] =
     {
         NULL,
         "CURSOR",
@@ -836,10 +1651,11 @@ static const char *get_resource_type( unsigned int id )
         "VXD",
         "ANICURSOR",
         "ANIICON",
-        "HTML"
+        "HTML",
+        "RT_MANIFEST"
     };
 
-    if ((size_t)id < sizeof(types)/sizeof(types[0])) return types[id];
+    if ((size_t)id < ARRAY_SIZE(types)) return types[id];
     return NULL;
 }
 
@@ -1002,52 +1818,51 @@ static void dump_dir_resource(void)
     for (i = 0; i< root->NumberOfNamedEntries + root->NumberOfIdEntries; i++)
     {
         e1 = (const IMAGE_RESOURCE_DIRECTORY_ENTRY*)(root + 1) + i;
-        namedir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e1->u2.s3.OffsetToDirectory);
+        namedir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e1->u2.s2.OffsetToDirectory);
         for (j = 0; j < namedir->NumberOfNamedEntries + namedir->NumberOfIdEntries; j++)
         {
             e2 = (const IMAGE_RESOURCE_DIRECTORY_ENTRY*)(namedir + 1) + j;
-            langdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e2->u2.s3.OffsetToDirectory);
+            langdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e2->u2.s2.OffsetToDirectory);
             for (k = 0; k < langdir->NumberOfNamedEntries + langdir->NumberOfIdEntries; k++)
             {
                 e3 = (const IMAGE_RESOURCE_DIRECTORY_ENTRY*)(langdir + 1) + k;
 
                 printf( "\n  " );
-                if (e1->u1.s1.NameIsString)
+                if (e1->u.s.NameIsString)
                 {
-                    string = (const IMAGE_RESOURCE_DIR_STRING_U*)((const char *)root + e1->u1.s1.NameOffset);
+                    string = (const IMAGE_RESOURCE_DIR_STRING_U*)((const char *)root + e1->u.s.NameOffset);
                     dump_unicode_str( string->NameString, string->Length );
                 }
                 else
                 {
-                    const char *type = get_resource_type( e1->u1.s2.Id );
+                    const char *type = get_resource_type( e1->u.Id );
                     if (type) printf( "%s", type );
-                    else printf( "%04x", e1->u1.s2.Id );
+                    else printf( "%04x", e1->u.Id );
                 }
 
                 printf( " Name=" );
-                if (e2->u1.s1.NameIsString)
+                if (e2->u.s.NameIsString)
                 {
-                    string = (const IMAGE_RESOURCE_DIR_STRING_U*) ((const char *)root + e2->u1.s1.NameOffset);
+                    string = (const IMAGE_RESOURCE_DIR_STRING_U*) ((const char *)root + e2->u.s.NameOffset);
                     dump_unicode_str( string->NameString, string->Length );
                 }
                 else
-                    printf( "%04x", e2->u1.s2.Id );
+                    printf( "%04x", e2->u.Id );
 
-                printf( " Language=%04x:\n", e3->u1.s2.Id );
+                printf( " Language=%04x:\n", e3->u.Id );
                 data = (const IMAGE_RESOURCE_DATA_ENTRY *)((const char *)root + e3->u2.OffsetToData);
-                if (e1->u1.s1.NameIsString)
+                if (e1->u.s.NameIsString)
                 {
                     dump_data( RVA( data->OffsetToData, data->Size ), data->Size, "    " );
                 }
-                else switch(e1->u1.s2.Id)
+                else switch(e1->u.Id)
                 {
                 case 6:
-                    dump_string_data( RVA( data->OffsetToData, data->Size ), data->Size,
-                                      e2->u1.s2.Id, "    " );
+                    dump_string_data( RVA( data->OffsetToData, data->Size ), data->Size,                                      e2->u.Id, "    " );
                     break;
                 case 11:
                     dump_msgtable_data( RVA( data->OffsetToData, data->Size ), data->Size,
-                                        e2->u1.s2.Id, "    " );
+                                        e2->u.Id, "    " );
                     break;
                 default:
                     dump_data( RVA( data->OffsetToData, data->Size ), data->Size, "    " );
@@ -1059,17 +1874,87 @@ static void dump_dir_resource(void)
     printf( "\n\n" );
 }
 
-void pe_dump(void* pmt)
+static void dump_debug(void)
+{
+    const char* stabs = NULL;
+    unsigned    szstabs = 0;
+    const char* stabstr = NULL;
+    unsigned    szstr = 0;
+    unsigned    i;
+    const IMAGE_SECTION_HEADER*	sectHead;
+
+    sectHead = IMAGE_FIRST_SECTION(PE_nt_headers);
+
+    for (i = 0; i < PE_nt_headers->FileHeader.NumberOfSections; i++, sectHead++)
+    {
+        if (!strcmp((const char *)sectHead->Name, ".stab"))
+        {
+            stabs = RVA(sectHead->VirtualAddress, sectHead->Misc.VirtualSize); 
+            szstabs = sectHead->Misc.VirtualSize;
+        }
+        if (!strncmp((const char *)sectHead->Name, ".stabstr", 8))
+        {
+            stabstr = RVA(sectHead->VirtualAddress, sectHead->Misc.VirtualSize);
+            szstr = sectHead->Misc.VirtualSize;
+        }
+    }
+    if (stabs && stabstr)
+        dump_stabs(stabs, szstabs, stabstr, szstr);
+}
+
+static void dump_symbol_table(void)
+{
+    const IMAGE_SYMBOL* sym;
+    int                 numsym;
+
+    numsym = PE_nt_headers->FileHeader.NumberOfSymbols;
+    if (!PE_nt_headers->FileHeader.PointerToSymbolTable || !numsym)
+        return;
+    sym = PRD(PE_nt_headers->FileHeader.PointerToSymbolTable,
+                                   sizeof(*sym) * numsym);
+    if (!sym) return;
+
+    dump_coff_symbol_table(sym, numsym, IMAGE_FIRST_SECTION(PE_nt_headers));
+}
+
+enum FileSig get_kind_exec(void)
+{
+    const WORD*                pw;
+    const DWORD*               pdw;
+    const IMAGE_DOS_HEADER*    dh;
+
+    pw = PRD(0, sizeof(WORD));
+    if (!pw) {printf("Can't get main signature, aborting\n"); return 0;}
+
+    if (*pw != IMAGE_DOS_SIGNATURE) return SIG_UNKNOWN;
+
+    if ((dh = PRD(0, sizeof(IMAGE_DOS_HEADER))))
+    {
+        /* the signature is the first DWORD */
+        pdw = PRD(dh->e_lfanew, sizeof(DWORD));
+        if (pdw)
+        {
+            if (*pdw == IMAGE_NT_SIGNATURE)                     return SIG_PE;
+            if (*(const WORD *)pdw == IMAGE_OS2_SIGNATURE)      return SIG_NE;
+            if (*(const WORD *)pdw == IMAGE_VXD_SIGNATURE)      return SIG_LE;
+        }
+        return SIG_DOS;
+    }
+    return SIG_UNKNOWN;
+}
+
+void pe_dump(void)
 {
     int	all = (globals.dumpsect != NULL) && strcmp(globals.dumpsect, "ALL") == 0;
 
-    PE_nt_headers = pmt;
+    PE_nt_headers = get_nt_header();
+    if (is_fake_dll()) printf( "*** This is a Wine fake DLL ***\n\n" );
+
     if (globals.do_dumpheader)
     {
 	dump_pe_header();
 	/* FIXME: should check ptr */
-	dump_sections((char*)PE_nt_headers + sizeof(DWORD) +
-		      sizeof(IMAGE_FILE_HEADER) + PE_nt_headers->FileHeader.SizeOfOptionalHeader,
+	dump_sections(PRD(0, 1), IMAGE_FIRST_SECTION(PE_nt_headers),
 		      PE_nt_headers->FileHeader.NumberOfSections);
     }
     else if (!globals.dumpsect)
@@ -1093,12 +1978,19 @@ void pe_dump(void* pmt)
 	    dump_dir_resource();
 	if (all || !strcmp(globals.dumpsect, "tls"))
 	    dump_dir_tls();
-#if 0
-	/* FIXME: not implemented yet */
+	if (all || !strcmp(globals.dumpsect, "loadcfg"))
+	    dump_dir_loadconfig();
+	if (all || !strcmp(globals.dumpsect, "clr"))
+	    dump_dir_clr_header();
 	if (all || !strcmp(globals.dumpsect, "reloc"))
 	    dump_dir_reloc();
-#endif
+	if (all || !strcmp(globals.dumpsect, "except"))
+	    dump_dir_exceptions();
     }
+    if (globals.do_symbol_table)
+        dump_symbol_table();
+    if (globals.do_debug)
+        dump_debug();
 }
 
 typedef struct _dll_symbol {
@@ -1135,31 +2027,30 @@ static void dll_close (void)
 }
 */
 
-static	void	do_grab_sym( enum FileSig sig, void* pmt )
+static	void	do_grab_sym( void )
 {
-    IMAGE_EXPORT_DIRECTORY	*exportDir;
+    const IMAGE_EXPORT_DIRECTORY*exportDir;
     unsigned			i, j;
-    DWORD*			pName;
-    DWORD*			pFunc;
-    WORD*			pOrdl;
+    const DWORD*		pName;
+    const DWORD*		pFunc;
+    const WORD* 		pOrdl;
     const char*			ptr;
     DWORD*			map;
 
-    PE_nt_headers = pmt;
+    PE_nt_headers = get_nt_header();
     if (!(exportDir = get_dir(IMAGE_FILE_EXPORT_DIRECTORY))) return;
 
     pName = RVA(exportDir->AddressOfNames, exportDir->NumberOfNames * sizeof(DWORD));
     if (!pName) {printf("Can't grab functions' name table\n"); return;}
     pOrdl = RVA(exportDir->AddressOfNameOrdinals, exportDir->NumberOfNames * sizeof(WORD));
     if (!pOrdl) {printf("Can't grab functions' ordinal table\n"); return;}
+    pFunc = RVA(exportDir->AddressOfFunctions, exportDir->NumberOfFunctions * sizeof(DWORD));
+    if (!pFunc) {printf("Can't grab functions' address table\n"); return;}
 
     /* dll_close(); */
 
-    if (!(dll_symbols = (dll_symbol *) malloc((exportDir->NumberOfFunctions + 1) *
-					      sizeof (dll_symbol))))
+    if (!(dll_symbols = malloc((exportDir->NumberOfFunctions + 1) * sizeof(dll_symbol))))
 	fatal ("Out of memory");
-    if (exportDir->AddressOfFunctions != exportDir->NumberOfNames || exportDir->Base > 1)
-	globals.do_ordinals = 1;
 
     /* bit map of used funcs */
     map = calloc(((exportDir->NumberOfFunctions + 31) & ~31) / 32, sizeof(DWORD));
@@ -1174,8 +2065,6 @@ static	void	do_grab_sym( enum FileSig sig, void* pmt )
 	dll_symbols[j].ordinal = exportDir->Base + *pOrdl;
 	assert(dll_symbols[j].symbol);
     }
-    pFunc = RVA(exportDir->AddressOfFunctions, exportDir->NumberOfFunctions * sizeof(DWORD));
-    if (!pFunc) {printf("Can't grab functions' address table\n"); return;}
 
     for (i = 0; i < exportDir->NumberOfFunctions; i++)
     {
@@ -1183,7 +2072,7 @@ static	void	do_grab_sym( enum FileSig sig, void* pmt )
 	{
 	    char ordinal_text[256];
 	    /* Ordinal only entry */
-	    snprintf (ordinal_text, sizeof(ordinal_text), "%s_%lu",
+            snprintf (ordinal_text, sizeof(ordinal_text), "%s_%u",
 		      globals.forward_dll ? globals.forward_dll : OUTPUT_UC_DLL_NAME,
 		      exportDir->Base + i);
 	    str_toupper(ordinal_text);
@@ -1197,7 +2086,7 @@ static	void	do_grab_sym( enum FileSig sig, void* pmt )
     free(map);
 
     if (NORMAL)
-	printf("%lu named symbols in DLL, %lu total, %d unique (ordinal base = %ld)\n",
+	printf("%u named symbols in DLL, %u total, %d unique (ordinal base = %d)\n",
 	       exportDir->NumberOfNames, exportDir->NumberOfFunctions, j, exportDir->Base);
 
     qsort( dll_symbols, j, sizeof(dll_symbol), symbol_cmp );
@@ -1212,7 +2101,7 @@ static	void	do_grab_sym( enum FileSig sig, void* pmt )
  *
  * Open a DLL and read in exported symbols
  */
-int dll_open (const char *dll_name)
+BOOL dll_open (const char *dll_name)
 {
     return dump_analysis(dll_name, do_grab_sym, SIG_PE);
 }
@@ -1222,15 +2111,13 @@ int dll_open (const char *dll_name)
  *
  * Get next exported symbol from dll
  */
-int dll_next_symbol (parsed_symbol * sym)
+BOOL dll_next_symbol (parsed_symbol * sym)
 {
-    if (!dll_current_symbol->symbol)
-	return 1;
-
-    assert (dll_symbols);
-
+    if (!dll_current_symbol || !dll_current_symbol->symbol)
+       return FALSE;
+     assert (dll_symbols);
     sym->symbol = strdup (dll_current_symbol->symbol);
     sym->ordinal = dll_current_symbol->ordinal;
     dll_current_symbol++;
-    return 0;
+    return TRUE;
 }

@@ -14,7 +14,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  * We use function pointers here as there is no import library for NTDLL on
@@ -37,8 +37,8 @@ static int      (WINAPIV *patoi)(const char *);
 static long     (WINAPIV *patol)(const char *);
 static LONGLONG (WINAPIV *p_atoi64)(const char *);
 static LPSTR    (WINAPIV *p_itoa)(int, LPSTR, INT);
-static LPSTR    (WINAPIV *p_ltoa)(long, LPSTR, INT);
-static LPSTR    (WINAPIV *p_ultoa)(unsigned long, LPSTR, INT);
+static LPSTR    (WINAPIV *p_ltoa)(LONG, LPSTR, INT);
+static LPSTR    (WINAPIV *p_ultoa)(ULONG, LPSTR, INT);
 static LPSTR    (WINAPIV *p_i64toa)(LONGLONG, LPSTR, INT);
 static LPSTR    (WINAPIV *p_ui64toa)(ULONGLONG, LPSTR, INT);
 
@@ -46,16 +46,21 @@ static int      (WINAPIV *p_wtoi)(LPWSTR);
 static long     (WINAPIV *p_wtol)(LPWSTR);
 static LONGLONG (WINAPIV *p_wtoi64)(LPWSTR);
 static LPWSTR   (WINAPIV *p_itow)(int, LPWSTR, int);
-static LPWSTR   (WINAPIV *p_ltow)(long, LPWSTR, INT);
-static LPWSTR   (WINAPIV *p_ultow)(unsigned long, LPWSTR, INT);
+static LPWSTR   (WINAPIV *p_ltow)(LONG, LPWSTR, INT);
+static LPWSTR   (WINAPIV *p_ultow)(ULONG, LPWSTR, INT);
 static LPWSTR   (WINAPIV *p_i64tow)(LONGLONG, LPWSTR, INT);
 static LPWSTR   (WINAPIV *p_ui64tow)(ULONGLONG, LPWSTR, INT);
 
-static long     (WINAPIV *pwcstol)(LPCWSTR, LPWSTR *, INT);
-static ULONG    (WINAPIV *pwcstoul)(LPCWSTR, LPWSTR *, INT);
+static LPWSTR   (__cdecl *p_wcslwr)(LPWSTR);
+static LPWSTR   (__cdecl *p_wcsupr)(LPWSTR);
 
 static LPWSTR   (WINAPIV *p_wcschr)(LPCWSTR, WCHAR);
 static LPWSTR   (WINAPIV *p_wcsrchr)(LPCWSTR, WCHAR);
+
+static void     (__cdecl *p_qsort)(void *,size_t,size_t, int(__cdecl *compar)(const void *, const void *) );
+static void*    (__cdecl *p_bsearch)(void *,void*,size_t,size_t, int(__cdecl *compar)(const void *, const void *) );
+static int      (WINAPIV *p__snprintf)(char *, size_t, const char *, ...);
+
 
 static void InitFunctionPtrs(void)
 {
@@ -85,11 +90,15 @@ static void InitFunctionPtrs(void)
 	p_i64tow = (void *)GetProcAddress(hntdll, "_i64tow");
 	p_ui64tow = (void *)GetProcAddress(hntdll, "_ui64tow");
 
-	pwcstol = (void *)GetProcAddress(hntdll, "wcstol");
-	pwcstoul = (void *)GetProcAddress(hntdll, "wcstoul");
+        p_wcslwr = (void *)GetProcAddress(hntdll, "_wcslwr");
+        p_wcsupr = (void *)GetProcAddress(hntdll, "_wcsupr");
 
 	p_wcschr= (void *)GetProcAddress(hntdll, "wcschr");
 	p_wcsrchr= (void *)GetProcAddress(hntdll, "wcsrchr");
+	p_qsort= (void *)GetProcAddress(hntdll, "qsort");
+	p_bsearch= (void *)GetProcAddress(hntdll, "bsearch");
+
+        p__snprintf = (void *)GetProcAddress(hntdll, "_snprintf");
     } /* if */
 }
 
@@ -203,7 +212,6 @@ static const ulong2str_t ulong2str[] = {
     {36,    62193781, "111111\0------------------------------------------------------------", 0x77},
     {37,    71270178, "111111\0------------------------------------------------------------", 0x77},
 };
-#define NB_ULONG2STR (sizeof(ulong2str)/sizeof(*ulong2str))
 
 
 static void one_itoa_test(int test_num, const ulong2str_t *ulong2str)
@@ -228,7 +236,7 @@ static void one_itoa_test(int test_num, const ulong2str_t *ulong2str)
 static void one_ltoa_test(int test_num, const ulong2str_t *ulong2str)
 {
     char dest_str[LARGE_STRI_BUFFER_LENGTH + 1];
-    long value;
+    LONG value;
     LPSTR result;
 
     memset(dest_str, '-', LARGE_STRI_BUFFER_LENGTH);
@@ -236,10 +244,10 @@ static void one_ltoa_test(int test_num, const ulong2str_t *ulong2str)
     value = ulong2str->value;
     result = p_ltoa(ulong2str->value, dest_str, ulong2str->base);
     ok(result == dest_str,
-       "(test %d): _ltoa(%ld, [out], %d) has result %p, expected: %p\n",
+       "(test %d): _ltoa(%d, [out], %d) has result %p, expected: %p\n",
        test_num, value, ulong2str->base, result, dest_str);
     ok(memcmp(dest_str, ulong2str->Buffer, LARGE_STRI_BUFFER_LENGTH) == 0,
-       "(test %d): _ltoa(%ld, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+       "(test %d): _ltoa(%d, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
        test_num, value, ulong2str->base, dest_str, ulong2str->Buffer);
 }
 
@@ -247,7 +255,7 @@ static void one_ltoa_test(int test_num, const ulong2str_t *ulong2str)
 static void one_ultoa_test(int test_num, const ulong2str_t *ulong2str)
 {
     char dest_str[LARGE_STRI_BUFFER_LENGTH + 1];
-    unsigned long value;
+    ULONG value;
     LPSTR result;
 
     memset(dest_str, '-', LARGE_STRI_BUFFER_LENGTH);
@@ -255,10 +263,10 @@ static void one_ultoa_test(int test_num, const ulong2str_t *ulong2str)
     value = ulong2str->value;
     result = p_ultoa(ulong2str->value, dest_str, ulong2str->base);
     ok(result == dest_str,
-       "(test %d): _ultoa(%lu, [out], %d) has result %p, expected: %p\n",
+       "(test %d): _ultoa(%u, [out], %d) has result %p, expected: %p\n",
        test_num, value, ulong2str->base, result, dest_str);
     ok(memcmp(dest_str, ulong2str->Buffer, LARGE_STRI_BUFFER_LENGTH) == 0,
-       "(test %d): _ultoa(%lu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+       "(test %d): _ultoa(%u, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
        test_num, value, ulong2str->base, dest_str, ulong2str->Buffer);
 }
 
@@ -267,7 +275,7 @@ static void test_ulongtoa(void)
 {
     int test_num;
 
-    for (test_num = 0; test_num < NB_ULONG2STR; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(ulong2str); test_num++) {
 	if (ulong2str[test_num].mask & 0x01) {
 	    one_itoa_test(test_num, &ulong2str[test_num]);
 	} /* if */
@@ -323,7 +331,7 @@ static void one_ltow_test(int test_num, const ulong2str_t *ulong2str)
     WCHAR dest_wstr[LARGE_STRI_BUFFER_LENGTH + 1];
     UNICODE_STRING unicode_string;
     STRING ansi_str;
-    long value;
+    LONG value;
     LPWSTR result;
 
     for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
@@ -343,10 +351,10 @@ static void one_ltow_test(int test_num, const ulong2str_t *ulong2str)
     result = p_ltow(value, dest_wstr, ulong2str->base);
     pRtlUnicodeStringToAnsiString(&ansi_str, &unicode_string, 1);
     ok(result == dest_wstr,
-       "(test %d): _ltow(%ld, [out], %d) has result %p, expected: %p\n",
+       "(test %d): _ltow(%d, [out], %d) has result %p, expected: %p\n",
        test_num, value, ulong2str->base, result, dest_wstr);
     ok(memcmp(dest_wstr, expected_wstr, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) == 0,
-       "(test %d): _ltow(%ld, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+       "(test %d): _ltow(%d, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
        test_num, value, ulong2str->base, ansi_str.Buffer, ulong2str->Buffer);
     pRtlFreeAnsiString(&ansi_str);
 }
@@ -359,7 +367,7 @@ static void one_ultow_test(int test_num, const ulong2str_t *ulong2str)
     WCHAR dest_wstr[LARGE_STRI_BUFFER_LENGTH + 1];
     UNICODE_STRING unicode_string;
     STRING ansi_str;
-    unsigned long value;
+    ULONG value;
     LPWSTR result;
 
     for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
@@ -379,10 +387,10 @@ static void one_ultow_test(int test_num, const ulong2str_t *ulong2str)
     result = p_ultow(value, dest_wstr, ulong2str->base);
     pRtlUnicodeStringToAnsiString(&ansi_str, &unicode_string, 1);
     ok(result == dest_wstr,
-       "(test %d): _ultow(%lu, [out], %d) has result %p, expected: %p\n",
+       "(test %d): _ultow(%u, [out], %d) has result %p, expected: %p\n",
        test_num, value, ulong2str->base, result, dest_wstr);
     ok(memcmp(dest_wstr, expected_wstr, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) == 0,
-       "(test %d): _ultow(%lu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+       "(test %d): _ultow(%u, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
        test_num, value, ulong2str->base, ansi_str.Buffer, ulong2str->Buffer);
     pRtlFreeAnsiString(&ansi_str);
 }
@@ -391,11 +399,9 @@ static void one_ultow_test(int test_num, const ulong2str_t *ulong2str)
 static void test_ulongtow(void)
 {
     int test_num;
-    int pos;
-    WCHAR expected_wstr[LARGE_STRI_BUFFER_LENGTH + 1];
     LPWSTR result;
 
-    for (test_num = 0; test_num < NB_ULONG2STR; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(ulong2str); test_num++) {
 	if (ulong2str[test_num].mask & 0x10) {
 	    one_itow_test(test_num, &ulong2str[test_num]);
 	} /* if */
@@ -407,32 +413,29 @@ static void test_ulongtow(void)
 	} /* if */
     } /* for */
 
-    for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
-	expected_wstr[pos] = ulong2str[0].Buffer[pos];
-    } /* for */
-    expected_wstr[LARGE_STRI_BUFFER_LENGTH] = '\0';
-    result = p_itow(ulong2str[0].value, NULL, 10);
-    ok(result == NULL,
-       "(test a): _itow(%ld, NULL, 10) has result %p, expected: NULL\n",
-       ulong2str[0].value, result);
+    if (0) {
+        /* Crashes on XP and W2K3 */
+        result = p_itow(ulong2str[0].value, NULL, 10);
+        ok(result == NULL,
+           "(test a): _itow(%d, NULL, 10) has result %p, expected: NULL\n",
+           ulong2str[0].value, result);
+    }
 
-    for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
-	expected_wstr[pos] = ulong2str[0].Buffer[pos];
-    } /* for */
-    expected_wstr[LARGE_STRI_BUFFER_LENGTH] = '\0';
-    result = p_ltow(ulong2str[0].value, NULL, 10);
-    ok(result == NULL,
-       "(test b): _ltow(%ld, NULL, 10) has result %p, expected: NULL\n",
-       ulong2str[0].value, result);
+    if (0) {
+        /* Crashes on XP and W2K3 */
+        result = p_ltow(ulong2str[0].value, NULL, 10);
+        ok(result == NULL,
+           "(test b): _ltow(%d, NULL, 10) has result %p, expected: NULL\n",
+           ulong2str[0].value, result);
+    }
 
-    for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
-	expected_wstr[pos] = ulong2str[0].Buffer[pos];
-    } /* for */
-    expected_wstr[LARGE_STRI_BUFFER_LENGTH] = '\0';
-    result = p_ultow(ulong2str[0].value, NULL, 10);
-    ok(result == NULL,
-       "(test c): _ultow(%ld, NULL, 10) has result %p, expected: NULL\n",
-       ulong2str[0].value, result);
+    if (0) {
+        /* Crashes on XP and W2K3 */
+        result = p_ultow(ulong2str[0].value, NULL, 10);
+        ok(result == NULL,
+           "(test c): _ultow(%d, NULL, 10) has result %p, expected: NULL\n",
+           ulong2str[0].value, result);
+    }
 }
 
 #define ULL(a,b) (((ULONGLONG)(a) << 32) | (b))
@@ -584,7 +587,6 @@ static const ulonglong2str_t ulonglong2str[] = {
     {37,     71270178, "111111\0------------------------------------------------------------", 0x33},
     {99, ULL(0x2,0x3c9e468c), "111111\0------------------------------------------------------------", 0x33},
 };
-#define NB_ULONGLONG2STR (sizeof(ulonglong2str)/sizeof(*ulonglong2str))
 
 
 static void one_i64toa_test(int test_num, const ulonglong2str_t *ulonglong2str)
@@ -596,20 +598,22 @@ static void one_i64toa_test(int test_num, const ulonglong2str_t *ulonglong2str)
     dest_str[LARGE_STRI_BUFFER_LENGTH] = '\0';
     result = p_i64toa(ulonglong2str->value, dest_str, ulonglong2str->base);
     ok(result == dest_str,
-       "(test %d): _i64toa(%Lu, [out], %d) has result %p, expected: %p\n",
-       test_num, ulonglong2str->value, ulonglong2str->base, result, dest_str);
+       "(test %d): _i64toa(%s, [out], %d) has result %p, expected: %p\n",
+       test_num, wine_dbgstr_longlong(ulonglong2str->value), ulonglong2str->base, result, dest_str);
     if (ulonglong2str->mask & 0x04) {
 	if (memcmp(dest_str, ulonglong2str->Buffer, LARGE_STRI_BUFFER_LENGTH) != 0) {
 	    if (memcmp(dest_str, ulonglong2str[1].Buffer, LARGE_STRI_BUFFER_LENGTH) != 0) {
 		ok(memcmp(dest_str, ulonglong2str->Buffer, LARGE_STRI_BUFFER_LENGTH) == 0,
-		   "(test %d): _i64toa(%Lu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
-		   test_num, ulonglong2str->value, ulonglong2str->base, dest_str, ulonglong2str->Buffer);
+		   "(test %d): _i64toa(%s, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+		   test_num, wine_dbgstr_longlong(ulonglong2str->value),
+                   ulonglong2str->base, dest_str, ulonglong2str->Buffer);
 	    } /* if */
 	} /* if */
     } else {
 	ok(memcmp(dest_str, ulonglong2str->Buffer, LARGE_STRI_BUFFER_LENGTH) == 0,
-	   "(test %d): _i64toa(%Lu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
-	   test_num, ulonglong2str->value, ulonglong2str->base, dest_str, ulonglong2str->Buffer);
+	   "(test %d): _i64toa(%s, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+	   test_num, wine_dbgstr_longlong(ulonglong2str->value),
+           ulonglong2str->base, dest_str, ulonglong2str->Buffer);
     } /* if */
 }
 
@@ -623,11 +627,12 @@ static void one_ui64toa_test(int test_num, const ulonglong2str_t *ulonglong2str)
     dest_str[LARGE_STRI_BUFFER_LENGTH] = '\0';
     result = p_ui64toa(ulonglong2str->value, dest_str, ulonglong2str->base);
     ok(result == dest_str,
-       "(test %d): _ui64toa(%Lu, [out], %d) has result %p, expected: %p\n",
-       test_num, ulonglong2str->value, ulonglong2str->base, result, dest_str);
+       "(test %d): _ui64toa(%s, [out], %d) has result %p, expected: %p\n",
+       test_num, wine_dbgstr_longlong(ulonglong2str->value), ulonglong2str->base, result, dest_str);
     ok(memcmp(dest_str, ulonglong2str->Buffer, LARGE_STRI_BUFFER_LENGTH) == 0,
-       "(test %d): _ui64toa(%Lu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
-       test_num, ulonglong2str->value, ulonglong2str->base, dest_str, ulonglong2str->Buffer);
+       "(test %d): _ui64toa(%s, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+       test_num, wine_dbgstr_longlong(ulonglong2str->value),
+       ulonglong2str->base, dest_str, ulonglong2str->Buffer);
 }
 
 
@@ -635,7 +640,7 @@ static void test_ulonglongtoa(void)
 {
     int test_num;
 
-    for (test_num = 0; test_num < NB_ULONGLONG2STR; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(ulonglong2str); test_num++) {
 	if (ulonglong2str[test_num].mask & 0x01) {
 	    one_i64toa_test(test_num, &ulonglong2str[test_num]);
 	} /* if */
@@ -673,8 +678,8 @@ static void one_i64tow_test(int test_num, const ulonglong2str_t *ulonglong2str)
     result = p_i64tow(ulonglong2str->value, dest_wstr, ulonglong2str->base);
     pRtlUnicodeStringToAnsiString(&ansi_str, &unicode_string, 1);
     ok(result == dest_wstr,
-       "(test %d): _i64tow(%llu, [out], %d) has result %p, expected: %p\n",
-       test_num, ulonglong2str->value, ulonglong2str->base, result, dest_wstr);
+       "(test %d): _i64tow(0x%s, [out], %d) has result %p, expected: %p\n",
+       test_num, wine_dbgstr_longlong(ulonglong2str->value), ulonglong2str->base, result, dest_wstr);
     if (ulonglong2str->mask & 0x04) {
 	if (memcmp(dest_wstr, expected_wstr, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) != 0) {
 	    for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
@@ -683,14 +688,16 @@ static void one_i64tow_test(int test_num, const ulonglong2str_t *ulonglong2str)
 	    expected_wstr[LARGE_STRI_BUFFER_LENGTH] = '\0';
 	    if (memcmp(dest_wstr, expected_wstr, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) != 0) {
 		ok(memcmp(dest_wstr, expected_wstr, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) == 0,
-		   "(test %d): _i64tow(%llu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
-		   test_num, ulonglong2str->value, ulonglong2str->base, ansi_str.Buffer, ulonglong2str->Buffer);
+                   "(test %d): _i64tow(0x%s, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+		   test_num, wine_dbgstr_longlong(ulonglong2str->value),
+		   ulonglong2str->base, ansi_str.Buffer, ulonglong2str->Buffer);
 	    } /* if */
 	} /* if */
     } else {
 	ok(memcmp(dest_wstr, expected_wstr, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) == 0,
-	   "(test %d): _i64tow(%llu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
-	   test_num, ulonglong2str->value, ulonglong2str->base, ansi_str.Buffer, ulonglong2str->Buffer);
+           "(test %d): _i64tow(0x%s, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+	   test_num, wine_dbgstr_longlong(ulonglong2str->value),
+	   ulonglong2str->base, ansi_str.Buffer, ulonglong2str->Buffer);
     } /* if */
     pRtlFreeAnsiString(&ansi_str);
 }
@@ -721,11 +728,13 @@ static void one_ui64tow_test(int test_num, const ulonglong2str_t *ulonglong2str)
     result = p_ui64tow(ulonglong2str->value, dest_wstr, ulonglong2str->base);
     pRtlUnicodeStringToAnsiString(&ansi_str, &unicode_string, 1);
     ok(result == dest_wstr,
-       "(test %d): _ui64tow(%llu, [out], %d) has result %p, expected: %p\n",
-       test_num, ulonglong2str->value, ulonglong2str->base, result, dest_wstr);
+       "(test %d): _ui64tow(0x%s, [out], %d) has result %p, expected: %p\n",
+       test_num, wine_dbgstr_longlong(ulonglong2str->value),
+       ulonglong2str->base, result, dest_wstr);
     ok(memcmp(dest_wstr, expected_wstr, LARGE_STRI_BUFFER_LENGTH * sizeof(WCHAR)) == 0,
-       "(test %d): _ui64tow(%llu, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
-       test_num, ulonglong2str->value, ulonglong2str->base, ansi_str.Buffer, ulonglong2str->Buffer);
+       "(test %d): _ui64tow(0x%s, [out], %d) assigns string \"%s\", expected: \"%s\"\n",
+       test_num, wine_dbgstr_longlong(ulonglong2str->value),
+       ulonglong2str->base, ansi_str.Buffer, ulonglong2str->Buffer);
     pRtlFreeAnsiString(&ansi_str);
 }
 
@@ -733,11 +742,9 @@ static void one_ui64tow_test(int test_num, const ulonglong2str_t *ulonglong2str)
 static void test_ulonglongtow(void)
 {
     int test_num;
-    int pos;
-    WCHAR expected_wstr[LARGE_STRI_BUFFER_LENGTH + 1];
     LPWSTR result;
 
-    for (test_num = 0; test_num < NB_ULONGLONG2STR; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(ulonglong2str); test_num++) {
 	if (ulonglong2str[test_num].mask & 0x10) {
 	    one_i64tow_test(test_num, &ulonglong2str[test_num]);
 	} /* if */
@@ -748,24 +755,22 @@ static void test_ulonglongtow(void)
 	} /* if */
     } /* for */
 
-    for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
-	expected_wstr[pos] = ulong2str[0].Buffer[pos];
-    } /* for */
-    expected_wstr[LARGE_STRI_BUFFER_LENGTH] = '\0';
-    result = p_i64tow(ulong2str[0].value, NULL, 10);
-    ok(result == NULL,
-       "(test d): _i64tow(%llu, NULL, 10) has result %p, expected: NULL\n",
-       ulonglong2str[0].value, result);
+    if (0) {
+        /* Crashes on XP and W2K3 */
+        result = p_i64tow(ulonglong2str[0].value, NULL, 10);
+        ok(result == NULL,
+           "(test d): _i64tow(0x%s, NULL, 10) has result %p, expected: NULL\n",
+           wine_dbgstr_longlong(ulonglong2str[0].value), result);
+    }
 
     if (p_ui64tow) {
-        for (pos = 0; pos < LARGE_STRI_BUFFER_LENGTH; pos++) {
-	    expected_wstr[pos] = ulong2str[0].Buffer[pos];
-	} /* for */
-	expected_wstr[LARGE_STRI_BUFFER_LENGTH] = '\0';
-	result = p_ui64tow(ulong2str[0].value, NULL, 10);
-	ok(result == NULL,
-	   "(test e): _ui64tow(%llu, NULL, 10) has result %p, expected: NULL\n",
-	   ulonglong2str[0].value, result);
+        if (0) {
+            /* Crashes on XP and W2K3 */
+	    result = p_ui64tow(ulonglong2str[0].value, NULL, 10);
+	    ok(result == NULL,
+               "(test e): _ui64tow(0x%s, NULL, 10) has result %p, expected: NULL\n",
+	       wine_dbgstr_longlong(ulonglong2str[0].value), result);
+        }
     } /* if */
 }
 
@@ -863,7 +868,7 @@ static const str2long_t str2long[] = {
     { "0o7",                   0   }, /* one digit octal */
     { "0o8",                   0   }, /* empty octal */
     { "0o",                    0   }, /* empty octal */
-    { "0d1011101100",          0   }, /* explizit decimal with 0d */
+    { "0d1011101100",          0   }, /* explicit decimal with 0d */
     { "x89abcdef",             0   }, /* Hex with lower case digits a-f (x-notation) */
     { "xFEDCBA00",             0   }, /* Hex with upper case digits A-F (x-notation) */
     { "-xFEDCBA00",            0   }, /* Negative Hexadecimal (x-notation) */
@@ -878,7 +883,6 @@ static const str2long_t str2long[] = {
     { "",                      0   }, /* empty string */
 /*  { NULL,                    0   }, */ /* NULL as string */
 };
-#define NB_STR2LONG (sizeof(str2long)/sizeof(*str2long))
 
 
 static void test_wtoi(void)
@@ -887,16 +891,41 @@ static void test_wtoi(void)
     UNICODE_STRING uni;
     int result;
 
-    for (test_num = 0; test_num < NB_STR2LONG; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(str2long); test_num++) {
 	pRtlCreateUnicodeStringFromAsciiz(&uni, str2long[test_num].str);
 	result = p_wtoi(uni.Buffer);
 	ok(result == str2long[test_num].value,
-	   "(test %d): call failed: _wtoi(\"%s\") has result %d, expected: %ld\n",
+           "(test %d): call failed: _wtoi(\"%s\") has result %d, expected: %d\n",
 	   test_num, str2long[test_num].str, result, str2long[test_num].value);
 	pRtlFreeUnicodeString(&uni);
     } /* for */
 }
 
+static void test_atoi(void)
+{
+    int test_num;
+    int result;
+
+    for (test_num = 0; test_num < ARRAY_SIZE(str2long); test_num++) {
+        result = patoi(str2long[test_num].str);
+        ok(result == str2long[test_num].value,
+           "(test %d): call failed: _atoi(\"%s\") has result %d, expected: %d\n",
+           test_num, str2long[test_num].str, result, str2long[test_num].value);
+    }
+}
+
+static void test_atol(void)
+{
+    int test_num;
+    int result;
+
+    for (test_num = 0; test_num < ARRAY_SIZE(str2long); test_num++) {
+        result = patol(str2long[test_num].str);
+        ok(result == str2long[test_num].value,
+           "(test %d): call failed: _atol(\"%s\") has result %d, expected: %d\n",
+           test_num, str2long[test_num].str, result, str2long[test_num].value);
+    }
+}
 
 static void test_wtol(void)
 {
@@ -904,11 +933,11 @@ static void test_wtol(void)
     UNICODE_STRING uni;
     LONG result;
 
-    for (test_num = 0; test_num < NB_STR2LONG; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(str2long); test_num++) {
 	pRtlCreateUnicodeStringFromAsciiz(&uni, str2long[test_num].str);
 	result = p_wtol(uni.Buffer);
 	ok(result == str2long[test_num].value,
-	   "(test %d): call failed: _wtol(\"%s\") has result %ld, expected: %ld\n",
+           "(test %d): call failed: _wtol(\"%s\") has result %d, expected: %d\n",
 	   test_num, str2long[test_num].str, result, str2long[test_num].value);
 	pRtlFreeUnicodeString(&uni);
     } /* for */
@@ -918,6 +947,7 @@ static void test_wtol(void)
 typedef struct {
     const char *str;
     LONGLONG value;
+    int overflow;
 } str2longlong_t;
 
 static const str2longlong_t str2longlong[] = {
@@ -972,8 +1002,8 @@ static const str2longlong_t str2longlong[] = {
     { "00x12345",              0   },
     { "0xx12345",              0   },
     { "1x34",                  1   },
-    { "-99999999999999999999", -ULL(0x6bc75e2d,0x630fffff) }, /* Big negative integer */
-    { "-9223372036854775809",   ULL(0x7fffffff,0xffffffff) }, /* Too small to fit in 64 bits */
+    { "-99999999999999999999", -ULL(0x6bc75e2d,0x630fffff), -1 }, /* Big negative integer */
+    { "-9223372036854775809",   ULL(0x7fffffff,0xffffffff), -1 }, /* Too small to fit in 64 bits */
     { "-9223372036854775808",   ULL(0x80000000,0x00000000) }, /* Smallest negative 64 bit integer */
     { "-9223372036854775807",  -ULL(0x7fffffff,0xffffffff) },
     { "-9999999999",           -ULL(0x00000002,0x540be3ff) },
@@ -993,12 +1023,12 @@ static const str2longlong_t str2longlong[] = {
     { "9999999999",             ULL(0x00000002,0x540be3ff) },
     { "9223372036854775806",    ULL(0x7fffffff,0xfffffffe) },
     { "9223372036854775807",    ULL(0x7fffffff,0xffffffff) }, /* Largest signed positive 64 bit integer */
-    { "9223372036854775808",    ULL(0x80000000,0x00000000) }, /* Pos int equal to smallest neg 64 bit int */
-    { "9223372036854775809",    ULL(0x80000000,0x00000001) },
-    { "18446744073709551614",   ULL(0xffffffff,0xfffffffe) },
-    { "18446744073709551615",   ULL(0xffffffff,0xffffffff) }, /* Largest unsigned 64 bit integer */
-    { "18446744073709551616",                            0 }, /* Too big to fit in 64 bits */
-    { "99999999999999999999",   ULL(0x6bc75e2d,0x630fffff) }, /* Big positive integer */
+    { "9223372036854775808",    ULL(0x80000000,0x00000000), 1 }, /* Pos int equal to smallest neg 64 bit int */
+    { "9223372036854775809",    ULL(0x80000000,0x00000001), 1 },
+    { "18446744073709551614",   ULL(0xffffffff,0xfffffffe), 1 },
+    { "18446744073709551615",   ULL(0xffffffff,0xffffffff), 1 }, /* Largest unsigned 64 bit integer */
+    { "18446744073709551616",                            0, 1 }, /* Too big to fit in 64 bits */
+    { "99999999999999999999",   ULL(0x6bc75e2d,0x630fffff), 1 }, /* Big positive integer */
     { "056789",            56789   }, /* Leading zero and still decimal */
     { "b1011101100",           0   }, /* Binary (b-notation) */
     { "-b1011101100",          0   }, /* Negative Binary (b-notation) */
@@ -1020,7 +1050,7 @@ static const str2longlong_t str2longlong[] = {
     { "0o7",                   0   }, /* one digit octal */
     { "0o8",                   0   }, /* empty octal */
     { "0o",                    0   }, /* empty octal */
-    { "0d1011101100",          0   }, /* explizit decimal with 0d */
+    { "0d1011101100",          0   }, /* explicit decimal with 0d */
     { "x89abcdef",             0   }, /* Hex with lower case digits a-f (x-notation) */
     { "xFEDCBA00",             0   }, /* Hex with upper case digits A-F (x-notation) */
     { "-xFEDCBA00",            0   }, /* Negative Hexadecimal (x-notation) */
@@ -1035,7 +1065,6 @@ static const str2longlong_t str2longlong[] = {
     { "",                      0   }, /* empty string */
 /*  { NULL,                    0   }, */ /* NULL as string */
 };
-#define NB_STR2LONGLONG (sizeof(str2longlong)/sizeof(*str2longlong))
 
 
 static void test_atoi64(void)
@@ -1043,12 +1072,21 @@ static void test_atoi64(void)
     int test_num;
     LONGLONG result;
 
-    for (test_num = 0; test_num < NB_STR2LONGLONG; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(str2longlong); test_num++) {
 	result = p_atoi64(str2longlong[test_num].str);
-	ok(result == str2longlong[test_num].value,
-	   "(test %d): call failed: _atoi64(\"%s\") has result %lld, expected: %lld\n",
-	   test_num, str2longlong[test_num].str, result, str2longlong[test_num].value);
-    } /* for */
+        if (str2longlong[test_num].overflow)
+            ok(result == str2longlong[test_num].value ||
+               (result == ((str2longlong[test_num].overflow == -1) ?
+                ULL(0x80000000,0x00000000) : ULL(0x7fffffff,0xffffffff))),
+               "(test %d): call failed: _atoi64(\"%s\") has result 0x%s, expected: 0x%s\n",
+               test_num, str2longlong[test_num].str, wine_dbgstr_longlong(result),
+               wine_dbgstr_longlong(str2longlong[test_num].value));
+        else
+            ok(result == str2longlong[test_num].value,
+               "(test %d): call failed: _atoi64(\"%s\") has result 0x%s, expected: 0x%s\n",
+               test_num, str2longlong[test_num].str, wine_dbgstr_longlong(result),
+               wine_dbgstr_longlong(str2longlong[test_num].value));
+    }
 }
 
 
@@ -1058,21 +1096,235 @@ static void test_wtoi64(void)
     UNICODE_STRING uni;
     LONGLONG result;
 
-    for (test_num = 0; test_num < NB_STR2LONGLONG; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(str2longlong); test_num++) {
 	pRtlCreateUnicodeStringFromAsciiz(&uni, str2longlong[test_num].str);
 	result = p_wtoi64(uni.Buffer);
-	ok(result == str2longlong[test_num].value,
-	   "(test %d): call failed: _wtoi64(\"%s\") has result %lld, expected: %lld\n",
-	   test_num, str2longlong[test_num].str, result, str2longlong[test_num].value);
+        if (str2longlong[test_num].overflow)
+            ok(result == str2longlong[test_num].value ||
+               (result == ((str2longlong[test_num].overflow == -1) ?
+                ULL(0x80000000,0x00000000) : ULL(0x7fffffff,0xffffffff))),
+               "(test %d): call failed: _atoi64(\"%s\") has result 0x%s, expected: 0x%s\n",
+               test_num, str2longlong[test_num].str, wine_dbgstr_longlong(result),
+               wine_dbgstr_longlong(str2longlong[test_num].value));
+        else
+            ok(result == str2longlong[test_num].value,
+               "(test %d): call failed: _atoi64(\"%s\") has result 0x%s, expected: 0x%s\n",
+               test_num, str2longlong[test_num].str, wine_dbgstr_longlong(result),
+               wine_dbgstr_longlong(str2longlong[test_num].value));
 	pRtlFreeUnicodeString(&uni);
-    } /* for */
+    }
 }
 
-static void test_wcsfuncs(void)
-{       
-    static const WCHAR testing[] = {'T','e','s','t','i','n','g',0};
-    ok (p_wcschr(testing,0)!=NULL, "wcschr Not finding terminating character\n");
-    ok (p_wcsrchr(testing,0)!=NULL, "wcsrchr Not finding terminating character\n");
+static void test_wcschr(void)
+{
+    static const WCHAR teststringW[] = {'a','b','r','a','c','a','d','a','b','r','a',0};
+
+    ok(p_wcschr(teststringW, 'a') == teststringW + 0,
+       "wcschr should have returned a pointer to the first 'a' character\n");
+    ok(p_wcschr(teststringW, 0) == teststringW + 11,
+       "wcschr should have returned a pointer to the null terminator\n");
+    ok(p_wcschr(teststringW, 'x') == NULL,
+       "wcschr should have returned NULL\n");
+}
+
+static void test_wcsrchr(void)
+{
+    static const WCHAR teststringW[] = {'a','b','r','a','c','a','d','a','b','r','a',0};
+
+    ok(p_wcsrchr(teststringW, 'a') == teststringW + 10,
+       "wcsrchr should have returned a pointer to the last 'a' character\n");
+    ok(p_wcsrchr(teststringW, 0) == teststringW + 11,
+       "wcsrchr should have returned a pointer to the null terminator\n");
+    ok(p_wcsrchr(teststringW, 'x') == NULL,
+       "wcsrchr should have returned NULL\n");
+}
+
+static void test_wcslwrupr(void)
+{
+    static WCHAR teststringW[] = {'a','b','r','a','c','a','d','a','b','r','a',0};
+    static WCHAR emptyW[] = {0};
+    static const WCHAR constemptyW[] = {0};
+
+    if (0) /* crashes on native */
+    {
+        static const WCHAR conststringW[] = {'a','b','r','a','c','a','d','a','b','r','a',0};
+        ok(p_wcslwr((LPWSTR)conststringW) == conststringW, "p_wcslwr returned different string\n");
+        ok(p_wcsupr((LPWSTR)conststringW) == conststringW, "p_wcsupr returned different string\n");
+        ok(p_wcslwr(NULL) == NULL, "p_wcslwr didn't returned NULL\n");
+        ok(p_wcsupr(NULL) == NULL, "p_wcsupr didn't returned NULL\n");
+    }
+    ok(p_wcslwr(teststringW) == teststringW, "p_wcslwr returned different string\n");
+    ok(p_wcsupr(teststringW) == teststringW, "p_wcsupr returned different string\n");
+    ok(p_wcslwr(emptyW) == emptyW, "p_wcslwr returned different string\n");
+    ok(p_wcsupr(emptyW) == emptyW, "p_wcsupr returned different string\n");
+    ok(p_wcslwr((LPWSTR)constemptyW) == constemptyW, "p_wcslwr returned different string\n");
+    ok(p_wcsupr((LPWSTR)constemptyW) == constemptyW, "p_wcsupr returned different string\n");
+}
+
+static int __cdecl intcomparefunc(const void *a, const void *b)
+{
+    const int *p = a, *q = b;
+
+    ok (a != b, "must never get the same pointer\n");
+
+    return *p - *q;
+}
+
+static int __cdecl charcomparefunc(const void *a, const void *b)
+{
+    const char *p = a, *q = b;
+
+    ok (a != b, "must never get the same pointer\n");
+
+    return *p - *q;
+}
+
+static int __cdecl strcomparefunc(const void *a, const void *b)
+{
+    const char * const *p = a;
+    const char * const *q = b;
+
+    ok (a != b, "must never get the same pointer\n");
+
+    return lstrcmpA(*p, *q);
+}
+
+static int __cdecl istrcomparefunc(const void *a, const void *b)
+{
+    const char * const *p = a;
+    const char * const *q = b;
+
+    ok (a != b, "must never get the same pointer\n");
+
+    return lstrcmpiA(*p, *q);
+}
+
+static void test_qsort(void)
+{
+    int arr[5] = { 23, 42, 8, 4, 16 };
+    char carr[5] = { 42, 23, 4, 8, 16 };
+    const char *strarr[7] = {
+	"Hello",
+	"Wine",
+	"World",
+	"!",
+	"Hopefully",
+	"Sorted",
+	"."
+    };
+    const char *strarr2[7] = {
+        "Hello",
+        "Wine",
+        "World",
+        "!",
+        "wine",
+        "Sorted",
+        "WINE"
+    };
+
+    p_qsort ((void*)arr, 0, sizeof(int), intcomparefunc);
+    ok(arr[0] == 23, "badly sorted, nmemb=0, arr[0] is %d\n", arr[0]);
+    ok(arr[1] == 42, "badly sorted, nmemb=0, arr[1] is %d\n", arr[1]);
+    ok(arr[2] == 8,  "badly sorted, nmemb=0, arr[2] is %d\n", arr[2]);
+    ok(arr[3] == 4,  "badly sorted, nmemb=0, arr[3] is %d\n", arr[3]);
+    ok(arr[4] == 16, "badly sorted, nmemb=0, arr[4] is %d\n", arr[4]);
+
+    p_qsort ((void*)arr, 1, sizeof(int), intcomparefunc);
+    ok(arr[0] == 23, "badly sorted, nmemb=1, arr[0] is %d\n", arr[0]);
+    ok(arr[1] == 42, "badly sorted, nmemb=1, arr[1] is %d\n", arr[1]);
+    ok(arr[2] == 8,  "badly sorted, nmemb=1, arr[2] is %d\n", arr[2]);
+    ok(arr[3] == 4,  "badly sorted, nmemb=1, arr[3] is %d\n", arr[3]);
+    ok(arr[4] == 16, "badly sorted, nmemb=1, arr[4] is %d\n", arr[4]);
+
+    p_qsort ((void*)arr, 5, 0, intcomparefunc);
+    ok(arr[0] == 23, "badly sorted, size=0, arr[0] is %d\n", arr[0]);
+    ok(arr[1] == 42, "badly sorted, size=0, arr[1] is %d\n", arr[1]);
+    ok(arr[2] == 8,  "badly sorted, size=0, arr[2] is %d\n", arr[2]);
+    ok(arr[3] == 4,  "badly sorted, size=0, arr[3] is %d\n", arr[3]);
+    ok(arr[4] == 16, "badly sorted, size=0, arr[4] is %d\n", arr[4]);
+
+    p_qsort ((void*)arr, 5, sizeof(int), intcomparefunc);
+    ok(arr[0] == 4,  "badly sorted, arr[0] is %d\n", arr[0]);
+    ok(arr[1] == 8,  "badly sorted, arr[1] is %d\n", arr[1]);
+    ok(arr[2] == 16, "badly sorted, arr[2] is %d\n", arr[2]);
+    ok(arr[3] == 23, "badly sorted, arr[3] is %d\n", arr[3]);
+    ok(arr[4] == 42, "badly sorted, arr[4] is %d\n", arr[4]);
+
+    p_qsort ((void*)carr, 5, sizeof(char), charcomparefunc);
+    ok(carr[0] == 4,  "badly sorted, carr[0] is %d\n", carr[0]);
+    ok(carr[1] == 8,  "badly sorted, carr[1] is %d\n", carr[1]);
+    ok(carr[2] == 16, "badly sorted, carr[2] is %d\n", carr[2]);
+    ok(carr[3] == 23, "badly sorted, carr[3] is %d\n", carr[3]);
+    ok(carr[4] == 42, "badly sorted, carr[4] is %d\n", carr[4]);
+
+    p_qsort ((void*)strarr, 7, sizeof(char*), strcomparefunc);
+    ok(!strcmp(strarr[0],"!"),  "badly sorted, strarr[0] is %s\n", strarr[0]);
+    ok(!strcmp(strarr[1],"."),  "badly sorted, strarr[1] is %s\n", strarr[1]);
+    ok(!strcmp(strarr[2],"Hello"),  "badly sorted, strarr[2] is %s\n", strarr[2]);
+    ok(!strcmp(strarr[3],"Hopefully"),  "badly sorted, strarr[3] is %s\n", strarr[3]);
+    ok(!strcmp(strarr[4],"Sorted"),  "badly sorted, strarr[4] is %s\n", strarr[4]);
+    ok(!strcmp(strarr[5],"Wine"),  "badly sorted, strarr[5] is %s\n", strarr[5]);
+    ok(!strcmp(strarr[6],"World"),  "badly sorted, strarr[6] is %s\n", strarr[6]);
+
+    p_qsort ((void*)strarr2, 7, sizeof(char*), istrcomparefunc);
+    ok(!strcmp(strarr2[0], "!"),  "badly sorted, strar2r[0] is %s\n", strarr2[0]);
+    ok(!strcmp(strarr2[1], "Hello"),  "badly sorted, strarr2[1] is %s\n", strarr2[1]);
+    ok(!strcmp(strarr2[2], "Sorted"),  "badly sorted, strarr2[2] is %s\n", strarr2[2]);
+todo_wine {
+    ok(!strcmp(strarr2[3], "wine"),  "badly sorted, strarr2[3] is %s\n", strarr2[3]);
+    ok(!strcmp(strarr2[4], "WINE"),  "badly sorted, strarr2[4] is %s\n", strarr2[4]);
+    ok(!strcmp(strarr2[5], "Wine"),  "badly sorted, strarr2[5] is %s\n", strarr2[5]);
+}
+    ok(!strcmp(strarr2[6], "World"),  "badly sorted, strarr2[6] is %s\n", strarr2[6]);
+}
+
+static void test_bsearch(void)
+{
+    int arr[7] = { 1, 3, 4, 8, 16, 23, 42 };
+    int *x, l, i, j;
+
+    /* just try all array sizes */
+    for (j=1;j<ARRAY_SIZE(arr);j++) {
+        for (i=0;i<j;i++) {
+            l = arr[i];
+            x = p_bsearch (&l, arr, j, sizeof(arr[0]), intcomparefunc);
+            ok (x == &arr[i], "bsearch did not find %d entry in loopsize %d.\n", i, j);
+        }
+        l = 4242;
+        x = p_bsearch (&l, arr, j, sizeof(arr[0]), intcomparefunc);
+        ok (x == NULL, "bsearch did find 4242 entry in loopsize %d.\n", j);
+    }
+}
+
+static void test__snprintf(void)
+{
+    const char *origstring = "XXXXXXXXXXXX";
+    const char *teststring = "hello world";
+    char buffer[32];
+    int res;
+
+    res = p__snprintf(NULL, 0, teststring);
+    ok(res == lstrlenA(teststring) || broken(res == -1) /* <= w2k */,
+       "_snprintf returned %d, expected %d.\n", res, lstrlenA(teststring));
+
+    if (res != -1)
+    {
+        res = p__snprintf(NULL, 1, teststring);
+        ok(res == lstrlenA(teststring) /* WinXP */ || res < 0 /* Vista and greater */,
+           "_snprintf returned %d, expected %d or < 0.\n", res, lstrlenA(teststring));
+    }
+    res = p__snprintf(buffer, strlen(teststring) - 1, teststring);
+    ok(res < 0, "_snprintf returned %d, expected < 0.\n", res);
+
+    strcpy(buffer,  origstring);
+    res = p__snprintf(buffer, strlen(teststring), teststring);
+    ok(res == lstrlenA(teststring), "_snprintf returned %d, expected %d.\n", res, lstrlenA(teststring));
+    ok(!strcmp(buffer, "hello worldX"), "_snprintf returned buffer '%s', expected 'hello worldX'.\n", buffer);
+
+    strcpy(buffer, origstring);
+    res = p__snprintf(buffer, strlen(teststring) + 1, teststring);
+    ok(res == lstrlenA(teststring), "_snprintf returned %d, expected %d.\n", res, lstrlenA(teststring));
+    ok(!strcmp(buffer, teststring), "_snprintf returned buffer '%s', expected '%s'.\n", buffer, teststring);
 }
 
 START_TEST(string)
@@ -1095,6 +1347,20 @@ START_TEST(string)
         test_wtol();
     if (p_wtoi64)
         test_wtoi64();
-    if (p_wcschr && p_wcsrchr)
-        test_wcsfuncs();
+    if (p_wcschr)
+        test_wcschr();
+    if (p_wcsrchr)
+        test_wcsrchr();
+    if (p_wcslwr && p_wcsupr)
+        test_wcslwrupr();
+    if (patoi)
+        test_atoi();
+    if (patol)
+        test_atol();
+    if (p_qsort)
+        test_qsort();
+    if (p_bsearch)
+        test_bsearch();
+    if (p__snprintf)
+        test__snprintf();
 }

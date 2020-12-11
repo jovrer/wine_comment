@@ -1,18 +1,22 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = dbghelp.dll
-IMPORTLIB = libdbghelp.$(IMPLIBEXT)
-IMPORTS   = psapi kernel32 ntdll
+IMPORTLIB = dbghelp
+EXTRADEFS = -D_IMAGEHLP_SOURCE_
+DELAYIMPORTS = version
+EXTRALIBS = $(Z_LIBS) $(CORESERVICES_LIBS) $(COREFOUNDATION_LIBS)
 
 C_SRCS = \
 	coff.c \
+	cpu_arm.c \
+	cpu_arm64.c \
+	cpu_i386.c \
+	cpu_ppc.c \
+	cpu_x86_64.c \
+	crc32.c \
 	dbghelp.c \
 	dwarf.c \
 	elf_module.c \
 	image.c \
-	memory.c \
+	macho_module.c \
 	minidump.c \
 	module.c \
 	msc.c \
@@ -25,6 +29,4 @@ C_SRCS = \
 	symbol.c \
 	type.c
 
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = version.rc

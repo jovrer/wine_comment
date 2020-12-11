@@ -1,14 +1,6 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = msrle32.dll
-IMPORTS   = winmm user32 kernel32
+IMPORTS   = winmm user32
 
 C_SRCS = msrle32.c
 
-RC_SRCS = rsrc.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = msrle32.rc

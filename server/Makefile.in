@@ -1,27 +1,22 @@
-DEFS      = -D__WINESRC__
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
-MODULE    = none
+PROGRAMS = wineserver
 
 C_SRCS = \
+	async.c \
 	atom.c \
 	change.c \
 	class.c \
 	clipboard.c \
+	completion.c \
 	console.c \
-	context_alpha.c \
-	context_i386.c \
-	context_powerpc.c \
-	context_sparc.c \
-	context_x86_64.c \
 	debugger.c \
+	device.c \
+	directory.c \
 	event.c \
 	fd.c \
 	file.c \
 	handle.c \
 	hook.c \
+	mach.c \
 	mailslot.c \
 	main.c \
 	mapping.c \
@@ -29,6 +24,7 @@ C_SRCS = \
 	named_pipe.c \
 	object.c \
 	process.c \
+	procfs.c \
 	ptrace.c \
 	queue.c \
 	region.c \
@@ -39,6 +35,7 @@ C_SRCS = \
 	signal.c \
 	snapshot.c \
 	sock.c \
+	symlink.c \
 	thread.c \
 	timer.c \
 	token.c \
@@ -48,22 +45,9 @@ C_SRCS = \
 	window.c \
 	winstation.c
 
-PROGRAMS = wineserver
-MANPAGES = wineserver.man
+MANPAGES = \
+	wineserver.de.UTF-8.man.in \
+	wineserver.fr.UTF-8.man.in \
+	wineserver.man.in
 
-all: $(PROGRAMS) $(MANPAGES)
-
-@MAKE_RULES@
-
-wineserver: $(OBJS)
-	$(CC) -o $(PROGRAMS) $(OBJS) $(LIBWINE) $(LIBUNICODE) $(LIBPORT) $(LDFLAGS) $(LIBS)
-
-install:: $(PROGRAMS) $(MANPAGES)
-	$(MKINSTALLDIRS) $(bindir) $(mandir)/man$(prog_manext)
-	$(INSTALL_PROGRAM) wineserver $(bindir)/wineserver
-	$(INSTALL_DATA) wineserver.man $(mandir)/man$(prog_manext)/wineserver.$(prog_manext)
-
-uninstall::
-	$(RM) $(bindir)/wineserver $(mandir)/man$(prog_manext)/wineserver.$(prog_manext)
-
-### Dependencies:
+EXTRALIBS = $(LDEXECFLAGS) -lwine $(POLL_LIBS) $(RT_LIBS)

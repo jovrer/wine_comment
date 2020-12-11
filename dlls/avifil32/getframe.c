@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2003 Michael Günnewig
+ * Copyright 2002-2003 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,17 +13,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define COM_NO_WINDOWS_H
-#include <assert.h>
 #include <stdarg.h>
 
 #include "windef.h"
 #include "winbase.h"
-#include "winnls.h"
-#include "windowsx.h"
 #include "wingdi.h"
 #include "winuser.h"
 #include "vfw.h"
@@ -41,32 +37,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(avifile);
 
 /***********************************************************************/
 
-static HRESULT WINAPI IGetFrame_fnQueryInterface(IGetFrame *iface,
-						 REFIID refiid, LPVOID *obj);
-static ULONG   WINAPI IGetFrame_fnAddRef(IGetFrame *iface);
-static ULONG   WINAPI IGetFrame_fnRelease(IGetFrame *iface);
-static LPVOID  WINAPI IGetFrame_fnGetFrame(IGetFrame *iface, LONG lPos);
-static HRESULT WINAPI IGetFrame_fnBegin(IGetFrame *iface, LONG lStart,
-					LONG lEnd, LONG lRate);
-static HRESULT WINAPI IGetFrame_fnEnd(IGetFrame *iface);
-static HRESULT WINAPI IGetFrame_fnSetFormat(IGetFrame *iface,
-					    LPBITMAPINFOHEADER lpbi,
-					    LPVOID lpBits, INT x, INT y,
-					    INT dx, INT dy);
-
-static const struct IGetFrameVtbl igetframeVtbl = {
-  IGetFrame_fnQueryInterface,
-  IGetFrame_fnAddRef,
-  IGetFrame_fnRelease,
-  IGetFrame_fnGetFrame,
-  IGetFrame_fnBegin,
-  IGetFrame_fnEnd,
-  IGetFrame_fnSetFormat
-};
-
 typedef struct _IGetFrameImpl {
   /* IUnknown stuff */
-  const IGetFrameVtbl *lpVtbl;
+  IGetFrame          IGetFrame_iface;
   LONG               ref;
 
   /* IGetFrame stuff */
@@ -96,16 +69,19 @@ typedef struct _IGetFrameImpl {
 
 /***********************************************************************/
 
+static inline IGetFrameImpl *impl_from_IGetFrame(IGetFrame *iface)
+{
+  return CONTAINING_RECORD(iface, IGetFrameImpl, IGetFrame_iface);
+}
+
 static void AVIFILE_CloseCompressor(IGetFrameImpl *This)
 {
-  if (This->lpOutFormat != NULL && This->lpInFormat != This->lpOutFormat) {
-    GlobalFreePtr(This->lpOutFormat);
+  if (This->lpInFormat != This->lpOutFormat) {
+    HeapFree(GetProcessHeap(), 0, This->lpOutFormat);
     This->lpOutFormat = NULL;
   }
-  if (This->lpInFormat != NULL) {
-    GlobalFreePtr(This->lpInFormat);
-    This->lpInFormat = NULL;
-  }
+  HeapFree(GetProcessHeap(), 0, This->lpInFormat);
+  This->lpInFormat = NULL;
   if (This->hic != NULL) {
     if (This->bResize)
       ICDecompressExEnd(This->hic);
@@ -116,36 +92,17 @@ static void AVIFILE_CloseCompressor(IGetFrameImpl *This)
   }
 }
 
-PGETFRAME AVIFILE_CreateGetFrame(PAVISTREAM pStream)
-{
-  IGetFrameImpl *pg;
-
-  /* check parameter */
-  if (pStream == NULL)
-    return NULL;
-
-  pg = (IGetFrameImpl*)LocalAlloc(LPTR, sizeof(IGetFrameImpl));
-  if (pg != NULL) {
-    pg->lpVtbl        = &igetframeVtbl;
-    pg->ref           = 1;
-    pg->lCurrentFrame = -1;
-    pg->pStream       = pStream;
-    IAVIStream_AddRef(pStream);
-  }
-
-  return (PGETFRAME)pg;
-}
-
 static HRESULT WINAPI IGetFrame_fnQueryInterface(IGetFrame *iface,
 						 REFIID refiid, LPVOID *obj)
 {
-  IGetFrameImpl *This = (IGetFrameImpl *)iface;
+  IGetFrameImpl *This = impl_from_IGetFrame(iface);
 
   TRACE("(%p,%s,%p)\n", This, debugstr_guid(refiid), obj);
 
   if (IsEqualGUID(&IID_IUnknown, refiid) ||
       IsEqualGUID(&IID_IGetFrame, refiid)) {
     *obj = iface;
+    IGetFrame_AddRef(iface);
     return S_OK;
   }
 
@@ -154,7 +111,7 @@ static HRESULT WINAPI IGetFrame_fnQueryInterface(IGetFrame *iface,
 
 static ULONG   WINAPI IGetFrame_fnAddRef(IGetFrame *iface)
 {
-  IGetFrameImpl *This = (IGetFrameImpl *)iface;
+  IGetFrameImpl *This = impl_from_IGetFrame(iface);
   ULONG ref = InterlockedIncrement(&This->ref);
 
   TRACE("(%p)\n", iface);
@@ -164,7 +121,7 @@ static ULONG   WINAPI IGetFrame_fnAddRef(IGetFrame *iface)
 
 static ULONG   WINAPI IGetFrame_fnRelease(IGetFrame *iface)
 {
-  IGetFrameImpl *This = (IGetFrameImpl *)iface;
+  IGetFrameImpl *This = impl_from_IGetFrame(iface);
   ULONG ref = InterlockedDecrement(&This->ref);
 
   TRACE("(%p)\n", iface);
@@ -176,8 +133,7 @@ static ULONG   WINAPI IGetFrame_fnRelease(IGetFrame *iface)
       This->pStream = NULL;
     }
 
-    LocalFree((HLOCAL)iface);
-    return 0;
+    HeapFree(GetProcessHeap(), 0, iface);
   }
 
   return ref;
@@ -185,12 +141,12 @@ static ULONG   WINAPI IGetFrame_fnRelease(IGetFrame *iface)
 
 static LPVOID  WINAPI IGetFrame_fnGetFrame(IGetFrame *iface, LONG lPos)
 {
-  IGetFrameImpl *This = (IGetFrameImpl *)iface;
+  IGetFrameImpl *This = impl_from_IGetFrame(iface);
 
   LONG readBytes;
   LONG readSamples;
 
-  TRACE("(%p,%ld)\n", iface, lPos);
+  TRACE("(%p,%d)\n", iface, lPos);
 
   /* We don't want negative start values! -- marks invalid buffer content */
   if (lPos < 0)
@@ -218,7 +174,7 @@ static LPVOID  WINAPI IGetFrame_fnGetFrame(IGetFrame *iface, LONG lPos)
       if (This->lpOutFormat != NULL) {
 	BITMAPINFOHEADER bi;
 
-	memcpy(&bi, This->lpOutFormat, sizeof(bi));
+	bi = *This->lpOutFormat;
 	AVIFILE_CloseCompressor(This);
 
 	if (FAILED(IGetFrame_SetFormat(iface, &bi, NULL, 0, 0, -1, -1))) {
@@ -258,7 +214,7 @@ static LPVOID  WINAPI IGetFrame_fnGetFrame(IGetFrame *iface, LONG lPos)
 	if (FAILED(AVIStreamSampleSize(This->pStream, lNext, &readBytes)))
 	  return NULL; /* bad thing, but bad things will happen */
 	if (readBytes <= 0) {
-	  ERR(": IAVIStream::REad doesn't return needed bytes!\n");
+	  ERR(": IAVIStream::Read doesn't return needed bytes!\n");
 	  return NULL;
 	}
 
@@ -266,7 +222,7 @@ static LPVOID  WINAPI IGetFrame_fnGetFrame(IGetFrame *iface, LONG lPos)
 	if (This->cbInBuffer >= readBytes)
 	  break;
 	This->cbInBuffer = This->cbInFormat + readBytes;
-	This->lpInFormat = GlobalReAllocPtr(This->lpInFormat, This->cbInBuffer, 0);
+	This->lpInFormat = HeapReAlloc(GetProcessHeap(), 0, This->lpInFormat, This->cbInBuffer);
 	if (This->lpInFormat == NULL)
 	  return NULL; /* out of memory */
 	This->lpInBuffer = (BYTE*)This->lpInFormat + This->cbInFormat;
@@ -304,9 +260,9 @@ static LPVOID  WINAPI IGetFrame_fnGetFrame(IGetFrame *iface, LONG lPos)
 static HRESULT WINAPI IGetFrame_fnBegin(IGetFrame *iface, LONG lStart,
 					LONG lEnd, LONG lRate)
 {
-  IGetFrameImpl *This = (IGetFrameImpl *)iface;
+  IGetFrameImpl *This = impl_from_IGetFrame(iface);
 
-  TRACE("(%p,%ld,%ld,%ld)\n", iface, lStart, lEnd, lRate);
+  TRACE("(%p,%d,%d,%d)\n", iface, lStart, lEnd, lRate);
 
   This->bFixedStream = TRUE;
 
@@ -315,7 +271,7 @@ static HRESULT WINAPI IGetFrame_fnBegin(IGetFrame *iface, LONG lStart,
 
 static HRESULT WINAPI IGetFrame_fnEnd(IGetFrame *iface)
 {
-  IGetFrameImpl *This = (IGetFrameImpl *)iface;
+  IGetFrameImpl *This = impl_from_IGetFrame(iface);
 
   TRACE("(%p)\n", iface);
 
@@ -329,7 +285,7 @@ static HRESULT WINAPI IGetFrame_fnSetFormat(IGetFrame *iface,
 					    LPVOID lpBits, INT x, INT y,
 					    INT dx, INT dy)
 {
-  IGetFrameImpl *This = (IGetFrameImpl *)iface;
+  IGetFrameImpl *This = impl_from_IGetFrame(iface);
 
   AVISTREAMINFOW     sInfo;
   LPBITMAPINFOHEADER lpbi         = lpbiWanted;
@@ -350,8 +306,7 @@ static HRESULT WINAPI IGetFrame_fnSetFormat(IGetFrame *iface,
   if (sInfo.fccType != streamtypeVIDEO)
     return AVIERR_UNSUPPORTED;
 
-  This->bFormatChanges =
-    (sInfo.dwFlags & AVISTREAMINFO_FORMATCHANGES ? TRUE : FALSE );
+  This->bFormatChanges = (sInfo.dwFlags & AVISTREAMINFO_FORMATCHANGES) != 0;
   This->dwFormatChangeCount = sInfo.dwFormatChangeCount;
   This->dwEditCount         = sInfo.dwEditCount;
   This->lCurrentFrame       = -1;
@@ -367,8 +322,7 @@ static HRESULT WINAPI IGetFrame_fnSetFormat(IGetFrame *iface,
     IAVIStream_ReadFormat(This->pStream, sInfo.dwStart,
 			  NULL, &This->cbInFormat);
 
-    This->lpInFormat =
-      (LPBITMAPINFOHEADER)GlobalAllocPtr(GHND, This->cbInFormat + This->cbInBuffer);
+    This->lpInFormat = HeapAlloc(GetProcessHeap(), 0, This->cbInFormat + This->cbInBuffer);
     if (This->lpInFormat == NULL) {
       AVIFILE_CloseCompressor(This);
       return AVIERR_MEMORY;
@@ -408,8 +362,7 @@ static HRESULT WINAPI IGetFrame_fnSetFormat(IGetFrame *iface,
   /* need memory for output format? */
   if (This->lpOutFormat == NULL) {
     This->lpOutFormat =
-      (LPBITMAPINFOHEADER)GlobalAllocPtr(GHND, sizeof(BITMAPINFOHEADER)
-					 + 256 * sizeof(RGBQUAD));
+      HeapAlloc(GetProcessHeap(), 0, sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD));
     if (This->lpOutFormat == NULL) {
       AVIFILE_CloseCompressor(This);
       return AVIERR_MEMORY;
@@ -475,11 +428,10 @@ static HRESULT WINAPI IGetFrame_fnSetFormat(IGetFrame *iface,
     }
 
     if (lpBits == NULL) {
-      register DWORD size = This->lpOutFormat->biClrUsed * sizeof(RGBQUAD);
+      DWORD size = This->lpOutFormat->biClrUsed * sizeof(RGBQUAD);
 
       size += This->lpOutFormat->biSize + This->lpOutFormat->biSizeImage;
-      This->lpOutFormat =
-	(LPBITMAPINFOHEADER)GlobalReAllocPtr(This->lpOutFormat, size, GMEM_MOVEABLE);
+      This->lpOutFormat = HeapReAlloc(GetProcessHeap(), 0, This->lpOutFormat, size);
       if (This->lpOutFormat == NULL) {
 	AVIFILE_CloseCompressor(This);
 	return AVIERR_MEMORY;
@@ -522,6 +474,36 @@ static HRESULT WINAPI IGetFrame_fnSetFormat(IGetFrame *iface,
 
     return AVIERR_COMPRESSOR;
   }
+}
+
+static const struct IGetFrameVtbl igetframeVtbl = {
+  IGetFrame_fnQueryInterface,
+  IGetFrame_fnAddRef,
+  IGetFrame_fnRelease,
+  IGetFrame_fnGetFrame,
+  IGetFrame_fnBegin,
+  IGetFrame_fnEnd,
+  IGetFrame_fnSetFormat
+};
+
+PGETFRAME AVIFILE_CreateGetFrame(PAVISTREAM pStream)
+{
+  IGetFrameImpl *pg;
+
+  /* check parameter */
+  if (pStream == NULL)
+    return NULL;
+
+  pg = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IGetFrameImpl));
+  if (pg != NULL) {
+    pg->IGetFrame_iface.lpVtbl = &igetframeVtbl;
+    pg->ref           = 1;
+    pg->lCurrentFrame = -1;
+    pg->pStream       = pStream;
+    IAVIStream_AddRef(pStream);
+  }
+
+  return &pg->IGetFrame_iface;
 }
 
 /***********************************************************************/

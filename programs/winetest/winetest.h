@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINETESTS_H
@@ -28,19 +28,27 @@
 
 void fatal (const char* msg);
 void warning (const char* msg);
-void *xmalloc (size_t len);
-void *xrealloc (void *op, size_t len);
 void xprintf (const char *fmt, ...);
 char *vstrmake (size_t *lenp, va_list ap);
 char *strmake (size_t *lenp, ...);
 int goodtagchar (char c);
 const char *findbadtagchar (const char *tag);
 
-int send_file (const char *name);
+int send_file (const char *url, const char *name);
+
+extern HANDLE logfile;
 
 /* GUI definitions */
 
 #include <windows.h>
+
+#ifndef __WINE_ALLOC_SIZE
+#define __WINE_ALLOC_SIZE(x)
+#endif
+void *heap_alloc (size_t len) __WINE_ALLOC_SIZE(1);
+void *heap_realloc (void *op, size_t len) __WINE_ALLOC_SIZE(2);
+char *heap_strdup( const char *str );
+void heap_free (void *op);
 
 enum report_type {
     R_STATUS = 0,
@@ -58,9 +66,12 @@ enum report_type {
     R_QUIET
 };
 
-#define MAXTAGLEN 20
+#define MAXTAGLEN 30
 extern char *tag;
+extern char *email;
+extern BOOL aborting;
 int guiAskTag (void);
+int guiAskEmail (void);
 int report (enum report_type t, ...);
 
 #endif /* __WINETESTS_H */

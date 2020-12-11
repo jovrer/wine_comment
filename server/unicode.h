@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_SERVER_UNICODE_H
@@ -33,6 +33,7 @@ static inline WCHAR *strdupW( const WCHAR *str )
     return memdup( str, len );
 }
 
-extern int dump_strW( const WCHAR *str, size_t len, FILE *f, const char escape[2] );
+extern int parse_strW( WCHAR *buffer, data_size_t *len, const char *src, char endchar );
+extern int dump_strW( const WCHAR *str, data_size_t len, FILE *f, const char escape[2] );
 
 #endif  /* __WINE_SERVER_UNICODE_H */

@@ -15,13 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 VOID DIALOG_FileNew(VOID);
 VOID DIALOG_FileOpen(VOID);
-VOID DIALOG_FileSave(VOID);
-VOID DIALOG_FileSaveAs(VOID);
+BOOL DIALOG_FileSave(VOID);
+BOOL DIALOG_FileSaveAs(VOID);
 VOID DIALOG_FilePrint(VOID);
 VOID DIALOG_FilePageSetup(VOID);
 VOID DIALOG_FilePrinterSetup(VOID);
@@ -38,20 +38,20 @@ VOID DIALOG_EditWrap(VOID);
 
 VOID DIALOG_Search(VOID);
 VOID DIALOG_SearchNext(VOID);
+VOID DIALOG_Replace(VOID);
 
 VOID DIALOG_SelectFont(VOID);
 
 VOID DIALOG_HelpContents(VOID);
 VOID DIALOG_HelpSearch(VOID);
-VOID DIALOG_HelpHelp(VOID);
-VOID DIALOG_HelpLicense(VOID);
-VOID DIALOG_HelpNoWarranty(VOID);
-VOID DIALOG_HelpAboutWine(VOID);
+VOID DIALOG_HelpAboutNotepad(VOID);
 
 VOID DIALOG_TimeDate(VOID);
+int DIALOG_StringMsgBox(HWND hParent, int formatId, LPCWSTR szString, DWORD dwFlags);
 
 /* utility functions */
 VOID ShowLastError(void);
+void UpdateWindowCaption(void);
 BOOL FileExists(LPCWSTR szFilename);
 BOOL DoCloseFile(void);
-void DoOpenFile(LPCWSTR szFileName);
+void DoOpenFile(LPCWSTR szFileName, ENCODING enc);

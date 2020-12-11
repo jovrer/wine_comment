@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -25,23 +25,16 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(cryptdll);
 
-HMODULE CRYPTDLL_hModule = 0;
-
 BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-    TRACE("%p,%lx,%p\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("%p,%x,%p\n", hinstDLL, fdwReason, lpvReserved);
 
     switch (fdwReason) {
+        case DLL_WINE_PREATTACH:
+            return FALSE;  /* prefer native version */
         case DLL_PROCESS_ATTACH:
-        {
             DisableThreadLibraryCalls(hinstDLL);
-            CRYPTDLL_hModule = hinstDLL;
             break;
-        }
-        case DLL_PROCESS_DETACH:
-        {
-            break;
-        }
     }
 
     return TRUE;

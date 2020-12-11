@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package winapi_global;
@@ -40,11 +40,7 @@ sub check_modules($$) {
 		foreach my $internal_name ($winapi->all_internal_functions_in_module($module)) {
 		    next if $internal_name =~ /\./;
 		    my $function = $functions->{$internal_name};
-		    if(!defined($function) && !$nativeapi->is_function($internal_name) &&
-               # FIXME: remove these when DLL separation is complete
-               !($module eq "user32" || $module eq "gdi32" || $module eq "kernel32" ||
-                 $module eq "user.exe" || $module eq "keyboard.drv" || $module eq "ddeml" ||
-                 $module eq "gdi.exe" || $module eq "dispdib" || $module eq "krnl386.exe"))
+		    if(!defined($function) && !$nativeapi->is_function($internal_name))
 		    {
 			$output->write("*.c: $module: $internal_name: " .
 				       "function declared but not implemented or declared external\n");

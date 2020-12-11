@@ -15,13 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WNET_PRIV_H__
 #define __WNET_PRIV_H__
 
-void wnetInit(HINSTANCE hInstDll);
-void wnetFree(void);
+void wnetInit(HINSTANCE hInstDll) DECLSPEC_HIDDEN;
+void wnetFree(void) DECLSPEC_HIDDEN;
 
 #endif /* ndef __WNET_PRIV_H__ */

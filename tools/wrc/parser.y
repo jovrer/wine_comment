@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * History:
  * 24-Jul-2000 BS	- Made a fix for broken Berkeley yacc on
@@ -129,55 +129,26 @@
 #include <assert.h>
 #include <ctype.h>
 #include <string.h>
-#ifdef HAVE_ALLOCA_H
-#include <alloca.h>
-#endif
 
 #include "wrc.h"
 #include "utils.h"
 #include "newstruc.h"
 #include "dumpres.h"
 #include "wine/wpp.h"
-#include "wine/unicode.h"
 #include "parser.h"
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
 
-#if defined(YYBYACC)
-	/* Berkeley yacc (byacc) doesn't seem to know about these */
-	/* Some *BSD supplied versions do define these though */
-# ifndef YYEMPTY
-#  define YYEMPTY	(-1)	/* Empty lookahead value of yychar */
-# endif
-# ifndef YYLEX
-#  define YYLEX		yylex()
-# endif
-
-#elif defined(YYBISON)
-	/* Bison was used for original development */
-	/* #define YYEMPTY -2 */
-	/* #define YYLEX   yylex() */
-
-#else
-	/* No yacc we know yet */
-# if !defined(YYEMPTY) || !defined(YYLEX)
-#  error Yacc version/type unknown. This version needs to be verified for settings of YYEMPTY and YYLEX.
-# elif defined(__GNUC__)	/* gcc defines the #warning directive */
-#  warning Yacc version/type unknown. It defines YYEMPTY and YYLEX, but is not tested
-  /* #else we just take a chance that it works... */
-# endif
-#endif
-
 int want_nl = 0;	/* Signal flex that we need the next newline */
 int want_id = 0;	/* Signal flex that we need the next identifier */
-stringtable_t *tagstt;	/* Stringtable tag.
+static stringtable_t *tagstt;	/* Stringtable tag.
 			 * It is set while parsing a stringtable to one of
 			 * the stringtables in the sttres list or a new one
 			 * if the language was not parsed before.
 			 */
-stringtable_t *sttres;	/* Stringtable resources. This holds the list of
+static stringtable_t *sttres;	/* Stringtable resources. This holds the list of
 			 * stringtables with different lanuages
 			 */
 static int dont_want_id = 0;	/* See language parsing for details */
@@ -195,7 +166,6 @@ static control_t *get_control_head(control_t *p);
 static ver_value_t *get_ver_value_head(ver_value_t *p);
 static ver_block_t *get_ver_block_head(ver_block_t *p);
 static resource_t *get_resource_head(resource_t *p);
-static menuex_item_t *get_itemex_head(menuex_item_t *p);
 static menu_item_t *get_item_head(menu_item_t *p);
 static raw_data_t *merge_raw_data_str(raw_data_t *r1, string_t *str);
 static raw_data_t *merge_raw_data_int(raw_data_t *r1, int i);
@@ -208,15 +178,6 @@ static raw_data_t *load_file(string_t *name, language_t *lang);
 static itemex_opt_t *new_itemex_opt(int id, int type, int state, int helpid);
 static event_t *add_string_event(string_t *key, int id, int flags, event_t *prev);
 static event_t *add_event(int key, int id, int flags, event_t *prev);
-static dialogex_t *dialogex_version(version_t *v, dialogex_t *dlg);
-static dialogex_t *dialogex_characteristics(characts_t *c, dialogex_t *dlg);
-static dialogex_t *dialogex_language(language_t *l, dialogex_t *dlg);
-static dialogex_t *dialogex_menu(name_id_t *m, dialogex_t *dlg);
-static dialogex_t *dialogex_class(name_id_t *n, dialogex_t *dlg);
-static dialogex_t *dialogex_font(font_id_t *f, dialogex_t *dlg);
-static dialogex_t *dialogex_caption(string_t *s, dialogex_t *dlg);
-static dialogex_t *dialogex_exstyle(style_t *st, dialogex_t *dlg);
-static dialogex_t *dialogex_style(style_t *st, dialogex_t *dlg);
 static name_id_t *convert_ctlclass(name_id_t *cls);
 static control_t *ins_ctrl(int type, int special_style, control_t *ctrl, control_t *prev);
 static dialog_t *dialog_version(version_t *v, dialog_t *dlg);
@@ -247,11 +208,9 @@ static int rsrcid_to_token(int lookahead);
 	accelerator_t	*acc;
 	bitmap_t	*bmp;
 	dialog_t	*dlg;
-	dialogex_t	*dlgex;
 	font_t		*fnt;
 	fontdir_t	*fnd;
 	menu_t		*men;
-	menuex_t	*menex;
 	html_t		*html;
 	rcdata_t	*rdt;
 	stringtable_t	*stt;
@@ -267,7 +226,6 @@ static int rsrcid_to_token(int lookahead);
 	characts_t	*chars;
 	event_t		*event;
 	menu_item_t	*menitm;
-	menuex_item_t	*menexitm;
 	itemex_opt_t	*exopt;
 	raw_data_t	*raw;
 	lvc_t		*lvc;
@@ -284,7 +242,7 @@ static int rsrcid_to_token(int lookahead);
 
 %token tNL
 %token <num> tNUMBER tLNUMBER
-%token <str> tSTRING tIDENT tFILENAME
+%token <str> tSTRING tIDENT
 %token <raw> tRAWDATA
 %token tACCELERATORS tBITMAP tCURSOR tDIALOG tDIALOGEX tMENU tMENUEX tMESSAGETABLE
 %token tRCDATA tVERSIONINFO tSTRINGTABLE tFONT tFONTDIR tICON tHTML
@@ -300,7 +258,6 @@ static int rsrcid_to_token(int lookahead);
 %token tFILEVERSION tPRODUCTVERSION tFILEFLAGSMASK tFILEOS tFILETYPE tFILEFLAGS tFILESUBTYPE
 %token tMENUBARBREAK tMENUBREAK tMENUITEM tPOPUP tSEPARATOR
 %token tHELP
-%token tSTRING tIDENT tRAWDATA
 %token tTOOLBAR tBUTTON
 %token tBEGIN tEND
 %token tDLGINIT
@@ -320,10 +277,9 @@ static int rsrcid_to_token(int lookahead);
 %type <event> 	events
 %type <bmp> 	bitmap
 %type <ani> 	cursor icon
-%type <dlg> 	dialog dlg_attributes
+%type <dlg> 	dialog dlg_attributes dialogex dlgex_attribs
 %type <ctl> 	ctrls gen_ctrl lab_ctrl ctrl_desc iconinfo
 %type <iptr>	helpid
-%type <dlgex> 	dialogex dlgex_attribs
 %type <ctl>	exctrls gen_exctrl lab_exctrl exctrl_desc
 %type <html>	html
 %type <rdt> 	rcdata
@@ -332,10 +288,8 @@ static int rsrcid_to_token(int lookahead);
 %type <verw>	ver_words
 %type <blk>	ver_blocks ver_block
 %type <val>	ver_values ver_value
-%type <men> 	menu
-%type <menitm>	item_definitions menu_body
-%type <menex>	menuex
-%type <menexitm> itemex_definitions menuex_body
+%type <men> 	menu menuex
+%type <menitm>	item_definitions menu_body itemex_definitions menuex_body
 %type <exopt>	itemex_p_options itemex_options
 %type <msg> 	messagetable
 %type <usr> 	userres
@@ -362,7 +316,7 @@ static int rsrcid_to_token(int lookahead);
 
 resource_file
 	: resources {
-		resource_t *rsc;
+		resource_t *rsc, *head;
 		/* First add stringtables to the resource-list */
 		rsc = build_stt_resources(sttres);
 		/* 'build_stt_resources' returns a head and $1 is a tail */
@@ -377,7 +331,7 @@ resource_file
 		/* Find the tail again */
 		while($1 && $1->next)
 			$1 = $1->next;
-		/* Now add any fontdirecory */
+		/* Now add any fontdirectory */
 		rsc = build_fontdirs($1);
 		/* 'build_fontdir' returns a head and $1 is a tail */
 		if($1)
@@ -388,8 +342,20 @@ resource_file
 		}
 		else
 			$1 = rsc;
-		/* Final statement before were done */
-		resource_top = get_resource_head($1);
+
+		/* Final statements before we're done */
+                if ((head = get_resource_head($1)) != NULL)
+                {
+                    if (resource_top)  /* append to existing resources */
+                    {
+                        resource_t *tail = resource_top;
+                        while (tail->next) tail = tail->next;
+                        tail->next = head;
+                        head->prev = tail;
+                    }
+                    else resource_top = head;
+                }
+                sttres = NULL;
 		}
 	;
 
@@ -418,7 +384,8 @@ resources
 					if(rsc->type == head->type
 					&& rsc->lan->id == head->lan->id
 					&& rsc->lan->sub == head->lan->sub
-					&& !compare_name_id(rsc->name, head->name))
+					&& !compare_name_id(rsc->name, head->name)
+					&& (rsc->type != res_usr || !compare_name_id(rsc->res.usr->type,head->res.usr->type)))
 					{
 						yyerror("Duplicate resource name '%s'", get_nameid_str(rsc->name));
 					}
@@ -443,7 +410,7 @@ resources
 		}
 	/*
 	 * The following newline rule will never get reduced because we never
-	 * get the tNL token, unless we explicitely set the 'want_nl'
+	 * get the tNL token, unless we explicitly set the 'want_nl'
 	 * flag, which we don't.
 	 * The *ONLY* reason for this to be here is because Berkeley
 	 * yacc (byacc), at least version 1.9, has a bug.
@@ -481,7 +448,7 @@ resource
 			$$->name = new_name_id();
 			$$->name->type = name_ord;
 			$$->name->name.i_name = $1;
-			chat("Got %s (%d)", get_typename($3), $$->name->name.i_name);
+			chat("Got %s (%d)\n", get_typename($3), $$->name->name.i_name);
 			}
 			}
 	| tIDENT usrcvt resource_definition {
@@ -491,7 +458,7 @@ resource
 			$$->name = new_name_id();
 			$$->name->type = name_str;
 			$$->name->name.s_name = $1;
-			chat("Got %s (%s)", get_typename($3), $$->name->name.s_name->str.cstr);
+			chat("Got %s (%s)\n", get_typename($3), $$->name->name.s_name->str.cstr);
 		}
 		}
 	| stringtable {
@@ -500,7 +467,7 @@ resource
 		 * the final rule of the parser is reduced (see above)
 		 */
 		$$ = NULL;
-		chat("Got STRINGTABLE");
+		chat("Got STRINGTABLE\n");
 		}
 	| tLANGUAGE {want_nl = 1; } expr ',' expr {
 		/* We *NEED* the newline to delimit the expression.
@@ -510,7 +477,7 @@ resource
 		 * However, we can test the lookahead-token for
 		 * being "non-expression" type, in which case we
 		 * continue. Fortunately, tNL is the only token that
-		 * will break expression parsing and is implicitely
+		 * will break expression parsing and is implicitly
 		 * void, so we just remove it. This scheme makes it
 		 * possible to do some (not all) fancy preprocessor
 		 * stuff.
@@ -526,19 +493,18 @@ resource
 			yychar = YYEMPTY;	/* Could use 'yyclearin', but we already need the*/
 						/* direct access to yychar in rule 'usrcvt' below. */
 		else if(yychar == tIDENT)
-			yywarning("LANGUAGE statement not delimited with newline; next identifier might be wrong");
+			parser_warning("LANGUAGE statement not delimited with newline; next identifier might be wrong\n");
 
 		want_nl = 0;	/* We don't want it anymore if we didn't get it */
 
 		if(!win32)
-			yywarning("LANGUAGE not supported in 16-bit mode");
-		if(currentlanguage)
-			free(currentlanguage);
+			parser_warning("LANGUAGE not supported in 16-bit mode\n");
+		free(currentlanguage);
 		if (get_language_codepage($3, $5) == -1)
 			yyerror( "Language %04x is not supported", ($5<<10) + $3);
 		currentlanguage = new_language($3, $5);
 		$$ = NULL;
-		chat("Got LANGUAGE %d,%d (0x%04x)", $3, $5, ($5<<10) + $3);
+		chat("Got LANGUAGE %d,%d (0x%04x)\n", $3, $5, ($5<<10) + $3);
 		}
 	;
 
@@ -602,13 +568,13 @@ resource_definition
 			}
 		}
 		else
-			internal_error(__FILE__, __LINE__, "Invalid top-level type %d in cursor resource", $1->type);
+			internal_error(__FILE__, __LINE__, "Invalid top-level type %d in cursor resource\n", $1->type);
 		free($1);
 		}
 	| dialog	{ $$ = new_resource(res_dlg, $1, $1->memopt, $1->lvc.language); }
 	| dialogex {
 		if(win32)
-			$$ = new_resource(res_dlgex, $1, $1->memopt, $1->lvc.language);
+			$$ = new_resource(res_dlg, $1, $1->memopt, $1->lvc.language);
 		else
 			$$ = NULL;
 		}
@@ -636,13 +602,13 @@ resource_definition
 			}
 		}
 		else
-			internal_error(__FILE__, __LINE__, "Invalid top-level type %d in icon resource", $1->type);
+			internal_error(__FILE__, __LINE__, "Invalid top-level type %d in icon resource\n", $1->type);
 		free($1);
 		}
 	| menu		{ $$ = new_resource(res_men, $1, $1->memopt, $1->lvc.language); }
 	| menuex {
 		if(win32)
-			$$ = new_resource(res_menex, $1, $1->memopt, $1->lvc.language);
+			$$ = new_resource(res_men, $1, $1->memopt, $1->lvc.language);
 		else
 			$$ = NULL;
 		}
@@ -655,8 +621,7 @@ resource_definition
 	;
 
 
-filename: tFILENAME	{ $$ = make_filename($1); }
-	| tIDENT	{ $$ = make_filename($1); }
+filename: tIDENT	{ $$ = make_filename($1); }
 	| tSTRING	{ $$ = make_filename($1); }
 	;
 
@@ -723,7 +688,7 @@ fontdir	: tFONTDIR loadmemopts file_raw	{ $$ = new_fontdir($3, $2); }
 messagetable
 	: tMESSAGETABLE loadmemopts file_raw	{
 		if(!win32)
-			yywarning("MESSAGETABLE not supported in 16-bit mode");
+			parser_warning("MESSAGETABLE not supported in 16-bit mode\n");
 		$$ = new_messagetable($3, $2);
 		}
 	;
@@ -747,7 +712,7 @@ userres	: usertype loadmemopts file_raw		{
 #else
 			if(pedantic && byteorder == WRC_BO_BIG)
 #endif
-				yywarning("Byteordering is not little-endian and type cannot be interpreted");
+				parser_warning("Byteordering is not little-endian and type cannot be interpreted\n");
 			$$ = new_user($1, $3, $2);
 		}
 	;
@@ -896,11 +861,9 @@ ctrls	: /* Empty */				{ $$ = NULL; }
 	;
 
 lab_ctrl
-	: tSTRING opt_comma expr ',' expr ',' expr ',' expr ',' expr optional_style_pair {
+	: nameid_s opt_comma expr ',' expr ',' expr ',' expr ',' expr optional_style_pair {
 		$$=new_control();
-		$$->title = new_name_id();
-		$$->title->type = name_str;
-		$$->title->name.s_name = $1;
+		$$->title = $1;
 		$$->id = $3;
 		$$->x = $5;
 		$$->y = $7;
@@ -1031,7 +994,7 @@ ctlclass
 dialogex: tDIALOGEX loadmemopts expr ',' expr ',' expr ',' expr helpid dlgex_attribs
 	  tBEGIN  exctrls tEND {
 		if(!win32)
-			yywarning("DIALOGEX not supported in 16-bit mode");
+			parser_warning("DIALOGEX not supported in 16-bit mode\n");
 		if($2)
 		{
 			$11->memopt = *($2);
@@ -1072,17 +1035,17 @@ dialogex: tDIALOGEX loadmemopts expr ',' expr ',' expr ',' expr helpid dlgex_att
 	;
 
 dlgex_attribs
-	: /* Empty */				{ $$=new_dialogex(); }
-	| dlgex_attribs tSTYLE style		{ $$=dialogex_style($3,$1); }
-	| dlgex_attribs tEXSTYLE style		{ $$=dialogex_exstyle($3,$1); }
-	| dlgex_attribs tCAPTION tSTRING	{ $$=dialogex_caption($3,$1); }
-	| dlgex_attribs opt_font		{ $$=dialogex_font($2,$1); }
-	| dlgex_attribs opt_exfont		{ $$=dialogex_font($2,$1); }
-	| dlgex_attribs tCLASS nameid_s		{ $$=dialogex_class($3,$1); }
-	| dlgex_attribs tMENU nameid		{ $$=dialogex_menu($3,$1); }
-	| dlgex_attribs opt_language		{ $$=dialogex_language($2,$1); }
-	| dlgex_attribs opt_characts		{ $$=dialogex_characteristics($2,$1); }
-	| dlgex_attribs opt_version		{ $$=dialogex_version($2,$1); }
+	: /* Empty */				{ $$=new_dialog(); $$->is_ex = TRUE; }
+	| dlgex_attribs tSTYLE style		{ $$=dialog_style($3,$1); }
+	| dlgex_attribs tEXSTYLE style		{ $$=dialog_exstyle($3,$1); }
+	| dlgex_attribs tCAPTION tSTRING	{ $$=dialog_caption($3,$1); }
+	| dlgex_attribs opt_font		{ $$=dialog_font($2,$1); }
+	| dlgex_attribs opt_exfont		{ $$=dialog_font($2,$1); }
+	| dlgex_attribs tCLASS nameid_s		{ $$=dialog_class($3,$1); }
+	| dlgex_attribs tMENU nameid		{ $$=dialog_menu($3,$1); }
+	| dlgex_attribs opt_language		{ $$=dialog_language($2,$1); }
+	| dlgex_attribs opt_characts		{ $$=dialog_characteristics($2,$1); }
+	| dlgex_attribs opt_version		{ $$=dialog_version($2,$1); }
 	;
 
 exctrls	: /* Empty */				{ $$ = NULL; }
@@ -1156,11 +1119,9 @@ gen_exctrl
 	;
 
 lab_exctrl
-	: tSTRING opt_comma expr ',' expr ',' expr ',' expr ',' expr optional_style_pair helpid opt_data {
+	: nameid_s opt_comma expr ',' expr ',' expr ',' expr ',' expr optional_style_pair helpid opt_data {
 		$$=new_control();
-		$$->title = new_name_id();
-		$$->title->type = name_str;
-		$$->title->name.s_name = $1;
+		$$->title = $1;
 		$$->id = $3;
 		$$->x = $5;
 		$$->y = $7;
@@ -1290,22 +1251,24 @@ item_definitions
  * (who would want to specify a MF_x flag twice?).
  */
 item_options
-	: /* Empty */				{ $$ = 0; }
-	| opt_comma tCHECKED		item_options	{ $$ = $3 | MF_CHECKED; }
-	| opt_comma tGRAYED		item_options	{ $$ = $3 | MF_GRAYED; }
-	| opt_comma tHELP		item_options	{ $$ = $3 | MF_HELP; }
-	| opt_comma tINACTIVE		item_options	{ $$ = $3 | MF_DISABLED; }
-	| opt_comma tMENUBARBREAK	item_options	{ $$ = $3 | MF_MENUBARBREAK; }
-	| opt_comma tMENUBREAK	item_options	{ $$ = $3 | MF_MENUBREAK; }
+	:  /* Empty */			{ $$ = 0; }
+	| ','		item_options	{ $$ = $2; }
+	| tCHECKED	item_options	{ $$ = $2 | MF_CHECKED; }
+	| tGRAYED	item_options	{ $$ = $2 | MF_GRAYED; }
+	| tHELP		item_options	{ $$ = $2 | MF_HELP; }
+	| tINACTIVE	item_options	{ $$ = $2 | MF_DISABLED; }
+	| tMENUBARBREAK	item_options	{ $$ = $2 | MF_MENUBARBREAK; }
+	| tMENUBREAK	item_options	{ $$ = $2 | MF_MENUBREAK; }
 	;
 
 /* ------------------------------ MenuEx ------------------------------ */
 menuex	: tMENUEX loadmemopts opt_lvc menuex_body	{
 		if(!win32)
-			yywarning("MENUEX not supported in 16-bit mode");
+			parser_warning("MENUEX not supported in 16-bit mode\n");
 		if(!$4)
 			yyerror("MenuEx must contain items");
-		$$ = new_menuex();
+		$$ = new_menu();
+		$$->is_ex = TRUE;
 		if($2)
 		{
 			$$->memopt = *($2);
@@ -1313,7 +1276,7 @@ menuex	: tMENUEX loadmemopts opt_lvc menuex_body	{
 		}
 		else
 			$$->memopt = WRC_MO_MOVEABLE | WRC_MO_PURE | WRC_MO_DISCARDABLE;
-		$$->items = get_itemex_head($4);
+		$$->items = get_item_head($4);
 		if($3)
 		{
 			$$->lvc = *($3);
@@ -1331,7 +1294,7 @@ menuex_body
 itemex_definitions
 	: /* Empty */	{$$ = NULL; }
 	| itemex_definitions tMENUITEM tSTRING itemex_options {
-		$$ = new_menuex_item();
+		$$ = new_menu_item();
 		$$->prev = $1;
 		if($1)
 			$1->next = $$;
@@ -1347,17 +1310,17 @@ itemex_definitions
 		free($4);
 		}
 	| itemex_definitions tMENUITEM tSEPARATOR {
-		$$ = new_menuex_item();
+		$$ = new_menu_item();
 		$$->prev = $1;
 		if($1)
 			$1->next = $$;
 		}
 	| itemex_definitions tPOPUP tSTRING itemex_p_options menuex_body {
-		$$ = new_menuex_item();
+		$$ = new_menu_item();
 		$$->prev = $1;
 		if($1)
 			$1->next = $$;
-		$$->popup = get_itemex_head($5);
+		$$->popup = get_item_head($5);
 		$$->name = $3;
 		$$->id = $4->id;
 		$$->type = $4->type;
@@ -1382,16 +1345,16 @@ itemex_options
 		$$->gotid = TRUE;
 		$$->gottype = TRUE;
 		$$->gotstate = TRUE;
-		if($2) free($2);
-		if($4) free($4);
+		free($2);
+		free($4);
 		}
 	| ',' e_expr ',' e_expr ',' expr {
 		$$ = new_itemex_opt($2 ? *($2) : 0, $4 ? *($4) : 0, $6, 0);
 		$$->gotid = TRUE;
 		$$->gottype = TRUE;
 		$$->gotstate = TRUE;
-		if($2) free($2);
-		if($4) free($4);
+		free($2);
+		free($4);
 		}
 	;
 
@@ -1403,23 +1366,23 @@ itemex_p_options
 		}
 	| ',' e_expr ',' expr {
 		$$ = new_itemex_opt($2 ? *($2) : 0, $4, 0, 0);
-		if($2) free($2);
+		free($2);
 		$$->gotid = TRUE;
 		$$->gottype = TRUE;
 		}
 	| ',' e_expr ',' e_expr ',' expr {
 		$$ = new_itemex_opt($2 ? *($2) : 0, $4 ? *($4) : 0, $6, 0);
-		if($2) free($2);
-		if($4) free($4);
+		free($2);
+		free($4);
 		$$->gotid = TRUE;
 		$$->gottype = TRUE;
 		$$->gotstate = TRUE;
 		}
 	| ',' e_expr ',' e_expr ',' e_expr ',' expr {
 		$$ = new_itemex_opt($2 ? *($2) : 0, $4 ? *($4) : 0, $6 ? *($6) : 0, $8);
-		if($2) free($2);
-		if($4) free($4);
-		if($6) free($6);
+		free($2);
+		free($4);
+		free($6);
 		$$->gotid = TRUE;
 		$$->gottype = TRUE;
 		$$->gotstate = TRUE;
@@ -1463,13 +1426,10 @@ stringtable
 				else
 					sttres = tagstt;
 			 }
-			 /* Else were done */
+			 /* Else, we're done */
 		}
-		if(tagstt_memopt)
-		{
-			free(tagstt_memopt);
-			tagstt_memopt = NULL;
-		}
+		free(tagstt_memopt);
+		tagstt_memopt = NULL;
 
 		$$ = tagstt;
 		}
@@ -1482,8 +1442,7 @@ stt_head: tSTRINGTABLE loadmemopts opt_lvc {
 		tagstt_memopt = $2;
 		tagstt_version = $3->version;
 		tagstt_characts = $3->characts;
-		if($3)
-			free($3);
+		free($3);
 		}
 	;
 
@@ -1512,7 +1471,7 @@ strings	: /* Empty */	{ $$ = NULL; }
 		tagstt->entries[tagstt->nentries-1].characts = tagstt_characts;
 
 		if(pedantic && !$4->size)
-			yywarning("Zero length strings make no sense");
+			parser_warning("Zero length strings make no sense\n");
 		if(!win32 && $4->size > 254)
 			yyerror("Stringtable entry more than 254 characters");
 		if(win32 && $4->size > 65534) /* Hmm..., does this happen? */
@@ -1723,22 +1682,29 @@ loadmemopts
 		}
 	;
 
-lamo	: tPRELOAD	{ $$ = new_int(WRC_MO_PRELOAD); }
-	| tMOVEABLE	{ $$ = new_int(WRC_MO_MOVEABLE); }
-	| tDISCARDABLE	{ $$ = new_int(WRC_MO_DISCARDABLE); }
-	| tPURE		{ $$ = new_int(WRC_MO_PURE); }
+lamo	: tPRELOAD	{ $$ = new_int(WRC_MO_PRELOAD);
+			  if (win32 && pedantic) parser_warning("PRELOAD is ignored in 32-bit mode\n"); }
+	| tMOVEABLE	{ $$ = new_int(WRC_MO_MOVEABLE);
+			  if (win32 && pedantic) parser_warning("MOVEABLE is ignored in 32-bit mode\n"); }
+	| tDISCARDABLE	{ $$ = new_int(WRC_MO_DISCARDABLE);
+			  if (win32 && pedantic) parser_warning("DISCARDABLE is ignored in 32-bit mode\n"); }
+	| tPURE		{ $$ = new_int(WRC_MO_PURE);
+			  if (win32 && pedantic) parser_warning("PURE is ignored in 32-bit mode\n"); }
 	;
 
-lama	: tLOADONCALL	{ $$ = new_int(~WRC_MO_PRELOAD); }
-	| tFIXED	{ $$ = new_int(~WRC_MO_MOVEABLE); }
-	| tIMPURE	{ $$ = new_int(~WRC_MO_PURE); }
+lama	: tLOADONCALL	{ $$ = new_int(~WRC_MO_PRELOAD);
+			  if (win32 && pedantic) parser_warning("LOADONCALL is ignored in 32-bit mode\n"); }
+	| tFIXED	{ $$ = new_int(~WRC_MO_MOVEABLE);
+			  if (win32 && pedantic) parser_warning("FIXED is ignored in 32-bit mode\n"); }
+	| tIMPURE	{ $$ = new_int(~WRC_MO_PURE);
+			  if (win32 && pedantic) parser_warning("IMPURE is ignored in 32-bit mode\n"); }
 	;
 
 /* ------------------------------ Win32 options ------------------------------ */
 opt_lvc	: /* Empty */		{ $$ = new_lvc(); }
 	| opt_lvc opt_language {
 		if(!win32)
-			yywarning("LANGUAGE not supported in 16-bit mode");
+			parser_warning("LANGUAGE not supported in 16-bit mode\n");
 		if($1->language)
 			yyerror("Language already defined");
 		$$ = $1;
@@ -1746,7 +1712,7 @@ opt_lvc	: /* Empty */		{ $$ = new_lvc(); }
 		}
 	| opt_lvc opt_characts {
 		if(!win32)
-			yywarning("CHARACTERISTICS not supported in 16-bit mode");
+			parser_warning("CHARACTERISTICS not supported in 16-bit mode\n");
 		if($1->characts)
 			yyerror("Characteristics already defined");
 		$$ = $1;
@@ -1754,7 +1720,7 @@ opt_lvc	: /* Empty */		{ $$ = new_lvc(); }
 		}
 	| opt_lvc opt_version {
 		if(!win32)
-			yywarning("VERSION not supported in 16-bit mode");
+			parser_warning("VERSION not supported in 16-bit mode\n");
 		if($1->version)
 			yyerror("Version already defined");
 		$$ = $1;
@@ -1820,8 +1786,8 @@ file_raw: filename	{ $$ = load_file($1,dup_language(currentlanguage)); }
 	;
 
 /* ------------------------------ Win32 expressions ------------------------------ */
-/* All win16 numbers are also handled here. This is inconsistent with MS'
- * resource compiler, but what the heck, its just handy to have.
+/* All win16 numbers are also handled here. This is inconsistent with MS
+ * resource compiler, but what the heck, it's just handy to have.
  */
 e_expr	: /* Empty */	{ $$ = 0; }
 	| expr		{ $$ = new_int($1); }
@@ -1862,7 +1828,7 @@ static dialog_t *dialog_style(style_t * st, dialog_t *dlg)
 
 	if(dlg->gotstyle)
 	{
-		yywarning("Style already defined, or-ing together");
+		parser_warning("Style already defined, or-ing together\n");
 	}
 	else
 	{
@@ -1886,7 +1852,7 @@ static dialog_t *dialog_exstyle(style_t *st, dialog_t *dlg)
 
 	if(dlg->gotexstyle)
 	{
-		yywarning("ExStyle already defined, or-ing together");
+		parser_warning("ExStyle already defined, or-ing together\n");
 	}
 	else
 	{
@@ -1975,6 +1941,14 @@ static control_t *ins_ctrl(int type, int special_style, control_t *ctrl, control
 	if(prev)
 		prev->next = ctrl;
 
+	/* Check for duplicate identifiers */
+	while (prev)
+	{
+		if (ctrl->id != -1 && ctrl->id == prev->id)
+                        parser_warning("Duplicate dialog control id %d\n", ctrl->id);
+		prev = prev->prev;
+	}
+
 	if(type != -1)
 	{
 		ctrl->ctlclass = new_name_id();
@@ -1995,7 +1969,7 @@ static control_t *ins_ctrl(int type, int special_style, control_t *ctrl, control
 		defaultstyle |= LBS_NOTIFY | WS_BORDER;
 		break;
 	case CT_COMBOBOX:
-                if (!(ctrl->style->or_mask & (CBS_SIMPLE | CBS_DROPDOWN | CBS_DROPDOWNLIST)))
+                if (!ctrl->gotstyle || !(ctrl->style->or_mask & (CBS_SIMPLE | CBS_DROPDOWN | CBS_DROPDOWNLIST)))
                     defaultstyle |= CBS_SIMPLE;
 		break;
 	case CT_STATIC:
@@ -2034,7 +2008,7 @@ static control_t *ins_ctrl(int type, int special_style, control_t *ctrl, control
 				defaultstyle |= WS_TABSTOP;
 				break;
 			default:
-				yywarning("Unknown default button control-style 0x%08x", special_style);
+				parser_warning("Unknown default button control-style 0x%08x\n", special_style);
 			case BS_GROUPBOX:
 			case BS_RADIOBUTTON:
 				break;
@@ -2052,7 +2026,7 @@ static control_t *ins_ctrl(int type, int special_style, control_t *ctrl, control
 			case SS_ICON:	/* Special case */
 				break;
 			default:
-				yywarning("Unknown default static control-style 0x%08x", special_style);
+				parser_warning("Unknown default static control-style 0x%08x\n", special_style);
 				break;
 			}
 			break;
@@ -2089,34 +2063,49 @@ byebye:
 	return ctrl;
 }
 
+static int get_class_idW(const WCHAR *cc)
+{
+        static const WCHAR szBUTTON[]    = {'B','U','T','T','O','N',0};
+        static const WCHAR szCOMBOBOX[]  = {'C','O','M','B','O','B','O','X',0};
+        static const WCHAR szLISTBOX[]   = {'L','I','S','T','B','O','X',0};
+        static const WCHAR szEDIT[]      = {'E','D','I','T',0};
+        static const WCHAR szSTATIC[]    = {'S','T','A','T','I','C',0};
+        static const WCHAR szSCROLLBAR[] = {'S','C','R','O','L','L','B','A','R',0};
+
+        if(!compare_striW(szBUTTON, cc)) return CT_BUTTON;
+        if(!compare_striW(szCOMBOBOX, cc)) return CT_COMBOBOX;
+        if(!compare_striW(szLISTBOX, cc)) return CT_LISTBOX;
+        if(!compare_striW(szEDIT, cc)) return CT_EDIT;
+        if(!compare_striW(szSTATIC, cc)) return CT_STATIC;
+        if(!compare_striW(szSCROLLBAR, cc)) return CT_SCROLLBAR;
+        return -1;
+}
+
+static int get_class_idA(const char *cc)
+{
+        if(!compare_striA("BUTTON", cc)) return CT_BUTTON;
+        if(!compare_striA("COMBOBOX", cc)) return CT_COMBOBOX;
+        if(!compare_striA("LISTBOX", cc)) return CT_LISTBOX;
+        if(!compare_striA("EDIT", cc)) return CT_EDIT;
+        if(!compare_striA("STATIC", cc)) return CT_STATIC;
+        if(!compare_striA("SCROLLBAR", cc)) return CT_SCROLLBAR;
+        return -1;
+}
+
+
 static name_id_t *convert_ctlclass(name_id_t *cls)
 {
-	char *cc = NULL;
 	int iclass;
 
 	if(cls->type == name_ord)
 		return cls;
 	assert(cls->type == name_str);
-	if(cls->type == str_unicode)
-	{
-		yyerror("Don't yet support unicode class comparison");
-	}
-	else
-		cc = cls->name.s_name->str.cstr;
+        if(cls->name.s_name->type == str_unicode)
+                iclass = get_class_idW(cls->name.s_name->str.wstr);
+        else
+                iclass = get_class_idA(cls->name.s_name->str.cstr);
 
-	if(!strcasecmp("BUTTON", cc))
-		iclass = CT_BUTTON;
-	else if(!strcasecmp("COMBOBOX", cc))
-		iclass = CT_COMBOBOX;
-	else if(!strcasecmp("LISTBOX", cc))
-		iclass = CT_LISTBOX;
-	else if(!strcasecmp("EDIT", cc))
-		iclass = CT_EDIT;
-	else if(!strcasecmp("STATIC", cc))
-		iclass = CT_STATIC;
-	else if(!strcasecmp("SCROLLBAR", cc))
-		iclass = CT_SCROLLBAR;
-	else
+        if (iclass == -1)
 		return cls;	/* No default, return user controlclass */
 
 	free(cls->name.s_name->str.cstr);
@@ -2124,118 +2113,6 @@ static name_id_t *convert_ctlclass(name_id_t *cls)
 	cls->type = name_ord;
 	cls->name.i_name = iclass;
 	return cls;
-}
-
-/* DialogEx specific functions */
-static dialogex_t *dialogex_style(style_t * st, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->style == NULL)
-	{
-		dlg->style = new_style(0,0);
-	}
-
-	if(dlg->gotstyle)
-	{
-		yywarning("Style already defined, or-ing together");
-	}
-	else
-	{
-		dlg->style->or_mask = 0;
-		dlg->style->and_mask = 0;
-	}
-	dlg->style->or_mask |= st->or_mask;
-	dlg->style->and_mask |= st->and_mask;
-	dlg->gotstyle = TRUE;
-	free(st);
-	return dlg;
-}
-
-static dialogex_t *dialogex_exstyle(style_t * st, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->exstyle == NULL)
-	{
-		dlg->exstyle = new_style(0,0);
-	}
-
-	if(dlg->gotexstyle)
-	{
-		yywarning("ExStyle already defined, or-ing together");
-	}
-	else
-	{
-		dlg->exstyle->or_mask = 0;
-		dlg->exstyle->and_mask = 0;
-	}
-	dlg->exstyle->or_mask |= st->or_mask;
-	dlg->exstyle->and_mask |= st->and_mask;
-	dlg->gotexstyle = TRUE;
-	free(st);
-	return dlg;
-}
-
-static dialogex_t *dialogex_caption(string_t *s, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->title)
-		yyerror("Caption already defined");
-	dlg->title = s;
-	return dlg;
-}
-
-static dialogex_t *dialogex_font(font_id_t *f, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->font)
-		yyerror("Font already defined");
-	dlg->font = f;
-	return dlg;
-}
-
-static dialogex_t *dialogex_class(name_id_t *n, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->dlgclass)
-		yyerror("Class already defined");
-	dlg->dlgclass = n;
-	return dlg;
-}
-
-static dialogex_t *dialogex_menu(name_id_t *m, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->menu)
-		yyerror("Menu already defined");
-	dlg->menu = m;
-	return dlg;
-}
-
-static dialogex_t *dialogex_language(language_t *l, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->lvc.language)
-		yyerror("Language already defined");
-	dlg->lvc.language = l;
-	return dlg;
-}
-
-static dialogex_t *dialogex_characteristics(characts_t *c, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->lvc.characts)
-		yyerror("Characteristics already defined");
-	dlg->lvc.characts = c;
-	return dlg;
-}
-
-static dialogex_t *dialogex_version(version_t *v, dialogex_t *dlg)
-{
-	assert(dlg != NULL);
-	if(dlg->lvc.version)
-		yyerror("Version already defined");
-	dlg->lvc.version = v;
-	return dlg;
 }
 
 /* Accelerator specific functions */
@@ -2257,40 +2134,22 @@ static event_t *add_event(int key, int id, int flags, event_t *prev)
 
 static event_t *add_string_event(string_t *key, int id, int flags, event_t *prev)
 {
-	int keycode = 0;
-	event_t *ev = new_event();
+    event_t *ev = new_event();
 
-	if(key->type != str_char)
-		yyerror("Key code must be an ascii string");
-
-	if((flags & WRC_AF_VIRTKEY) && (!isupper(key->str.cstr[0] & 0xff) && !isdigit(key->str.cstr[0] & 0xff)))
-		yyerror("VIRTKEY code is not equal to ascii value");
-
-	if(key->str.cstr[0] == '^' && (flags & WRC_AF_CONTROL) != 0)
-	{
-		yyerror("Cannot use both '^' and CONTROL modifier");
-	}
-	else if(key->str.cstr[0] == '^')
-	{
-		keycode = toupper(key->str.cstr[1]) - '@';
-		if(keycode >= ' ')
-			yyerror("Control-code out of range");
-	}
-	else
-		keycode = key->str.cstr[0];
-	ev->key = keycode;
-	ev->id = id;
-	ev->flags = flags & ~WRC_AF_ASCII;
-	ev->prev = prev;
-	if(prev)
-		prev->next = ev;
-	return ev;
+    ev->str = key;
+    ev->id = id;
+    ev->flags = flags & ~WRC_AF_ASCII;
+    ev->prev = prev;
+    if(prev)
+        prev->next = ev;
+    return ev;
 }
 
 /* MenuEx specific functions */
 static itemex_opt_t *new_itemex_opt(int id, int type, int state, int helpid)
 {
-	itemex_opt_t *opt = (itemex_opt_t *)xmalloc(sizeof(itemex_opt_t));
+	itemex_opt_t *opt = xmalloc(sizeof(itemex_opt_t));
+	memset( opt, 0, sizeof(*opt) );
 	opt->id = id;
 	opt->type = type;
 	opt->state = state;
@@ -2322,7 +2181,7 @@ static raw_data_t *load_file(string_t *filename, language_t *lang)
 	fseek(fp, 0, SEEK_SET);
 	if (rd->size)
 	{
-		rd->data = (char *)xmalloc(rd->size);
+		rd->data = xmalloc(rd->size);
 		fread(rd->data, rd->size, 1, fp);
 	}
 	else rd->data = NULL;
@@ -2338,11 +2197,11 @@ static raw_data_t *int2raw_data(int i)
 
 	if( ( i >= 0 && (int)((unsigned short)i) != i) ||
             ( i < 0  && (int)((short)i) != i) )
-		yywarning("Integer constant out of 16bit range (%d), truncated to %d\n", i, (short)i);
+		parser_warning("Integer constant out of 16bit range (%d), truncated to %d\n", i, (short)i);
 
 	rd = new_raw_data();
 	rd->size = sizeof(short);
-	rd->data = (char *)xmalloc(rd->size);
+	rd->data = xmalloc(rd->size);
 	switch(byteorder)
 	{
 #ifdef WORDS_BIGENDIAN
@@ -2369,7 +2228,7 @@ static raw_data_t *long2raw_data(int i)
 	raw_data_t *rd;
 	rd = new_raw_data();
 	rd->size = sizeof(int);
-	rd->data = (char *)xmalloc(rd->size);
+	rd->data = xmalloc(rd->size);
 	switch(byteorder)
 	{
 #ifdef WORDS_BIGENDIAN
@@ -2400,7 +2259,7 @@ static raw_data_t *str2raw_data(string_t *str)
 	raw_data_t *rd;
 	rd = new_raw_data();
 	rd->size = str->size * (str->type == str_char ? 1 : 2);
-	rd->data = (char *)xmalloc(rd->size);
+	rd->data = xmalloc(rd->size);
 	if(str->type == str_char)
 		memcpy(rd->data, str->str.cstr, rd->size);
 	else if(str->type == str_unicode)
@@ -2431,7 +2290,7 @@ static raw_data_t *str2raw_data(string_t *str)
 		}
 	}
 	else
-		internal_error(__FILE__, __LINE__, "Invalid stringtype");
+		internal_error(__FILE__, __LINE__, "Invalid stringtype\n");
 	return rd;
 }
 
@@ -2472,15 +2331,6 @@ static raw_data_t *merge_raw_data_str(raw_data_t *r1, string_t *str)
 
 /* Function the go back in a list to get the head */
 static menu_item_t *get_item_head(menu_item_t *p)
-{
-	if(!p)
-		return NULL;
-	while(p->prev)
-		p = p->prev;
-	return p;
-}
-
-static menuex_item_t *get_itemex_head(menuex_item_t *p)
 {
 	if(!p)
 		return NULL;
@@ -2556,12 +2406,12 @@ static stringtable_t *find_stringtable(lvc_t *lvc)
 			if((stt->lvc.version && lvc->version && *(stt->lvc.version) != *(lvc->version))
 			|| (!stt->lvc.version && lvc->version)
 			|| (stt->lvc.version && !lvc->version))
-				yywarning("Stringtable's versions are not the same, using first definition");
+				parser_warning("Stringtable's versions are not the same, using first definition\n");
 
 			if((stt->lvc.characts && lvc->characts && *(stt->lvc.characts) != *(lvc->characts))
 			|| (!stt->lvc.characts && lvc->characts)
 			|| (stt->lvc.characts && !lvc->characts))
-				yywarning("Stringtable's characteristics are not the same, using first definition");
+				parser_warning("Stringtable's characteristics are not the same, using first definition\n");
 			*/
 			return stt;
 		}
@@ -2606,7 +2456,8 @@ static resource_t *build_stt_resources(stringtable_t *stthead)
 		for(i = 0; i < stt->nentries; )
 		{
 			newstt = new_stringtable(&stt->lvc);
-			newstt->entries = (stt_entry_t *)xmalloc(16 * sizeof(stt_entry_t));
+			newstt->entries = xmalloc(16 * sizeof(stt_entry_t));
+			memset( newstt->entries, 0, 16 * sizeof(stt_entry_t) );
 			newstt->nentries = 16;
 			newstt->idbase = stt->entries[i].id & ~0xf;
 			for(j = 0; j < 16 && i < stt->nentries; j++)
@@ -2637,7 +2488,7 @@ static resource_t *build_stt_resources(stringtable_t *stthead)
 			}
 			if(andsum != orsum)
 			{
-				warning("Stringtable's memory options are not equal (idbase: %d)", newstt->idbase);
+				warning("Stringtable's memory options are not equal (idbase: %d)\n", newstt->idbase);
 			}
 			/* Check version and characteristics */
 			for(j = 0; j < 16; j++)
@@ -2645,11 +2496,11 @@ static resource_t *build_stt_resources(stringtable_t *stthead)
 				if(characts
 				&& newstt->entries[j].characts
 				&& *newstt->entries[j].characts != *characts)
-					warning("Stringtable's characteristics are not the same (idbase: %d)", newstt->idbase);
+					warning("Stringtable's characteristics are not the same (idbase: %d)\n", newstt->idbase);
 				if(version
 				&& newstt->entries[j].version
 				&& *newstt->entries[j].version != *version)
-					warning("Stringtable's versions are not the same (idbase: %d)", newstt->idbase);
+					warning("Stringtable's versions are not the same (idbase: %d)\n", newstt->idbase);
 			}
 			rsc = new_resource(res_stt, newstt, newstt->memopt, newstt->lvc.language);
 			rsc->name = new_name_id();
@@ -2763,7 +2614,7 @@ static resource_t *build_fontdir(resource_t **fnt, int nfnt)
 	static int once = 0;
 	if(!once)
 	{
-		warning("Need to parse fonts, not yet implemented (fnt: %p, nfnt: %d)", fnt, nfnt);
+		warning("Need to parse fonts, not yet implemented (fnt: %p, nfnt: %d)\n", fnt, nfnt);
 		once++;
 	}
 	return NULL;
@@ -2812,7 +2663,7 @@ static resource_t *build_fontdirs(resource_t *tail)
 	{
 		if(compare_name_id(&nid, fnd[i]->name))
 		{
-			warning("User supplied FONTDIR entry has an invalid name '%s', ignored",
+			warning("User supplied FONTDIR entry has an invalid name '%s', ignored\n",
 				get_nameid_str(fnd[i]->name));
 			fnd[i] = NULL;
 		}
@@ -2822,12 +2673,13 @@ static resource_t *build_fontdirs(resource_t *tail)
 	if(nfnt == 0)
 	{
 		if(nfnd != 0)
-			warning("Found %d FONTDIR entries without any fonts present", nfnd);
+			warning("Found %d FONTDIR entries without any fonts present\n", nfnd);
 		goto clean;
 	}
 
 	/* Copy space */
 	lanfnt = xmalloc(nfnt * sizeof(*lanfnt));
+	memset( lanfnt, 0, nfnt * sizeof(*lanfnt));
 
 	/* Get all fonts covered by fontdirs */
 	for(i = 0; i < nfnd; i++)
@@ -2856,7 +2708,7 @@ static resource_t *build_fontdirs(resource_t *tail)
 		else if(nlanfnt == BYTESWAP_WORD(cnt))
 			isswapped = 1;
 		else
-			error("FONTDIR for language %d,%d has wrong count (%d, expected %d)",
+			error("FONTDIR for language %d,%d has wrong count (%d, expected %d)\n",
 				fnd[i]->lan->id, fnd[i]->lan->sub, cnt, nlanfnt);
 #ifdef WORDS_BIGENDIAN
 		if((byteorder == WRC_BO_LITTLE && !isswapped) || (byteorder != WRC_BO_LITTLE && isswapped))
@@ -2864,7 +2716,7 @@ static resource_t *build_fontdirs(resource_t *tail)
 		if((byteorder == WRC_BO_BIG && !isswapped) || (byteorder != WRC_BO_BIG && isswapped))
 #endif
 		{
-			internal_error(__FILE__, __LINE__, "User supplied FONTDIR needs byteswapping");
+			internal_error(__FILE__, __LINE__, "User supplied FONTDIR needs byteswapping\n");
 		}
 	}
 
@@ -2908,10 +2760,8 @@ static resource_t *build_fontdirs(resource_t *tail)
 
 	free(lanfnt);
 clean:
-	if(fnt)
-		free(fnt);
-	if(fnd)
-		free(fnd);
+	free(fnt);
+	free(fnd);
 	free(str.str.cstr);
 	return lst;
 }
@@ -2944,11 +2794,10 @@ clean:
 static int rsrcid_to_token(int lookahead)
 {
 	int token;
-	const char *type = "?";
 
 	/* Get a token if we don't have one yet */
 	if(lookahead == YYEMPTY)
-		lookahead = YYLEX;
+		lookahead = yylex();
 
 	/* Only numbers are possibly interesting */
 	switch(lookahead)
@@ -2965,77 +2814,62 @@ static int rsrcid_to_token(int lookahead)
 	switch(yylval.num)
 	{
 	case WRC_RT_CURSOR:
-		type = "CURSOR";
 		token = tCURSOR;
 		break;
 	case WRC_RT_ICON:
-		type = "ICON";
 		token = tICON;
 		break;
 	case WRC_RT_BITMAP:
-		type = "BITMAP";
 		token = tBITMAP;
 		break;
 	case WRC_RT_FONT:
-		type = "FONT";
 		token = tFONT;
 		break;
 	case WRC_RT_FONTDIR:
-		type = "FONTDIR";
 		token = tFONTDIR;
 		break;
 	case WRC_RT_RCDATA:
-		type = "RCDATA";
 		token = tRCDATA;
 		break;
 	case WRC_RT_MESSAGETABLE:
-		type = "MESSAGETABLE";
 		token = tMESSAGETABLE;
 		break;
 	case WRC_RT_DLGINIT:
-		type = "DLGINIT";
 		token = tDLGINIT;
 		break;
 	case WRC_RT_ACCELERATOR:
-		type = "ACCELERATOR";
 		token = tACCELERATORS;
 		break;
 	case WRC_RT_MENU:
-		type = "MENU";
 		token = tMENU;
 		break;
 	case WRC_RT_DIALOG:
-		type = "DIALOG";
 		token = tDIALOG;
 		break;
 	case WRC_RT_VERSION:
-		type = "VERSION";
 		token = tVERSIONINFO;
 		break;
 	case WRC_RT_TOOLBAR:
-		type = "TOOLBAR";
 		token = tTOOLBAR;
 		break;
 	case WRC_RT_HTML:
-		type = "HTML";
 		token = tHTML;
 		break;
 
 	case WRC_RT_STRING:
-		type = "STRINGTABLE";
 		break;
 
 	case WRC_RT_ANICURSOR:
 	case WRC_RT_ANIICON:
 	case WRC_RT_GROUP_CURSOR:
 	case WRC_RT_GROUP_ICON:
-		yywarning("Usertype uses reserved type ID %d, which is auto-generated", yylval.num);
+		parser_warning("Usertype uses reserved type ID %d, which is auto-generated\n", yylval.num);
 		return lookahead;
 
 	case WRC_RT_DLGINCLUDE:
 	case WRC_RT_PLUGPLAY:
 	case WRC_RT_VXD:
-		yywarning("Usertype uses reserved type ID %d, which is not supported by wrc yet", yylval.num);
+		parser_warning("Usertype uses reserved type ID %d, which is not supported by wrc yet\n", yylval.num);
 	default:
 		return lookahead;
 	}

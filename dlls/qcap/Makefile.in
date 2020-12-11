@@ -1,24 +1,17 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = qcap.dll
-IMPORTS   = ole32 oleaut32 user32 gdi32 advapi32 kernel32
-EXTRALIBS = -lstrmiids -luuid $(LIBUNICODE)
+IMPORTS   = strmiids strmbase uuid ole32 oleaut32 gdi32 advapi32
+DELAYIMPORTS = msvfw32
 
 C_SRCS = \
+	audiorecord.c \
+	avico.c \
+	avimux.c \
 	capturegraph.c \
-	dllsetup.c \
 	enummedia.c \
-	enumpins.c \
-	pin.c \
 	qcap_main.c \
+	smartteefilter.c \
 	v4l.c \
 	vfwcapture.c \
 	yuv.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

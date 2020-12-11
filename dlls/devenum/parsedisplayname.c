@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES ON THIS FILE:
  * - Implements IParseDisplayName interface which creates a moniker
@@ -27,31 +27,28 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(devenum);
 
-static HRESULT WINAPI DEVENUM_IParseDisplayName_QueryInterface(
-    LPPARSEDISPLAYNAME iface,
-    REFIID riid,
-    LPVOID *ppvObj)
+static HRESULT WINAPI DEVENUM_IParseDisplayName_QueryInterface(IParseDisplayName *iface,
+        REFIID riid, void **ppv)
 {
     TRACE("\n\tIID:\t%s\n",debugstr_guid(riid));
 
-    if (ppvObj == NULL) return E_POINTER;
+    if (!ppv)
+        return E_POINTER;
 
     if (IsEqualGUID(riid, &IID_IUnknown) ||
         IsEqualGUID(riid, &IID_IParseDisplayName))
     {
-	*ppvObj = (LPVOID)iface;
-	IParseDisplayName_AddRef(iface);
-	return S_OK;
+        *ppv = iface;
+        IParseDisplayName_AddRef(iface);
+        return S_OK;
     }
 
-    FIXME("- no interface\n\tIID:\t%s\n", debugstr_guid(riid));
+    FIXME("- no interface IID: %s\n", debugstr_guid(riid));
+    *ppv = NULL;
     return E_NOINTERFACE;
 }
 
-/**********************************************************************
- * DEVENUM_IParseDisplayName_AddRef (also IUnknown)
- */
-static ULONG WINAPI DEVENUM_IParseDisplayName_AddRef(LPPARSEDISPLAYNAME iface)
+static ULONG WINAPI DEVENUM_IParseDisplayName_AddRef(IParseDisplayName *iface)
 {
     TRACE("\n");
 
@@ -60,10 +57,7 @@ static ULONG WINAPI DEVENUM_IParseDisplayName_AddRef(LPPARSEDISPLAYNAME iface)
     return 2; /* non-heap based object */
 }
 
-/**********************************************************************
- * DEVENUM_IParseDisplayName_Release (also IUnknown)
- */
-static ULONG WINAPI DEVENUM_IParseDisplayName_Release(LPPARSEDISPLAYNAME iface)
+static ULONG WINAPI DEVENUM_IParseDisplayName_Release(IParseDisplayName *iface)
 {
     TRACE("\n");
 
@@ -81,77 +75,85 @@ static ULONG WINAPI DEVENUM_IParseDisplayName_Release(LPPARSEDISPLAYNAME iface)
  *  Might not handle more complicated strings properly (ie anything
  *  not in "@device:sw:{CLSID1}\<filter name or CLSID>" format
  */
-static HRESULT WINAPI DEVENUM_IParseDisplayName_ParseDisplayName(
-    LPPARSEDISPLAYNAME iface,
-    IBindCtx *pbc,
-    LPOLESTR pszDisplayName,
-    ULONG *pchEaten,
-    IMoniker **ppmkOut)
+static HRESULT WINAPI DEVENUM_IParseDisplayName_ParseDisplayName(IParseDisplayName *iface,
+        IBindCtx *pbc, LPOLESTR name, ULONG *eaten, IMoniker **ret)
 {
-    LPOLESTR pszBetween = NULL;
-    LPOLESTR pszClass = NULL;
-    IEnumMoniker * pEm = NULL;
-    MediaCatMoniker * pMoniker = NULL;
-    CLSID clsidDevice;
-    HRESULT res = S_OK;
-    int classlen;
+    WCHAR buffer[MAX_PATH];
+    enum device_type type;
+    MediaCatMoniker *mon;
+    CLSID class;
 
-    TRACE("(%p, %s, %p, %p)\n", pbc, debugstr_w(pszDisplayName), pchEaten, ppmkOut);
+    TRACE("(%p, %s, %p, %p)\n", pbc, debugstr_w(name), eaten, ret);
 
-    *ppmkOut = NULL;
-    if (pchEaten)
-        *pchEaten = strlenW(pszDisplayName);
+    *ret = NULL;
+    if (eaten)
+        *eaten = strlenW(name);
 
-    pszDisplayName = strchrW(pszDisplayName, '{');
-    pszBetween = strchrW(pszDisplayName, '}') + 2;
+    name = strchrW(name, ':') + 1;
 
-    /* size = pszBetween - pszDisplayName - 1 (for '\\' after CLSID)
-     * + 1 (for NULL character)
-     */
-    classlen = (int)(pszBetween - pszDisplayName - 1);
-    pszClass = CoTaskMemAlloc((classlen + 1) * sizeof(WCHAR));
-    if (!pszClass)
+    if (!strncmpW(name, swW, 3))
+    {
+        type = DEVICE_FILTER;
+        name += 3;
+    }
+    else if (!strncmpW(name, cmW, 3))
+    {
+        type = DEVICE_CODEC;
+        name += 3;
+    }
+    else if (!strncmpW(name, dmoW, 4))
+    {
+        type = DEVICE_DMO;
+        name += 4;
+    }
+    else
+    {
+        FIXME("unhandled device type %s\n", debugstr_w(name));
+        return MK_E_SYNTAX;
+    }
+
+    if (!(mon = DEVENUM_IMediaCatMoniker_Construct()))
         return E_OUTOFMEMORY;
 
-    memcpy(pszClass, pszDisplayName, classlen * sizeof(WCHAR));
-    pszClass[classlen] = 0;
-
-    TRACE("Device CLSID: %s\n", debugstr_w(pszClass));
-
-    res = CLSIDFromString(pszClass, &clsidDevice);
-
-    if (SUCCEEDED(res))
+    if (type == DEVICE_DMO)
     {
-        res = DEVENUM_ICreateDevEnum_CreateClassEnumerator((ICreateDevEnum *)(char*)&DEVENUM_CreateDevEnum, &clsidDevice, &pEm, 0);
-        if (res == S_FALSE) /* S_FALSE means no category */
-            res = MK_E_NOOBJECT;
-    }
-
-    if (SUCCEEDED(res))
-    {
-        pMoniker = DEVENUM_IMediaCatMoniker_Construct();
-        if (pMoniker)
+        lstrcpynW(buffer, name, CHARS_IN_GUID);
+        if (FAILED(CLSIDFromString(buffer, &mon->clsid)))
         {
-            if (RegCreateKeyW(((EnumMonikerImpl *)pEm)->hkey,
-                               pszBetween,
-                               &pMoniker->hkey) == ERROR_SUCCESS)
-                *ppmkOut = (LPMONIKER)pMoniker;
-            else
-            {
-                IMoniker_Release((LPMONIKER)pMoniker);
-                res = MK_E_NOOBJECT;
-            }
+            IMoniker_Release(&mon->IMoniker_iface);
+            return MK_E_SYNTAX;
+        }
+
+        lstrcpynW(buffer, name + CHARS_IN_GUID - 1, CHARS_IN_GUID);
+        if (FAILED(CLSIDFromString(buffer, &mon->class)))
+        {
+            IMoniker_Release(&mon->IMoniker_iface);
+            return MK_E_SYNTAX;
         }
     }
+    else
+    {
+        lstrcpynW(buffer, name, CHARS_IN_GUID);
+        if (CLSIDFromString(buffer, &class) == S_OK)
+        {
+            mon->has_class = TRUE;
+            mon->class = class;
+            name += CHARS_IN_GUID;
+        }
 
-    if (pEm)
-        IEnumMoniker_Release(pEm);
+        if (!(mon->name = CoTaskMemAlloc((strlenW(name) + 1) * sizeof(WCHAR))))
+        {
+            IMoniker_Release(&mon->IMoniker_iface);
+            return E_OUTOFMEMORY;
+        }
+        strcpyW(mon->name, name);
+    }
 
-    if (pszClass)
-        CoTaskMemFree(pszClass);
+    mon->type = type;
 
-    TRACE("-- returning: %lx\n", res);
-    return res;
+    *ret = &mon->IMoniker_iface;
+
+    return S_OK;
 }
 
 /**********************************************************************
@@ -166,4 +168,4 @@ static const IParseDisplayNameVtbl IParseDisplayName_Vtbl =
 };
 
 /* The one instance of this class */
-ParseDisplayNameImpl DEVENUM_ParseDisplayName = { &IParseDisplayName_Vtbl };
+IParseDisplayName DEVENUM_ParseDisplayName = { &IParseDisplayName_Vtbl };

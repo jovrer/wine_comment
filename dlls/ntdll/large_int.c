@@ -16,14 +16,20 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include "config.h"
+#include "wine/port.h"
 
 #include <stdarg.h>
 
 #include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
+
+#ifndef _WIN64
 
 /*
  * Note: we use LONGLONG instead of LARGE_INTEGER, because
@@ -253,14 +259,11 @@ ULONGLONG WINAPI RtlEnlargedUnsignedMultiply( UINT a, UINT b )
 UINT WINAPI RtlEnlargedUnsignedDivide( ULONGLONG a, UINT b, UINT *remptr )
 {
 #if defined(__i386__) && defined(__GNUC__)
-    UINT ret, rem, p1, p2;
+    UINT ret, rem;
 
-    p1 = a >> 32;
-    p2 = a &  0xffffffffLL;
-
-    __asm__("div %4,%%eax"
+    __asm__("divl %4"
             : "=a" (ret), "=d" (rem)
-            : "0" (p2), "1" (p1), "g" (b) );
+            : "0" ((UINT)a), "1" ((UINT)(a >> 32)), "g" (b) );
     if (remptr) *remptr = rem;
     return ret;
 #else
@@ -372,6 +375,16 @@ LONGLONG WINAPI RtlExtendedMagicDivide(
     } /* if */
 }
 
+
+/*************************************************************************
+ *        RtlInterlockedCompareExchange64   (NTDLL.@)
+ */
+LONGLONG WINAPI RtlInterlockedCompareExchange64( LONGLONG *dest, LONGLONG xchg, LONGLONG compare )
+{
+    return interlocked_cmpxchg64( dest, xchg, compare );
+}
+
+#endif  /* _WIN64 */
 
 /******************************************************************************
  *      RtlLargeIntegerToChar	[NTDLL.@]
@@ -506,6 +519,8 @@ NTSTATUS WINAPI RtlInt64ToUnicodeString(
 }
 
 
+#ifdef __i386__
+
 /******************************************************************************
  *        _alldiv   (NTDLL.@)
  *
@@ -513,7 +528,7 @@ NTSTATUS WINAPI RtlInt64ToUnicodeString(
  *
  * PARAMS
  *  a [I] Initial number.
- *  b [I] Number to multiply a by.
+ *  b [I] Number to divide a by.
  *
  * RETURNS
  *  The dividend of a and b.
@@ -567,7 +582,7 @@ LONGLONG WINAPI _allrem( LONGLONG a, LONGLONG b )
  *
  * PARAMS
  *  a [I] Initial number.
- *  b [I] Number to multiply a by.
+ *  b [I] Number to divide a by.
  *
  * RETURNS
  *  The dividend of a and b.
@@ -577,6 +592,76 @@ ULONGLONG WINAPI _aulldiv( ULONGLONG a, ULONGLONG b )
     return a / b;
 }
 
+/******************************************************************************
+ *        _allshl   (NTDLL.@)
+ *
+ * Shift a 64 bit integer to the left.
+ *
+ * PARAMS
+ *  a [I] Initial number.
+ *  b [I] Number to shift a by to the left.
+ *
+ * RETURNS
+ *  The left-shifted value.
+ */
+LONGLONG WINAPI _allshl( LONGLONG a, LONG b )
+{
+    return a << b;
+}
+
+/******************************************************************************
+ *        _allshr   (NTDLL.@)
+ *
+ * Shift a 64 bit integer to the right.
+ *
+ * PARAMS
+ *  a [I] Initial number.
+ *  b [I] Number to shift a by to the right.
+ *
+ * RETURNS
+ *  The right-shifted value.
+ */
+LONGLONG WINAPI _allshr( LONGLONG a, LONG b )
+{
+    return a >> b;
+}
+
+/******************************************************************************
+ *        _alldvrm   (NTDLL.@)
+ *
+ * Divide two 64 bit integers.
+ *
+ * PARAMS
+ *  a [I] Initial number.
+ *  b [I] Number to divide a by.
+ *
+ * RETURNS
+ *  Returns the quotient of a and b in edx:eax.
+ *  Returns the remainder of a and b in ebx:ecx.
+ */
+__ASM_STDCALL_FUNC( _alldvrm, 16,
+                    "pushl %ebp\n\t"
+                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+                    "movl %esp,%ebp\n\t"
+                    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+                    "pushl 20(%ebp)\n\t"
+                    "pushl 16(%ebp)\n\t"
+                    "pushl 12(%ebp)\n\t"
+                    "pushl 8(%ebp)\n\t"
+                    "call " __ASM_NAME("_allrem") "\n\t"
+                    "movl %edx,%ebx\n\t"
+                    "pushl %eax\n\t"
+                    "pushl 20(%ebp)\n\t"
+                    "pushl 16(%ebp)\n\t"
+                    "pushl 12(%ebp)\n\t"
+                    "pushl 8(%ebp)\n\t"
+                    "call " __ASM_NAME("_alldiv") "\n\t"
+                    "popl %ecx\n\t"
+                    "leave\n\t"
+                    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+                    __ASM_CFI(".cfi_same_value %ebp\n\t")
+                    "ret $16" )
 
 /******************************************************************************
  *        _aullrem   (NTDLL.@)
@@ -594,3 +679,59 @@ ULONGLONG WINAPI _aullrem( ULONGLONG a, ULONGLONG b )
 {
     return a % b;
 }
+
+/******************************************************************************
+ *        _aullshr   (NTDLL.@)
+ *
+ * Shift a 64 bit unsigned integer to the right.
+ *
+ * PARAMS
+ *  a [I] Initial number.
+ *  b [I] Number to shift a by to the right.
+ *
+ * RETURNS
+ *  The right-shifted value.
+ */
+ULONGLONG WINAPI _aullshr( ULONGLONG a, LONG b )
+{
+    return a >> b;
+}
+
+/******************************************************************************
+ *        _aulldvrm   (NTDLL.@)
+ *
+ * Divide two 64 bit unsigned integers.
+ *
+ * PARAMS
+ *  a [I] Initial number.
+ *  b [I] Number to divide a by.
+ *
+ * RETURNS
+ *  Returns the quotient of a and b in edx:eax.
+ *  Returns the remainder of a and b in ebx:ecx.
+ */
+__ASM_STDCALL_FUNC( _aulldvrm, 16,
+                    "pushl %ebp\n\t"
+                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+                    "movl %esp,%ebp\n\t"
+                    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+                    "pushl 20(%ebp)\n\t"
+                    "pushl 16(%ebp)\n\t"
+                    "pushl 12(%ebp)\n\t"
+                    "pushl 8(%ebp)\n\t"
+                    "call " __ASM_NAME("_aullrem") "\n\t"
+                    "movl %edx,%ebx\n\t"
+                    "pushl %eax\n\t"
+                    "pushl 20(%ebp)\n\t"
+                    "pushl 16(%ebp)\n\t"
+                    "pushl 12(%ebp)\n\t"
+                    "pushl 8(%ebp)\n\t"
+                    "call " __ASM_NAME("_aulldiv") "\n\t"
+                    "popl %ecx\n\t"
+                    "leave\n\t"
+                    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+                    __ASM_CFI(".cfi_same_value %ebp\n\t")
+                    "ret $16" )
+
+#endif  /* __i386__ */

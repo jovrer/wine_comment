@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -32,18 +32,36 @@
 #include "winuser.h"
 #include "icm.h"
 
+#include "mscms_priv.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(mscms);
+
+#ifdef HAVE_LCMS2
+static void lcms_error_handler(cmsContext ctx, cmsUInt32Number error, const char *text)
+{
+    TRACE("%u %s\n", error, debugstr_a(text));
+}
+#endif
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 {
-    TRACE( "(%p, %ld, %p)\n", hinst, reason, reserved );
+    TRACE( "(%p, %d, %p)\n", hinst, reason, reserved );
 
     switch (reason)
     {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls( hinst );
+#ifdef HAVE_LCMS2
+        cmsSetLogErrorHandler( lcms_error_handler );
+#else
+        ERR( "Wine was built without support for liblcms2, expect problems\n" );
+#endif
         break;
     case DLL_PROCESS_DETACH:
+        if (reserved) break;
+#ifdef HAVE_LCMS2
+        free_handle_tables();
+#endif
         break;
     }
     return TRUE;

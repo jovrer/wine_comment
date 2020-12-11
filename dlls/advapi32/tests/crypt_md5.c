@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdio.h>
@@ -33,15 +33,11 @@ typedef struct
     unsigned char digest[16];
 } MD5_CTX;
 
-typedef VOID (WINAPI *fnMD5Init)( MD5_CTX *ctx );
-typedef VOID (WINAPI *fnMD5Update)( MD5_CTX *ctx, const unsigned char *src, const int len );
-typedef VOID (WINAPI *fnMD5Final)( MD5_CTX *ctx );
+static VOID (WINAPI *pMD5Init)( MD5_CTX *ctx );
+static VOID (WINAPI *pMD5Update)( MD5_CTX *ctx, const unsigned char *src, const int len );
+static VOID (WINAPI *pMD5Final)( MD5_CTX *ctx );
 
-fnMD5Init pMD5Init;
-fnMD5Update pMD5Update;
-fnMD5Final pMD5Final;
-
-#define ctxcmp( a, b ) memcmp( (char*)a, (char*)b, FIELD_OFFSET( MD5_CTX, in ) )
+#define ctxcmp( a, b ) memcmp( a, b, FIELD_OFFSET( MD5_CTX, in ) )
 
 static void test_md5_ctx(void)
 {
@@ -77,13 +73,17 @@ static void test_md5_ctx(void)
         { 0x43, 0x03, 0xdd, 0x8c, 0x60, 0xd9, 0x3a, 0x22,
           0x0b, 0x28, 0xd0, 0xb2, 0x65, 0x93, 0xd0, 0x36 };
 
-    if (!(module = LoadLibrary( "advapi32.dll" ))) return;
+    module = GetModuleHandleA("advapi32.dll");
 
-    pMD5Init = (fnMD5Init)GetProcAddress( module, "MD5Init" );
-    pMD5Update = (fnMD5Update)GetProcAddress( module, "MD5Update" );
-    pMD5Final = (fnMD5Final)GetProcAddress( module, "MD5Final" );
+    pMD5Init = (void *)GetProcAddress( module, "MD5Init" );
+    pMD5Update = (void *)GetProcAddress( module, "MD5Update" );
+    pMD5Final = (void *)GetProcAddress( module, "MD5Final" );
 
-    if (!pMD5Init || !pMD5Update || !pMD5Final) goto out;
+    if (!pMD5Init || !pMD5Update || !pMD5Final)
+    {
+        win_skip("Needed functions are not available\n");
+        return;
+    }
 
     memset( &ctx, 0, sizeof(ctx) );
     pMD5Init( &ctx );
@@ -98,9 +98,6 @@ static void test_md5_ctx(void)
     pMD5Final( &ctx );
     ok( ctxcmp( &ctx, &ctx_initialized ), "context has changed\n" );
     ok( !memcmp( ctx.digest, expect, sizeof(expect) ), "incorrect result\n" );
-
-out:
-    FreeLibrary( module );
 }
 
 START_TEST(crypt_md5)

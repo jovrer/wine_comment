@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -27,19 +27,47 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
-#include "excpt.h"
 #include "wine/exception.h"
 #include "ntdll_misc.h"
 #include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(relay);
-WINE_DECLARE_DEBUG_CHANNEL(snoop);
-WINE_DECLARE_DEBUG_CHANNEL(seh);
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
+
+struct relay_descr  /* descriptor for a module */
+{
+    void               *magic;               /* signature */
+    void               *relay_call;          /* functions to call from relay thunks */
+    void               *private;             /* reserved for the relay code private data */
+    const char         *entry_point_base;    /* base address of entry point thunks */
+    const unsigned int *entry_point_offsets; /* offsets of entry points thunks */
+    const char         *args_string;         /* string describing the arguments */
+};
+
+#define RELAY_DESCR_MAGIC  ((void *)0xdeb90002)
+#define IS_INTARG(x)       (((ULONG_PTR)(x) >> 16) == 0)
+
+/* private data built at dll load time */
+
+struct relay_entry_point
+{
+    void       *orig_func;    /* original entry point function */
+    const char *name;         /* function name (if any) */
+};
+
+struct relay_private_data
+{
+    HMODULE                  module;            /* module handle of this dll */
+    unsigned int             base;              /* ordinal base */
+    char                     dllname[40];       /* dll name (without .dll extension) */
+    struct relay_entry_point entry_points[1];   /* list of dll entry points */
+};
 
 static const WCHAR **debug_relay_excludelist;
 static const WCHAR **debug_relay_includelist;
@@ -50,17 +78,17 @@ static const WCHAR **debug_from_relay_includelist;
 static const WCHAR **debug_from_snoop_excludelist;
 static const WCHAR **debug_from_snoop_includelist;
 
-static BOOL init_done;
+static RTL_RUN_ONCE init_once = RTL_RUN_ONCE_INIT;
 
 /* compare an ASCII and a Unicode string without depending on the current codepage */
-inline static int strcmpAW( const char *strA, const WCHAR *strW )
+static inline int strcmpAW( const char *strA, const WCHAR *strW )
 {
     while (*strA && ((unsigned char)*strA == *strW)) { strA++; strW++; }
     return (unsigned char)*strA - *strW;
 }
 
 /* compare an ASCII and a Unicode string without depending on the current codepage */
-inline static int strncmpiAW( const char *strA, const WCHAR *strW, int n )
+static inline int strncmpiAW( const char *strA, const WCHAR *strW, int n )
 {
     int ret = 0;
     for ( ; n > 0; n--, strA++, strW++)
@@ -89,35 +117,63 @@ static const WCHAR **build_list( const WCHAR *buffer )
                                 (count+1) * sizeof(WCHAR*) + (strlenW(buffer)+1) * sizeof(WCHAR) )))
     {
         WCHAR *str = (WCHAR *)(ret + count + 1);
-        WCHAR *p = str;
+        WCHAR *q = str;
 
         strcpyW( str, buffer );
         count = 0;
         for (;;)
         {
-            ret[count++] = p;
-            if (!(p = strchrW( p, ';' ))) break;
-            *p++ = 0;
+            ret[count++] = q;
+            if (!(q = strchrW( q, ';' ))) break;
+            *q++ = 0;
         }
         ret[count++] = NULL;
     }
     return ret;
 }
 
+/***********************************************************************
+ *           load_list_value
+ *
+ * Load a function list from a registry value.
+ */
+static const WCHAR **load_list( HKEY hkey, const WCHAR *value )
+{
+    char initial_buffer[4096];
+    char *buffer = initial_buffer;
+    DWORD count;
+    NTSTATUS status;
+    UNICODE_STRING name;
+    const WCHAR **list = NULL;
+
+    RtlInitUnicodeString( &name, value );
+    status = NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(initial_buffer), &count );
+    if (status == STATUS_BUFFER_OVERFLOW)
+    {
+        buffer = RtlAllocateHeap( GetProcessHeap(), 0, count );
+        status = NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, count, &count );
+    }
+    if (status == STATUS_SUCCESS)
+    {
+        WCHAR *str = (WCHAR *)((KEY_VALUE_PARTIAL_INFORMATION *)buffer)->Data;
+        list = build_list( str );
+        if (list) TRACE( "%s = %s\n", debugstr_w(value), debugstr_w(str) );
+    }
+
+    if (buffer != initial_buffer) RtlFreeHeap( GetProcessHeap(), 0, buffer );
+    return list;
+}
 
 /***********************************************************************
  *           init_debug_lists
  *
  * Build the relay include/exclude function lists.
  */
-static void init_debug_lists(void)
+static DWORD WINAPI init_debug_lists( RTL_RUN_ONCE *once, void *param, void **context )
 {
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING name;
-    char buffer[1024];
     HANDLE root, hkey;
-    DWORD count;
-    WCHAR *str;
     static const WCHAR configW[] = {'S','o','f','t','w','a','r','e','\\',
                                     'W','i','n','e','\\',
                                     'D','e','b','u','g',0};
@@ -129,9 +185,6 @@ static void init_debug_lists(void)
     static const WCHAR RelayFromExcludeW[] = {'R','e','l','a','y','F','r','o','m','E','x','c','l','u','d','e',0};
     static const WCHAR SnoopFromIncludeW[] = {'S','n','o','o','p','F','r','o','m','I','n','c','l','u','d','e',0};
     static const WCHAR SnoopFromExcludeW[] = {'S','n','o','o','p','F','r','o','m','E','x','c','l','u','d','e',0};
-
-    if (init_done) return;
-    init_done = TRUE;
 
     RtlOpenCurrentUser( KEY_ALL_ACCESS, &root );
     attr.Length = sizeof(attr);
@@ -145,147 +198,28 @@ static void init_debug_lists(void)
     /* @@ Wine registry key: HKCU\Software\Wine\Debug */
     if (NtOpenKey( &hkey, KEY_ALL_ACCESS, &attr )) hkey = 0;
     NtClose( root );
-    if (!hkey) return;
+    if (!hkey) return TRUE;
 
-    str = (WCHAR *)((KEY_VALUE_PARTIAL_INFORMATION *)buffer)->Data;
-    RtlInitUnicodeString( &name, RelayIncludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE("RelayInclude = %s\n", debugstr_w(str) );
-        debug_relay_includelist = build_list( str );
-    }
-
-    RtlInitUnicodeString( &name, RelayExcludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE( "RelayExclude = %s\n", debugstr_w(str) );
-        debug_relay_excludelist = build_list( str );
-    }
-
-    RtlInitUnicodeString( &name, SnoopIncludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE_(snoop)( "SnoopInclude = %s\n", debugstr_w(str) );
-        debug_snoop_includelist = build_list( str );
-    }
-
-    RtlInitUnicodeString( &name, SnoopExcludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE_(snoop)( "SnoopExclude = %s\n", debugstr_w(str) );
-        debug_snoop_excludelist = build_list( str );
-    }
-
-    RtlInitUnicodeString( &name, RelayFromIncludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE("RelayFromInclude = %s\n", debugstr_w(str) );
-        debug_from_relay_includelist = build_list( str );
-    }
-
-    RtlInitUnicodeString( &name, RelayFromExcludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE( "RelayFromExclude = %s\n", debugstr_w(str) );
-        debug_from_relay_excludelist = build_list( str );
-    }
-
-    RtlInitUnicodeString( &name, SnoopFromIncludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE_(snoop)("SnoopFromInclude = %s\n", debugstr_w(str) );
-        debug_from_snoop_includelist = build_list( str );
-    }
-
-    RtlInitUnicodeString( &name, SnoopFromExcludeW );
-    if (!NtQueryValueKey( hkey, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &count ))
-    {
-        TRACE_(snoop)( "SnoopFromExclude = %s\n", debugstr_w(str) );
-        debug_from_snoop_excludelist = build_list( str );
-    }
+    debug_relay_includelist = load_list( hkey, RelayIncludeW );
+    debug_relay_excludelist = load_list( hkey, RelayExcludeW );
+    debug_snoop_includelist = load_list( hkey, SnoopIncludeW );
+    debug_snoop_excludelist = load_list( hkey, SnoopExcludeW );
+    debug_from_relay_includelist = load_list( hkey, RelayFromIncludeW );
+    debug_from_relay_excludelist = load_list( hkey, RelayFromExcludeW );
+    debug_from_snoop_includelist = load_list( hkey, SnoopFromIncludeW );
+    debug_from_snoop_excludelist = load_list( hkey, SnoopFromExcludeW );
 
     NtClose( hkey );
+    return TRUE;
 }
 
-
-#include "pshpack1.h"
-
-typedef struct
-{
-    BYTE          call;         /* 0xe8 call callfrom32 (relative) */
-    DWORD         callfrom32;   /* RELAY_CallFrom32 relative addr */
-    BYTE          ret;          /* 0xc2 ret $n  or  0xc3 ret */
-    WORD          args;         /* nb of args to remove from the stack */
-    void         *orig;         /* original entry point */
-    DWORD         argtypes;     /* argument types */
-} DEBUG_ENTRY_POINT;
-
-typedef	struct
-{
-	/* code part */
-	BYTE		lcall;		/* 0xe8 call snoopentry (relative) */
-	/* NOTE: If you move snoopentry OR nrofargs fix the relative offset
-	 * calculation!
-	 */
-	DWORD		snoopentry;	/* SNOOP_Entry relative */
-	/* unreached */
-	int		nrofargs;
-	FARPROC	origfun;
-	const char *name;
-} SNOOP_FUN;
-
-typedef struct tagSNOOP_DLL {
-	HMODULE	hmod;
-	SNOOP_FUN	*funs;
-	DWORD		ordbase;
-	DWORD		nrofordinals;
-	struct tagSNOOP_DLL	*next;
-	char name[1];
-} SNOOP_DLL;
-
-typedef struct
-{
-	/* code part */
-	BYTE		lcall;		/* 0xe8 call snoopret relative*/
-	/* NOTE: If you move snoopret OR origreturn fix the relative offset
-	 * calculation!
-	 */
-	DWORD		snoopret;	/* SNOOP_Ret relative */
-	/* unreached */
-	FARPROC	origreturn;
-	SNOOP_DLL	*dll;
-	DWORD		ordinal;
-	DWORD		origESP;
-	DWORD		*args;		/* saved args across a stdcall */
-} SNOOP_RETURNENTRY;
-
-typedef struct tagSNOOP_RETURNENTRIES {
-	SNOOP_RETURNENTRY entry[4092/sizeof(SNOOP_RETURNENTRY)];
-	struct tagSNOOP_RETURNENTRIES	*next;
-} SNOOP_RETURNENTRIES;
-
-#include "poppack.h"
-
-extern void WINAPI SNOOP_Entry();
-extern void WINAPI SNOOP_Return();
-
-static SNOOP_DLL *firstdll;
-static SNOOP_RETURNENTRIES *firstrets;
-
-static WINE_EXCEPTION_FILTER(page_fault)
-{
-    if (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ||
-        GetExceptionCode() == EXCEPTION_PRIV_INSTRUCTION)
-        return EXCEPTION_EXECUTE_HANDLER;
-    return EXCEPTION_CONTINUE_SEARCH;
-}
 
 /***********************************************************************
  *           check_list
  *
  * Check if a given module and function is in the list.
  */
-static BOOL check_list( const char *module, int ordinal, const char *func, const WCHAR **list )
+static BOOL check_list( const char *module, int ordinal, const char *func, const WCHAR *const *list )
 {
     char ord_str[10];
 
@@ -360,261 +294,541 @@ static BOOL check_from_module( const WCHAR **includelist, const WCHAR **excludel
     return show;
 }
 
-/***********************************************************************
- *           find_exported_name
- *
- * Find the name of an exported function.
- */
-static const char *find_exported_name( HMODULE module,
-                                       IMAGE_EXPORT_DIRECTORY *exp, int ordinal )
-{
-    unsigned int i;
-    const char *ret = NULL;
 
-    WORD *ordptr = (WORD *)((char *)module + exp->AddressOfNameOrdinals);
-    for (i = 0; i < exp->NumberOfNames; i++, ordptr++)
-        if (*ordptr + exp->Base == ordinal) break;
-    if (i < exp->NumberOfNames)
-        ret = (char *)module + ((DWORD*)((char *)module + exp->AddressOfNames))[i];
-    return ret;
+static BOOL is_ret_val( char type )
+{
+    return type >= 'A' && type <= 'Z';
 }
 
+static const char *func_name( struct relay_private_data *data, unsigned int ordinal )
+{
+    struct relay_entry_point *entry_point = data->entry_points + ordinal;
+
+    if (entry_point->name)
+        return wine_dbg_sprintf( "%s.%s", data->dllname, entry_point->name );
+    else
+        return wine_dbg_sprintf( "%s.%u", data->dllname, data->base + ordinal );
+}
+
+static void trace_string_a( INT_PTR ptr )
+{
+    if (!IS_INTARG( ptr )) TRACE( "%08lx %s", ptr, debugstr_a( (char *)ptr ));
+    else TRACE( "%08lx", ptr );
+}
+
+static void trace_string_w( INT_PTR ptr )
+{
+    if (!IS_INTARG( ptr )) TRACE( "%08lx %s", ptr, debugstr_w( (WCHAR *)ptr ));
+    else TRACE( "%08lx", ptr );
+}
+
+#ifdef __i386__
 
 /***********************************************************************
- *           get_entry_point
- *
- * Get the name of the DLL entry point corresponding to a relay address.
+ *           relay_trace_entry
  */
-static void get_entry_point( char *buffer, DEBUG_ENTRY_POINT *relay )
+DECLSPEC_HIDDEN void * WINAPI relay_trace_entry( struct relay_descr *descr, unsigned int idx,
+                                                 const DWORD *stack, unsigned int *nb_args )
 {
-    IMAGE_EXPORT_DIRECTORY *exp = NULL;
-    DEBUG_ENTRY_POINT *debug;
-    char *p;
-    const char *name;
-    int ordinal = 0;
-    PLIST_ENTRY mark, entry;
-    PLDR_MODULE mod = NULL;
-    DWORD size;
+    WORD ordinal = LOWORD(idx);
+    const char *arg_types = descr->args_string + HIWORD(idx);
+    struct relay_private_data *data = descr->private;
+    struct relay_entry_point *entry_point = data->entry_points + ordinal;
+    unsigned int i, pos;
 
-    /* First find the module */
+    TRACE( "\1Call %s(", func_name( data, ordinal ));
 
-    mark = &NtCurrentTeb()->Peb->LdrData->InLoadOrderModuleList;
-    for (entry = mark->Flink; entry != mark; entry = entry->Flink)
+    for (i = pos = 0; !is_ret_val( arg_types[i] ); i++)
     {
-        mod = CONTAINING_RECORD(entry, LDR_MODULE, InLoadOrderModuleList);
-        if (!(mod->Flags & LDR_WINE_INTERNAL)) continue;
-        exp = RtlImageDirectoryEntryToData( mod->BaseAddress, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &size );
-        if (!exp) continue;
-        debug = (DEBUG_ENTRY_POINT *)((char *)exp + size);
-        if (debug <= relay && relay < debug + exp->NumberOfFunctions)
+        switch (arg_types[i])
         {
-            ordinal = relay - debug;
+        case 'j': /* int64 */
+            TRACE( "%x%08x", stack[pos+1], stack[pos] );
+            pos += 2;
+            break;
+        case 'k': /* int128 */
+            TRACE( "{%08x,%08x,%08x,%08x}", stack[pos], stack[pos+1], stack[pos+2], stack[pos+3] );
+            pos += 4;
+            break;
+        case 's': /* str */
+            trace_string_a( stack[pos++] );
+            break;
+        case 'w': /* wstr */
+            trace_string_w( stack[pos++] );
+            break;
+        case 'f': /* float */
+            TRACE( "%g", *(const float *)&stack[pos++] );
+            break;
+        case 'd': /* double */
+            TRACE( "%g", *(const double *)&stack[pos] );
+            pos += 2;
+            break;
+        case 'i': /* long */
+        default:
+            TRACE( "%08x", stack[pos++] );
             break;
         }
+        if (!is_ret_val( arg_types[i+1] )) TRACE( "," );
     }
+    *nb_args = pos;
+    if (arg_types[0] == 't') *nb_args |= 0x80000000;  /* thiscall */
+    TRACE( ") ret=%08x\n", stack[-1] );
+    return entry_point->orig_func;
+}
 
-    /* Now find the function */
+/***********************************************************************
+ *           relay_trace_exit
+ */
+DECLSPEC_HIDDEN void WINAPI relay_trace_exit( struct relay_descr *descr, unsigned int idx,
+                                              void *retaddr, LONGLONG retval )
+{
+    const char *arg_types = descr->args_string + HIWORD(idx);
 
-    strcpy( buffer, (char *)mod->BaseAddress + exp->Name );
-    p = buffer + strlen(buffer);
-    if (p > buffer + 4 && !strcasecmp( p - 4, ".dll" )) p -= 4;
+    TRACE( "\1Ret  %s()", func_name( descr->private, LOWORD(idx) ));
 
-    if ((name = find_exported_name( mod->BaseAddress, exp, ordinal + exp->Base )))
-        sprintf( p, ".%s", name );
+    while (!is_ret_val( *arg_types )) arg_types++;
+    if (*arg_types == 'J')  /* int64 return value */
+        TRACE( " retval=%08x%08x ret=%08x\n",
+               (UINT)(retval >> 32), (UINT)retval, (UINT)retaddr );
     else
-        sprintf( p, ".%ld", ordinal + exp->Base );
+        TRACE( " retval=%08x ret=%08x\n", (UINT)retval, (UINT)retaddr );
 }
 
+extern LONGLONG WINAPI relay_call( struct relay_descr *descr, unsigned int idx );
+__ASM_GLOBAL_FUNC( relay_call,
+                   "pushl %ebp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                   __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+                   "movl %esp,%ebp\n\t"
+                   __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+                   "pushl %esi\n\t"
+                  __ASM_CFI(".cfi_rel_offset %esi,-4\n\t")
+                   "pushl %edi\n\t"
+                  __ASM_CFI(".cfi_rel_offset %edi,-8\n\t")
+                   "pushl %ecx\n\t"
+                  __ASM_CFI(".cfi_rel_offset %ecx,-12\n\t")
+                   /* trace the parameters */
+                   "pushl %eax\n\t"
+                   "pushl %esp\n\t"  /* number of args return ptr */
+                   "leal 20(%ebp),%esi\n\t"  /* stack */
+                   "pushl %esi\n\t"
+                   "pushl 12(%ebp)\n\t"
+                   "pushl 8(%ebp)\n\t"
+                   "call " __ASM_NAME("relay_trace_entry") "\n\t"
+                   /* copy the arguments*/
+                   "movl -16(%ebp),%ecx\n\t"  /* number of args */
+                   "jecxz 1f\n\t"
+                   "andl $0x7fffffff,%ecx\n\t"
+                   "leal 0(,%ecx,4),%edx\n\t"
+                   "subl %edx,%esp\n\t"
+                   "andl $~15,%esp\n\t"
+                   "movl %esp,%edi\n\t"
+                   "cld\n\t"
+                   "rep; movsl\n\t"
+                   "testl $0x80000000,-16(%ebp)\n\t"  /* thiscall */
+                   "jz 1f\n\t"
+                   "popl %ecx\n"
+                   /* call the entry point */
+                   "1:\tcall *%eax\n\t"
+                   "movl %eax,%esi\n\t"
+                   "movl %edx,%edi\n\t"
+                   /* trace the return value */
+                   "leal -20(%ebp),%esp\n\t"
+                   "pushl %edx\n\t"
+                   "pushl %eax\n\t"
+                   "pushl 16(%ebp)\n\t"
+                   "pushl 12(%ebp)\n\t"
+                   "pushl 8(%ebp)\n\t"
+                   "call " __ASM_NAME("relay_trace_exit") "\n\t"
+                   /* restore return value and return */
+                   "leal -12(%ebp),%esp\n\t"
+                   "movl %esi,%eax\n\t"
+                   "movl %edi,%edx\n\t"
+                   "popl %ecx\n\t"
+                   __ASM_CFI(".cfi_same_value %ecx\n\t")
+                   "popl %edi\n\t"
+                   __ASM_CFI(".cfi_same_value %edi\n\t")
+                   "popl %esi\n\t"
+                   __ASM_CFI(".cfi_same_value %esi\n\t")
+                   "popl %ebp\n\t"
+                   __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+                   __ASM_CFI(".cfi_same_value %ebp\n\t")
+                   "ret $8" )
+
+#elif defined(__arm__)
 
 /***********************************************************************
- *           RELAY_PrintArgs
+ *           relay_trace_entry
  */
-static inline void RELAY_PrintArgs( int *args, int nb_args, unsigned int typemask )
+DECLSPEC_HIDDEN void * WINAPI relay_trace_entry( struct relay_descr *descr, unsigned int idx,
+                                                 const DWORD *stack, unsigned int *nb_args )
 {
-    while (nb_args--)
+    WORD ordinal = LOWORD(idx);
+    const char *arg_types = descr->args_string + HIWORD(idx);
+    struct relay_private_data *data = descr->private;
+    struct relay_entry_point *entry_point = data->entry_points + ordinal;
+    unsigned int i, pos;
+#ifndef __SOFTFP__
+    unsigned int float_pos = 0, double_pos = 0;
+    const union fpregs { float s[16]; double d[8]; } *fpstack = (const union fpregs *)stack - 1;
+#endif
+
+    TRACE( "\1Call %s(", func_name( data, ordinal ));
+
+    for (i = pos = 0; !is_ret_val( arg_types[i] ); i++)
     {
-	if ((typemask & 3) && HIWORD(*args))
+        switch (arg_types[i])
         {
-	    if (typemask & 2)
-                DPRINTF( "%08x %s", *args, debugstr_w((LPWSTR)*args) );
-            else
-                DPRINTF( "%08x %s", *args, debugstr_a((LPCSTR)*args) );
-	}
-        else DPRINTF( "%08x", *args );
-        if (nb_args) DPRINTF( "," );
-        args++;
-        typemask >>= 2;
+        case 'j': /* int64 */
+            pos = (pos + 1) & ~1;
+            TRACE( "%x%08x", stack[pos+1], stack[pos] );
+            pos += 2;
+            break;
+        case 'k': /* int128 */
+            TRACE( "{%08x,%08x,%08x,%08x}", stack[pos], stack[pos+1], stack[pos+2], stack[pos+3] );
+            pos += 4;
+            break;
+        case 's': /* str */
+            trace_string_a( stack[pos++] );
+            break;
+        case 'w': /* wstr */
+            trace_string_w( stack[pos++] );
+            break;
+        case 'f': /* float */
+#ifndef __SOFTFP__
+            if (!(float_pos % 2)) float_pos = max( float_pos, double_pos * 2 );
+            if (float_pos < 16)
+            {
+                TRACE( "%g", fpstack->s[float_pos++] );
+                break;
+            }
+#endif
+            TRACE( "%g", *(const float *)&stack[pos++] );
+            break;
+        case 'd': /* double */
+#ifndef __SOFTFP__
+            double_pos = max( (float_pos + 1) / 2, double_pos );
+            if (double_pos < 8)
+            {
+                TRACE( "%g", fpstack->d[double_pos++] );
+                break;
+            }
+#endif
+            pos = (pos + 1) & ~1;
+            TRACE( "%g", *(const double *)&stack[pos] );
+            pos += 2;
+            break;
+        case 'i': /* long */
+        default:
+            TRACE( "%08x", stack[pos++] );
+            break;
+        }
+        if (!is_ret_val( arg_types[i+1] )) TRACE( "," );
     }
+
+#ifndef __SOFTFP__
+    if (float_pos || double_pos)
+    {
+        pos |= 0x80000000;
+        stack = (const DWORD *)fpstack;  /* retaddr is below the fp regs */
+    }
+#endif
+    *nb_args = pos;
+    TRACE( ") ret=%08x\n", stack[-1] );
+    return entry_point->orig_func;
 }
 
-extern LONGLONG call_entry_point( void *func, int nb_args, const int *args );
-__ASM_GLOBAL_FUNC( call_entry_point,
-                   "\tpushl %ebp\n"
-                   "\tmovl %esp,%ebp\n"
-                   "\tmovl 12(%ebp),%ecx\n"
-                   "\tmovl 16(%ebp),%edx\n"
-                   "\tjecxz 1f\n"
-                   "2:\tpushl -4(%edx,%ecx,4)\n"
-                   "\tloop 2b\n"
-                   "1:\tcall *8(%ebp)\n"
-                   "\tmovl %ebp,%esp\n"
-                   "\tleave\n"
-                   "\tret" );
+/***********************************************************************
+ *           relay_trace_exit
+ */
+DECLSPEC_HIDDEN void WINAPI relay_trace_exit( struct relay_descr *descr, unsigned int idx,
+                                              DWORD retaddr, LONGLONG retval )
+{
+    const char *arg_types = descr->args_string + HIWORD(idx);
 
+    TRACE( "\1Ret  %s()", func_name( descr->private, LOWORD(idx) ));
+
+    while (!is_ret_val( *arg_types )) arg_types++;
+    if (*arg_types == 'J')  /* int64 return value */
+        TRACE( " retval=%08x%08x ret=%08x\n",
+               (UINT)(retval >> 32), (UINT)retval, retaddr );
+    else
+        TRACE( " retval=%08x ret=%08x\n", (UINT)retval, retaddr );
+}
+
+extern LONGLONG WINAPI relay_call( struct relay_descr *descr, unsigned int idx, const DWORD *stack );
+__ASM_GLOBAL_FUNC( relay_call,
+                   ".arm\n\t"
+                   "push {r4-r8,lr}\n\t"
+                   "sub sp, #16\n\t"
+                   "mov r6, r2\n\t"
+                   "add r3, sp, #12\n\t"
+                   "mov r7, r0\n\t"
+                   "mov r8, r1\n\t"
+                   "bl " __ASM_NAME("relay_trace_entry") "\n\t"
+                   "mov ip, r0\n\t"  /* entry point */
+                   "mov r5, sp\n\t"
+                   "ldr r1, [sp, #12]\n\t"  /* number of args */
+                   "lsl r3, r1, #2\n\t"
+                   "subs r3, #16\n\t"   /* first 4 args are in registers */
+                   "ble 2f\n\t"
+                   "sub sp, r3\n\t"
+                   "and sp, #~7\n"
+                   "add r2, r6, #16\n\t"   /* skip r0-r3 */
+                   "1:\tsubs r3, r3, #4\n\t"
+                   "ldr r0, [r2, r3]\n\t"
+                   "str r0, [sp, r3]\n\t"
+                   "bgt 1b\n"
+                   "2:\t"
+#ifndef __SOFTFP__
+                   "tst r1, #0x80000000\n\t"
+                   "ldm r6, {r0-r3}\n\t"
+                   "vldmdbne r6!, {s0-s15}\n\t"
+#else
+                   "ldm r6, {r0-r3}\n\t"
+#endif
+                   "blx ip\n\t"
+                   "mov sp, r5\n\t"
+                   "ldr r2, [r6, #-4]\n\t"  /* retaddr */
+                   "mov r4, r0\n\t"
+                   "mov r5, r1\n\t"
+                   "mov r0, r7\n\t"
+                   "mov r1, r8\n\t"
+                   "str r4, [sp]\n\t"
+                   "str r5, [sp, #4]\n\t"
+#ifndef __SOFTFP__
+                   "vstr d0, [sp, #8]\n\t"  /* preserve floating point retval */
+                   "bl " __ASM_NAME("relay_trace_exit") "\n\t"
+                   "vldr d0, [sp, #8]\n\t"
+#else
+                   "bl " __ASM_NAME("relay_trace_exit") "\n\t"
+#endif
+                   "mov r0, r4\n\t"
+                   "mov r1, r5\n\t"
+                   "add sp, #16\n\t"
+                   "pop {r4-r8,pc}" )
+
+#elif defined(__aarch64__)
 
 /***********************************************************************
- *           RELAY_CallFrom32
- *
- * Stack layout on entry to this function:
- *  ...      ...
- * (esp+12)  arg2
- * (esp+8)   arg1
- * (esp+4)   ret_addr
- * (esp)     return addr to relay code
+ *           relay_trace_entry
  */
-static LONGLONG RELAY_CallFrom32( int ret_addr, ... )
+DECLSPEC_HIDDEN void * WINAPI relay_trace_entry( struct relay_descr *descr, unsigned int idx,
+                                                 const INT_PTR *stack, unsigned int *nb_args )
 {
-    LONGLONG ret;
-    char buffer[80];
+    WORD ordinal = LOWORD(idx);
+    const char *arg_types = descr->args_string + HIWORD(idx);
+    struct relay_private_data *data = descr->private;
+    struct relay_entry_point *entry_point = data->entry_points + ordinal;
+    unsigned int i;
 
-    int *args = &ret_addr + 1;
-    /* Relay addr is the return address for this function */
-    BYTE *relay_addr = (BYTE *)__builtin_return_address(0);
-    DEBUG_ENTRY_POINT *relay = (DEBUG_ENTRY_POINT *)(relay_addr - 5);
-    WORD nb_args = relay->args / sizeof(int);
+    TRACE( "\1Call %s(", func_name( data, ordinal ));
 
-    if (TRACE_ON(relay))
+    for (i = 0; !is_ret_val( arg_types[i] ); i++)
     {
-        get_entry_point( buffer, relay );
-
-        DPRINTF( "%04lx:Call %s(", GetCurrentThreadId(), buffer );
-        RELAY_PrintArgs( args, nb_args, relay->argtypes );
-        DPRINTF( ") ret=%08x\n", ret_addr );
+        switch (arg_types[i])
+        {
+        case 's': /* str */
+            trace_string_a( stack[i] );
+            break;
+        case 'w': /* wstr */
+            trace_string_w( stack[i] );
+            break;
+        case 'i': /* long */
+        default:
+            TRACE( "%08lx", stack[i] );
+            break;
+        }
+        if (!is_ret_val( arg_types[i + 1] )) TRACE( "," );
     }
+    *nb_args = i;
+    TRACE( ") ret=%08lx\n", stack[-1] );
+    return entry_point->orig_func;
+}
 
-    ret = call_entry_point( relay->orig, nb_args, args );
+/***********************************************************************
+ *           relay_trace_exit
+ */
+DECLSPEC_HIDDEN void WINAPI relay_trace_exit( struct relay_descr *descr, unsigned int idx,
+                                              INT_PTR retaddr, INT_PTR retval )
+{
+    TRACE( "\1Ret  %s() retval=%08lx ret=%08lx\n",
+           func_name( descr->private, LOWORD(idx) ), retval, retaddr );
+}
 
-    if (TRACE_ON(relay))
-    {
-        BOOL ret64 = (relay->argtypes & 0x80000000) && (nb_args < 16);
-        if (ret64)
-            DPRINTF( "%04lx:Ret  %s() retval=%08x%08x ret=%08x\n",
-                     GetCurrentThreadId(),
-                     buffer, (UINT)(ret >> 32), (UINT)ret, ret_addr );
-        else
-            DPRINTF( "%04lx:Ret  %s() retval=%08x ret=%08x\n",
-                     GetCurrentThreadId(),
-                     buffer, (UINT)ret, ret_addr );
-    }
+extern LONGLONG CDECL call_entry_point( void *func, int nb_args, const INT_PTR *args );
+__ASM_GLOBAL_FUNC( call_entry_point,
+                   "stp x29, x30, [SP,#-16]!\n\t"
+                   "stp x19, x20, [SP,#-16]!\n\t"
+                   "mov x29, SP\n\t"
+                   "mov x19, x2\n\t"
+                   "ldp x8, x9, [x19, #-32]\n\t"
+                   "mov x9, x0\n\t"
+                   "cbz w1, 2f\n\t"
+                   "mov w10, w1\n\t"
+                   "mov x11, x2\n\t"
+                   "mov x12, #0\n\t"
+                   "ldp x0, x1, [x11], #16\n\t"
+                   "add w12, w12, #2\n\t"
+                   "cmp w12, w10\n\t"
+                   "b.hs 2f\n\t"
+                   "ldp x2, x3, [x11], #16\n\t"
+                   "add w12, w12, #2\n\t"
+                   "cmp w12, w10\n\t"
+                   "b.hs 2f\n\t"
+                   "ldp x4, x5, [x11], #16\n\t"
+                   "add w12, w12, #2\n\t"
+                   "cmp w12, w10\n\t"
+                   "b.hs 2f\n\t"
+                   "ldp x6, x7, [x11], #16\n\t"
+                   "add w12, w12, #2\n\t"
+                   "cmp w12, w10\n\t"
+                   "b.hs 2f\n\t"
+                   "sub w12, w10, #8\n\t"
+                   "lsl w12, w12, #3\n\t"
+                   "sub SP, SP, w12, uxtw\n\t"
+                   "tbz w12, #3, 1f\n\t"
+                   "sub SP, SP, #8\n\t"
+                   "1: sub w12, w12, #8\n\t"
+                   "ldr x13, [x11, x12]\n\t"
+                   "str x13, [SP, x12]\n\t"
+                   "cbnz w12, 1b\n\t"
+                   "2: blr x9\n\t"
+                   "mov SP, x29\n\t"
+                   "ldp x19, x20, [SP], #16\n\t"
+                   "ldp x29, x30, [SP], #16\n\t"
+                   "ret\n" )
+
+static LONGLONG WINAPI relay_call( struct relay_descr *descr, unsigned int idx, const INT_PTR *stack )
+{
+    unsigned int nb_args;
+    void *func = relay_trace_entry( descr, idx, stack, &nb_args );
+    LONGLONG ret = call_entry_point( func, nb_args, stack );
+    relay_trace_exit( descr, idx, stack[-1], ret );
     return ret;
 }
 
+#elif defined(__x86_64__)
 
 /***********************************************************************
- *           RELAY_CallFrom32Regs
- *
- * Stack layout (esp is context->Esp, not the current %esp):
- *
- * ...
- * (esp+4)  first arg
- * (esp)    return addr to caller
- * (esp-4)  return addr to DEBUG_ENTRY_POINT
- * (esp-8)  saved %eax
- * (esp-12) ptr to relay entry code for RELAY_CallFrom32Regs
- *  ...    >128 bytes space free to be modified (ensured by the assembly glue)
+ *           relay_trace_entry
  */
-void WINAPI __regs_RELAY_CallFrom32Regs( CONTEXT86 *context )
+DECLSPEC_HIDDEN void * WINAPI relay_trace_entry( struct relay_descr *descr, unsigned int idx,
+                                                 const INT_PTR *stack, unsigned int *nb_args )
 {
-    char buffer[80];
-    int* args;
-    int args_copy[17];
-    BYTE *entry_point;
+    WORD ordinal = LOWORD(idx);
+    const char *arg_types = descr->args_string + HIWORD(idx);
+    struct relay_private_data *data = descr->private;
+    struct relay_entry_point *entry_point = data->entry_points + ordinal;
+    unsigned int i;
 
-    BYTE *relay_addr = *((BYTE **)context->Esp - 1);
-    DEBUG_ENTRY_POINT *relay = (DEBUG_ENTRY_POINT *)(relay_addr - 5);
-    WORD nb_args = relay->args / sizeof(int);
+    TRACE( "\1Call %s(", func_name( data, ordinal ));
 
-    /* remove extra stuff from the stack */
-    context->Eip = *(DWORD *)context->Esp;
-    context->Esp += sizeof(DWORD);
-    args = (int *)context->Esp;
-    if (relay->ret == 0xc2) /* stdcall */
-        context->Esp += nb_args * sizeof(int);
-
-    entry_point = (BYTE *)relay->orig;
-    assert( entry_point[0] == 0x50 /* pushl %eax */ );
-    assert( entry_point[1] == 0xe8 /* call */ );
-
-    if (TRACE_ON(relay))
+    for (i = 0; !is_ret_val( arg_types[i] ); i++)
     {
-        get_entry_point( buffer, relay );
-
-        DPRINTF( "%04lx:Call %s(", GetCurrentThreadId(), buffer );
-        RELAY_PrintArgs( args, nb_args, relay->argtypes );
-        DPRINTF( ") ret=%08lx fs=%04lx\n", context->Eip, context->SegFs );
-
-        DPRINTF(" eax=%08lx ebx=%08lx ecx=%08lx edx=%08lx esi=%08lx edi=%08lx\n",
-                context->Eax, context->Ebx, context->Ecx,
-                context->Edx, context->Esi, context->Edi );
-        DPRINTF(" ebp=%08lx esp=%08lx ds=%04lx es=%04lx gs=%04lx flags=%08lx\n",
-                context->Ebp, context->Esp, context->SegDs,
-                context->SegEs, context->SegGs, context->EFlags );
+        switch (arg_types[i])
+        {
+        case 's': /* str */
+            trace_string_a( stack[i] );
+            break;
+        case 'w': /* wstr */
+            trace_string_w( stack[i] );
+            break;
+        case 'f': /* float */
+            TRACE( "%g", *(const float *)&stack[i] );
+            break;
+        case 'd': /* double */
+            TRACE( "%g", *(const double *)&stack[i] );
+            break;
+        case 'i': /* long */
+        default:
+            TRACE( "%08lx", stack[i] );
+            break;
+        }
+        if (!is_ret_val( arg_types[i+1] )) TRACE( "," );
     }
-
-    /* Now call the real function */
-
-    memcpy( args_copy, args, nb_args * sizeof(args[0]) );
-    args_copy[nb_args] = (int)context;  /* append context argument */
-
-    call_entry_point( (entry_point + 6 + *(DWORD *)(entry_point + 6)), nb_args+1, args_copy );
-
-    if (TRACE_ON(relay))
-    {
-        DPRINTF( "%04lx:Ret  %s() retval=%08lx ret=%08lx fs=%04lx\n",
-                 GetCurrentThreadId(),
-                 buffer, context->Eax, context->Eip, context->SegFs );
-
-        DPRINTF(" eax=%08lx ebx=%08lx ecx=%08lx edx=%08lx esi=%08lx edi=%08lx\n",
-                context->Eax, context->Ebx, context->Ecx,
-                context->Edx, context->Esi, context->Edi );
-        DPRINTF(" ebp=%08lx esp=%08lx ds=%04lx es=%04lx gs=%04lx flags=%08lx\n",
-                context->Ebp, context->Esp, context->SegDs,
-                context->SegEs, context->SegGs, context->EFlags );
-    }
+    *nb_args = i;
+    TRACE( ") ret=%08lx\n", stack[-1] );
+    return entry_point->orig_func;
 }
 
-void WINAPI RELAY_CallFrom32Regs(void);
-DEFINE_REGS_ENTRYPOINT( RELAY_CallFrom32Regs, 0, 0 );
-
-/* check whether the function at addr starts with a call to __wine_call_from_32_regs */
-static BOOL is_register_entry_point( const BYTE *addr )
+/***********************************************************************
+ *           relay_trace_exit
+ */
+DECLSPEC_HIDDEN void WINAPI relay_trace_exit( struct relay_descr *descr, unsigned int idx,
+                                              INT_PTR retaddr, INT_PTR retval )
 {
-    extern void __wine_call_from_32_regs();
-    const int *offset;
-    const void *ptr;
-
-    if (addr[0] != 0x50) return FALSE;  /* pushl %eax */
-    if (addr[1] != 0xe8) return FALSE;  /* call */
-    /* check if call target is __wine_call_from_32_regs */
-    offset = (const int *)(addr + 2);
-    if (*offset == (const char *)__wine_call_from_32_regs - (const char *)(offset + 1)) return TRUE;
-    /* now check if call target is an import table jump to __wine_call_from_32_regs */
-    addr = (const BYTE *)(offset + 1) + *offset;
-
-    /* Note: the following checks depend on the asm code generated by winebuild */
-
-    if (addr[0] == 0xff && addr[1] == 0x25)  /* indirect jmp */
-    {
-        ptr = *(const void * const*)(addr + 2);  /* get indirect jmp target address */
-    }
-    else  /* check for import thunk */
-    {
-        if (addr[0] != 0xe8) return FALSE;  /* call get_pc_thunk */
-        if (addr[5] != 0xff || addr[6] != 0xa0) return FALSE;  /* jmp *offset(%eax) */
-        ptr = addr + 5 + *(const int *)(addr + 7);
-    }
-    return (*(const char * const*)ptr == (char *)__wine_call_from_32_regs);
+    TRACE( "\1Ret  %s() retval=%08lx ret=%08lx\n",
+           func_name( descr->private, LOWORD(idx) ), retval, retaddr );
 }
+
+extern INT_PTR WINAPI relay_call( struct relay_descr *descr, unsigned int idx, const INT_PTR *stack );
+__ASM_GLOBAL_FUNC( relay_call,
+                   "pushq %rbp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset 8\n\t")
+                   __ASM_CFI(".cfi_rel_offset %rbp,0\n\t")
+                   "movq %rsp,%rbp\n\t"
+                   __ASM_CFI(".cfi_def_cfa_register %rbp\n\t")
+                   "leaq -0x48(%rbp),%rsp\n\t"
+                   "andq $~15,%rsp\n\t"
+                   "movq %rcx,-32(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %rcx,-32\n\t")
+                   "movq %rdx,-24(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %rdx,-24\n\t")
+                   "movq %rsi,-16(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %rsi,-16\n\t")
+                   "movq %rdi,-8(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %rdi,-8\n\t")
+                   /* trace the parameters */
+                   "leaq 24(%rbp),%r8\n\t"   /* stack */
+                   "leaq -40(%rbp),%r9\n\t"
+                   "call " __ASM_NAME("relay_trace_entry") "\n\t"
+                   /* copy the arguments */
+                   "movl -40(%rbp),%edx\n\t"  /* number of args */
+                   "movq $4,%rcx\n\t"
+                   "cmp %rcx,%rdx\n\t"
+                   "cmovgq %rdx,%rcx\n\t"
+                   "leaq -16(,%rcx,8),%rdx\n\t"
+                   "andq $~15,%rdx\n\t"
+                   "subq %rdx,%rsp\n\t"
+                   "leaq 24(%rbp),%rsi\n\t"  /* original stack */
+                   "movq %rsp,%rdi\n\t"
+                   "rep; movsq\n\t"
+                   /* call the entry point */
+                   "movq 0(%rsp),%rcx\n\t"
+                   "movq 8(%rsp),%rdx\n\t"
+                   "movq 16(%rsp),%r8\n\t"
+                   "movq 24(%rsp),%r9\n\t"
+                   "movq 0(%rsp),%xmm0\n\t"
+                   "movq 8(%rsp),%xmm1\n\t"
+                   "movq 16(%rsp),%xmm2\n\t"
+                   "movq 24(%rsp),%xmm3\n\t"
+                   "callq *%rax\n\t"
+                   /* trace the return value */
+                   "movq -32(%rbp),%rcx\n\t"
+                   "movq -24(%rbp),%rdx\n\t"
+                   "movq 16(%rbp),%r8\n\t"   /* retaddr */
+                   "movq %rax,%rsi\n\t"
+                   "movaps %xmm0,32(%rsp)\n\t"
+                   "movq %rax,%r9\n\t"
+                   "call " __ASM_NAME("relay_trace_exit") "\n\t"
+                   /* restore return value and return */
+                   "movq %rsi,%rax\n\t"
+                   "movaps 32(%rsp),%xmm0\n\t"
+                   "movq -16(%rbp),%rsi\n\t"
+                   __ASM_CFI(".cfi_same_value %rsi\n\t")
+                   "movq -8(%rbp),%rdi\n\t"
+                   __ASM_CFI(".cfi_same_value %rdi\n\t")
+                   "movq %rbp,%rsp\n\t"
+                   __ASM_CFI(".cfi_def_cfa_register %rsp\n\t")
+                   "popq %rbp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
+                   __ASM_CFI(".cfi_same_value %rbp\n\t")
+                   "ret")
+
+#else
+#error Not supported on this CPU
+#endif
 
 
 /***********************************************************************
@@ -623,18 +837,16 @@ static BOOL is_register_entry_point( const BYTE *addr )
  * Return the proc address to use for a given function.
  */
 FARPROC RELAY_GetProcAddress( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
-                              DWORD exp_size, FARPROC proc, const WCHAR *user )
+                              DWORD exp_size, FARPROC proc, DWORD ordinal, const WCHAR *user )
 {
-    const DEBUG_ENTRY_POINT *debug = (DEBUG_ENTRY_POINT *)proc;
-    const DEBUG_ENTRY_POINT *list = (const DEBUG_ENTRY_POINT *)((const char *)exports + exp_size);
+    struct relay_private_data *data;
+    const struct relay_descr *descr = (const struct relay_descr *)((const char *)exports + exp_size);
 
-    if (debug < list || debug >= list + exports->NumberOfFunctions) return proc;
-    if (list + (debug - list) != debug) return proc;  /* not a valid address */
+    if (descr->magic != RELAY_DESCR_MAGIC || !(data = descr->private)) return proc;  /* no relay data */
+    if (!data->entry_points[ordinal].orig_func) return proc;  /* not a relayed function */
     if (check_from_module( debug_from_relay_includelist, debug_from_relay_excludelist, user ))
-       return proc;  /* we want to relay it */
-    if (!debug->call) return proc;  /* not a normal function */
-    if (debug->call != 0xe8 && debug->call != 0xe9) return proc; /* not a debug thunk at all */
-    return debug->orig;
+        return proc;  /* we want to relay it */
+    return data->entry_points[ordinal].orig_func;
 }
 
 
@@ -646,49 +858,131 @@ FARPROC RELAY_GetProcAddress( HMODULE module, const IMAGE_EXPORT_DIRECTORY *expo
 void RELAY_SetupDLL( HMODULE module )
 {
     IMAGE_EXPORT_DIRECTORY *exports;
-    DEBUG_ENTRY_POINT *debug;
     DWORD *funcs;
-    unsigned int i;
-    const char *name;
-    char *p, dllname[80];
-    DWORD size;
+    unsigned int i, len;
+    DWORD size, entry_point_rva;
+    struct relay_descr *descr;
+    struct relay_private_data *data;
+    const WORD *ordptr;
 
-    if (!init_done) init_debug_lists();
+    RtlRunOnceExecuteOnce( &init_once, init_debug_lists, NULL, NULL );
 
     exports = RtlImageDirectoryEntryToData( module, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &size );
     if (!exports) return;
-    debug = (DEBUG_ENTRY_POINT *)((char *)exports + size);
-    funcs = (DWORD *)((char *)module + exports->AddressOfFunctions);
-    strcpy( dllname, (char *)module + exports->Name );
-    p = dllname + strlen(dllname) - 4;
-    if (p > dllname && !strcasecmp( p, ".dll" )) *p = 0;
 
-    for (i = 0; i < exports->NumberOfFunctions; i++, funcs++, debug++)
+    descr = (struct relay_descr *)((char *)exports + size);
+    if (descr->magic != RELAY_DESCR_MAGIC) return;
+
+    if (!(data = RtlAllocateHeap( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*data) +
+                                  (exports->NumberOfFunctions-1) * sizeof(data->entry_points) )))
+        return;
+
+    descr->relay_call = relay_call;
+    descr->private = data;
+
+    data->module = module;
+    data->base   = exports->Base;
+    len = strlen( (char *)module + exports->Name );
+    if (len > 4 && !strcasecmp( (char *)module + exports->Name + len - 4, ".dll" )) len -= 4;
+    len = min( len, sizeof(data->dllname) - 1 );
+    memcpy( data->dllname, (char *)module + exports->Name, len );
+    data->dllname[len] = 0;
+
+    /* fetch name pointer for all entry points and store them in the private structure */
+
+    ordptr = (const WORD *)((char *)module + exports->AddressOfNameOrdinals);
+    for (i = 0; i < exports->NumberOfNames; i++, ordptr++)
     {
-        int on = 1;
+        DWORD name_rva = ((DWORD*)((char *)module + exports->AddressOfNames))[i];
+        data->entry_points[*ordptr].name = (const char *)module + name_rva;
+    }
 
-        if (!debug->call) continue;  /* not a normal function */
-        if (debug->call != 0xe8 && debug->call != 0xe9) break; /* not a debug thunk at all */
+    /* patch the functions in the export table to point to the relay thunks */
 
-        name = find_exported_name( module, exports, i + exports->Base );
-        on = check_relay_include( dllname, i + exports->Base, name );
+    funcs = (DWORD *)((char *)module + exports->AddressOfFunctions);
+    entry_point_rva = descr->entry_point_base - (const char *)module;
+    for (i = 0; i < exports->NumberOfFunctions; i++, funcs++)
+    {
+        if (!descr->entry_point_offsets[i]) continue;   /* not a normal function */
+        if (!check_relay_include( data->dllname, i + exports->Base, data->entry_points[i].name ))
+            continue;  /* don't include this entry point */
 
-        if (on)
-        {
-            debug->call = 0xe8;  /* call relative */
-            if (is_register_entry_point( debug->orig ))
-                debug->callfrom32 = (char *)RELAY_CallFrom32Regs - (char *)&debug->ret;
-            else
-                debug->callfrom32 = (char *)RELAY_CallFrom32 - (char *)&debug->ret;
-        }
-        else
-        {
-            debug->call = 0xe9;  /* jmp relative */
-            debug->callfrom32 = (char *)debug->orig - (char *)&debug->ret;
-        }
-        *funcs = (char *)debug - (char *)module;
+        data->entry_points[i].orig_func = (char *)module + *funcs;
+        *funcs = entry_point_rva + descr->entry_point_offsets[i];
     }
 }
+
+#else  /* __i386__ || __x86_64__ || __arm__ || __aarch64__ */
+
+FARPROC RELAY_GetProcAddress( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
+                              DWORD exp_size, FARPROC proc, DWORD ordinal, const WCHAR *user )
+{
+    return proc;
+}
+
+void RELAY_SetupDLL( HMODULE module )
+{
+}
+
+#endif  /* __i386__ || __x86_64__ || __arm__ || __aarch64__ */
+
+
+/***********************************************************************/
+/* snoop support */
+/***********************************************************************/
+
+#ifdef __i386__
+
+WINE_DECLARE_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(snoop);
+
+#include "pshpack1.h"
+
+typedef	struct
+{
+	/* code part */
+	BYTE		lcall;		/* 0xe8 call snoopentry (relative) */
+	DWORD		snoopentry;	/* SNOOP_Entry relative */
+	/* unreached */
+	int		nrofargs;
+	FARPROC	origfun;
+	const char *name;
+} SNOOP_FUN;
+
+typedef struct tagSNOOP_DLL {
+	HMODULE	hmod;
+	SNOOP_FUN	*funs;
+	DWORD		ordbase;
+	DWORD		nrofordinals;
+	struct tagSNOOP_DLL	*next;
+	char name[1];
+} SNOOP_DLL;
+
+typedef struct
+{
+	/* code part */
+	BYTE		lcall;		/* 0xe8 call snoopret relative*/
+	DWORD		snoopret;	/* SNOOP_Ret relative */
+	/* unreached */
+	FARPROC	origreturn;
+	SNOOP_DLL	*dll;
+	DWORD		ordinal;
+	void		**origESP;
+	DWORD		*args;		/* saved args across a stdcall */
+} SNOOP_RETURNENTRY;
+
+typedef struct tagSNOOP_RETURNENTRIES {
+	SNOOP_RETURNENTRY entry[4092/sizeof(SNOOP_RETURNENTRY)];
+	struct tagSNOOP_RETURNENTRIES	*next;
+} SNOOP_RETURNENTRIES;
+
+#include "poppack.h"
+
+extern void WINAPI SNOOP_Entry(void);
+extern void WINAPI SNOOP_Return(void);
+
+static SNOOP_DLL *firstdll;
+static SNOOP_RETURNENTRIES *firstrets;
 
 
 /***********************************************************************
@@ -718,13 +1012,15 @@ void SNOOP_SetupDLL(HMODULE hmod)
     char *p, *name;
     void *addr;
     SIZE_T size;
+    ULONG size32;
     IMAGE_EXPORT_DIRECTORY *exports;
 
-    if (!init_done) init_debug_lists();
+    RtlRunOnceExecuteOnce( &init_once, init_debug_lists, NULL, NULL );
 
-    exports = RtlImageDirectoryEntryToData( hmod, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &size );
-    if (!exports) return;
+    exports = RtlImageDirectoryEntryToData( hmod, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &size32 );
+    if (!exports || !exports->NumberOfFunctions) return;
     name = (char *)hmod + exports->Name;
+    size = size32;
 
     TRACE_(snoop)("hmod=%p, name=%s\n", hmod, name);
 
@@ -789,7 +1085,7 @@ FARPROC SNOOP_GetProcAddress( HMODULE hmod, const IMAGE_EXPORT_DIRECTORY *export
     if (!check_from_module( debug_from_snoop_includelist, debug_from_snoop_excludelist, user ))
         return origfun; /* the calling module was explicitly excluded */
 
-    if (!*(LPBYTE)origfun) /* 0x00 is an imposs. opcode, poss. dataref. */
+    if (!*(LPBYTE)origfun) /* 0x00 is an impossible opcode, possible dataref. */
         return origfun;
 
     sec = RtlImageRvaToSection( RtlImageNtHeader(hmod), hmod, (char *)origfun - (char *)hmod );
@@ -825,8 +1121,7 @@ FARPROC SNOOP_GetProcAddress( HMODULE hmod, const IMAGE_EXPORT_DIRECTORY *export
     {
         fun->name       = ename;
         fun->lcall	= 0xe8;
-        /* NOTE: origreturn struct member MUST come directly after snoopentry */
-        fun->snoopentry	= (char*)SNOOP_Entry-((char*)(&fun->nrofargs));
+        fun->snoopentry	= (char *)SNOOP_Entry - (char *)(&fun->snoopentry + 1);
         fun->origfun	= origfun;
         fun->nrofargs	= -1;
     }
@@ -837,8 +1132,8 @@ static void SNOOP_PrintArg(DWORD x)
 {
     int i,nostring;
 
-    DPRINTF("%08lx",x);
-    if (!HIWORD(x) || TRACE_ON(seh)) return; /* trivial reject to avoid faults */
+    TRACE_(snoop)("%08x",x);
+    if (IS_INTARG(x) || TRACE_ON(seh)) return; /* trivial reject to avoid faults */
     __TRY
     {
         LPBYTE s=(LPBYTE)x;
@@ -850,7 +1145,7 @@ static void SNOOP_PrintArg(DWORD x)
             i++;
         }
         if (!nostring && i > 5)
-            DPRINTF(" %s",debugstr_an((LPSTR)x,i));
+            TRACE_(snoop)(" %s",debugstr_an((LPSTR)x,i));
         else  /* try unicode */
         {
             LPWSTR s=(LPWSTR)x;
@@ -861,38 +1156,28 @@ static void SNOOP_PrintArg(DWORD x)
                 if (s[i]>0x100) {nostring=1;break;}
                 i++;
             }
-            if (!nostring && i > 5) DPRINTF(" %s",debugstr_wn((LPWSTR)x,i));
+            if (!nostring && i > 5) TRACE_(snoop)(" %s",debugstr_wn((LPWSTR)x,i));
         }
     }
-    __EXCEPT(page_fault)
+    __EXCEPT_PAGE_FAULT
     {
     }
     __ENDTRY
 }
 
-#define CALLER1REF (*(DWORD*)context->Esp)
-
-void WINAPI __regs_SNOOP_Entry( CONTEXT86 *context )
+void WINAPI DECLSPEC_HIDDEN __regs_SNOOP_Entry( void **stack )
 {
-	DWORD		ordinal=0,entry = context->Eip - 5;
-	SNOOP_DLL	*dll = firstdll;
-	SNOOP_FUN	*fun = NULL;
+	SNOOP_DLL *dll;
+	SNOOP_FUN *fun = (SNOOP_FUN *)((char *)stack[0] - 5);
 	SNOOP_RETURNENTRIES	**rets = &firstrets;
 	SNOOP_RETURNENTRY	*ret;
 	int		i=0, max;
 
-	while (dll) {
-		if (	((char*)entry>=(char*)dll->funs)	&&
-			((char*)entry<=(char*)(dll->funs+dll->nrofordinals))
-		) {
-			fun = (SNOOP_FUN*)entry;
-			ordinal = fun-dll->funs;
-			break;
-		}
-		dll=dll->next;
-	}
+	for (dll = firstdll; dll; dll = dll->next )
+            if (fun >= dll->funs && fun < dll->funs + dll->nrofordinals) break;
+
 	if (!dll) {
-		FIXME("entrypoint 0x%08lx not found\n",entry);
+		FIXME("entrypoint %p not found\n", fun);
 		return; /* oops */
 	}
 	/* guess cdecl ... */
@@ -902,7 +1187,7 @@ void WINAPI __regs_SNOOP_Entry( CONTEXT86 *context )
 		 * which has (for xxxxxxxx up to 255 the opcode "83 C4 xx".
 		 * (after that 81 C2 xx xx xx xx)
 		 */
-		LPBYTE	reteip = (LPBYTE)CALLER1REF;
+		LPBYTE	reteip = stack[1];
 
 		if (reteip) {
 			if ((reteip[0]==0x83)&&(reteip[1]==0xc4))
@@ -912,10 +1197,10 @@ void WINAPI __regs_SNOOP_Entry( CONTEXT86 *context )
 
 
 	while (*rets) {
-		for (i=0;i<sizeof((*rets)->entry)/sizeof((*rets)->entry[0]);i++)
+		for (i=0;i<ARRAY_SIZE( (*rets)->entry );i++)
 			if (!(*rets)->entry[i].origreturn)
 				break;
-		if (i!=sizeof((*rets)->entry)/sizeof((*rets)->entry[0]))
+		if (i!=ARRAY_SIZE( (*rets)->entry ))
 			break;
 		rets = &((*rets)->next);
 	}
@@ -928,47 +1213,47 @@ void WINAPI __regs_SNOOP_Entry( CONTEXT86 *context )
                                         PAGE_EXECUTE_READWRITE);
                 if (!addr) return;
                 *rets = addr;
-		memset(*rets,0,4096);
 		i = 0;	/* entry 0 is free */
 	}
 	ret = &((*rets)->entry[i]);
 	ret->lcall	= 0xe8;
-	/* NOTE: origreturn struct member MUST come directly after snoopret */
-	ret->snoopret	= ((char*)SNOOP_Return)-(char*)(&ret->origreturn);
-	ret->origreturn	= (FARPROC)CALLER1REF;
-	CALLER1REF	= (DWORD)&ret->lcall;
+	ret->snoopret	= (char *)SNOOP_Return - (char *)(&ret->snoopret + 1);
+	ret->origreturn	= stack[1];
+	stack[1]	= &ret->lcall;
 	ret->dll	= dll;
 	ret->args	= NULL;
-	ret->ordinal	= ordinal;
-	ret->origESP	= context->Esp;
+	ret->ordinal	= fun - dll->funs;
+	ret->origESP	= stack;
 
-	context->Eip = (DWORD)fun->origfun;
+	stack[0] = fun->origfun;
 
-	if (fun->name) DPRINTF("%04lx:CALL %s.%s(",GetCurrentThreadId(),dll->name,fun->name);
-	else DPRINTF("%04lx:CALL %s.%ld(",GetCurrentThreadId(),dll->name,dll->ordbase+ordinal);
+        if (!TRACE_ON(snoop)) return;
+
+	if (fun->name) TRACE_(snoop)("\1CALL %s.%s(", dll->name, fun->name);
+	else TRACE_(snoop)("\1CALL %s.%d(", dll->name, dll->ordbase+ret->ordinal);
 	if (fun->nrofargs>0) {
 		max = fun->nrofargs; if (max>16) max=16;
 		for (i=0;i<max;i++)
                 {
-                    SNOOP_PrintArg(*(DWORD*)(context->Esp + 4 + sizeof(DWORD)*i));
-                    if (i<fun->nrofargs-1) DPRINTF(",");
+                    SNOOP_PrintArg( (DWORD)stack[i + 2] );
+                    if (i<fun->nrofargs-1) TRACE_(snoop)(",");
                 }
 		if (max!=fun->nrofargs)
-			DPRINTF(" ...");
+			TRACE_(snoop)(" ...");
 	} else if (fun->nrofargs<0) {
-		DPRINTF("<unknown, check return>");
+		TRACE_(snoop)("<unknown, check return>");
 		ret->args = RtlAllocateHeap(GetProcessHeap(),
                                             0,16*sizeof(DWORD));
-		memcpy(ret->args,(LPBYTE)(context->Esp + 4),sizeof(DWORD)*16);
+		memcpy(ret->args, stack + 2, sizeof(DWORD)*16);
 	}
-	DPRINTF(") ret=%08lx\n",(DWORD)ret->origreturn);
+	TRACE_(snoop)(") ret=%08x\n",(DWORD)ret->origreturn);
 }
 
-
-void WINAPI __regs_SNOOP_Return( CONTEXT86 *context )
+void WINAPI DECLSPEC_HIDDEN __regs_SNOOP_Return( void **stack )
 {
-	SNOOP_RETURNENTRY	*ret = (SNOOP_RETURNENTRY*)(context->Eip - 5);
+	SNOOP_RETURNENTRY *ret = (SNOOP_RETURNENTRY*)((char *)stack[0] - 5);
         SNOOP_FUN *fun = &ret->dll->funs[ret->ordinal];
+        DWORD retval = (DWORD)stack[-1];  /* get saved %eax from the stack */
 
 	/* We haven't found out the nrofargs yet. If we called a cdecl
 	 * function it is too late anyway and we can just set '0' (which
@@ -976,16 +1261,21 @@ void WINAPI __regs_SNOOP_Return( CONTEXT86 *context )
 	 * If stdcall -> everything ok.
 	 */
 	if (ret->dll->funs[ret->ordinal].nrofargs<0)
-		ret->dll->funs[ret->ordinal].nrofargs=(context->Esp - ret->origESP-4)/4;
-	context->Eip = (DWORD)ret->origreturn;
+		ret->dll->funs[ret->ordinal].nrofargs = stack - ret->origESP - 1;
+	stack[0] = ret->origreturn;
+
+        if (!TRACE_ON(snoop)) {
+            ret->origreturn = NULL; /* mark as empty */
+            return;
+        }
+
 	if (ret->args) {
 		int	i,max;
 
                 if (fun->name)
-                    DPRINTF("%04lx:RET  %s.%s(", GetCurrentThreadId(), ret->dll->name, fun->name);
+                    TRACE_(snoop)("\1RET  %s.%s(", ret->dll->name, fun->name);
                 else
-                    DPRINTF("%04lx:RET  %s.%ld(", GetCurrentThreadId(),
-                            ret->dll->name,ret->dll->ordbase+ret->ordinal);
+                    TRACE_(snoop)("\1RET  %s.%d(", ret->dll->name, ret->dll->ordbase+ret->ordinal);
 
 		max = fun->nrofargs;
 		if (max>16) max=16;
@@ -993,48 +1283,56 @@ void WINAPI __regs_SNOOP_Return( CONTEXT86 *context )
 		for (i=0;i<max;i++)
                 {
                     SNOOP_PrintArg(ret->args[i]);
-                    if (i<max-1) DPRINTF(",");
+                    if (i<max-1) TRACE_(snoop)(",");
                 }
-		DPRINTF(") retval=%08lx ret=%08lx\n",
-			context->Eax,(DWORD)ret->origreturn );
+		TRACE_(snoop)(") retval=%08x ret=%08x\n", retval, (DWORD)ret->origreturn );
 		RtlFreeHeap(GetProcessHeap(),0,ret->args);
 		ret->args = NULL;
 	}
         else
         {
             if (fun->name)
-		DPRINTF("%04lx:RET  %s.%s() retval=%08lx ret=%08lx\n",
-			GetCurrentThreadId(),
-			ret->dll->name, fun->name, context->Eax, (DWORD)ret->origreturn);
+		TRACE_(snoop)("\1RET  %s.%s() retval=%08x ret=%08x\n",
+                        ret->dll->name, fun->name, retval, (DWORD)ret->origreturn);
             else
-		DPRINTF("%04lx:RET  %s.%ld() retval=%08lx ret=%08lx\n",
-			GetCurrentThreadId(),
+		TRACE_(snoop)("\1RET  %s.%d() retval=%08x ret=%08x\n",
 			ret->dll->name,ret->dll->ordbase+ret->ordinal,
-			context->Eax, (DWORD)ret->origreturn);
+			retval, (DWORD)ret->origreturn);
         }
 	ret->origreturn = NULL; /* mark as empty */
 }
 
-/* assembly wrappers that save the context */
-DEFINE_REGS_ENTRYPOINT( SNOOP_Entry, 0, 0 );
-DEFINE_REGS_ENTRYPOINT( SNOOP_Return, 0, 0 );
+/* small wrappers that save registers and get the stack pointer */
+#define SNOOP_WRAPPER(name) \
+    __ASM_STDCALL_FUNC( name, 0,                                        \
+                        "pushl %eax\n\t"                                \
+                        __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")       \
+                        "pushl %ecx\n\t"                                \
+                        __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")       \
+                        "pushl %edx\n\t"                                \
+                        __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")       \
+                        "leal 12(%esp),%eax\n\t"                        \
+                        "pushl %eax\n\t"                                \
+                        __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")       \
+                        "call " __ASM_NAME("__regs_" #name) __ASM_STDCALL(4) "\n\t" \
+                        __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")      \
+                        "popl %edx\n\t"                                 \
+                        __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")      \
+                        "popl %ecx\n\t"                                 \
+                        __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")      \
+                        "popl %eax\n\t"                                 \
+                        __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")      \
+                        "ret" )
+
+SNOOP_WRAPPER( SNOOP_Entry )
+SNOOP_WRAPPER( SNOOP_Return )
 
 #else  /* __i386__ */
-
-FARPROC RELAY_GetProcAddress( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
-                              DWORD exp_size, FARPROC proc, const WCHAR *user )
-{
-    return proc;
-}
 
 FARPROC SNOOP_GetProcAddress( HMODULE hmod, const IMAGE_EXPORT_DIRECTORY *exports, DWORD exp_size,
                               FARPROC origfun, DWORD ordinal, const WCHAR *user )
 {
     return origfun;
-}
-
-void RELAY_SetupDLL( HMODULE module )
-{
 }
 
 void SNOOP_SetupDLL( HMODULE hmod )

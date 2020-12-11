@@ -6,16 +6,16 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2.1 of the License,or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not,write to the Free Software
- * Foundation,Inc.,59 Temple Place,Suite 330,Boston,MA 02111-1307 USA
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef MAPITAGS_H
 #define MAPITAGS_H
@@ -345,7 +345,7 @@
 #define PR_MINI_ICON PROP_TAG(PT_BINARY,0x0FFC)
 #define PR_STORE_ENTRYID PROP_TAG(PT_BINARY,0x0FFB)
 #define PR_STORE_RECORD_KEY PROP_TAG(PT_BINARY,0x0FFA)
-/* Binary identifer for an individual object */
+/* Binary identifier for an individual object */
 #define PR_RECORD_KEY PROP_TAG(PT_BINARY,0x0FF9)
 #define PR_MAPPING_SIGNATURE PROP_TAG(PT_BINARY,0x0FF8)
 #define PR_ACCESS_LEVEL PROP_TAG(PT_I4,0x0FF7)
@@ -415,7 +415,7 @@
 #define PR_IPM_OUTBOX_SEARCH_KEY PROP_TAG(PT_BINARY,0x3411)
 #define PR_IPM_WASTEBASKET_SEARCH_KEY PROP_TAG(PT_BINARY,0x3412)
 #define PR_IPM_SENTMAIL_SEARCH_KEY PROP_TAG(PT_BINARY,0x3413)
-/* Provder-defined message store type */
+/* Provider-defined message store type */
 #define PR_MDB_PROVIDER PROP_TAG(PT_BINARY,0x3414)
 #define PR_RECEIVE_FOLDER_SETTINGS PROP_TAG(PT_OBJECT,0x3415)
 #define PR_VALID_FOLDER_MASK PROP_TAG(PT_I4,0x35DF)
@@ -452,6 +452,7 @@
 #define PR_AB_PROVIDER_ID PROP_TAG(PT_BINARY,0x3615)
 #define PR_DEFAULT_VIEW_ENTRYID PROP_TAG(PT_BINARY,0x3616)
 #define PR_ASSOC_CONTENT_COUNT PROP_TAG(PT_I4,0x3617)
+#define PR_IPM_DRAFTS_ENTRYID PROP_TAG(PT_BINARY,0x36D7)
 #define PR_ATTACHMENT_X400_PARAMETERS PROP_TAG(PT_BINARY,0x3700)
 #define PR_ATTACH_DATA_OBJ PROP_TAG(PT_OBJECT,0x3701)
 #define PR_ATTACH_DATA_BIN PROP_TAG(PT_BINARY,0x3701)

@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_WINSPOOL_H
 #define __WINE_WINSPOOL_H
@@ -28,20 +28,20 @@ extern "C" {
 
 /* DEFINES */
 
-#define PRINTER_ATTRIBUTE_QUEUED         0x00000001
-#define PRINTER_ATTRIBUTE_DIRECT         0x00000002
-#define PRINTER_ATTRIBUTE_DEFAULT        0x00000004
-#define PRINTER_ATTRIBUTE_SHARED         0x00000008
-#define PRINTER_ATTRIBUTE_NETWORK        0x00000010
-#define PRINTER_ATTRIBUTE_HIDDEN         0x00000020
-#define PRINTER_ATTRIBUTE_LOCAL          0x00000040
-
+#define PRINTER_ATTRIBUTE_QUEUED            0x00000001
+#define PRINTER_ATTRIBUTE_DIRECT            0x00000002
+#define PRINTER_ATTRIBUTE_DEFAULT           0x00000004
+#define PRINTER_ATTRIBUTE_SHARED            0x00000008
+#define PRINTER_ATTRIBUTE_NETWORK           0x00000010
+#define PRINTER_ATTRIBUTE_HIDDEN            0x00000020
+#define PRINTER_ATTRIBUTE_LOCAL             0x00000040
 #define PRINTER_ATTRIBUTE_ENABLE_DEVQ       0x00000080
 #define PRINTER_ATTRIBUTE_KEEPPRINTEDJOBS   0x00000100
 #define PRINTER_ATTRIBUTE_DO_COMPLETE_FIRST 0x00000200
-
-#define PRINTER_ATTRIBUTE_WORK_OFFLINE   0x00000400
-#define PRINTER_ATTRIBUTE_ENABLE_BIDI    0x00000800
+#define PRINTER_ATTRIBUTE_WORK_OFFLINE      0x00000400
+#define PRINTER_ATTRIBUTE_ENABLE_BIDI       0x00000800
+#define PRINTER_ATTRIBUTE_RAW_ONLY          0x00001000
+#define PRINTER_ATTRIBUTE_PUBLISHED         0x00002000
 
 #define PRINTER_CONTROL_PAUSE      1
 #define PRINTER_CONTROL_RESUME     2
@@ -69,6 +69,7 @@ extern "C" {
 #define PRINTER_ENUM_ICON6       0x00200000
 #define PRINTER_ENUM_ICON7       0x00400000
 #define PRINTER_ENUM_ICON8       0x00800000
+#define PRINTER_ENUM_HIDE        0x01000000
 
 
 /* various printer statuses */
@@ -97,6 +98,8 @@ extern "C" {
 #define PRINTER_STATUS_DOOR_OPEN         0x00400000
 #define PRINTER_STATUS_SERVER_UNKNOWN    0x00800000
 #define PRINTER_STATUS_POWER_SAVE        0x01000000
+#define PRINTER_STATUS_SERVER_OFFLINE    0x02000000
+#define PRINTER_STATUS_DRIVER_UPDATE_NEEDED 0x04000000
 
 #define NO_PRIORITY  0
 #define MAX_PRIORITY 99
@@ -272,6 +275,34 @@ extern "C" {
 #define JOB_EXECUTE         (STANDARD_RIGHTS_EXECUTE | JOB_ACCESS_ADMINISTER)
 #define JOB_ALL_ACCESS      (STANDARD_RIGHTS_REQUIRED | JOB_ACCESS_ADMINISTER)
 
+
+/* Flags for printer drivers */
+#define DRIVER_KERNELMODE       0x00000001
+#define DRIVER_USERMODE         0x00000002
+
+#define APD_STRICT_UPGRADE      0x00000001
+#define APD_STRICT_DOWNGRADE    0x00000002
+#define APD_COPY_ALL_FILES      0x00000004
+#define APD_COPY_NEW_FILES      0x00000008
+#define APD_COPY_FROM_DIRECTORY 0x00000010
+
+#define DPD_DELETE_UNUSED_FILES     0x00000001
+#define DPD_DELETE_SPECIFIC_VERSION 0x00000002
+#define DPD_DELETE_ALL_FILES        0x00000004
+
+/* dwAction for PRINTER_INFO_7 */
+#define DSPRINT_PUBLISH     0x00000001
+#define DSPRINT_UPDATE      0x00000002
+#define DSPRINT_UNPUBLISH   0x00000004
+#define DSPRINT_REPUBLISH   0x00000008
+#define DSPRINT_PENDING     0x80000000
+
+#define UPDP_SILENT_UPLOAD      0x00000001
+#define UPDP_UPLOAD_ALWAYS      0x00000002
+#define UPDP_CHECK_DRIVERSTORE  0x00000004
+
+/* ##################################### */
+
 /* TYPES */
 typedef struct _PRINTER_DEFAULTSA {
   LPSTR        pDatatype;
@@ -301,7 +332,7 @@ DECL_WINELIB_TYPE_AW(PDRIVER_INFO_1)
 DECL_WINELIB_TYPE_AW(LPDRIVER_INFO_1)
 
 typedef struct _DRIVER_INFO_2A {
-  DWORD   cVersion;
+  DWORD     cVersion;
   LPSTR     pName;
   LPSTR     pEnvironment;
   LPSTR     pDriverPath;
@@ -310,7 +341,7 @@ typedef struct _DRIVER_INFO_2A {
 } DRIVER_INFO_2A, *PDRIVER_INFO_2A, *LPDRIVER_INFO_2A;
 
 typedef struct _DRIVER_INFO_2W {
-  DWORD   cVersion;
+  DWORD     cVersion;
   LPWSTR    pName;
   LPWSTR    pEnvironment;
   LPWSTR    pDriverPath;
@@ -351,6 +382,174 @@ typedef struct _DRIVER_INFO_3W {
 DECL_WINELIB_TYPE_AW(DRIVER_INFO_3)
 DECL_WINELIB_TYPE_AW(PDRIVER_INFO_3)
 DECL_WINELIB_TYPE_AW(LPDRIVER_INFO_3)
+
+typedef struct _DRIVER_INFO_4A {
+  DWORD cVersion;
+  LPSTR pName;
+  LPSTR pEnvironment;
+  LPSTR pDriverPath;
+  LPSTR pDataFile;
+  LPSTR pConfigFile;
+  LPSTR pHelpFile;
+  LPSTR pDependentFiles;
+  LPSTR pMonitorName;
+  LPSTR pDefaultDataType;
+  LPSTR pszzPreviousNames;
+} DRIVER_INFO_4A, *PDRIVER_INFO_4A, *LPDRIVER_INFO_4A;
+
+typedef struct _DRIVER_INFO_4W {
+  DWORD cVersion;
+  LPWSTR pName;
+  LPWSTR pEnvironment;
+  LPWSTR pDriverPath;
+  LPWSTR pDataFile;
+  LPWSTR pConfigFile;
+  LPWSTR pHelpFile;
+  LPWSTR pDependentFiles;
+  LPWSTR pMonitorName;
+  LPWSTR pDefaultDataType;
+  LPWSTR pszzPreviousNames;
+} DRIVER_INFO_4W, *PDRIVER_INFO_4W, *LPDRIVER_INFO_4W;
+
+DECL_WINELIB_TYPE_AW(DRIVER_INFO_4)
+DECL_WINELIB_TYPE_AW(PDRIVER_INFO_4)
+DECL_WINELIB_TYPE_AW(LPDRIVER_INFO_4)
+
+
+typedef struct _DRIVER_INFO_5A {
+  DWORD cVersion;
+  LPSTR pName;
+  LPSTR pEnvironment;
+  LPSTR pDriverPath;
+  LPSTR pDataFile;
+  LPSTR pConfigFile;
+  DWORD dwDriverAttributes;
+  DWORD dwConfigVersion;
+  DWORD dwDriverVersion;
+} DRIVER_INFO_5A, *PDRIVER_INFO_5A, *LPDRIVER_INFO_5A;
+
+typedef struct _DRIVER_INFO_5W {
+  DWORD  cVersion;
+  LPWSTR pName;
+  LPWSTR pEnvironment;
+  LPWSTR pDriverPath;
+  LPWSTR pDataFile;
+  LPWSTR pConfigFile;
+  DWORD  dwDriverAttributes;
+  DWORD  dwConfigVersion;
+  DWORD  dwDriverVersion;
+} DRIVER_INFO_5W, *PDRIVER_INFO_5W, *LPDRIVER_INFO_5W;
+
+DECL_WINELIB_TYPE_AW(DRIVER_INFO_5)
+DECL_WINELIB_TYPE_AW(PDRIVER_INFO_5)
+DECL_WINELIB_TYPE_AW(LPDRIVER_INFO_5)
+
+typedef struct _DRIVER_INFO_6A {
+  DWORD     cVersion;
+  LPSTR     pName;
+  LPSTR     pEnvironment;
+  LPSTR     pDriverPath;
+  LPSTR     pDataFile;
+  LPSTR     pConfigFile;
+  LPSTR     pHelpFile;
+  LPSTR     pDependentFiles;
+  LPSTR     pMonitorName;
+  LPSTR     pDefaultDataType;
+  LPSTR     pszzPreviousNames;
+  FILETIME  ftDriverDate;
+  DWORDLONG dwlDriverVersion;
+  LPSTR     pszMfgName;
+  LPSTR     pszOEMUrl;
+  LPSTR     pszHardwareID;
+  LPSTR     pszProvider;
+} DRIVER_INFO_6A, *PDRIVER_INFO_6A, *LPDRIVER_INFO_6A;
+
+typedef struct _DRIVER_INFO_6W {
+  DWORD     cVersion;
+  LPWSTR    pName;
+  LPWSTR    pEnvironment;
+  LPWSTR    pDriverPath;
+  LPWSTR    pDataFile;
+  LPWSTR    pConfigFile;
+  LPWSTR    pHelpFile;
+  LPWSTR    pDependentFiles;
+  LPWSTR    pMonitorName;
+  LPWSTR    pDefaultDataType;
+  LPWSTR    pszzPreviousNames;
+  FILETIME  ftDriverDate;
+  DWORDLONG dwlDriverVersion;
+  LPWSTR    pszMfgName;
+  LPWSTR    pszOEMUrl;
+  LPWSTR    pszHardwareID;
+  LPWSTR    pszProvider;
+} DRIVER_INFO_6W, *PDRIVER_INFO_6W, *LPDRIVER_INFO_6W;
+
+DECL_WINELIB_TYPE_AW(DRIVER_INFO_6)
+DECL_WINELIB_TYPE_AW(PDRIVER_INFO_6)
+DECL_WINELIB_TYPE_AW(LPDRIVER_INFO_6)
+
+/* DRIVER_INFO_7 is not defined in native winspool.h and not found in the www */
+
+typedef struct _DRIVER_INFO_8A {
+  DWORD     cVersion;
+  LPSTR     pName;
+  LPSTR     pEnvironment;
+  LPSTR     pDriverPath;
+  LPSTR     pDataFile;
+  LPSTR     pConfigFile;
+  LPSTR     pHelpFile;
+  LPSTR     pDependentFiles;
+  LPSTR     pMonitorName;
+  LPSTR     pDefaultDataType;
+  LPSTR     pszzPreviousNames;
+  FILETIME  ftDriverDate;
+  DWORDLONG dwlDriverVersion;
+  LPSTR     pszMfgName;
+  LPSTR     pszOEMUrl;
+  LPSTR     pszHardwareID;
+  LPSTR     pszProvider;
+  LPSTR     pszPrintProcessor;
+  LPSTR     pszVendorSetup;
+  LPSTR     pszzColorProfiles;
+  LPSTR     pszInfPath;
+  DWORD     dwPrinterDriverAttributes;
+  LPSTR     pszzCoreDriverDependencies;
+  FILETIME  ftMinInboxDriverVerDate;
+  DWORDLONG dwlMinInboxDriverVerVersion;
+} DRIVER_INFO_8A, *PDRIVER_INFO_8A, *LPDRIVER_INFO_8A;
+
+typedef struct _DRIVER_INFO_8W {
+  DWORD     cVersion;
+  LPWSTR    pName;
+  LPWSTR    pEnvironment;
+  LPWSTR    pDriverPath;
+  LPWSTR    pDataFile;
+  LPWSTR    pConfigFile;
+  LPWSTR    pHelpFile;
+  LPWSTR    pDependentFiles;
+  LPWSTR    pMonitorName;
+  LPWSTR    pDefaultDataType;
+  LPWSTR    pszzPreviousNames;
+  FILETIME  ftDriverDate;
+  DWORDLONG dwlDriverVersion;
+  LPWSTR    pszMfgName;
+  LPWSTR    pszOEMUrl;
+  LPWSTR    pszHardwareID;
+  LPWSTR    pszProvider;
+  LPWSTR    pszPrintProcessor;
+  LPWSTR    pszVendorSetup;
+  LPWSTR    pszzColorProfiles;
+  LPWSTR    pszInfPath;
+  DWORD     dwPrinterDriverAttributes;
+  LPWSTR    pszzCoreDriverDependencies;
+  FILETIME  ftMinInboxDriverVerDate;
+  DWORDLONG dwlMinInboxDriverVerVersion;
+} DRIVER_INFO_8W, *PDRIVER_INFO_8W, *LPDRIVER_INFO_8W;
+
+DECL_WINELIB_TYPE_AW(DRIVER_INFO_8)
+DECL_WINELIB_TYPE_AW(PDRIVER_INFO_8)
+DECL_WINELIB_TYPE_AW(LPDRIVER_INFO_8)
+
 
 typedef struct _PRINTER_INFO_1A {
   DWORD   Flags;
@@ -470,6 +669,45 @@ DECL_WINELIB_TYPE_AW(LPPRINTER_INFO_5)
 typedef struct _PRINTER_INFO_6 {
   DWORD dwStatus;
 } PRINTER_INFO_6, *PPRINTER_INFO_6, *LPPRINTER_INFO_6;
+
+typedef struct _PRINTER_INFO_7A {
+  LPSTR     pszObjectGUID;
+  DWORD     dwAction;
+} PRINTER_INFO_7A, *PPRINTER_INFO_7A, *LPPRINTER_INFO_7A;
+
+typedef struct _PRINTER_INFO_7W {
+  LPWSTR    pszObjectGUID;
+  DWORD     dwAction;
+} PRINTER_INFO_7W, *PPRINTER_INFO_7W, *LPPRINTER_INFO_7W;
+
+DECL_WINELIB_TYPE_AW(PRINTER_INFO_7)
+DECL_WINELIB_TYPE_AW(PPRINTER_INFO_7)
+DECL_WINELIB_TYPE_AW(LPPRINTER_INFO_7)
+
+typedef struct _PRINTER_INFO_8A {
+  LPDEVMODEA pDevMode;
+} PRINTER_INFO_8A, *PPRINTER_INFO_8A, *LPPRINTER_INFO_8A;
+
+typedef struct _PRINTER_INFO_8W {
+  LPDEVMODEW pDevMode;
+} PRINTER_INFO_8W, *PPRINTER_INFO_8W, *LPPRINTER_INFO_8W;
+
+DECL_WINELIB_TYPE_AW(PRINTER_INFO_8)
+DECL_WINELIB_TYPE_AW(PPRINTER_INFO_8)
+DECL_WINELIB_TYPE_AW(LPPRINTER_INFO_8)
+
+typedef struct _PRINTER_INFO_9A {
+  LPDEVMODEA pDevMode;
+} PRINTER_INFO_9A, *PPRINTER_INFO_9A, *LPPRINTER_INFO_9A;
+
+typedef struct _PRINTER_INFO_9W {
+  LPDEVMODEW pDevMode;
+} PRINTER_INFO_9W, *PPRINTER_INFO_9W, *LPPRINTER_INFO_9W;
+
+DECL_WINELIB_TYPE_AW(PRINTER_INFO_9)
+DECL_WINELIB_TYPE_AW(PPRINTER_INFO_9)
+DECL_WINELIB_TYPE_AW(LPPRINTER_INFO_9)
+
 
 typedef struct _JOB_INFO_1A {
   DWORD JobId;
@@ -636,6 +874,36 @@ typedef struct _FORM_INFO_1W {
 DECL_WINELIB_TYPE_AW(FORM_INFO_1)
 DECL_WINELIB_TYPE_AW(PFORM_INFO_1)
 DECL_WINELIB_TYPE_AW(LPFORM_INFO_1)
+
+typedef struct _FORM_INFO_2A {
+  DWORD  Flags;
+  LPSTR  pName;
+  SIZEL  Size;
+  RECTL  ImageableArea;
+  LPCSTR pKeyword;
+  DWORD  StringType;
+  LPSTR  pMuiDll;
+  DWORD  dwResourceId;
+  LPSTR  pDisplayName;
+  LANGID wLangId;
+} FORM_INFO_2A, *PFORM_INFO_2A, *LPFORM_INFO_2A;
+
+typedef struct _FORM_INFO_2W {
+  DWORD  Flags;
+  LPWSTR pName;
+  SIZEL  Size;
+  RECTL  ImageableArea;
+  LPCSTR pKeyword;
+  DWORD  StringType;
+  LPWSTR pMuiDll;
+  DWORD  dwResourceId;
+  LPWSTR pDisplayName;
+  LANGID wLangId;
+} FORM_INFO_2W, *PFORM_INFO_2W, *LPFORM_INFO_2W;
+
+DECL_WINELIB_TYPE_AW(FORM_INFO_2)
+DECL_WINELIB_TYPE_AW(PFORM_INFO_2)
+DECL_WINELIB_TYPE_AW(LPFORM_INFO_2)
 
 typedef struct _PRINTPROCESSOR_INFO_1A {
   LPSTR pName;
@@ -871,6 +1139,298 @@ typedef struct _BIDI_RESPONSE_CONTAINER {
  BIDI_RESPONSE_DATA aData[1];
 } BIDI_RESPONSE_CONTAINER, *LPBIDI_RESPONSE_CONTAINER, *PBIDI_RESPONSE_CONTAINER;
 
+/* string constants */
+
+#define SPLREG_DEFAULT_SPOOL_DIRECTORYA "DefaultSpoolDirectory"
+#ifdef _MSC_VER
+#define SPLREG_DEFAULT_SPOOL_DIRECTORYW L"DefaultSpoolDirectory"
+#elif defined(__GNUC__)
+#define SPLREG_DEFAULT_SPOOL_DIRECTORYW (const WCHAR[]){'D','e','f','a','u','l','t','S','p','o','o','l','D','i','r','e','c','t','o','r','y',0}
+#else
+static const WCHAR SPLREG_DEFAULT_SPOOL_DIRECTORYW[] = {'D','e','f','a','u','l','t','S','p','o','o','l','D','i','r','e','c','t','o','r','y',0};
+#endif
+#define SPLREG_DEFAULT_SPOOL_DIRECTORY WINELIB_NAME_AW(SPLREG_DEFAULT_SPOOL_DIRECTORY)
+
+#define SPLREG_PORT_THREAD_PRIORITY_DEFAULTA "PortThreadPriorityDefault"
+#ifdef _MSC_VER
+#define SPLREG_PORT_THREAD_PRIORITY_DEFAULTW L"PortThreadPriorityDefault"
+#elif defined(__GNUC__)
+#define SPLREG_PORT_THREAD_PRIORITY_DEFAULTW (const WCHAR[]){'P','o','r','t','T','h','r','e','a','d','P','r','i','o','r','i','t','y','D','e','f','a','u','l','t',0}
+#else
+static const WCHAR SPLREG_PORT_THREAD_PRIORITY_DEFAULTW[] = {'P','o','r','t','T','h','r','e','a','d','P','r','i','o','r','i','t','y','D','e','f','a','u','l','t',0};
+#endif
+#define SPLREG_PORT_THREAD_PRIORITY_DEFAULT WINELIB_NAME_AW(SPLREG_PORT_THREAD_PRIORITY_DEFAULT)
+
+#define SPLREG_PORT_THREAD_PRIORITYA "PortThreadPriority"
+#ifdef _MSC_VER
+#define SPLREG_PORT_THREAD_PRIORITYW L"PortThreadPriority"
+#elif defined(__GNUC__)
+#define SPLREG_PORT_THREAD_PRIORITYW (const WCHAR[]){'P','o','r','t','T','h','r','e','a','d','P','r','i','o','r','i','t','y',0}
+#else
+static const WCHAR SPLREG_PORT_THREAD_PRIORITYW[] = {'P','o','r','t','T','h','r','e','a','d','P','r','i','o','r','i','t','y',0};
+#endif
+#define SPLREG_PORT_THREAD_PRIORITY WINELIB_NAME_AW(SPLREG_PORT_THREAD_PRIORITY)
+
+#define SPLREG_SCHEDULER_THREAD_PRIORITY_DEFAULTA "SchedulerThreadPriorityDefault"
+#ifdef _MSC_VER
+#define SPLREG_SCHEDULER_THREAD_PRIORITY_DEFAULTW L"SchedulerThreadPriorityDefault"
+#elif defined(__GNUC__)
+#define SPLREG_SCHEDULER_THREAD_PRIORITY_DEFAULTW (const WCHAR[]){'S','c','h','e','d','u','l','e','r','T','h','r','e','a','d','P','r','i','o','r','i','t','y','D','e','f','a','u','l','t',0}
+#else
+static const WCHAR SPLREG_SCHEDULER_THREAD_PRIORITY_DEFAULTW[] = {'S','c','h','e','d','u','l','e','r','T','h','r','e','a','d','P','r','i','o','r','i','t','y','D','e','f','a','u','l','t',0};
+#endif
+#define SPLREG_SCHEDULER_THREAD_PRIORITY_DEFAULT WINELIB_NAME_AW(SPLREG_SCHEDULER_THREAD_PRIORITY_DEFAULT)
+
+#define SPLREG_SCHEDULER_THREAD_PRIORITYA "SchedulerThreadPriority"
+#ifdef _MSC_VER
+#define SPLREG_SCHEDULER_THREAD_PRIORITYW L"SchedulerThreadPriority"
+#elif defined(__GNUC__)
+#define SPLREG_SCHEDULER_THREAD_PRIORITYW (const WCHAR[]){'S','c','h','e','d','u','l','e','r','T','h','r','e','a','d','P','r','i','o','r','i','t','y',0}
+#else
+static const WCHAR SPLREG_SCHEDULER_THREAD_PRIORITYW[] = {'S','c','h','e','d','u','l','e','r','T','h','r','e','a','d','P','r','i','o','r','i','t','y',0};
+#endif
+#define SPLREG_SCHEDULER_THREAD_PRIORITY WINELIB_NAME_AW(SPLREG_SCHEDULER_THREAD_PRIORITY)
+
+#define SPLREG_BEEP_ENABLEDA "BeepEnabled"
+#ifdef _MSC_VER
+#define SPLREG_BEEP_ENABLEDW L"BeepEnabled"
+#elif defined(__GNUC__)
+#define SPLREG_BEEP_ENABLEDW (const WCHAR[]){'B','e','e','p','E','n','a','b','l','e','d',0}
+#else
+static const WCHAR SPLREG_BEEP_ENABLEDW[] = {'B','e','e','p','E','n','a','b','l','e','d',0};
+#endif
+#define SPLREG_BEEP_ENABLED WINELIB_NAME_AW(SPLREG_BEEP_ENABLED)
+
+#define SPLREG_NET_POPUPA "NetPopup"
+#ifdef _MSC_VER
+#define SPLREG_NET_POPUPW L"NetPopup"
+#elif defined(__GNUC__)
+#define SPLREG_NET_POPUPW (const WCHAR[]){'N','e','t','P','o','p','u','p',0}
+#else
+static const WCHAR SPLREG_NET_POPUPW[] = {'N','e','t','P','o','p','u','p',0};
+#endif
+#define SPLREG_NET_POPUP WINELIB_NAME_AW(SPLREG_NET_POPUP)
+
+#define SPLREG_RETRY_POPUPA "RetryPopup"
+#ifdef _MSC_VER
+#define SPLREG_RETRY_POPUPW L"RetryPopup"
+#elif defined(__GNUC__)
+#define SPLREG_RETRY_POPUPW (const WCHAR[]){'R','e','t','r','y','P','o','p','u','p',0}
+#else
+static const WCHAR SPLREG_RETRY_POPUPW[] = {'R','e','t','r','y','P','o','p','u','p',0};
+#endif
+#define SPLREG_RETRY_POPUP WINELIB_NAME_AW(SPLREG_RETRY_POPUP)
+
+#define SPLREG_NET_POPUP_TO_COMPUTERA "NetPopupToComputer"
+#ifdef _MSC_VER
+#define SPLREG_NET_POPUP_TO_COMPUTERW L"NetPopupToComputer"
+#elif defined(__GNUC__)
+#define SPLREG_NET_POPUP_TO_COMPUTERW (const WCHAR[]){'N','e','t','P','o','p','u','p','T','o','C','o','m','p','u','t','e','r',0}
+#else
+static const WCHAR SPLREG_NET_POPUP_TO_COMPUTERW[] = {'N','e','t','P','o','p','u','p','T','o','C','o','m','p','u','t','e','r',0};
+#endif
+#define SPLREG_NET_POPUP_TO_COMPUTER WINELIB_NAME_AW(SPLREG_NET_POPUP_TO_COMPUTER)
+
+#define SPLREG_EVENT_LOGA "EventLog"
+#ifdef _MSC_VER
+#define SPLREG_EVENT_LOGW L"EventLog"
+#elif defined(__GNUC__)
+#define SPLREG_EVENT_LOGW (const WCHAR[]){'E','v','e','n','t','L','o','g',0}
+#else
+static const WCHAR SPLREG_EVENT_LOGW[] = {'E','v','e','n','t','L','o','g',0};
+#endif
+#define SPLREG_EVENT_LOG WINELIB_NAME_AW(SPLREG_EVENT_LOG)
+
+#define SPLREG_MAJOR_VERSIONA "MajorVersion"
+#ifdef _MSC_VER
+#define SPLREG_MAJOR_VERSIONW L"MajorVersion"
+#elif defined(__GNUC__)
+#define SPLREG_MAJOR_VERSIONW (const WCHAR[]){'M','a','j','o','r','V','e','r','s','i','o','n',0}
+#else
+static const WCHAR SPLREG_MAJOR_VERSIONW[] = {'M','a','j','o','r','V','e','r','s','i','o','n',0};
+#endif
+#define SPLREG_MAJOR_VERSION WINELIB_NAME_AW(SPLREG_MAJOR_VERSION)
+
+#define SPLREG_MINOR_VERSIONA "MinorVersion"
+#ifdef _MSC_VER
+#define SPLREG_MINOR_VERSIONW L"MinorVersion"
+#elif defined(__GNUC__)
+#define SPLREG_MINOR_VERSIONW (const WCHAR[]){'M','i','n','o','r','V','e','r','s','i','o','n',0}
+#else
+static const WCHAR SPLREG_MINOR_VERSIONW[] = {'M','i','n','o','r','V','e','r','s','i','o','n',0};
+#endif
+#define SPLREG_MINOR_VERSION WINELIB_NAME_AW(SPLREG_MINOR_VERSION)
+
+#define SPLREG_ARCHITECTUREA "Architecture"
+#ifdef _MSC_VER
+#define SPLREG_ARCHITECTUREW L"Architecture"
+#elif defined(__GNUC__)
+#define SPLREG_ARCHITECTUREW (const WCHAR[]){'A','r','c','h','i','t','e','c','t','u','r','e',0}
+#else
+static const WCHAR SPLREG_ARCHITECTUREW[] = {'A','r','c','h','i','t','e','c','t','u','r','e',0};
+#endif
+#define SPLREG_ARCHITECTURE WINELIB_NAME_AW(SPLREG_ARCHITECTURE)
+
+#define SPLREG_OS_VERSIONA "OSVersion"
+#ifdef _MSC_VER
+#define SPLREG_OS_VERSIONW L"OSVersion"
+#elif defined(__GNUC__)
+#define SPLREG_OS_VERSIONW (const WCHAR[]){'O','S','V','e','r','s','i','o','n',0}
+#else
+static const WCHAR SPLREG_OS_VERSIONW[] = {'O','S','V','e','r','s','i','o','n',0};
+#endif
+#define SPLREG_OS_VERSION WINELIB_NAME_AW(SPLREG_OS_VERSION)
+
+#define SPLREG_OS_VERSIONEXA "OSVersionEx"
+#ifdef _MSC_VER
+#define SPLREG_OS_VERSIONEXW L"OSVersionEx"
+#elif defined(__GNUC__)
+#define SPLREG_OS_VERSIONEXW (const WCHAR[]){'O','S','V','e','r','s','i','o','n','E','x',0}
+#else
+static const WCHAR SPLREG_OS_VERSIONEXW[] = {'O','S','V','e','r','s','i','o','n','E','x',0};
+#endif
+#define SPLREG_OS_VERSIONEX WINELIB_NAME_AW(SPLREG_OS_VERSIONEX)
+
+#define SPLREG_DS_PRESENTA "DsPresent"
+#ifdef _MSC_VER
+#define SPLREG_DS_PRESENTW L"DsPresent"
+#elif defined(__GNUC__)
+#define SPLREG_DS_PRESENTW (const WCHAR[]){'D','s','P','r','e','s','e','n','t',0}
+#else
+static const WCHAR SPLREG_DS_PRESENTW[] = {'D','s','P','r','e','s','e','n','t',0};
+#endif
+#define SPLREG_DS_PRESENT WINELIB_NAME_AW(SPLREG_DS_PRESENT)
+
+#define SPLREG_DS_PRESENT_FOR_USERA "DsPresentForUser"
+#ifdef _MSC_VER
+#define SPLREG_DS_PRESENT_FOR_USERW L"DsPresentForUser"
+#elif defined(__GNUC__)
+#define SPLREG_DS_PRESENT_FOR_USERW (const WCHAR[]){'D','s','P','r','e','s','e','n','t','F','o','r','U','s','e','r',0}
+#else
+static const WCHAR SPLREG_DS_PRESENT_FOR_USERW[] = {'D','s','P','r','e','s','e','n','t','F','o','r','U','s','e','r',0};
+#endif
+#define SPLREG_DS_PRESENT_FOR_USER WINELIB_NAME_AW(SPLREG_DS_PRESENT_FOR_USER)
+
+#define SPLREG_REMOTE_FAXA "RemoteFax"
+#ifdef _MSC_VER
+#define SPLREG_REMOTE_FAXW L"RemoteFax"
+#elif defined(__GNUC__)
+#define SPLREG_REMOTE_FAXW (const WCHAR[]){'R','e','m','o','t','e','F','a','x',0}
+#else
+static const WCHAR SPLREG_REMOTE_FAXW[] = {'R','e','m','o','t','e','F','a','x',0};
+#endif
+#define SPLREG_REMOTE_FAX WINELIB_NAME_AW(SPLREG_REMOTE_FAX)
+
+#define SPLREG_RESTART_JOB_ON_POOL_ERRORA "RestartJobOnPoolError"
+#ifdef _MSC_VER
+#define SPLREG_RESTART_JOB_ON_POOL_ERRORW L"RestartJobOnPoolError"
+#elif defined(__GNUC__)
+#define SPLREG_RESTART_JOB_ON_POOL_ERRORW (const WCHAR[]){'R','e','s','t','a','r','t','J','o','b','O','n','P','o','o','l','E','r','r','o','r',0}
+#else
+static const WCHAR SPLREG_RESTART_JOB_ON_POOL_ERRORW[] = {'R','e','s','t','a','r','t','J','o','b','O','n','P','o','o','l','E','r','r','o','r',0};
+#endif
+#define SPLREG_RESTART_JOB_ON_POOL_ERROR WINELIB_NAME_AW(SPLREG_RESTART_JOB_ON_POOL_ERROR)
+
+#define SPLREG_RESTART_JOB_ON_POOL_ENABLEDA "RestartJobOnPoolEnabled"
+#ifdef _MSC_VER
+#define SPLREG_RESTART_JOB_ON_POOL_ENABLEDW L"RestartJobOnPoolEnabled"
+#elif defined(__GNUC__)
+#define SPLREG_RESTART_JOB_ON_POOL_ENABLEDW (const WCHAR[]){'R','e','s','t','a','r','t','J','o','b','O','n','P','o','o','l','E','n','a','b','l','e','d',0}
+#else
+static const WCHAR SPLREG_RESTART_JOB_ON_POOL_ENABLEDW[] = {'R','e','s','t','a','r','t','J','o','b','O','n','P','o','o','l','E','n','a','b','l','e','d',0};
+#endif
+#define SPLREG_RESTART_JOB_ON_POOL_ENABLED WINELIB_NAME_AW(SPLREG_RESTART_JOB_ON_POOL_ENABLED)
+
+#define SPLREG_DNS_MACHINE_NAMEA "DNSMachineName"
+#ifdef _MSC_VER
+#define SPLREG_DNS_MACHINE_NAMEW L"DNSMachineName"
+#elif defined(__GNUC__)
+#define SPLREG_DNS_MACHINE_NAMEW (const WCHAR[]){'D','N','S','M','a','c','h','i','n','e','N','a','m','e',0}
+#else
+static const WCHAR SPLREG_DNS_MACHINE_NAMEW[] = {'D','N','S','M','a','c','h','i','n','e','N','a','m','e',0};
+#endif
+#define SPLREG_DNS_MACHINE_NAME WINELIB_NAME_AW(SPLREG_DNS_MACHINE_NAME)
+
+#define SPLREG_ALLOW_USER_MANAGEFORMSA "AllowUserManageForms"
+#ifdef _MSC_VER
+#define SPLREG_ALLOW_USER_MANAGEFORMSW L"AllowUserManageForms"
+#elif defined(__GNUC__)
+#define SPLREG_ALLOW_USER_MANAGEFORMSW (const WCHAR[]){'A','l','l','o','w','U','s','e','r','M','a','n','a','g','e','F','o','r','m','s',0}
+#else
+static const WCHAR SPLREG_ALLOW_USER_MANAGEFORMSW[] = {'A','l','l','o','w','U','s','e','r','M','a','n','a','g','e','F','o','r','m','s',0};
+#endif
+#define SPLREG_ALLOW_USER_MANAGEFORMS WINELIB_NAME_AW(SPLREG_ALLOW_USER_MANAGEFORMS)
+
+#define SPLREG_WEBSHAREMGMTA "WebShareMgmt"
+#ifdef _MSC_VER
+#define SPLREG_WEBSHAREMGMTW L"WebShareMgmt"
+#elif defined(__GNUC__)
+#define SPLREG_WEBSHAREMGMTW (const WCHAR[]){'W','e','b','S','h','a','r','e','M','g','m','t',0}
+#else
+static const WCHAR SPLREG_WEBSHAREMGMTW[] = {'W','e','b','S','h','a','r','e','M','g','m','t',0};
+#endif
+#define SPLREG_WEBSHAREMGMT WINELIB_NAME_AW(SPLREG_WEBSHAREMGMT)
+
+#define SPLREG_PRINT_DRIVER_ISOLATION_GROUPSA "PrintDriverIsolationGroups"
+#ifdef _MSC_VER
+#define SPLREG_PRINT_DRIVER_ISOLATION_GROUPSW L"PrintDriverIsolationGroups"
+#elif defined(__GNUC__)
+#define SPLREG_PRINT_DRIVER_ISOLATION_GROUPSW (const WCHAR[]){'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','G','r','o','u','p','s',0}
+#else
+static const WCHAR SPLREG_PRINT_DRIVER_ISOLATION_GROUPSW[] = {'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','G','r','o','u','p','s',0};
+#endif
+#define SPLREG_PRINT_DRIVER_ISOLATION_GROUPS WINELIB_NAME_AW(SPLREG_PRINT_DRIVER_ISOLATION_GROUPS)
+
+#define SPLREG_PRINT_DRIVER_ISOLATION_TIME_BEFORE_RECYCLEA "PrintDriverIsolationTimeBeforeRecycle"
+#ifdef _MSC_VER
+#define SPLREG_PRINT_DRIVER_ISOLATION_TIME_BEFORE_RECYCLEW L"PrintDriverIsolationTimeBeforeRecycle"
+#elif defined(__GNUC__)
+#define SPLREG_PRINT_DRIVER_ISOLATION_TIME_BEFORE_RECYCLEW (const WCHAR[]){'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','T','i','m','e','B','e','f','o','r','e','R','e','c','y','c','l','e',0}
+#else
+static const WCHAR SPLREG_PRINT_DRIVER_ISOLATION_TIME_BEFORE_RECYCLEW[] = {'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','T','i','m','e','B','e','f','o','r','e','R','e','c','y','c','l','e',0};
+#endif
+#define SPLREG_PRINT_DRIVER_ISOLATION_TIME_BEFORE_RECYCLE WINELIB_NAME_AW(SPLREG_PRINT_DRIVER_ISOLATION_TIME_BEFORE_RECYCLE)
+
+#define SPLREG_PRINT_DRIVER_ISOLATION_MAX_OBJECTS_BEFORE_RECYCLEA "PrintDriverIsolationMaxobjsBeforeRecycle"
+#ifdef _MSC_VER
+#define SPLREG_PRINT_DRIVER_ISOLATION_MAX_OBJECTS_BEFORE_RECYCLEW L"PrintDriverIsolationMaxobjsBeforeRecycle"
+#elif defined(__GNUC__)
+#define SPLREG_PRINT_DRIVER_ISOLATION_MAX_OBJECTS_BEFORE_RECYCLEW (const WCHAR[]){'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','M','a','x','o','b','j','s','B','e','f','o','r','e','R','e','c','y','c','l','e',0}
+#else
+static const WCHAR SPLREG_PRINT_DRIVER_ISOLATION_MAX_OBJECTS_BEFORE_RECYCLEW[] = {'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','M','a','x','o','b','j','s','B','e','f','o','r','e','R','e','c','y','c','l','e',0};
+#endif
+#define SPLREG_PRINT_DRIVER_ISOLATION_MAX_OBJECTS_BEFORE_RECYCLE WINELIB_NAME_AW(SPLREG_PRINT_DRIVER_ISOLATION_MAX_OBJECTS_BEFORE_RECYCLE)
+
+#define SPLREG_PRINT_DRIVER_ISOLATION_IDLE_TIMEOUTA "PrintDriverIsolationIdleTimeout"
+#ifdef _MSC_VER
+#define SPLREG_PRINT_DRIVER_ISOLATION_IDLE_TIMEOUTW L"PrintDriverIsolationIdleTimeout"
+#elif defined(__GNUC__)
+#define SPLREG_PRINT_DRIVER_ISOLATION_IDLE_TIMEOUTW (const WCHAR[]){'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','I','d','l','e','T','i','m','e','o','u','t',0}
+#else
+static const WCHAR SPLREG_PRINT_DRIVER_ISOLATION_IDLE_TIMEOUTW[] = {'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','I','d','l','e','T','i','m','e','o','u','t',0};
+#endif
+#define SPLREG_PRINT_DRIVER_ISOLATION_IDLE_TIMEOUT WINELIB_NAME_AW(SPLREG_PRINT_DRIVER_ISOLATION_IDLE_TIMEOUT)
+
+#define SPLREG_PRINT_DRIVER_ISOLATION_EXECUTION_POLICYA "PrintDriverIsolationExecutionPolicy"
+#ifdef _MSC_VER
+#define SPLREG_PRINT_DRIVER_ISOLATION_EXECUTION_POLICYW L"PrintDriverIsolationExecutionPolicy"
+#elif defined(__GNUC__)
+#define SPLREG_PRINT_DRIVER_ISOLATION_EXECUTION_POLICYW (const WCHAR[]){'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','E','x','e','c','u','t','i','o','n','P','o','l','i','c','y',0}
+#else
+static const WCHAR SPLREG_PRINT_DRIVER_ISOLATION_EXECUTION_POLICYW[] = {'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','E','x','e','c','u','t','i','o','n','P','o','l','i','c','y',0};
+#endif
+#define SPLREG_PRINT_DRIVER_ISOLATION_EXECUTION_POLICY WINELIB_NAME_AW(SPLREG_PRINT_DRIVER_ISOLATION_EXECUTION_POLICY)
+
+#define SPLREG_PRINT_DRIVER_ISOLATION_OVERRIDE_POLICYA "PrintDriverIsolationOverrideCompat"
+#ifdef _MSC_VER
+#define SPLREG_PRINT_DRIVER_ISOLATION_OVERRIDE_POLICYW L"PrintDriverIsolationOverrideCompat"
+#elif defined(__GNUC__)
+#define SPLREG_PRINT_DRIVER_ISOLATION_OVERRIDE_POLICYW (const WCHAR[]){'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','O','v','e','r','r','i','d','e','C','o','m','p','a','t',0}
+#else
+static const WCHAR SPLREG_PRINT_DRIVER_ISOLATION_OVERRIDE_POLICYW[] = {'P','r','i','n','t','D','r','i','v','e','r','I','s','o','l','a','t','i','o','n','O','v','e','r','r','i','d','e','C','o','m','p','a','t',0};
+#endif
+#define SPLREG_PRINT_DRIVER_ISOLATION_OVERRIDE_POLICY WINELIB_NAME_AW(SPLREG_PRINT_DRIVER_ISOLATION_OVERRIDE_POLICY)
+
 /* DECLARATIONS */
 INT WINAPI DeviceCapabilitiesA(LPCSTR pDevice,LPCSTR pPort,WORD fwCapability,
 			       LPSTR pOutput, LPDEVMODEA pDevMode);
@@ -986,6 +1546,10 @@ BOOL WINAPI EnumPrinterDriversW(LPWSTR pName, LPWSTR pEnvironment, DWORD Level,
 BOOL WINAPI GetDefaultPrinterA(LPSTR pName, LPDWORD pcbNameSize);
 BOOL WINAPI GetDefaultPrinterW(LPWSTR pName, LPDWORD pcbNameSize);
 #define GetDefaultPrinter WINELIB_NAME_AW(GetDefaultPrinter)
+
+BOOL WINAPI SetDefaultPrinterA(LPCSTR);
+BOOL WINAPI SetDefaultPrinterW(LPCWSTR);
+#define SetDefaultPrinter WINELIB_NAME_AW(SetDefaultPrinter)
 
 BOOL WINAPI DeletePrinterDriverA(LPSTR pName, LPSTR pEnvironment,
 				 LPSTR pDriverName);
@@ -1187,10 +1751,8 @@ BOOL WINAPI AddPortA(LPSTR pName, HWND hWnd, LPSTR pMonitorName);
 BOOL WINAPI AddPortW(LPWSTR pName, HWND hWnd, LPWSTR pMonitorName);
 #define AddPort WINELIB_NAME_AW(AddPort)
 
-BOOL WINAPI AddPortExA(HANDLE hMonitor, LPSTR pName, DWORD Level,
-                       LPBYTE lpBuffer, LPSTR lpMonitorName);
-BOOL WINAPI AddPortExW(HANDLE hMonitor, LPWSTR pName, DWORD Level,
-                       LPBYTE lpBuffer, LPWSTR lpMonitorName);
+BOOL WINAPI AddPortExA(LPSTR, DWORD, LPBYTE, LPSTR);
+BOOL WINAPI AddPortExW(LPWSTR, DWORD, LPBYTE, LPWSTR);
 #define AddPortEx WINELIB_NAME_AW(AddPortEx)
 
 BOOL WINAPI ConfigurePortA(LPSTR pName, HWND hWnd, LPSTR pPortName);
@@ -1227,6 +1789,12 @@ BOOL WINAPI DeletePrintProvidorW(LPWSTR pName, LPWSTR pEnvironment,
 				 LPWSTR pPrintProvidorName);
 #define DeletePrintProvidor WINELIB_NAME_AW(DeletePrintProvidor)
 
+DWORD WINAPI EnumPrinterKeyA(HANDLE printer, const CHAR *key,
+                             CHAR *subkey, DWORD size, DWORD *needed);
+DWORD WINAPI EnumPrinterKeyW(HANDLE printer, const WCHAR *key,
+                             WCHAR *subkey, DWORD size, DWORD *needed);
+#define EnumPrinterKey WINELIB_NAME_AW(EnumPrinterKey)
+
 DWORD WINAPI EnumPrinterDataExA(HANDLE hPrinter, LPCSTR pKeyName,
 				LPBYTE pEnumValues, DWORD cbEnumValues,
 				LPDWORD pcbEnumValues, LPDWORD pnEnumValues);
@@ -1242,6 +1810,14 @@ LONG WINAPI ExtDeviceMode( HWND hWnd, HANDLE hInst, LPDEVMODEA pDevModeOutput,
 LPSTR WINAPI StartDocDlgA(HANDLE hPrinter, DOCINFOA *doc);
 LPWSTR WINAPI StartDocDlgW(HANDLE hPrinter, DOCINFOW *doc);
 #define StartDocDlg WINELIB_NAME_AW(StartDocDlg)
+
+HRESULT WINAPI UploadPrinterDriverPackageA(LPCSTR,LPCSTR,LPCSTR,DWORD,HWND,LPSTR,PULONG);
+HRESULT WINAPI UploadPrinterDriverPackageW(LPCWSTR,LPCWSTR,LPCWSTR,DWORD,HWND,LPWSTR,PULONG);
+#define UploadPrinterDriverPackage WINELIB_NAME_AW(UploadPrinterDriverPackage)
+
+BOOL WINAPI XcvDataW(HANDLE hXcv, LPCWSTR pszDataName, PBYTE pInputData,
+    DWORD cbInputData, PBYTE pOutputData, DWORD cbOutputData,
+    PDWORD pcbOutputNeeded, PDWORD pdwStatus);
 
 #ifdef __cplusplus
 } /* extern "C" */

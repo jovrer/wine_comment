@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -23,10 +23,15 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#ifdef HAVE_SYS_WAIT_H
+#include <sys/wait.h>
+#endif
 #ifdef HAVE_SYS_MMAN_H
 #include <sys/mman.h>
 #endif
@@ -40,6 +45,8 @@
 #include "wine/library.h"
 #include "wine/list.h"
 
+#ifdef HAVE_MMAP
+
 struct reserved_area
 {
     struct list entry;
@@ -48,16 +55,32 @@ struct reserved_area
 };
 
 static struct list reserved_areas = LIST_INIT(reserved_areas);
-static const int granularity_mask = 0xffff;  /* reserved areas have 64k granularity */
+static const unsigned int granularity_mask = 0xffff;  /* reserved areas have 64k granularity */
 
 #ifndef MAP_NORESERVE
 #define MAP_NORESERVE 0
 #endif
-
-#ifndef HAVE_MMAP
-static inline int munmap( void *ptr, size_t size ) { return 0; }
+#ifndef MAP_PRIVATE
+#define MAP_PRIVATE 0
+#endif
+#ifndef MAP_ANON
+#define MAP_ANON 0
 #endif
 
+static inline int get_fdzero(void)
+{
+    static int fd = -1;
+
+    if (MAP_ANON == 0 && fd == -1)
+    {
+        if ((fd = open( "/dev/zero", O_RDONLY )) == -1)
+        {
+            perror( "/dev/zero: open" );
+            exit(1);
+        }
+    }
+    return fd;
+}
 
 #if (defined(__svr4__) || defined(__NetBSD__)) && !defined(MAP_TRYFIXED)
 /***********************************************************************
@@ -71,7 +94,7 @@ static inline int munmap( void *ptr, size_t size ) { return 0; }
  * the address argument in this case.
  *
  * As Wine code occasionally relies on the Linux behaviour, e.g. to
- * be able to map non-relocateable PE executables to their proper
+ * be able to map non-relocatable PE executables to their proper
  * start addresses, or to map the DOS memory to 0, this routine
  * emulates the Linux behaviour by checking whether the desired
  * address range is still available, and placing the mapping there
@@ -81,8 +104,8 @@ static int try_mmap_fixed (void *addr, size_t len, int prot, int flags,
                            int fildes, off_t off)
 {
     char * volatile result = NULL;
-    int pagesize = getpagesize();
-    pid_t pid;
+    const size_t pagesize = sysconf( _SC_PAGESIZE );
+    pid_t pid, wret;
 
     /* We only try to map to a fixed address if
        addr is non-NULL and properly aligned,
@@ -131,14 +154,18 @@ static int try_mmap_fixed (void *addr, size_t len, int prot, int flags,
        _exit(1);
     }
 
-    /* vfork() lets the parent continue only after the child
-       has exited.  Furthermore, Wine sets SIGCHLD to SIG_IGN,
-       so we don't need to wait for the child. */
+    /* reap child */
+    do {
+        wret = waitpid(pid, NULL, 0);
+    } while (wret < 0 && errno == EINTR);
 
     return result == addr;
 }
 
 #elif defined(__APPLE__)
+
+#include <mach/mach_init.h>
+#include <mach/vm_map.h>
 
 /*
  * On Darwin, we can use the Mach call vm_allocate to allocate
@@ -148,15 +175,15 @@ static int try_mmap_fixed (void *addr, size_t len, int prot, int flags,
 static int try_mmap_fixed (void *addr, size_t len, int prot, int flags,
                            int fildes, off_t off)
 {
-    void *result;
-    result = addr;
-    if(vm_allocate(mach_task_self(),&result,len,0))
-        return 0;
-    else
+    vm_address_t result = (vm_address_t)addr;
+
+    if (!vm_allocate(mach_task_self(),&result,len,0))
     {
-        result = mmap( addr, len, prot, flags | MAP_FIXED, fildes, off );
-        return result == addr;
+        if (mmap( (void *)result, len, prot, flags | MAP_FIXED, fildes, off ) != MAP_FAILED)
+            return 1;
+        vm_deallocate(mach_task_self(),result,len);
     }
+    return 0;
 }
 
 #endif  /* (__svr4__ || __NetBSD__) && !MAP_TRYFIXED */
@@ -169,34 +196,16 @@ static int try_mmap_fixed (void *addr, size_t len, int prot, int flags,
  */
 void *wine_anon_mmap( void *start, size_t size, int prot, int flags )
 {
-#ifdef HAVE_MMAP
-    static int fdzero = -1;
-
-#ifdef MAP_ANON
-    flags |= MAP_ANON;
-#else
-    if (fdzero == -1)
-    {
-        if ((fdzero = open( "/dev/zero", O_RDONLY )) == -1)
-        {
-            perror( "/dev/zero: open" );
-            exit(1);
-        }
-    }
-#endif  /* MAP_ANON */
-
 #ifdef MAP_SHARED
     flags &= ~MAP_SHARED;
 #endif
 
     /* Linux EINVAL's on us if we don't pass MAP_PRIVATE to an anon mmap */
-#ifdef MAP_PRIVATE
-    flags |= MAP_PRIVATE;
-#endif
+    flags |= MAP_PRIVATE | MAP_ANON;
 
     if (!(flags & MAP_FIXED))
     {
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
         /* Even FreeBSD 5.3 does not properly support NULL here. */
         if( start == NULL ) start = (void *)0x110000;
 #endif
@@ -205,47 +214,104 @@ void *wine_anon_mmap( void *start, size_t size, int prot, int flags )
         /* If available, this will attempt a fixed mapping in-kernel */
         flags |= MAP_TRYFIXED;
 #elif defined(__svr4__) || defined(__NetBSD__) || defined(__APPLE__)
-        if ( try_mmap_fixed( start, size, prot, flags, fdzero, 0 ) )
+        if ( try_mmap_fixed( start, size, prot, flags, get_fdzero(), 0 ) )
             return start;
 #endif
     }
-    return mmap( start, size, prot, flags, fdzero, 0 );
-#else
-    return (void *)-1;
-#endif
+    return mmap( start, size, prot, flags, get_fdzero(), 0 );
 }
 
 
-#ifdef HAVE_MMAP
+/***********************************************************************
+ *		mmap_reserve
+ *
+ * mmap wrapper used for reservations, only maps the specified address
+ */
+static inline int mmap_reserve( void *addr, size_t size )
+{
+    void *ptr;
+    int flags = MAP_PRIVATE | MAP_ANON | MAP_NORESERVE;
+
+#ifdef MAP_TRYFIXED
+    flags |= MAP_TRYFIXED;
+#elif defined(__APPLE__)
+    return try_mmap_fixed( addr, size, PROT_NONE, flags, get_fdzero(), 0 );
+#endif
+    ptr = mmap( addr, size, PROT_NONE, flags, get_fdzero(), 0 );
+    if (ptr != addr && ptr != (void *)-1)  munmap( ptr, size );
+    return (ptr == addr);
+}
+
 
 /***********************************************************************
  *           reserve_area
  *
  * Reserve as much memory as possible in the given area.
- * FIXME: probably needs a different algorithm for Solaris
  */
-static void reserve_area( void *addr, void *end )
+static inline void reserve_area( void *addr, void *end )
 {
-    void *ptr;
     size_t size = (char *)end - (char *)addr;
 
+#if (defined(__svr4__) || defined(__NetBSD__)) && !defined(MAP_TRYFIXED)
+    /* try_mmap_fixed is inefficient when using vfork, so we need a different algorithm here */
+    /* we assume no other thread is running at this point */
+    size_t i, pagesize = sysconf( _SC_PAGESIZE );
+    char vec;
+
+    while (size)
+    {
+        for (i = 0; i < size; i += pagesize)
+            if (mincore( (caddr_t)addr + i, pagesize, &vec ) != -1) break;
+
+        i &= ~granularity_mask;
+        if (i && mmap( addr, i, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE,
+                       get_fdzero(), 0 ) != (void *)-1)
+            wine_mmap_add_reserved_area( addr, i );
+
+        i += granularity_mask + 1;
+        if ((char *)addr + i < (char *)addr) break;  /* overflow */
+        addr = (char *)addr + i;
+        if (addr >= end) break;
+        size = (char *)end - (char *)addr;
+    }
+#else
     if (!size) return;
 
-    if ((ptr = wine_anon_mmap( addr, size, PROT_NONE, MAP_NORESERVE )) != (void *)-1)
+    if (mmap_reserve( addr, size ))
     {
-        if (ptr == addr)
-        {
-            wine_mmap_add_reserved_area( addr, size );
-            return;
-        }
-        else munmap( ptr, size );
+        wine_mmap_add_reserved_area( addr, size );
+        return;
     }
-    if (size > granularity_mask + 1)
+    size = (size / 2) & ~granularity_mask;
+    if (size)
     {
-        size_t new_size = (size / 2) & ~granularity_mask;
-        reserve_area( addr, (char *)addr + new_size );
-        reserve_area( (char *)addr + new_size, end );
+        reserve_area( addr, (char *)addr + size );
+        reserve_area( (char *)addr + size, end );
     }
+#endif
+}
+
+
+#ifdef __i386__
+/***********************************************************************
+ *           reserve_malloc_space
+ *
+ * Solaris malloc is not smart enough to obtain space through mmap(), so try to make
+ * sure that there is some available sbrk() space before we reserve other things.
+ */
+static inline void reserve_malloc_space( size_t size )
+{
+#ifdef __sun
+    size_t i, count = size / 1024;
+    void **ptrs = malloc( count * sizeof(ptrs[0]) );
+
+    if (!ptrs) return;
+
+    for (i = 0; i < count; i++) if (!(ptrs[i] = malloc( 1024 ))) break;
+    if (i--)  /* free everything except the last one */
+        while (i) free( ptrs[--i] );
+    free( ptrs );
+#endif
 }
 
 
@@ -254,23 +320,24 @@ static void reserve_area( void *addr, void *end )
  *
  * Reserve the DOS area (0x00000000-0x00110000).
  */
-static void reserve_dos_area(void)
+static inline void reserve_dos_area(void)
 {
-    const size_t page_size = getpagesize();
+    const size_t first_page = 0x1000;
     const size_t dos_area_size = 0x110000;
     void *ptr;
 
     /* first page has to be handled specially */
-    ptr = wine_anon_mmap( (void *)page_size, dos_area_size - page_size, PROT_NONE, MAP_NORESERVE );
-    if (ptr != (void *)page_size)
+    ptr = wine_anon_mmap( (void *)first_page, dos_area_size - first_page, PROT_NONE, MAP_NORESERVE );
+    if (ptr != (void *)first_page)
     {
-        if (ptr != (void *)-1) munmap( ptr, dos_area_size - page_size );
+        if (ptr != (void *)-1) munmap( ptr, dos_area_size - first_page );
         return;
     }
     /* now add first page with MAP_FIXED */
-    wine_anon_mmap( NULL, page_size, PROT_NONE, MAP_NORESERVE|MAP_FIXED );
+    wine_anon_mmap( NULL, first_page, PROT_NONE, MAP_NORESERVE|MAP_FIXED );
     wine_mmap_add_reserved_area( NULL, dos_area_size );
 }
+#endif
 
 
 /***********************************************************************
@@ -278,12 +345,20 @@ static void reserve_dos_area(void)
  */
 void mmap_init(void)
 {
+#ifdef __i386__
     struct reserved_area *area;
     struct list *ptr;
-#if defined(__i386__) && !defined(__FreeBSD__)  /* commented out until FreeBSD gets fixed */
     char stack;
     char * const stack_ptr = &stack;
-    char *user_space_limit = (char *)0x80000000;
+    char *user_space_limit = (char *)0x7ffe0000;
+
+    reserve_malloc_space( 8 * 1024 * 1024 );
+
+    if (!list_head( &reserved_areas ))
+    {
+        /* if we don't have a preloader, try to reserve some space below 2Gb */
+        reserve_area( (void *)0x00110000, (void *)0x40000000 );
+    }
 
     /* check for a reserved area starting at the user space limit */
     /* to avoid wasting time trying to allocate it again */
@@ -300,18 +375,18 @@ void mmap_init(void)
 
     if (stack_ptr >= user_space_limit)
     {
+        char *end = 0;
         char *base = stack_ptr - ((unsigned int)stack_ptr & granularity_mask) - (granularity_mask + 1);
         if (base > user_space_limit) reserve_area( user_space_limit, base );
         base = stack_ptr - ((unsigned int)stack_ptr & granularity_mask) + (granularity_mask + 1);
-#ifdef linux
-        /* Linux heuristic: if the stack top is at c0000000, assume the address space */
-        /* ends there, this avoids a lot of futile allocation attempts */
-        if (base != (char *)0xc0000000)
+#if defined(linux) || defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__DragonFly__)
+        /* Heuristic: assume the stack is near the end of the address */
+        /* space, this avoids a lot of futile allocation attempts */
+        end = (char *)(((unsigned long)base + 0x0fffffff) & 0xf0000000);
 #endif
-            reserve_area( base, 0 );
+        reserve_area( base, end );
     }
     else reserve_area( user_space_limit, 0 );
-#endif /* __i386__ */
 
     /* reserve the DOS area if not already done */
 
@@ -322,15 +397,20 @@ void mmap_init(void)
         if (!area->base) return;  /* already reserved */
     }
     reserve_dos_area();
-}
 
-#else /* HAVE_MMAP */
+#elif defined(__x86_64__) || defined(__aarch64__)
 
-void mmap_init(void)
-{
-}
+    if (!list_head( &reserved_areas ))
+    {
+        /* if we don't have a preloader, try to reserve the space now */
+        reserve_area( (void *)0x000000010000, (void *)0x000068000000 );
+        reserve_area( (void *)0x00007ff00000, (void *)0x00007fff0000 );
+        reserve_area( (void *)0x7ffffe000000, (void *)0x7fffffff0000 );
+    }
 
 #endif
+}
+
 
 /***********************************************************************
  *           wine_mmap_add_reserved_area
@@ -491,3 +571,46 @@ int wine_mmap_is_in_reserved_area( void *addr, size_t size )
     }
     return 0;
 }
+
+
+/***********************************************************************
+ *           wine_mmap_enum_reserved_areas
+ *
+ * Enumerate the list of reserved areas, sorted by addresses.
+ * If enum_func returns a non-zero value, enumeration is stopped and the value is returned.
+ *
+ * Note: the reserved areas functions are not reentrant, caller is
+ * responsible for proper locking.
+ */
+int wine_mmap_enum_reserved_areas( int (*enum_func)(void *base, size_t size, void *arg), void *arg,
+                                   int top_down )
+{
+    int ret = 0;
+    struct list *ptr;
+
+    if (top_down)
+    {
+        for (ptr = reserved_areas.prev; ptr != &reserved_areas; ptr = ptr->prev)
+        {
+            struct reserved_area *area = LIST_ENTRY( ptr, struct reserved_area, entry );
+            if ((ret = enum_func( area->base, area->size, arg ))) break;
+        }
+    }
+    else
+    {
+        for (ptr = reserved_areas.next; ptr != &reserved_areas; ptr = ptr->next)
+        {
+            struct reserved_area *area = LIST_ENTRY( ptr, struct reserved_area, entry );
+            if ((ret = enum_func( area->base, area->size, arg ))) break;
+        }
+    }
+    return ret;
+}
+
+#else /* HAVE_MMAP */
+
+void mmap_init(void)
+{
+}
+
+#endif

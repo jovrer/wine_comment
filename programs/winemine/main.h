@@ -13,14 +13,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <windows.h>
 
 #define BEGINNER_MINES        10
-#define BEGINNER_COLS         8
-#define BEGINNER_ROWS         8
+#define BEGINNER_COLS         9
+#define BEGINNER_ROWS         9
 
 #define ADVANCED_MINES        40
 #define ADVANCED_COLS         16
@@ -44,6 +44,8 @@
 #define LED_HEIGHT       23
 #define FACE_WIDTH       24
 #define FACE_HEIGHT      24
+
+#define MAX_PLAYER_NAME_SIZE 31
 
 typedef enum { SPRESS_BMP, COOL_BMP, DEAD_BMP, OOH_BMP, SMILE_BMP } FACE_BMP;
 
@@ -84,7 +86,7 @@ typedef struct tagBOARD
     unsigned rows;
     unsigned cols;
     unsigned mines;
-    char best_name [3][16];
+    WCHAR best_name [3][MAX_PLAYER_NAME_SIZE+1];
     DWORD best_time [3];
     DIFFICULTY difficulty;
 
@@ -118,64 +120,15 @@ typedef struct tagBOARD
 
 } BOARD;
 
-void ExitApp( int error );
-
-void InitBoard( BOARD *p_board );
-
-void LoadBoard( BOARD *p_board );
-
-void SaveBoard( BOARD *p_board );
-
-void DestroyBoard( BOARD *p_board );
-
-void SetDifficulty( BOARD *p_board, DIFFICULTY difficulty );
-
 void CheckLevel( BOARD *p_board );
+void SaveBoard( BOARD *p_board );
+void ResetResults( BOARD *p_board );
 
-void CreateBoard( BOARD *p_board );
+INT_PTR CALLBACK CustomDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
-void CreateBoxes( BOARD *p_board );
+INT_PTR CALLBACK CongratsDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
-void TestBoard( HWND hWnd, BOARD *p_board, unsigned x, unsigned y, int msg );
+INT_PTR CALLBACK TimesDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
-void TestMines( BOARD *p_board, POINT pt, int msg );
-
-void TestFace( BOARD *p_board, POINT pt, int msg );
-
-void DrawBoard( HDC hdc, HDC hMemDC, PAINTSTRUCT *ps, BOARD *p_board );
-
-void DrawMines( HDC hdc, HDC hMemDC, BOARD *p_board );
-
-void DrawMine( HDC hdc, HDC hMemDC, BOARD *p_board, unsigned col, unsigned row, BOOL IsPressed );
-
-void AddFlag( BOARD *p_board, unsigned col, unsigned row );
-
-void CompleteBox( BOARD *p_board, unsigned col, unsigned row );
-
-void CompleteBoxes( BOARD *p_board, unsigned col, unsigned row );
-
-void PressBox( BOARD *p_board, unsigned col, unsigned row );
-
-void PressBoxes( BOARD *p_board, unsigned col, unsigned row );
-
-void UnpressBox( BOARD *p_board, unsigned col, unsigned row );
-
-void UnpressBoxes( BOARD *p_board, unsigned col, unsigned row );
-
-void UpdateTimer( BOARD *p_board );
-
-void DrawLeds( HDC hdc, HDC hMemDC, BOARD *p_board, int number, int x, int y);
-
-void DrawFace( HDC hdc, HDC hMemDC, BOARD *p_board );
-
-LRESULT WINAPI MainProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-BOOL CALLBACK CustomDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam );
-
-BOOL CALLBACK CongratsDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam );
-
-BOOL CALLBACK TimesDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam );
-
-BOOL CALLBACK AboutDlgProc( HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
 /* end of header */

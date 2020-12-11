@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_COMMDLG_H
@@ -26,7 +26,9 @@ extern "C" {
 #endif
 
 #include <prsht.h>
+#ifndef _WIN64
 #include <pshpack1.h>
+#endif
 
 #ifndef SNDMSG
 #ifdef __cplusplus
@@ -63,6 +65,8 @@ extern "C" {
 #define OFN_DONTADDTORECENT          0x02000000
 #define OFN_FORCESHOWHIDDEN          0x10000000
 
+#define OFN_EX_NOPLACESBAR           0x00000001
+
 #define OFN_SHAREFALLTHROUGH     2
 #define OFN_SHARENOWARN          1
 #define OFN_SHAREWARN            0
@@ -70,7 +74,7 @@ extern "C" {
 #define SAVE_DIALOG  1
 #define OPEN_DIALOG  2
 
-typedef UINT (CALLBACK *LPOFNHOOKPROC)(HWND,UINT,WPARAM,LPARAM);
+typedef UINT_PTR (CALLBACK *LPOFNHOOKPROC)(HWND,UINT,WPARAM,LPARAM);
 
 typedef struct tagOFNA {
 	DWORD		lStructSize;
@@ -93,6 +97,9 @@ typedef struct tagOFNA {
 	LPARAM		lCustData;
 	LPOFNHOOKPROC	lpfnHook;
 	LPCSTR		lpTemplateName;
+        void           *pvReserved;
+        DWORD           dwReserved;
+        DWORD           FlagsEx;
 } OPENFILENAMEA,*LPOPENFILENAMEA;
 
 typedef struct tagOFNW {
@@ -116,13 +123,16 @@ typedef struct tagOFNW {
 	LPARAM		lCustData;
 	LPOFNHOOKPROC	lpfnHook;
 	LPCWSTR		lpTemplateName;
+        void           *pvReserved;
+        DWORD           dwReserved;
+        DWORD           FlagsEx;
 } OPENFILENAMEW,*LPOPENFILENAMEW;
 
 DECL_WINELIB_TYPE_AW(OPENFILENAME)
 DECL_WINELIB_TYPE_AW(LPOPENFILENAME)
 
 #ifndef CDSIZEOF_STRUCT
-#define CDSIZEOF_STRUCT(type,field) ((int)&(((type *)0)->field) + sizeof(((type*)0)->field))
+#define CDSIZEOF_STRUCT(type,field) ((INT_PTR)&(((type *)0)->field) + sizeof(((type*)0)->field))
 #endif
 
 #define OPENFILENAME_SIZE_VERSION_400A CDSIZEOF_STRUCT(OPENFILENAMEA,lpTemplateName)
@@ -147,16 +157,35 @@ typedef struct
 DECL_WINELIB_TYPE_AW(OFNOTIFY)
 DECL_WINELIB_TYPE_AW(LPOFNOTIFY)
 
-typedef UINT (CALLBACK *LPCCHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
+typedef struct _OFNOTIFYEXA
+{
+        NMHDR           hdr;
+        LPOPENFILENAMEA lpOFN;
+        LPVOID          psf;
+        LPVOID          pidl;
+} OFNOTIFYEXA, *LPOFNOTIFYEXA;
+
+typedef struct _OFNOTIFYEXW
+{
+        NMHDR           hdr;
+        LPOPENFILENAMEW lpOFN;
+        LPVOID          psf;
+        LPVOID          pidl;
+} OFNOTIFYEXW, *LPOFNOTIFYEXW;
+
+DECL_WINELIB_TYPE_AW(OFNOTIFYEX)
+DECL_WINELIB_TYPE_AW(LPOFNOTIFYEX)
+
+typedef UINT_PTR (CALLBACK *LPCCHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
 
 typedef struct {
 	DWORD		lStructSize;
 	HWND		hwndOwner;
 	HWND		hInstance; /* Should be an HINSTANCE but MS made a typo */
-	DWORD	        rgbResult;
-	LPDWORD         lpCustColors;
+	COLORREF        rgbResult;
+	COLORREF       *lpCustColors;
 	DWORD 		Flags;
-	DWORD		lCustData;
+	LPARAM		lCustData;
         LPCCHOOKPROC    lpfnHook;
 	LPCSTR 		lpTemplateName;
 } CHOOSECOLORA;
@@ -166,10 +195,10 @@ typedef struct {
 	DWORD		lStructSize;
 	HWND		hwndOwner;
 	HWND		hInstance; /* Should be an HINSTANCE but MS made a typo */
-	DWORD	        rgbResult;
-	LPDWORD         lpCustColors;
+	COLORREF        rgbResult;
+	COLORREF       *lpCustColors;
 	DWORD 		Flags;
-	DWORD		lCustData;
+	LPARAM		lCustData;
         LPCCHOOKPROC    lpfnHook;
 	LPCWSTR 	lpTemplateName;
 } CHOOSECOLORW;
@@ -189,7 +218,7 @@ DECL_WINELIB_TYPE_AW(LPCHOOSECOLOR)
 #define CC_SOLIDCOLOR            0x00000080
 #define CC_ANYCOLOR              0x00000100
 
-typedef UINT (CALLBACK *LPFRHOOKPROC)(HWND,UINT,WPARAM,LPARAM);
+typedef UINT_PTR (CALLBACK *LPFRHOOKPROC)(HWND,UINT,WPARAM,LPARAM);
 
 typedef struct {
 	DWORD		lStructSize;
@@ -243,7 +272,7 @@ DECL_WINELIB_TYPE_AW(LPFINDREPLACE)
 #define FR_MATCHKASHIDA                 0x40000000
 #define FR_MATCHALEFHAMZA               0x80000000
 
-typedef UINT (CALLBACK *LPCFHOOKPROC)(HWND,UINT,WPARAM,LPARAM);
+typedef UINT_PTR (CALLBACK *LPCFHOOKPROC)(HWND,UINT,WPARAM,LPARAM);
 
 typedef struct tagCHOOSEFONTA
 {
@@ -291,31 +320,31 @@ DECL_WINELIB_TYPE_AW(LPCHOOSEFONT)
 #define CF_SCREENFONTS               0x00000001
 #define CF_PRINTERFONTS              0x00000002
 #define CF_BOTH                      (CF_SCREENFONTS | CF_PRINTERFONTS)
-#define CF_SHOWHELP                  0x00000004L
-#define CF_ENABLEHOOK                0x00000008L
-#define CF_ENABLETEMPLATE            0x00000010L
-#define CF_ENABLETEMPLATEHANDLE      0x00000020L
-#define CF_INITTOLOGFONTSTRUCT       0x00000040L
-#define CF_USESTYLE                  0x00000080L
-#define CF_EFFECTS                   0x00000100L
-#define CF_APPLY                     0x00000200L
-#define CF_ANSIONLY                  0x00000400L
+#define CF_SHOWHELP                  __MSABI_LONG(0x00000004)
+#define CF_ENABLEHOOK                __MSABI_LONG(0x00000008)
+#define CF_ENABLETEMPLATE            __MSABI_LONG(0x00000010)
+#define CF_ENABLETEMPLATEHANDLE      __MSABI_LONG(0x00000020)
+#define CF_INITTOLOGFONTSTRUCT       __MSABI_LONG(0x00000040)
+#define CF_USESTYLE                  __MSABI_LONG(0x00000080)
+#define CF_EFFECTS                   __MSABI_LONG(0x00000100)
+#define CF_APPLY                     __MSABI_LONG(0x00000200)
+#define CF_ANSIONLY                  __MSABI_LONG(0x00000400)
 #define CF_SCRIPTSONLY               CF_ANSIONLY
-#define CF_NOVECTORFONTS             0x00000800L
+#define CF_NOVECTORFONTS             __MSABI_LONG(0x00000800)
 #define CF_NOOEMFONTS                CF_NOVECTORFONTS
-#define CF_NOSIMULATIONS             0x00001000L
-#define CF_LIMITSIZE                 0x00002000L
-#define CF_FIXEDPITCHONLY            0x00004000L
-#define CF_WYSIWYG                   0x00008000L /* use with CF_SCREENFONTS & CF_PRINTERFONTS */
-#define CF_FORCEFONTEXIST            0x00010000L
-#define CF_SCALABLEONLY              0x00020000L
-#define CF_TTONLY                    0x00040000L
-#define CF_NOFACESEL                 0x00080000L
-#define CF_NOSTYLESEL                0x00100000L
-#define CF_NOSIZESEL                 0x00200000L
-#define CF_SELECTSCRIPT              0x00400000L
-#define CF_NOSCRIPTSEL               0x00800000L
-#define CF_NOVERTFONTS               0x01000000L
+#define CF_NOSIMULATIONS             __MSABI_LONG(0x00001000)
+#define CF_LIMITSIZE                 __MSABI_LONG(0x00002000)
+#define CF_FIXEDPITCHONLY            __MSABI_LONG(0x00004000)
+#define CF_WYSIWYG                   __MSABI_LONG(0x00008000) /* use with CF_SCREENFONTS & CF_PRINTERFONTS */
+#define CF_FORCEFONTEXIST            __MSABI_LONG(0x00010000)
+#define CF_SCALABLEONLY              __MSABI_LONG(0x00020000)
+#define CF_TTONLY                    __MSABI_LONG(0x00040000)
+#define CF_NOFACESEL                 __MSABI_LONG(0x00080000)
+#define CF_NOSTYLESEL                __MSABI_LONG(0x00100000)
+#define CF_NOSIZESEL                 __MSABI_LONG(0x00200000)
+#define CF_SELECTSCRIPT              __MSABI_LONG(0x00400000)
+#define CF_NOSCRIPTSEL               __MSABI_LONG(0x00800000)
+#define CF_NOVERTFONTS               __MSABI_LONG(0x01000000)
 
 #define SIMULATED_FONTTYPE      0x8000
 #define PRINTER_FONTTYPE        0x4000
@@ -412,7 +441,6 @@ static const WCHAR HELPMSGSTRINGW[] = { 'c','o','m','m','d','l','g','_',
 #endif
 #define HELPMSGSTRING   WINELIB_NAME_AW(HELPMSGSTRING)
 
-
 #define CD_LBSELNOITEMS -1
 #define CD_LBSELCHANGE   0
 #define CD_LBSELSUB      1
@@ -428,6 +456,7 @@ static const WCHAR HELPMSGSTRINGW[] = { 'c','o','m','m','d','l','g','_',
 #define CDN_HELP                (CDN_FIRST - 0x0004)
 #define CDN_FILEOK              (CDN_FIRST - 0x0005)
 #define CDN_TYPECHANGE          (CDN_FIRST - 0x0006)
+#define CDN_INCLUDEITEM         (CDN_FIRST - 0x0007)
 
 #define CDM_FIRST               (WM_USER + 100)
 #define CDM_LAST                (WM_USER + 200)
@@ -435,7 +464,7 @@ static const WCHAR HELPMSGSTRINGW[] = { 'c','o','m','m','d','l','g','_',
 #define CDM_GETSPEC             (CDM_FIRST + 0x0000)
 #define CDM_GETFILEPATH         (CDM_FIRST + 0x0001)
 #define CDM_GETFOLDERPATH       (CDM_FIRST + 0x0002)
-#define CDM_GETFOLDERLIST       (CDM_FIRST + 0x0003)
+#define CDM_GETFOLDERIDLIST     (CDM_FIRST + 0x0003)
 #define CDM_SETCONTROLTEXT      (CDM_FIRST + 0x0004)
 #define CDM_HIDECONTROL         (CDM_FIRST + 0x0005)
 #define CDM_SETDEFEXT           (CDM_FIRST + 0x0006)
@@ -504,8 +533,8 @@ static const WCHAR HELPMSGSTRINGW[] = { 'c','o','m','m','d','l','g','_',
         (void)SNDMSG(_hdlg, CDM_SETDEFEXT, 0, (LPARAM)(LPSTR)_pszext)
 
 
-typedef UINT (CALLBACK *LPPRINTHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
-typedef UINT (CALLBACK *LPSETUPHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
+typedef UINT_PTR (CALLBACK *LPPRINTHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
+typedef UINT_PTR (CALLBACK *LPSETUPHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
 
 typedef struct tagPDA
 {
@@ -556,30 +585,43 @@ typedef struct tagPDW
 DECL_WINELIB_TYPE_AW(PRINTDLG)
 DECL_WINELIB_TYPE_AW(LPPRINTDLG)
 
-#define PD_ALLPAGES                  0x00000000
-#define PD_SELECTION                 0x00000001
-#define PD_PAGENUMS                  0x00000002
-#define PD_NOSELECTION               0x00000004
-#define PD_NOPAGENUMS                0x00000008
-#define PD_COLLATE                   0x00000010
-#define PD_PRINTTOFILE               0x00000020
-#define PD_PRINTSETUP                0x00000040
-#define PD_NOWARNING                 0x00000080
-#define PD_RETURNDC                  0x00000100
-#define PD_RETURNIC                  0x00000200
-#define PD_RETURNDEFAULT             0x00000400
-#define PD_SHOWHELP                  0x00000800
-#define PD_ENABLEPRINTHOOK           0x00001000
-#define PD_ENABLESETUPHOOK           0x00002000
-#define PD_ENABLEPRINTTEMPLATE       0x00004000
-#define PD_ENABLESETUPTEMPLATE       0x00008000
-#define PD_ENABLEPRINTTEMPLATEHANDLE 0x00010000
-#define PD_ENABLESETUPTEMPLATEHANDLE 0x00020000
-#define PD_USEDEVMODECOPIES          0x00040000
+#define PD_ALLPAGES                   0x00000000
+#define PD_SELECTION                  0x00000001
+#define PD_PAGENUMS                   0x00000002
+#define PD_NOSELECTION                0x00000004
+#define PD_NOPAGENUMS                 0x00000008
+#define PD_COLLATE                    0x00000010
+#define PD_PRINTTOFILE                0x00000020
+#define PD_PRINTSETUP                 0x00000040
+#define PD_NOWARNING                  0x00000080
+#define PD_RETURNDC                   0x00000100
+#define PD_RETURNIC                   0x00000200
+#define PD_RETURNDEFAULT              0x00000400
+#define PD_SHOWHELP                   0x00000800
+#define PD_ENABLEPRINTHOOK            0x00001000
+#define PD_ENABLESETUPHOOK            0x00002000
+#define PD_ENABLEPRINTTEMPLATE        0x00004000
+#define PD_ENABLESETUPTEMPLATE        0x00008000
+#define PD_ENABLEPRINTTEMPLATEHANDLE  0x00010000
+#define PD_ENABLESETUPTEMPLATEHANDLE  0x00020000
+#define PD_USEDEVMODECOPIES           0x00040000
 #define PD_USEDEVMODECOPIESANDCOLLATE 0x00040000
-#define PD_DISABLEPRINTTOFILE        0x00080000
-#define PD_HIDEPRINTTOFILE           0x00100000
-#define PD_NONETWORKBUTTON           0x00200000
+#define PD_DISABLEPRINTTOFILE         0x00080000
+#define PD_HIDEPRINTTOFILE            0x00100000
+#define PD_NONETWORKBUTTON            0x00200000
+#define PD_CURRENTPAGE                0x00400000
+#define PD_NOCURRENTPAGE              0x00800000
+#define PD_EXCLUSIONFLAGS             0x01000000
+#define PD_USELARGETEMPLATE           0x10000000
+
+
+#define PD_EXCL_COPIESANDCOLLATE      (DM_COPIES | DM_COLLATE)
+
+#define START_PAGE_GENERAL 0xffffffff
+
+#define PD_RESULT_CANCEL 0
+#define PD_RESULT_PRINT  1
+#define PD_RESULT_APPLY  2
 
 typedef struct
 {
@@ -661,7 +703,7 @@ DECL_WINELIB_TYPE_AW(LPPAGESETUPDLG)
 #define PSD_ENABLEPAGESETUPTEMPLATEHANDLE 0x00020000
 #define PSD_ENABLEPAGEPAINTHOOK           0x00040000
 #define PSD_DISABLEPAGEPAINTING           0x00080000
-#define PSD_NONETWORKBUTTON		  0x00200000
+#define PSD_NONETWORKBUTTON               0x00200000
 
 typedef struct tagPRINTPAGERANGE
 {
@@ -722,6 +764,40 @@ typedef struct tagPDEXW
 DECL_WINELIB_TYPE_AW(PRINTDLGEX)
 DECL_WINELIB_TYPE_AW(LPPRINTDLGEX)
 
+#ifdef STDMETHOD
+
+DEFINE_GUID(IID_IPrintDialogCallback, 0x5852a2c3,0x6530,0x11d1,0xb6,0xa3,0x00,0x00,0xf8,0x75,0x7b,0xf9);
+#define INTERFACE IPrintDialogCallback
+DECLARE_INTERFACE_(IPrintDialogCallback,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface)(THIS_ REFIID,void **) PURE;
+    STDMETHOD_(ULONG,AddRef)(THIS) PURE;
+    STDMETHOD_(ULONG,Release)(THIS) PURE;
+    /*** IPrintDialogCallback methods ***/
+    STDMETHOD(InitDone)(THIS) PURE;
+    STDMETHOD(SelectionChange)(THIS) PURE;
+    STDMETHOD(HandleMessage)(THIS_ HWND,UINT,WPARAM,LPARAM,LRESULT *) PURE;
+};
+#undef INTERFACE
+
+DEFINE_GUID(IID_IPrintDialogServices, 0x509aaeda,0x5639,0x11d1,0xb6,0xa1,0x00,0x00,0xf8,0x75,0x7b,0xf9);
+#define INTERFACE IPrintDialogServices
+DECLARE_INTERFACE_(IPrintDialogServices,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface)(THIS_ REFIID,void **) PURE;
+    STDMETHOD_(ULONG,AddRef)(THIS) PURE;
+    STDMETHOD_(ULONG,Release)(THIS) PURE;
+    /*** IPrintDialogServices methods ***/
+    STDMETHOD(GetCurrentDevMode)(THIS_ LPDEVMODEW,UINT *) PURE;
+    STDMETHOD(GetCurrentPrinterName)(THIS_ LPWSTR,UINT *) PURE;
+    STDMETHOD(GetCurrentPortName)(THIS_ LPWSTR,UINT *) PURE;
+};
+#undef INTERFACE
+
+#endif /* STDMETHOD */
+
 BOOL  WINAPI ChooseColorA(LPCHOOSECOLORA lpChCol);
 BOOL  WINAPI ChooseColorW(LPCHOOSECOLORW lpChCol);
 #define ChooseColor WINELIB_NAME_AW(ChooseColor)
@@ -757,7 +833,9 @@ BOOL  WINAPI ChooseFontW(LPCHOOSEFONTW);
 void COMDLG32_SetCommDlgExtendedError(DWORD err);
 
 
+#ifndef _WIN64
 #include <poppack.h>
+#endif
 
 #ifdef __cplusplus
 }

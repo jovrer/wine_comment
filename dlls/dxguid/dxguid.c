@@ -16,12 +16,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
 
-#define COM_NO_WINDOWS_H
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
@@ -36,12 +35,14 @@
 #include "ddraw.h"
 #include "mmsystem.h"
 #include "dsound.h"
-#include "dsdriver.h"
-#include "dmusici.h"
+#include "dsconf.h"
 #include "dmusics.h"
 #include "dplay.h"
+#include "dplay8.h"
 #include "dplobby.h"
+#include "dplobby8.h"
 #include "dinput.h"
 #include "ddrawi.h"
+#include "dxdiag.h"
 #include "dxfile.h"
-#include "d3drm.h"
+#include "rmxfguid.h"

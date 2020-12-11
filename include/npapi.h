@@ -13,10 +13,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_NPAPI_H__
 #define __WINE_NPAPI_H__
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* capabilities */
 #define WNNC_SPEC_VERSION          0x00000001
@@ -34,12 +38,17 @@
 #define WNNC_CON_CANCELCONNECTION  0x00000002
 #define WNNC_CON_GETCONNECTIONS    0x00000004
 #define WNNC_CON_ADDCONNECTION3    0x00000008
+#define WNNC_CON_GETPERFORMANCE    0x00000040
+#define WNNC_CON_DEFER             0x00000080
 
 #define WNNC_DIALOG                0x00000008
 #define WNNC_DLG_DEVICEMODE        0x00000001
 #define WNNC_DLG_PROPERTYDIALOG    0x00000020
 #define WNNC_DLG_SEARCHDIALOG      0x00000040
 #define WNNC_DLG_FORMATNETWORKNAME 0x00000080
+#define WNNC_DLG_PERMISSIONEDITOR  0x00000100
+#define WNNC_DLG_GETRESOURCEPARENT 0x00000200
+#define WNNC_DLG_GETRESOURCEINFORMATION 0x00000800
 
 #define WNNC_ADMIN                 0x00000009
 #define WNNC_ADM_GETDIRECTORYTYPE  0x00000001
@@ -48,6 +57,7 @@
 #define WNNC_ENUMERATION           0x0000000b
 #define WNNC_ENUM_GLOBAL           0x00000001
 #define WNNC_ENUM_LOCAL            0x00000002
+#define WNNC_ENUM_CONTEXT          0x00000004
 
 #define WNNC_START                 0x0000000c
 #define WNNC_WAIT_FOR_START        0x00000001
@@ -64,6 +74,8 @@ typedef DWORD (APIENTRY *PF_NPOpenEnum)(DWORD dwScope, DWORD dwType, DWORD dwUsa
 typedef DWORD (APIENTRY *PF_NPEnumResource)(HANDLE hEnum, LPDWORD lpcCount,
  LPVOID lpBuffer, LPDWORD lpBufferSize);
 typedef DWORD (APIENTRY *PF_NPCloseEnum)(HANDLE hEnum);
+typedef DWORD (APIENTRY *PF_NPGetResourceInformation)(LPNETRESOURCEW lpNetResource,
+ LPVOID lpBuffer, LPDWORD lpcbBuffer, LPWSTR* lplpSystem);
 
 /* connection-related */
 typedef DWORD (APIENTRY *PF_NPAddConnection)(LPNETRESOURCEW lpNetResource,
@@ -199,5 +211,9 @@ typedef DWORD (APIENTRY *PF_AddConnectNotify)(LPNOTIFYINFO lpNotifyInfo,
  LPNOTIFYADD lpAddInfo);
 typedef DWORD (APIENTRY *PF_CancelConnectNotify)(LPNOTIFYINFO lpNotifyInfo,
  LPNOTIFYADD lpAddInfo);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ndef __WINE_NPAPI_H__ */

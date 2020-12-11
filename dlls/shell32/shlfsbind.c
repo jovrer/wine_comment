@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 #include "config.h"
@@ -28,7 +28,6 @@
 
 #include "windef.h"
 #include "winbase.h"
-#include "winreg.h"
 #include "winuser.h"
 #include "shlobj.h"
 #include "shell32_main.h"
@@ -42,131 +41,34 @@ WINE_DEFAULT_DEBUG_CHANNEL(pidl);
  */
 typedef struct
 {
-    const IFileSystemBindDataVtbl *lpVtbl;
-    LONG              ref;
+    IFileSystemBindData IFileSystemBindData_iface;
+    LONG ref;
     WIN32_FIND_DATAW findFile;
-} IFileSystemBindDataImpl;
+} FileSystemBindData;
 
-static HRESULT WINAPI IFileSystemBindData_fnQueryInterface(IFileSystemBindData *, REFIID, LPVOID*);
-static ULONG WINAPI IFileSystemBindData_fnAddRef(IFileSystemBindData *);
-static ULONG WINAPI IFileSystemBindData_fnRelease(IFileSystemBindData *);
-static HRESULT WINAPI IFileSystemBindData_fnGetFindData(IFileSystemBindData *, WIN32_FIND_DATAW *);
-static HRESULT WINAPI IFileSystemBindData_fnSetFindData(IFileSystemBindData *, const WIN32_FIND_DATAW *);
-
-static const IFileSystemBindDataVtbl sbvt =
+static inline FileSystemBindData *impl_from_IFileSystemBindData(IFileSystemBindData *iface)
 {
-    IFileSystemBindData_fnQueryInterface,
-    IFileSystemBindData_fnAddRef,
-    IFileSystemBindData_fnRelease,
-    IFileSystemBindData_fnSetFindData,
-    IFileSystemBindData_fnGetFindData,
-};
-
-static const WCHAR wFileSystemBindData[] = {
-    'F','i','l','e',' ','S','y','s','t','e','m',' ','B','i','n','d','D','a','t','a',0};
-
-HRESULT WINAPI IFileSystemBindData_Constructor(const WIN32_FIND_DATAW *pfd, LPBC *ppV)
-{
-    IFileSystemBindDataImpl *sb;
-    HRESULT ret = E_OUTOFMEMORY;
-
-    TRACE("%p, %p\n", pfd, ppV);
-
-    if (!ppV)
-       return E_INVALIDARG;
-
-    *ppV = NULL;
-
-    sb = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IFileSystemBindDataImpl));
-    if (!sb)
-        return ret;
-
-    sb->lpVtbl = &sbvt;
-    sb->ref = 1;
-    IFileSystemBindData_fnSetFindData((IFileSystemBindData*)sb, pfd);
-
-    ret = CreateBindCtx(0, ppV);
-    if (SUCCEEDED(ret))
-    {
-        BIND_OPTS bindOpts;
-
-        bindOpts.cbStruct = sizeof(BIND_OPTS);
-        bindOpts.grfFlags = 0;
-        bindOpts.grfMode = STGM_CREATE;
-        bindOpts.dwTickCountDeadline = 0;
-        IBindCtx_SetBindOptions(*ppV, &bindOpts);
-        IBindCtx_RegisterObjectParam(*ppV, (LPOLESTR)wFileSystemBindData, (LPUNKNOWN)sb);
-
-        IFileSystemBindData_Release((IFileSystemBindData*)sb);
-    }
-    else
-        HeapFree(GetProcessHeap(), 0, sb);
-    return ret;
+    return CONTAINING_RECORD(iface, FileSystemBindData, IFileSystemBindData_iface);
 }
 
-HRESULT WINAPI FileSystemBindData_GetFindData(LPBC pbc, WIN32_FIND_DATAW *pfd)
-{
-    LPUNKNOWN pUnk;
-    IFileSystemBindData *pfsbd = NULL;
-    HRESULT ret;
-
-    TRACE("%p, %p\n", pbc, pfd);
-
-    if (!pfd)
-        return E_INVALIDARG;
-
-    ret = IBindCtx_GetObjectParam(pbc, (LPOLESTR)wFileSystemBindData, &pUnk);
-    if (SUCCEEDED(ret))
-    {
-        ret = IUnknown_QueryInterface(pUnk, &IID_IFileSystemBindData, (LPVOID *)&pfsbd);
-        if (SUCCEEDED(ret))
-        {
-            ret = IFileSystemBindData_GetFindData(pfsbd, pfd);
-            IFileSystemBindData_Release(pfsbd);
-        }
-        IUnknown_Release(pUnk);
-    }
-    return ret;
-}
-
-HRESULT WINAPI FileSystemBindData_SetFindData(LPBC pbc, const WIN32_FIND_DATAW *pfd)
-{
-    LPUNKNOWN pUnk;
-    IFileSystemBindData *pfsbd = NULL;
-    HRESULT ret;
-    
-    TRACE("%p, %p\n", pbc, pfd);
-
-    ret = IBindCtx_GetObjectParam(pbc, (LPOLESTR)wFileSystemBindData, &pUnk);
-    if (SUCCEEDED(ret))
-    {
-        ret = IUnknown_QueryInterface(pUnk, &IID_IFileSystemBindData, (LPVOID *)&pfsbd);
-        if (SUCCEEDED(ret))
-        {
-            ret = IFileSystemBindData_SetFindData(pfsbd, pfd);
-            IFileSystemBindData_Release(pfsbd);
-        }
-        IUnknown_Release(pUnk);
-    }
-    return ret;
-}
-
-static HRESULT WINAPI IFileSystemBindData_fnQueryInterface(
+static HRESULT WINAPI FileSystemBindData_QueryInterface(
                 IFileSystemBindData *iface, REFIID riid, LPVOID *ppV)
 {
-    IFileSystemBindDataImpl *This = (IFileSystemBindDataImpl *)iface;
-    TRACE("(%p)->(\n\tIID:\t%s, %p)\n", This, debugstr_guid(riid), ppV);
+    FileSystemBindData *This = impl_from_IFileSystemBindData(iface);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppV);
 
     *ppV = NULL;
 
-    if (IsEqualIID(riid, &IID_IUnknown))
-        *ppV = This;
-    else if (IsEqualIID(riid, &IID_IFileSystemBindData))
-        *ppV = (IFileSystemBindData*)This;
+    if (IsEqualIID(riid, &IID_IUnknown) ||
+        IsEqualIID(riid, &IID_IFileSystemBindData))
+    {
+        *ppV = &This->IFileSystemBindData_iface;
+    }
 
     if (*ppV)
     {
-        IUnknown_AddRef((IUnknown*)(*ppV));
+        IFileSystemBindData_AddRef(iface);
         TRACE("-- Interface: (%p)->(%p)\n", ppV, *ppV);
         return S_OK;
     }
@@ -174,53 +76,97 @@ static HRESULT WINAPI IFileSystemBindData_fnQueryInterface(
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI IFileSystemBindData_fnAddRef(IFileSystemBindData *iface)
+static ULONG WINAPI FileSystemBindData_AddRef(IFileSystemBindData *iface)
 {
-    IFileSystemBindDataImpl *This = (IFileSystemBindDataImpl *)iface;
-    ULONG refCount = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p)->(count=%li)\n", This, refCount - 1);
-
-    return refCount;
+    FileSystemBindData *This = impl_from_IFileSystemBindData(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+    TRACE("(%p)->(%u)\n", This, ref);
+    return ref;
 }
 
-static ULONG WINAPI IFileSystemBindData_fnRelease(IFileSystemBindData *iface)
+static ULONG WINAPI FileSystemBindData_Release(IFileSystemBindData *iface)
 {
-    IFileSystemBindDataImpl *This = (IFileSystemBindDataImpl *)iface;
-    ULONG refCount = InterlockedDecrement(&This->ref);
-    
-    TRACE("(%p)->(count=%li)\n", This, refCount + 1);
+    FileSystemBindData *This = impl_from_IFileSystemBindData(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
 
-    if (!refCount)
-    {
-        TRACE(" destroying ISFBindPidl(%p)\n",This);
-        HeapFree(GetProcessHeap(), 0, This);
-    }
-    return refCount;
+    TRACE("(%p)->(%u)\n", This, ref);
+
+    if (!ref)
+        heap_free(This);
+
+    return ref;
 }
 
-static HRESULT WINAPI IFileSystemBindData_fnGetFindData(
-               IFileSystemBindData *iface, WIN32_FIND_DATAW *pfd)
+static HRESULT WINAPI FileSystemBindData_GetFindData(IFileSystemBindData *iface, WIN32_FIND_DATAW *pfd)
 {
-    IFileSystemBindDataImpl *This = (IFileSystemBindDataImpl *)iface;
-    TRACE("(%p), %p\n", This, pfd);
+    FileSystemBindData *This = impl_from_IFileSystemBindData(iface);
+
+    TRACE("(%p)->(%p)\n", This, pfd);
 
     if (!pfd)
         return E_INVALIDARG;
 
-    memcpy(pfd, &This->findFile, sizeof(WIN32_FIND_DATAW));
-    return NOERROR;
+    *pfd = This->findFile;
+    return S_OK;
 }
 
-static HRESULT WINAPI IFileSystemBindData_fnSetFindData(
-               IFileSystemBindData *iface, const WIN32_FIND_DATAW *pfd)
+static HRESULT WINAPI FileSystemBindData_SetFindData(IFileSystemBindData *iface, const WIN32_FIND_DATAW *pfd)
 {
-    IFileSystemBindDataImpl *This = (IFileSystemBindDataImpl *)iface;
-    TRACE("(%p), %p\n", This, pfd);
+    FileSystemBindData *This = impl_from_IFileSystemBindData(iface);
+
+    TRACE("(%p)->(%p)\n", This, pfd);
 
     if (pfd)
-        memcpy(&This->findFile, pfd, sizeof(WIN32_FIND_DATAW));
+        This->findFile = *pfd;
     else
         memset(&This->findFile, 0, sizeof(WIN32_FIND_DATAW));
-    return NOERROR;
+    return S_OK;
+}
+
+static const IFileSystemBindDataVtbl FileSystemBindDataVtbl = {
+    FileSystemBindData_QueryInterface,
+    FileSystemBindData_AddRef,
+    FileSystemBindData_Release,
+    FileSystemBindData_SetFindData,
+    FileSystemBindData_GetFindData,
+};
+
+HRESULT WINAPI IFileSystemBindData_Constructor(const WIN32_FIND_DATAW *find_data, LPBC *ppV)
+{
+    FileSystemBindData *This;
+    HRESULT ret;
+
+    TRACE("(%p %p)\n", find_data, ppV);
+
+    if (!ppV)
+       return E_INVALIDARG;
+
+    *ppV = NULL;
+
+    This = heap_alloc(sizeof(*This));
+    if (!This) return E_OUTOFMEMORY;
+
+    This->IFileSystemBindData_iface.lpVtbl = &FileSystemBindDataVtbl;
+    This->ref = 1;
+    IFileSystemBindData_SetFindData(&This->IFileSystemBindData_iface, find_data);
+
+    ret = CreateBindCtx(0, ppV);
+    if (SUCCEEDED(ret))
+    {
+        static const WCHAR nameW[] = {
+            'F','i','l','e',' ','S','y','s','t','e','m',' ','B','i','n','d',' ','D','a','t','a',0};
+        BIND_OPTS bindOpts;
+
+        bindOpts.cbStruct = sizeof(BIND_OPTS);
+        bindOpts.grfFlags = 0;
+        bindOpts.grfMode = STGM_CREATE;
+        bindOpts.dwTickCountDeadline = 0;
+        IBindCtx_SetBindOptions(*ppV, &bindOpts);
+        IBindCtx_RegisterObjectParam(*ppV, (WCHAR*)nameW, (IUnknown*)&This->IFileSystemBindData_iface);
+
+        IFileSystemBindData_Release(&This->IFileSystemBindData_iface);
+    }
+    else
+        heap_free(This);
+    return ret;
 }

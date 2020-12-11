@@ -1,5 +1,5 @@
 /*
- * Copyright 2002 Michael Günnewig
+ * Copyright 2002 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __MSRLE32_PRIVATE_H
@@ -23,7 +23,6 @@
 #include <stdarg.h>
 #endif
 
-#define COM_NO_WINDOWS_H
 #include "windef.h"
 #include "winbase.h"
 #include "mmsystem.h"
@@ -35,8 +34,7 @@
 #define IDS_DESCRIPTION 101
 #define IDS_ABOUT       102
 
-#define MSRLE32_VERSION  0x00010000 /* Version 1.0 build 0 */
-#define MSRLE32_DEFAULTQUALITY (75 * ICQUALITY_HIGH) / 100
+#define MSRLE32_DEFAULTQUALITY (85 * ICQUALITY_HIGH) / 100
 
 #define FOURCC_RLE   mmioFOURCC('R','L','E',' ')
 #define FOURCC_RLE4  mmioFOURCC('R','L','E','4')
@@ -48,7 +46,6 @@
 
 typedef struct _CodecInfo {
   FOURCC  fccHandler;
-  DWORD   dwQuality;
 
   BOOL    bCompress;
   LONG    nPrevFrame;

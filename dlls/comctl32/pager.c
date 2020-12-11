@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  *
@@ -59,10 +59,10 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "winnls.h"
-#include "windowsx.h"
 #include "commctrl.h"
 #include "comctl32.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(pager);
 
@@ -71,6 +71,7 @@ typedef struct
     HWND   hwndSelf;   /* handle of the control wnd */
     HWND   hwndChild;  /* handle of the contained wnd */
     HWND   hwndNotify; /* handle of the parent wnd */
+    BOOL   bUnicode;   /* send notifications in Unicode */
     DWORD  dwStyle;    /* styles for this control */
     COLORREF clrBk;    /* background color */
     INT    nBorder;    /* border size for the control */
@@ -83,28 +84,38 @@ typedef struct
     INT    TLbtnState; /* state of top or left btn */
     INT    BRbtnState; /* state of bottom or right btn */
     INT    direction;  /* direction of the scroll, (e.g. PGF_SCROLLUP) */
+    WCHAR  *pwszBuffer;/* text buffer for converted notifications */
+    INT    nBufferSize;/* size of the above buffer */
 } PAGER_INFO;
-
-#define MIN_ARROW_WIDTH  8
-#define MIN_ARROW_HEIGHT 5
 
 #define TIMERID1         1
 #define TIMERID2         2
 #define INITIAL_DELAY    500
 #define REPEAT_DELAY     50
 
+/* Text field conversion behavior flags for PAGER_SendConvertedNotify() */
+enum conversion_flags
+{
+    /* Convert Unicode text to ANSI for parent before sending. If not set, do nothing */
+    CONVERT_SEND = 0x01,
+    /* Convert ANSI text from parent back to Unicode for children */
+    CONVERT_RECEIVE = 0x02,
+    /* Send empty text to parent if text is NULL. Original text pointer still remains NULL */
+    SEND_EMPTY_IF_NULL = 0x04,
+    /* Set text to null after parent received the notification if the required mask is not set before sending notification */
+    SET_NULL_IF_NO_MASK = 0x08,
+    /* Zero out the text buffer before sending it to parent */
+    ZERO_SEND = 0x10
+};
+
 static void
-PAGER_GetButtonRects(PAGER_INFO* infoPtr, RECT* prcTopLeft, RECT* prcBottomRight, BOOL bClientCoords)
+PAGER_GetButtonRects(const PAGER_INFO* infoPtr, RECT* prcTopLeft, RECT* prcBottomRight, BOOL bClientCoords)
 {
     RECT rcWindow;
     GetWindowRect (infoPtr->hwndSelf, &rcWindow);
 
     if (bClientCoords)
-    {
-        POINT pt = {rcWindow.left, rcWindow.top};
-        ScreenToClient(infoPtr->hwndSelf, &pt);
-        OffsetRect(&rcWindow, -(rcWindow.left-pt.x), -(rcWindow.top-pt.y));
-    }
+        MapWindowPoints( 0, infoPtr->hwndSelf, (POINT *)&rcWindow, 2 );
     else
         OffsetRect(&rcWindow, -rcWindow.left, -rcWindow.top);
 
@@ -121,115 +132,13 @@ PAGER_GetButtonRects(PAGER_INFO* infoPtr, RECT* prcTopLeft, RECT* prcBottomRight
     }
 }
 
-/* the horizontal arrows are:
- *
- * 01234    01234
- * 1  *      *
- * 2 **      **
- * 3***      ***
- * 4***      ***
- * 5 **      **
- * 6  *      *
- * 7
- *
- */
 static void
-PAGER_DrawHorzArrow (HDC hdc, RECT r, INT colorRef, BOOL left)
-{
-    INT x, y, w, h;
-    HPEN hPen, hOldPen;
-
-    w = r.right - r.left + 1;
-    h = r.bottom - r.top + 1;
-    if ((h < MIN_ARROW_WIDTH) || (w < MIN_ARROW_HEIGHT))
-        return;  /* refuse to draw partial arrow */
-
-    if (!(hPen = CreatePen( PS_SOLID, 1, GetSysColor( colorRef )))) return;
-    hOldPen = SelectObject ( hdc, hPen );
-    if (left)
-    {
-        x = r.left + ((w - MIN_ARROW_HEIGHT) / 2) + 3;
-        y = r.top + ((h - MIN_ARROW_WIDTH) / 2) + 1;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x--, y+5); y++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x--, y+3); y++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x, y+1);
-    }
-    else
-    {
-        x = r.left + ((w - MIN_ARROW_HEIGHT) / 2) + 1;
-        y = r.top + ((h - MIN_ARROW_WIDTH) / 2) + 1;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x++, y+5); y++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x++, y+3); y++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x, y+1);
-    }
-
-    SelectObject( hdc, hOldPen );
-    DeleteObject( hPen );
-}
-
-/* the vertical arrows are:
- *
- * 01234567    01234567
- * 1******        **
- * 2 ****        ****
- * 3  **        ******
- * 4
- *
- */
-static void
-PAGER_DrawVertArrow (HDC hdc, RECT r, INT colorRef, BOOL up)
-{
-    INT x, y, w, h;
-    HPEN hPen, hOldPen;
-
-    w = r.right - r.left + 1;
-    h = r.bottom - r.top + 1;
-    if ((h < MIN_ARROW_WIDTH) || (w < MIN_ARROW_HEIGHT))
-        return;  /* refuse to draw partial arrow */
-
-    if (!(hPen = CreatePen( PS_SOLID, 1, GetSysColor( colorRef )))) return;
-    hOldPen = SelectObject ( hdc, hPen );
-    if (up)
-    {
-        x = r.left + ((w - MIN_ARROW_HEIGHT) / 2) + 1;
-        y = r.top + ((h - MIN_ARROW_WIDTH) / 2) + 3;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x+5, y--); x++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x+3, y--); x++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x+1, y);
-    }
-    else
-    {
-        x = r.left + ((w - MIN_ARROW_HEIGHT) / 2) + 1;
-        y = r.top + ((h - MIN_ARROW_WIDTH) / 2) + 1;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x+5, y++); x++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x+3, y++); x++;
-        MoveToEx (hdc, x, y, NULL);
-        LineTo (hdc, x+1, y);
-    }
-
-    SelectObject( hdc, hOldPen );
-    DeleteObject( hPen );
-}
-
-static void
-PAGER_DrawButton(HDC hdc, COLORREF clrBk, RECT arrowRect,
+PAGER_DrawButton(HDC hdc, COLORREF clrBk, RECT rc,
                  BOOL horz, BOOL topLeft, INT btnState)
 {
-    HBRUSH   hBrush, hOldBrush;
-    RECT     rc = arrowRect;
+    UINT flags;
 
-    TRACE("arrowRect = %s, btnState = %d\n", wine_dbgstr_rect(&arrowRect), btnState);
+    TRACE("rc = %s, btnState = %d\n", wine_dbgstr_rect(&rc), btnState);
 
     if (btnState == PGF_INVISIBLE)
         return;
@@ -237,54 +146,26 @@ PAGER_DrawButton(HDC hdc, COLORREF clrBk, RECT arrowRect,
     if ((rc.right - rc.left <= 0) || (rc.bottom - rc.top <= 0))
         return;
 
-    hBrush = CreateSolidBrush(clrBk);
-    hOldBrush = (HBRUSH)SelectObject(hdc, hBrush);
+    if (horz)
+        flags = topLeft ? DFCS_SCROLLLEFT : DFCS_SCROLLRIGHT;
+    else
+        flags = topLeft ? DFCS_SCROLLUP : DFCS_SCROLLDOWN;
 
-    FillRect(hdc, &rc, hBrush);
-
-    if (btnState == PGF_HOT)
+    switch (btnState)
     {
-       DrawEdge( hdc, &rc, BDR_RAISEDINNER, BF_RECT);
-       if (horz)
-           PAGER_DrawHorzArrow(hdc, rc, COLOR_WINDOWFRAME, topLeft);
-       else
-           PAGER_DrawVertArrow(hdc, rc, COLOR_WINDOWFRAME, topLeft);
+    case PGF_HOT:
+        break;
+    case PGF_NORMAL:
+        flags |= DFCS_FLAT;
+        break;
+    case PGF_DEPRESSED:
+        flags |= DFCS_PUSHED;
+        break;
+    case PGF_GRAYED:
+        flags |= DFCS_INACTIVE | DFCS_FLAT;
+        break;
     }
-    else if (btnState == PGF_NORMAL)
-    {
-       DrawEdge (hdc, &rc, BDR_OUTER, BF_FLAT);
-       if (horz)
-           PAGER_DrawHorzArrow(hdc, rc, COLOR_WINDOWFRAME, topLeft);
-       else
-           PAGER_DrawVertArrow(hdc, rc, COLOR_WINDOWFRAME, topLeft);
-    }
-    else if (btnState == PGF_DEPRESSED)
-    {
-       DrawEdge( hdc, &rc, BDR_SUNKENOUTER, BF_RECT);
-       if (horz)
-           PAGER_DrawHorzArrow(hdc, rc, COLOR_WINDOWFRAME, topLeft);
-       else
-           PAGER_DrawVertArrow(hdc, rc, COLOR_WINDOWFRAME, topLeft);
-    }
-    else if (btnState == PGF_GRAYED)
-    {
-       DrawEdge (hdc, &rc, BDR_OUTER, BF_FLAT);
-       if (horz)
-       {
-           PAGER_DrawHorzArrow(hdc, rc, COLOR_3DHIGHLIGHT, topLeft);
-           rc.left++, rc.top++; rc.right++, rc.bottom++;
-           PAGER_DrawHorzArrow(hdc, rc, COLOR_3DSHADOW, topLeft);
-       }
-       else
-       {
-           PAGER_DrawVertArrow(hdc, rc, COLOR_3DHIGHLIGHT, topLeft);
-           rc.left++, rc.top++; rc.right++, rc.bottom++;
-           PAGER_DrawVertArrow(hdc, rc, COLOR_3DSHADOW, topLeft);
-       }
-    }
-
-    SelectObject( hdc, hOldBrush );
-    DeleteObject(hBrush);
+    DrawFrameControl( hdc, &rc, DFC_SCROLL, flags );
 }
 
 /* << PAGER_GetDropTarget >> */
@@ -300,7 +181,7 @@ PAGER_ForwardMouse (PAGER_INFO* infoPtr, BOOL bFwd)
 }
 
 static inline LRESULT
-PAGER_GetButtonState (PAGER_INFO* infoPtr, INT btn)
+PAGER_GetButtonState (const PAGER_INFO* infoPtr, INT btn)
 {
     LRESULT btnState = PGF_INVISIBLE;
     TRACE("[%p]\n", infoPtr->hwndSelf);
@@ -315,51 +196,52 @@ PAGER_GetButtonState (PAGER_INFO* infoPtr, INT btn)
 
 
 static inline INT
-PAGER_GetPos(PAGER_INFO *infoPtr)
+PAGER_GetPos(const PAGER_INFO *infoPtr)
 {
     TRACE("[%p] returns %d\n", infoPtr->hwndSelf, infoPtr->nPos);
     return infoPtr->nPos;
 }
 
 static inline INT
-PAGER_GetButtonSize(PAGER_INFO *infoPtr)
+PAGER_GetButtonSize(const PAGER_INFO *infoPtr)
 {
     TRACE("[%p] returns %d\n", infoPtr->hwndSelf, infoPtr->nButtonSize);
     return infoPtr->nButtonSize;
 }
 
 static inline INT
-PAGER_GetBorder(PAGER_INFO *infoPtr)
+PAGER_GetBorder(const PAGER_INFO *infoPtr)
 {
     TRACE("[%p] returns %d\n", infoPtr->hwndSelf, infoPtr->nBorder);
     return infoPtr->nBorder;
 }
 
 static inline COLORREF
-PAGER_GetBkColor(PAGER_INFO *infoPtr)
+PAGER_GetBkColor(const PAGER_INFO *infoPtr)
 {
-    TRACE("[%p] returns %06lx\n", infoPtr->hwndSelf, infoPtr->clrBk);
+    TRACE("[%p] returns %06x\n", infoPtr->hwndSelf, infoPtr->clrBk);
     return infoPtr->clrBk;
 }
 
 static void
-PAGER_CalcSize (PAGER_INFO *infoPtr, INT* size, BOOL getWidth)
+PAGER_CalcSize( PAGER_INFO *infoPtr )
 {
     NMPGCALCSIZE nmpgcs;
     ZeroMemory (&nmpgcs, sizeof (NMPGCALCSIZE));
     nmpgcs.hdr.hwndFrom = infoPtr->hwndSelf;
     nmpgcs.hdr.idFrom   = GetWindowLongPtrW (infoPtr->hwndSelf, GWLP_ID);
     nmpgcs.hdr.code = PGN_CALCSIZE;
-    nmpgcs.dwFlag = getWidth ? PGF_CALCWIDTH : PGF_CALCHEIGHT;
-    nmpgcs.iWidth = getWidth ? *size : 0;
-    nmpgcs.iHeight = getWidth ? 0 : *size;
-    SendMessageW (infoPtr->hwndNotify, WM_NOTIFY,
-                  (WPARAM)nmpgcs.hdr.idFrom, (LPARAM)&nmpgcs);
+    nmpgcs.dwFlag = (infoPtr->dwStyle & PGS_HORZ) ? PGF_CALCWIDTH : PGF_CALCHEIGHT;
+    nmpgcs.iWidth = infoPtr->nWidth;
+    nmpgcs.iHeight = infoPtr->nHeight;
+    SendMessageW (infoPtr->hwndNotify, WM_NOTIFY, nmpgcs.hdr.idFrom, (LPARAM)&nmpgcs);
 
-    *size = getWidth ? nmpgcs.iWidth : nmpgcs.iHeight;
+    if (infoPtr->dwStyle & PGS_HORZ)
+        infoPtr->nWidth = nmpgcs.iWidth;
+    else
+        infoPtr->nHeight = nmpgcs.iHeight;
 
-    TRACE("[%p] PGN_CALCSIZE returns %s=%d\n", infoPtr->hwndSelf,
-                  getWidth ? "width" : "height", *size);
+    TRACE("[%p] PGN_CALCSIZE returns %dx%d\n", infoPtr->hwndSelf, nmpgcs.iWidth, nmpgcs.iHeight );
 }
 
 static void
@@ -385,10 +267,9 @@ PAGER_PositionChildWnd(PAGER_INFO* infoPtr)
             TRACE("[%p] SWP %dx%d at (%d,%d)\n", infoPtr->hwndSelf,
                          infoPtr->nWidth, infoPtr->nHeight,
                          -nPos, 0);
-            SetWindowPos(infoPtr->hwndChild, 0,
+            SetWindowPos(infoPtr->hwndChild, HWND_TOP,
                          -nPos, 0,
-                         infoPtr->nWidth, infoPtr->nHeight,
-                         SWP_NOZORDER);
+                         infoPtr->nWidth, infoPtr->nHeight, 0);
         }
         else
         {
@@ -399,10 +280,9 @@ PAGER_PositionChildWnd(PAGER_INFO* infoPtr)
             TRACE("[%p] SWP %dx%d at (%d,%d)\n", infoPtr->hwndSelf,
                          infoPtr->nWidth, infoPtr->nHeight,
                          0, -nPos);
-            SetWindowPos(infoPtr->hwndChild, 0,
+            SetWindowPos(infoPtr->hwndChild, HWND_TOP,
                          0, -nPos,
-                         infoPtr->nWidth, infoPtr->nHeight,
-                         SWP_NOZORDER);
+                         infoPtr->nWidth, infoPtr->nHeight, 0);
         }
 
         InvalidateRect(infoPtr->hwndChild, NULL, TRUE);
@@ -410,7 +290,7 @@ PAGER_PositionChildWnd(PAGER_INFO* infoPtr)
 }
 
 static INT
-PAGER_GetScrollRange(PAGER_INFO* infoPtr)
+PAGER_GetScrollRange(PAGER_INFO* infoPtr, BOOL calc_size)
 {
     INT scrollRange = 0;
 
@@ -420,16 +300,16 @@ PAGER_GetScrollRange(PAGER_INFO* infoPtr)
         RECT wndRect;
         GetWindowRect(infoPtr->hwndSelf, &wndRect);
 
+        if (calc_size)
+            PAGER_CalcSize(infoPtr);
         if (infoPtr->dwStyle & PGS_HORZ)
         {
             wndSize = wndRect.right - wndRect.left;
-            PAGER_CalcSize(infoPtr, &infoPtr->nWidth, TRUE);
             childSize = infoPtr->nWidth;
         }
         else
         {
             wndSize = wndRect.bottom - wndRect.top;
-            PAGER_CalcSize(infoPtr, &infoPtr->nHeight, FALSE);
             childSize = infoPtr->nHeight;
         }
 
@@ -453,9 +333,10 @@ PAGER_UpdateBtns(PAGER_INFO *infoPtr, INT scrollRange, BOOL hideGrayBtns)
     RECT rcTopLeft, rcBottomRight;
 
     /* get button rects */
-    PAGER_GetButtonRects(infoPtr, &rcTopLeft, &rcBottomRight, FALSE);
+    PAGER_GetButtonRects(infoPtr, &rcTopLeft, &rcBottomRight, TRUE);
 
     GetCursorPos(&pt);
+    ScreenToClient( infoPtr->hwndSelf, &pt );
 
     /* update states based on scroll position */
     if (infoPtr->nPos > 0)
@@ -463,7 +344,7 @@ PAGER_UpdateBtns(PAGER_INFO *infoPtr, INT scrollRange, BOOL hideGrayBtns)
         if (infoPtr->TLbtnState == PGF_INVISIBLE || infoPtr->TLbtnState == PGF_GRAYED)
             infoPtr->TLbtnState = PGF_NORMAL;
     }
-    else if (PtInRect(&rcTopLeft, pt))
+    else if (!hideGrayBtns && PtInRect(&rcTopLeft, pt))
         infoPtr->TLbtnState = PGF_GRAYED;
     else
         infoPtr->TLbtnState = PGF_INVISIBLE;
@@ -478,7 +359,7 @@ PAGER_UpdateBtns(PAGER_INFO *infoPtr, INT scrollRange, BOOL hideGrayBtns)
         if (infoPtr->BRbtnState == PGF_INVISIBLE || infoPtr->BRbtnState == PGF_GRAYED)
             infoPtr->BRbtnState = PGF_NORMAL;
     }
-    else if (PtInRect(&rcBottomRight, pt))
+    else if (!hideGrayBtns && PtInRect(&rcBottomRight, pt))
         infoPtr->BRbtnState = PGF_GRAYED;
     else
         infoPtr->BRbtnState = PGF_INVISIBLE;
@@ -501,9 +382,9 @@ PAGER_UpdateBtns(PAGER_INFO *infoPtr, INT scrollRange, BOOL hideGrayBtns)
 }
 
 static LRESULT
-PAGER_SetPos(PAGER_INFO* infoPtr, INT newPos, BOOL fromBtnPress)
+PAGER_SetPos(PAGER_INFO* infoPtr, INT newPos, BOOL fromBtnPress, BOOL calc_size)
 {
-    INT scrollRange = PAGER_GetScrollRange(infoPtr);
+    INT scrollRange = PAGER_GetScrollRange(infoPtr, calc_size);
     INT oldPos = infoPtr->nPos;
 
     if ((scrollRange <= 0) || (newPos < 0))
@@ -525,96 +406,6 @@ PAGER_SetPos(PAGER_INFO* infoPtr, INT newPos, BOOL fromBtnPress)
     return 0;
 }
 
-static LRESULT
-PAGER_WindowPosChanging(PAGER_INFO* infoPtr, WINDOWPOS *winpos)
-{
-    if ((infoPtr->dwStyle & CCS_NORESIZE) && !(winpos->flags & SWP_NOSIZE))
-    {
-        /* don't let the app resize the nonscrollable dimension of a control
-         * that was created with CCS_NORESIZE style
-         * (i.e. height for a horizontal pager, or width for a vertical one) */
-
-	/* except if the current dimension is 0 and app is setting for
-	 * first time, then save amount as dimension. - GA 8/01 */
-
-        if (infoPtr->dwStyle & PGS_HORZ)
-	    if (!infoPtr->nHeight && winpos->cy)
-		infoPtr->nHeight = winpos->cy;
-	    else
-		winpos->cy = infoPtr->nHeight;
-        else
-	    if (!infoPtr->nWidth && winpos->cx)
-		infoPtr->nWidth = winpos->cx;
-	    else
-		winpos->cx = infoPtr->nWidth;
-	return 0;
-    }
-
-    return DefWindowProcW (infoPtr->hwndSelf, WM_WINDOWPOSCHANGING, 0, (LPARAM)winpos);
-}
-
-static INT
-PAGER_SetFixedWidth(PAGER_INFO* infoPtr)
-{
-  /* Must set the non-scrollable dimension to be less than the full height/width
-   * so that NCCalcSize is called.  The Msoft docs mention 3/4 factor for button
-   * size, and experimentation shows that affect is almost right. */
-
-    RECT wndRect;
-    INT delta, h;
-    GetWindowRect(infoPtr->hwndSelf, &wndRect);
-
-    /* see what the app says for btn width */
-    PAGER_CalcSize(infoPtr, &infoPtr->nWidth, TRUE);
-
-    if (infoPtr->dwStyle & CCS_NORESIZE)
-    {
-        delta = wndRect.right - wndRect.left - infoPtr->nWidth;
-        if (delta > infoPtr->nButtonSize)
-            infoPtr->nWidth += 4 * infoPtr->nButtonSize / 3;
-        else if (delta > 0)
-            infoPtr->nWidth +=  infoPtr->nButtonSize / 3;
-    }
-
-    h = wndRect.bottom - wndRect.top + infoPtr->nButtonSize;
-
-    TRACE("[%p] infoPtr->nWidth set to %d\n",
-	       infoPtr->hwndSelf, infoPtr->nWidth);
-
-    return h;
-}
-
-static INT
-PAGER_SetFixedHeight(PAGER_INFO* infoPtr)
-{
-  /* Must set the non-scrollable dimension to be less than the full height/width
-   * so that NCCalcSize is called.  The Msoft docs mention 3/4 factor for button
-   * size, and experimentation shows that affect is almost right. */
-
-    RECT wndRect;
-    INT delta, w;
-    GetWindowRect(infoPtr->hwndSelf, &wndRect);
-
-    /* see what the app says for btn height */
-    PAGER_CalcSize(infoPtr, &infoPtr->nHeight, FALSE);
-
-    if (infoPtr->dwStyle & CCS_NORESIZE)
-    {
-        delta = wndRect.bottom - wndRect.top - infoPtr->nHeight;
-        if (delta > infoPtr->nButtonSize)
-            infoPtr->nHeight += infoPtr->nButtonSize;
-        else if (delta > 0)
-            infoPtr->nHeight +=  infoPtr->nButtonSize / 3;
-    }
-
-    w = wndRect.right - wndRect.left + infoPtr->nButtonSize;
-
-    TRACE("[%p] infoPtr->nHeight set to %d\n",
-	       infoPtr->hwndSelf, infoPtr->nHeight);
-
-    return w;
-}
-
 /******************************************************************
  * For the PGM_RECALCSIZE message (but not the other uses in      *
  * this module), the native control does only the following:      *
@@ -634,12 +425,12 @@ PAGER_RecalcSize(PAGER_INFO *infoPtr)
 
     if (infoPtr->hwndChild)
     {
-        INT scrollRange = PAGER_GetScrollRange(infoPtr);
+        INT scrollRange = PAGER_GetScrollRange(infoPtr, TRUE);
 
         if (scrollRange <= 0)
         {
             infoPtr->nPos = -1;
-            PAGER_SetPos(infoPtr, 0, FALSE);
+            PAGER_SetPos(infoPtr, 0, FALSE, TRUE);
         }
         else
             PAGER_PositionChildWnd(infoPtr);
@@ -655,7 +446,7 @@ PAGER_SetBkColor (PAGER_INFO* infoPtr, COLORREF clrBk)
     COLORREF clrTemp = infoPtr->clrBk;
 
     infoPtr->clrBk = clrBk;
-    TRACE("[%p] %06lx\n", infoPtr->hwndSelf, infoPtr->clrBk);
+    TRACE("[%p] %06x\n", infoPtr->hwndSelf, infoPtr->clrBk);
 
     /* the native control seems to do things this way */
     SetWindowPos(infoPtr->hwndSelf, 0, 0, 0, 0, 0,
@@ -699,36 +490,17 @@ PAGER_SetButtonSize (PAGER_INFO* infoPtr, INT iButtonSize)
 static LRESULT
 PAGER_SetChild (PAGER_INFO* infoPtr, HWND hwndChild)
 {
-    INT hw;
-
     infoPtr->hwndChild = IsWindow (hwndChild) ? hwndChild : 0;
 
     if (infoPtr->hwndChild)
     {
         TRACE("[%p] hwndChild=%p\n", infoPtr->hwndSelf, infoPtr->hwndChild);
 
-        if (infoPtr->dwStyle & PGS_HORZ) {
-            hw = PAGER_SetFixedHeight(infoPtr);
-	    /* adjust non-scrollable dimension to fit the child */
-	    SetWindowPos(infoPtr->hwndSelf, 0, 0, 0, hw, infoPtr->nHeight,
-			 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOZORDER |
-			 SWP_NOSIZE | SWP_NOACTIVATE);
-	}
-        else {
-            hw = PAGER_SetFixedWidth(infoPtr);
-	    /* adjust non-scrollable dimension to fit the child */
-	    SetWindowPos(infoPtr->hwndSelf, 0, 0, 0, infoPtr->nWidth, hw,
-			 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOZORDER |
-			 SWP_NOSIZE | SWP_NOACTIVATE);
-	}
-
-        /* position child within the page scroller */
-        SetWindowPos(infoPtr->hwndChild, HWND_TOP,
-                     0,0,0,0,
-                     SWP_SHOWWINDOW | SWP_NOSIZE);  /* native is 0 */
+        SetWindowPos(infoPtr->hwndSelf, 0, 0, 0, 0, 0,
+                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE);
 
         infoPtr->nPos = -1;
-        PAGER_SetPos(infoPtr, 0, FALSE);
+        PAGER_SetPos(infoPtr, 0, FALSE, FALSE);
     }
 
     return 0;
@@ -764,8 +536,7 @@ PAGER_Scroll(PAGER_INFO* infoPtr, INT dir)
         }
         nmpgScroll.iScroll -= 2*infoPtr->nButtonSize;
 
-        SendMessageW (infoPtr->hwndNotify, WM_NOTIFY,
-                    (WPARAM)nmpgScroll.hdr.idFrom, (LPARAM)&nmpgScroll);
+        SendMessageW (infoPtr->hwndNotify, WM_NOTIFY, nmpgScroll.hdr.idFrom, (LPARAM)&nmpgScroll);
 
         TRACE("[%p] PGN_SCROLL returns iScroll=%d\n", infoPtr->hwndSelf, nmpgScroll.iScroll);
 
@@ -774,9 +545,9 @@ PAGER_Scroll(PAGER_INFO* infoPtr, INT dir)
             infoPtr->direction = dir;
 
             if (dir == PGF_SCROLLLEFT || dir == PGF_SCROLLUP)
-                PAGER_SetPos(infoPtr, infoPtr->nPos - nmpgScroll.iScroll, TRUE);
+                PAGER_SetPos(infoPtr, infoPtr->nPos - nmpgScroll.iScroll, TRUE, TRUE);
             else
-                PAGER_SetPos(infoPtr, infoPtr->nPos + nmpgScroll.iScroll, TRUE);
+                PAGER_SetPos(infoPtr, infoPtr->nPos + nmpgScroll.iScroll, TRUE, TRUE);
         }
         else
             infoPtr->direction = -1;
@@ -784,7 +555,7 @@ PAGER_Scroll(PAGER_INFO* infoPtr, INT dir)
 }
 
 static LRESULT
-PAGER_FmtLines(PAGER_INFO *infoPtr)
+PAGER_FmtLines(const PAGER_INFO *infoPtr)
 {
     /* initiate NCCalcSize to resize client wnd and get size */
     SetWindowPos(infoPtr->hwndSelf, 0, 0, 0, 0, 0,
@@ -799,12 +570,13 @@ PAGER_FmtLines(PAGER_INFO *infoPtr)
 }
 
 static LRESULT
-PAGER_Create (HWND hwnd, LPCREATESTRUCTW lpcs)
+PAGER_Create (HWND hwnd, const CREATESTRUCTW *lpcs)
 {
     PAGER_INFO *infoPtr;
+    INT ret;
 
     /* allocate memory for info structure */
-    infoPtr = (PAGER_INFO *)Alloc (sizeof(PAGER_INFO));
+    infoPtr = heap_alloc_zero (sizeof(*infoPtr));
     if (!infoPtr) return -1;
     SetWindowLongPtrW (hwnd, 0, (DWORD_PTR)infoPtr);
 
@@ -828,6 +600,9 @@ PAGER_Create (HWND hwnd, LPCREATESTRUCTW lpcs)
     if (infoPtr->dwStyle & PGS_DRAGNDROP)
         FIXME("[%p] Drag and Drop style is not implemented yet.\n", infoPtr->hwndSelf);
 
+    ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFYFORMAT, (WPARAM)infoPtr->hwndSelf, NF_QUERY);
+    infoPtr->bUnicode = (ret == NFR_UNICODE);
+
     return 0;
 }
 
@@ -836,7 +611,8 @@ static LRESULT
 PAGER_Destroy (PAGER_INFO *infoPtr)
 {
     SetWindowLongPtrW (infoPtr->hwndSelf, 0, 0);
-    Free (infoPtr);  /* free pager info data */
+    heap_free (infoPtr->pwszBuffer);
+    heap_free (infoPtr);
     return 0;
 }
 
@@ -844,7 +620,6 @@ static LRESULT
 PAGER_NCCalcSize(PAGER_INFO* infoPtr, WPARAM wParam, LPRECT lpRect)
 {
     RECT rcChild, rcWindow;
-    INT scrollRange;
 
     /*
      * lpRect points to a RECT struct.  On entry, the struct
@@ -861,13 +636,12 @@ PAGER_NCCalcSize(PAGER_INFO* infoPtr, WPARAM wParam, LPRECT lpRect)
     MapWindowPoints (0, infoPtr->hwndSelf, (LPPOINT)&rcChild, 2); /* FIXME: RECT != 2 POINTS */
     GetWindowRect (infoPtr->hwndSelf, &rcWindow);
 
+    infoPtr->nWidth = lpRect->right - lpRect->left;
+    infoPtr->nHeight = lpRect->bottom - lpRect->top;
+    PAGER_CalcSize( infoPtr );
+
     if (infoPtr->dwStyle & PGS_HORZ)
     {
-	infoPtr->nWidth = lpRect->right - lpRect->left;
-	PAGER_CalcSize (infoPtr, &infoPtr->nWidth, TRUE);
-
-	scrollRange = infoPtr->nWidth - (rcWindow.right - rcWindow.left);
-
 	if (infoPtr->TLbtnState && (lpRect->left + infoPtr->nButtonSize < lpRect->right))
 	    lpRect->left += infoPtr->nButtonSize;
 	if (infoPtr->BRbtnState && (lpRect->right - infoPtr->nButtonSize > lpRect->left))
@@ -875,31 +649,21 @@ PAGER_NCCalcSize(PAGER_INFO* infoPtr, WPARAM wParam, LPRECT lpRect)
     }
     else
     {
-	infoPtr->nHeight = lpRect->bottom - lpRect->top;
-	PAGER_CalcSize (infoPtr, &infoPtr->nHeight, FALSE);
-
-	scrollRange = infoPtr->nHeight - (rcWindow.bottom - rcWindow.top);
-
 	if (infoPtr->TLbtnState && (lpRect->top + infoPtr->nButtonSize < lpRect->bottom))
 	    lpRect->top += infoPtr->nButtonSize;
 	if (infoPtr->BRbtnState && (lpRect->bottom - infoPtr->nButtonSize > lpRect->top))
 	    lpRect->bottom -= infoPtr->nButtonSize;
     }
 
-    TRACE("nPos=%d, nHeigth=%d, window=%s\n",
-          infoPtr->nPos, infoPtr->nHeight,
-          wine_dbgstr_rect(&rcWindow));
-
-    TRACE("[%p] client rect set to %ldx%ld at (%ld,%ld) BtnState[%d,%d]\n",
-	  infoPtr->hwndSelf, lpRect->right-lpRect->left, lpRect->bottom-lpRect->top,
-	  lpRect->left, lpRect->top,
+    TRACE("nPos=%d, nHeight=%d, window=%s\n", infoPtr->nPos, infoPtr->nHeight, wine_dbgstr_rect(&rcWindow));
+    TRACE("[%p] client rect set to %s BtnState[%d,%d]\n", infoPtr->hwndSelf, wine_dbgstr_rect(lpRect),
 	  infoPtr->TLbtnState, infoPtr->BRbtnState);
 
     return 0;
 }
 
 static LRESULT
-PAGER_NCPaint (PAGER_INFO* infoPtr, HRGN hRgn)
+PAGER_NCPaint (const PAGER_INFO* infoPtr, HRGN hRgn)
 {
     RECT rcBottomRight, rcTopLeft;
     HDC hdc;
@@ -924,7 +688,7 @@ PAGER_NCPaint (PAGER_INFO* infoPtr, HRGN hRgn)
 }
 
 static INT
-PAGER_HitTest (PAGER_INFO* infoPtr, const POINT * pt)
+PAGER_HitTest (const PAGER_INFO* infoPtr, const POINT * pt)
 {
     RECT clientRect, rcTopLeft, rcBottomRight;
     POINT ptWindow;
@@ -956,7 +720,7 @@ PAGER_HitTest (PAGER_INFO* infoPtr, const POINT * pt)
 }
 
 static LRESULT
-PAGER_NCHitTest (PAGER_INFO* infoPtr, INT x, INT y)
+PAGER_NCHitTest (const PAGER_INFO* infoPtr, INT x, INT y)
 {
     POINT pt;
     INT nHit;
@@ -974,7 +738,7 @@ static LRESULT
 PAGER_MouseMove (PAGER_INFO* infoPtr, INT keys, INT x, INT y)
 {
     POINT clpt, pt;
-    RECT wnrect, *btnrect = NULL;
+    RECT wnrect;
     BOOL topLeft = FALSE;
     INT btnstate = 0;
     INT hit;
@@ -987,8 +751,9 @@ PAGER_MouseMove (PAGER_INFO* infoPtr, INT keys, INT x, INT y)
     ClientToScreen(infoPtr->hwndSelf, &pt);
     GetWindowRect(infoPtr->hwndSelf, &wnrect);
     if (PtInRect(&wnrect, pt)) {
-        RECT TLbtnrect, BRbtnrect;
-        PAGER_GetButtonRects(infoPtr, &TLbtnrect, &BRbtnrect, FALSE);
+	RECT topleft, bottomright, *rect = NULL;
+
+	PAGER_GetButtonRects(infoPtr, &topleft, &bottomright, FALSE);
 
 	clpt = pt;
 	MapWindowPoints(0, infoPtr->hwndSelf, &clpt, 1);
@@ -996,24 +761,23 @@ PAGER_MouseMove (PAGER_INFO* infoPtr, INT keys, INT x, INT y)
 	if ((hit == PGB_TOPORLEFT) && (infoPtr->TLbtnState == PGF_NORMAL))
 	{
 	    topLeft = TRUE;
-	    btnrect = &TLbtnrect;
+	    rect = &topleft;
 	    infoPtr->TLbtnState = PGF_HOT;
 	    btnstate = infoPtr->TLbtnState;
 	}
 	else if ((hit == PGB_BOTTOMORRIGHT) && (infoPtr->BRbtnState == PGF_NORMAL))
 	{
 	    topLeft = FALSE;
-	    btnrect = &BRbtnrect;
+	    rect = &bottomright;
 	    infoPtr->BRbtnState = PGF_HOT;
 	    btnstate = infoPtr->BRbtnState;
 	}
 
 	/* If in one of the buttons the capture and draw buttons */
-	if (btnrect)
+	if (rect)
 	{
-	    TRACE("[%p] draw btn (%ld,%ld)-(%ld,%ld), Capture %s, style %08lx\n",
-		  infoPtr->hwndSelf, btnrect->left, btnrect->top,
-		  btnrect->right, btnrect->bottom,
+            TRACE("[%p] draw btn (%s), Capture %s, style %08x\n",
+                  infoPtr->hwndSelf, wine_dbgstr_rect(rect),
 		  (infoPtr->bCapture) ? "TRUE" : "FALSE",
 		  infoPtr->dwStyle);
 	    if (!infoPtr->bCapture)
@@ -1026,7 +790,7 @@ PAGER_MouseMove (PAGER_INFO* infoPtr, INT keys, INT x, INT y)
 		SetTimer(infoPtr->hwndSelf, TIMERID1, 0x3e, 0);
 	    hdc = GetWindowDC(infoPtr->hwndSelf);
 	    /* OffsetRect(wnrect, 0 | 1, 0 | 1) */
-	    PAGER_DrawButton(hdc, infoPtr->clrBk, *btnrect,
+	    PAGER_DrawButton(hdc, infoPtr->clrBk, *rect,
 			     infoPtr->dwStyle & PGS_HORZ, topLeft, btnstate);
 	    ReleaseDC(infoPtr->hwndSelf, hdc);
 	    return 0;
@@ -1077,8 +841,7 @@ PAGER_MouseMove (PAGER_INFO* infoPtr, INT keys, INT x, INT y)
         	nmhdr.hwndFrom = infoPtr->hwndSelf;
         	nmhdr.idFrom   = GetWindowLongPtrW(infoPtr->hwndSelf, GWLP_ID);
         	nmhdr.code = NM_RELEASEDCAPTURE;
-        	SendMessageW(infoPtr->hwndNotify, WM_NOTIFY,
-                         (WPARAM)nmhdr.idFrom, (LPARAM)&nmhdr);
+		SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, nmhdr.idFrom, (LPARAM)&nmhdr);
         }
         if (IsWindow(infoPtr->hwndSelf))
             KillTimer(infoPtr->hwndSelf, TIMERID1);
@@ -1180,7 +943,7 @@ PAGER_Timer (PAGER_INFO* infoPtr, INT nTimerId)
 	else
 	    dir = (infoPtr->dwStyle & PGS_HORZ) ?
 		PGF_SCROLLRIGHT : PGF_SCROLLDOWN;
-	TRACE("[%p] TIMERID1: style=%08lx, dir=%d\n", 
+	TRACE("[%p] TIMERID1: style=%08x, dir=%d\n",
               infoPtr->hwndSelf, infoPtr->dwStyle, dir);
 	KillTimer(infoPtr->hwndSelf, TIMERID1);
 	SetTimer(infoPtr->hwndSelf, TIMERID1, REPEAT_DELAY, 0);
@@ -1204,20 +967,21 @@ PAGER_Timer (PAGER_INFO* infoPtr, INT nTimerId)
 }
 
 static LRESULT
-PAGER_EraseBackground (PAGER_INFO* infoPtr, HDC hdc)
+PAGER_EraseBackground (const PAGER_INFO* infoPtr, HDC hdc)
 {
     POINT pt, ptorig;
     HWND parent;
+    LRESULT ret;
 
     pt.x = 0;
     pt.y = 0;
     parent = GetParent(infoPtr->hwndSelf);
     MapWindowPoints(infoPtr->hwndSelf, parent, &pt, 1);
     OffsetWindowOrgEx (hdc, pt.x, pt.y, &ptorig);
-    SendMessageW (parent, WM_ERASEBKGND, (WPARAM)hdc, 0);
+    ret = SendMessageW (parent, WM_ERASEBKGND, (WPARAM)hdc, 0);
     SetWindowOrgEx (hdc, ptorig.x, ptorig.y, 0);
 
-    return 0;
+    return ret;
 }
 
 
@@ -1238,11 +1002,11 @@ PAGER_Size (PAGER_INFO* infoPtr, INT type, INT x, INT y)
 
 
 static LRESULT 
-PAGER_StyleChanged(PAGER_INFO *infoPtr, WPARAM wStyleType, LPSTYLESTRUCT lpss)
+PAGER_StyleChanged(PAGER_INFO *infoPtr, WPARAM wStyleType, const STYLESTRUCT *lpss)
 {
     DWORD oldStyle = infoPtr->dwStyle;
 
-    TRACE("(styletype=%x, styleOld=0x%08lx, styleNew=0x%08lx)\n",
+    TRACE("(styletype=%lx, styleOld=0x%08x, styleNew=0x%08x)\n",
           wStyleType, lpss->styleOld, lpss->styleNew);
 
     if (wStyleType != GWL_STYLE) return 0;
@@ -1257,10 +1021,444 @@ PAGER_StyleChanged(PAGER_INFO *infoPtr, WPARAM wStyleType, LPSTYLESTRUCT lpss)
     return 0;
 }
 
+static LRESULT PAGER_NotifyFormat(PAGER_INFO *infoPtr, INT command)
+{
+    INT ret;
+    switch (command)
+    {
+    case NF_REQUERY:
+        ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFYFORMAT, (WPARAM)infoPtr->hwndSelf, NF_QUERY);
+        infoPtr->bUnicode = (ret == NFR_UNICODE);
+        return ret;
+    case NF_QUERY:
+        /* Pager always wants Unicode notifications from children */
+        return NFR_UNICODE;
+    default:
+        return 0;
+    }
+}
+
+static UINT PAGER_GetAnsiNtfCode(UINT code)
+{
+    switch (code)
+    {
+    /* ComboxBoxEx */
+    case CBEN_DRAGBEGINW: return CBEN_DRAGBEGINA;
+    case CBEN_ENDEDITW: return CBEN_ENDEDITA;
+    case CBEN_GETDISPINFOW: return CBEN_GETDISPINFOA;
+    /* Date and Time Picker */
+    case DTN_FORMATW: return DTN_FORMATA;
+    case DTN_FORMATQUERYW: return DTN_FORMATQUERYA;
+    case DTN_USERSTRINGW: return DTN_USERSTRINGA;
+    case DTN_WMKEYDOWNW: return DTN_WMKEYDOWNA;
+    /* Header */
+    case HDN_BEGINTRACKW: return HDN_BEGINTRACKA;
+    case HDN_DIVIDERDBLCLICKW: return HDN_DIVIDERDBLCLICKA;
+    case HDN_ENDTRACKW: return HDN_ENDTRACKA;
+    case HDN_GETDISPINFOW: return HDN_GETDISPINFOA;
+    case HDN_ITEMCHANGEDW: return HDN_ITEMCHANGEDA;
+    case HDN_ITEMCHANGINGW: return HDN_ITEMCHANGINGA;
+    case HDN_ITEMCLICKW: return HDN_ITEMCLICKA;
+    case HDN_ITEMDBLCLICKW: return HDN_ITEMDBLCLICKA;
+    case HDN_TRACKW: return HDN_TRACKA;
+    /* List View */
+    case LVN_BEGINLABELEDITW: return LVN_BEGINLABELEDITA;
+    case LVN_ENDLABELEDITW: return LVN_ENDLABELEDITA;
+    case LVN_GETDISPINFOW: return LVN_GETDISPINFOA;
+    case LVN_GETINFOTIPW: return LVN_GETINFOTIPA;
+    case LVN_INCREMENTALSEARCHW: return LVN_INCREMENTALSEARCHA;
+    case LVN_ODFINDITEMW: return LVN_ODFINDITEMA;
+    case LVN_SETDISPINFOW: return LVN_SETDISPINFOA;
+    /* Toolbar */
+    case TBN_GETBUTTONINFOW: return TBN_GETBUTTONINFOA;
+    case TBN_GETINFOTIPW: return TBN_GETINFOTIPA;
+    /* Tooltip */
+    case TTN_GETDISPINFOW: return TTN_GETDISPINFOA;
+    /* Tree View */
+    case TVN_BEGINDRAGW: return TVN_BEGINDRAGA;
+    case TVN_BEGINLABELEDITW: return TVN_BEGINLABELEDITA;
+    case TVN_BEGINRDRAGW: return TVN_BEGINRDRAGA;
+    case TVN_DELETEITEMW: return TVN_DELETEITEMA;
+    case TVN_ENDLABELEDITW: return TVN_ENDLABELEDITA;
+    case TVN_GETDISPINFOW: return TVN_GETDISPINFOA;
+    case TVN_GETINFOTIPW: return TVN_GETINFOTIPA;
+    case TVN_ITEMEXPANDEDW: return TVN_ITEMEXPANDEDA;
+    case TVN_ITEMEXPANDINGW: return TVN_ITEMEXPANDINGA;
+    case TVN_SELCHANGEDW: return TVN_SELCHANGEDA;
+    case TVN_SELCHANGINGW: return TVN_SELCHANGINGA;
+    case TVN_SETDISPINFOW: return TVN_SETDISPINFOA;
+    }
+    return code;
+}
+
+static BOOL PAGER_AdjustBuffer(PAGER_INFO *infoPtr, INT size)
+{
+    if (!infoPtr->pwszBuffer)
+        infoPtr->pwszBuffer = heap_alloc(size);
+    else if (infoPtr->nBufferSize < size)
+        infoPtr->pwszBuffer = heap_realloc(infoPtr->pwszBuffer, size);
+
+    if (!infoPtr->pwszBuffer) return FALSE;
+    if (infoPtr->nBufferSize < size) infoPtr->nBufferSize = size;
+
+    return TRUE;
+}
+
+/* Convert text to Unicode and return the original text address */
+static WCHAR *PAGER_ConvertText(WCHAR **text)
+{
+    WCHAR *oldText = *text;
+    *text = NULL;
+    Str_SetPtrWtoA((CHAR **)text, oldText);
+    return oldText;
+}
+
+static void PAGER_RestoreText(WCHAR **text, WCHAR *oldText)
+{
+    if (!oldText) return;
+
+    Free(*text);
+    *text = oldText;
+}
+
+static LRESULT PAGER_SendConvertedNotify(PAGER_INFO *infoPtr, NMHDR *hdr, UINT *mask, UINT requiredMask, WCHAR **text,
+                                         INT *textMax, DWORD flags)
+{
+    CHAR *sendBuffer = NULL;
+    CHAR *receiveBuffer;
+    INT bufferSize;
+    WCHAR *oldText;
+    INT oldTextMax;
+    LRESULT ret = NO_ERROR;
+
+    oldText = *text;
+    oldTextMax = textMax ? *textMax : 0;
+
+    hdr->code = PAGER_GetAnsiNtfCode(hdr->code);
+
+    if (mask && !(*mask & requiredMask))
+    {
+        ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+        if (flags & SET_NULL_IF_NO_MASK) oldText = NULL;
+        goto done;
+    }
+
+    if (oldTextMax < 0) goto done;
+
+    if ((*text && flags & (CONVERT_SEND | ZERO_SEND)) || (!*text && flags & SEND_EMPTY_IF_NULL))
+    {
+        bufferSize = textMax ? *textMax : lstrlenW(*text) + 1;
+        sendBuffer = heap_alloc_zero(bufferSize);
+        if (!sendBuffer) goto done;
+        if (!(flags & ZERO_SEND)) WideCharToMultiByte(CP_ACP, 0, *text, -1, sendBuffer, bufferSize, NULL, FALSE);
+        *text = (WCHAR *)sendBuffer;
+    }
+
+    ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+
+    if (*text && oldText && (flags & CONVERT_RECEIVE))
+    {
+        /* MultiByteToWideChar requires that source and destination are not the same buffer */
+        if (*text == oldText)
+        {
+            bufferSize = lstrlenA((CHAR *)*text)  + 1;
+            receiveBuffer = heap_alloc(bufferSize);
+            if (!receiveBuffer) goto done;
+            memcpy(receiveBuffer, *text, bufferSize);
+            MultiByteToWideChar(CP_ACP, 0, receiveBuffer, bufferSize, oldText, oldTextMax);
+            heap_free(receiveBuffer);
+        }
+        else
+            MultiByteToWideChar(CP_ACP, 0, (CHAR *)*text, -1, oldText, oldTextMax);
+    }
+
+done:
+    heap_free(sendBuffer);
+    *text = oldText;
+    return ret;
+}
+
+static LRESULT PAGER_Notify(PAGER_INFO *infoPtr, NMHDR *hdr)
+{
+    LRESULT ret;
+
+    if (infoPtr->bUnicode) return SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+
+    switch (hdr->code)
+    {
+    /* ComboBoxEx */
+    case CBEN_GETDISPINFOW:
+    {
+        NMCOMBOBOXEXW *nmcbe = (NMCOMBOBOXEXW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmcbe->ceItem.mask, CBEIF_TEXT, &nmcbe->ceItem.pszText,
+                                         &nmcbe->ceItem.cchTextMax, ZERO_SEND | SET_NULL_IF_NO_MASK | CONVERT_RECEIVE);
+    }
+    case CBEN_DRAGBEGINW:
+    {
+        NMCBEDRAGBEGINW *nmdbW = (NMCBEDRAGBEGINW *)hdr;
+        NMCBEDRAGBEGINA nmdbA = {{0}};
+        nmdbA.hdr.code = PAGER_GetAnsiNtfCode(nmdbW->hdr.code);
+        nmdbA.hdr.hwndFrom = nmdbW->hdr.hwndFrom;
+        nmdbA.hdr.idFrom = nmdbW->hdr.idFrom;
+        nmdbA.iItemid = nmdbW->iItemid;
+        WideCharToMultiByte(CP_ACP, 0, nmdbW->szText, ARRAY_SIZE(nmdbW->szText), nmdbA.szText, ARRAY_SIZE(nmdbA.szText),
+                            NULL, FALSE);
+        return SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)&nmdbA);
+    }
+    case CBEN_ENDEDITW:
+    {
+        NMCBEENDEDITW *nmedW = (NMCBEENDEDITW *)hdr;
+        NMCBEENDEDITA nmedA = {{0}};
+        nmedA.hdr.code = PAGER_GetAnsiNtfCode(nmedW->hdr.code);
+        nmedA.hdr.hwndFrom = nmedW->hdr.hwndFrom;
+        nmedA.hdr.idFrom = nmedW->hdr.idFrom;
+        nmedA.fChanged = nmedW->fChanged;
+        nmedA.iNewSelection = nmedW->iNewSelection;
+        nmedA.iWhy = nmedW->iWhy;
+        WideCharToMultiByte(CP_ACP, 0, nmedW->szText, ARRAY_SIZE(nmedW->szText), nmedA.szText, ARRAY_SIZE(nmedA.szText),
+                            NULL, FALSE);
+        return SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)&nmedA);
+    }
+    /* Date and Time Picker */
+    case DTN_FORMATW:
+    {
+        NMDATETIMEFORMATW *nmdtf = (NMDATETIMEFORMATW *)hdr;
+        WCHAR *oldFormat;
+        INT textLength;
+
+        hdr->code = PAGER_GetAnsiNtfCode(hdr->code);
+        oldFormat = PAGER_ConvertText((WCHAR **)&nmdtf->pszFormat);
+        ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)nmdtf);
+        PAGER_RestoreText((WCHAR **)&nmdtf->pszFormat, oldFormat);
+
+        if (nmdtf->pszDisplay)
+        {
+            textLength = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)nmdtf->pszDisplay, -1, 0, 0);
+            if (!PAGER_AdjustBuffer(infoPtr, textLength * sizeof(WCHAR))) return ret;
+            MultiByteToWideChar(CP_ACP, 0, (LPCSTR)nmdtf->pszDisplay, -1, infoPtr->pwszBuffer, textLength);
+            if (nmdtf->pszDisplay != nmdtf->szDisplay)
+                nmdtf->pszDisplay = infoPtr->pwszBuffer;
+            else
+            {
+                textLength = min(textLength, ARRAY_SIZE(nmdtf->szDisplay));
+                memcpy(nmdtf->szDisplay, infoPtr->pwszBuffer, textLength * sizeof(WCHAR));
+            }
+        }
+
+        return ret;
+    }
+    case DTN_FORMATQUERYW:
+    {
+        NMDATETIMEFORMATQUERYW *nmdtfq = (NMDATETIMEFORMATQUERYW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, NULL, 0, (WCHAR **)&nmdtfq->pszFormat, NULL, CONVERT_SEND);
+    }
+    case DTN_WMKEYDOWNW:
+    {
+        NMDATETIMEWMKEYDOWNW *nmdtkd = (NMDATETIMEWMKEYDOWNW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, NULL, 0, (WCHAR **)&nmdtkd->pszFormat, NULL, CONVERT_SEND);
+    }
+    case DTN_USERSTRINGW:
+    {
+        NMDATETIMESTRINGW *nmdts = (NMDATETIMESTRINGW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, NULL, 0, (WCHAR **)&nmdts->pszUserString, NULL, CONVERT_SEND);
+    }
+    /* Header */
+    case HDN_BEGINTRACKW:
+    case HDN_DIVIDERDBLCLICKW:
+    case HDN_ENDTRACKW:
+    case HDN_ITEMCHANGEDW:
+    case HDN_ITEMCHANGINGW:
+    case HDN_ITEMCLICKW:
+    case HDN_ITEMDBLCLICKW:
+    case HDN_TRACKW:
+    {
+        NMHEADERW *nmh = (NMHEADERW *)hdr;
+        WCHAR *oldText = NULL, *oldFilterText = NULL;
+        HD_TEXTFILTERW *tf = NULL;
+
+        hdr->code = PAGER_GetAnsiNtfCode(hdr->code);
+
+        if (!nmh->pitem) return SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+        if (nmh->pitem->mask & HDI_TEXT) oldText = PAGER_ConvertText(&nmh->pitem->pszText);
+        if ((nmh->pitem->mask & HDI_FILTER) && (nmh->pitem->type == HDFT_ISSTRING) && nmh->pitem->pvFilter)
+        {
+            tf = (HD_TEXTFILTERW *)nmh->pitem->pvFilter;
+            oldFilterText = PAGER_ConvertText(&tf->pszText);
+        }
+        ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+        PAGER_RestoreText(&nmh->pitem->pszText, oldText);
+        if (tf) PAGER_RestoreText(&tf->pszText, oldFilterText);
+        return ret;
+    }
+    case HDN_GETDISPINFOW:
+    {
+        NMHDDISPINFOW *nmhddi = (NMHDDISPINFOW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmhddi->mask, HDI_TEXT, &nmhddi->pszText, &nmhddi->cchTextMax,
+                                         SEND_EMPTY_IF_NULL | CONVERT_SEND | CONVERT_RECEIVE);
+    }
+    /* List View */
+    case LVN_BEGINLABELEDITW:
+    case LVN_ENDLABELEDITW:
+    case LVN_SETDISPINFOW:
+    {
+        NMLVDISPINFOW *nmlvdi = (NMLVDISPINFOW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmlvdi->item.mask, LVIF_TEXT, &nmlvdi->item.pszText,
+                                         &nmlvdi->item.cchTextMax, SET_NULL_IF_NO_MASK | CONVERT_SEND | CONVERT_RECEIVE);
+    }
+    case LVN_GETDISPINFOW:
+    {
+        NMLVDISPINFOW *nmlvdi = (NMLVDISPINFOW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmlvdi->item.mask, LVIF_TEXT, &nmlvdi->item.pszText,
+                                         &nmlvdi->item.cchTextMax, CONVERT_RECEIVE);
+    }
+    case LVN_GETINFOTIPW:
+    {
+        NMLVGETINFOTIPW *nmlvgit = (NMLVGETINFOTIPW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, NULL, 0, &nmlvgit->pszText, &nmlvgit->cchTextMax,
+                                         CONVERT_SEND | CONVERT_RECEIVE);
+    }
+    case LVN_INCREMENTALSEARCHW:
+    case LVN_ODFINDITEMW:
+    {
+        NMLVFINDITEMW *nmlvfi = (NMLVFINDITEMW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmlvfi->lvfi.flags, LVFI_STRING | LVFI_SUBSTRING,
+                                         (WCHAR **)&nmlvfi->lvfi.psz, NULL, CONVERT_SEND);
+    }
+    /* Toolbar */
+    case TBN_GETBUTTONINFOW:
+    {
+        NMTOOLBARW *nmtb = (NMTOOLBARW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, NULL, 0, &nmtb->pszText, &nmtb->cchText,
+                                         SEND_EMPTY_IF_NULL | CONVERT_SEND | CONVERT_RECEIVE);
+    }
+    case TBN_GETINFOTIPW:
+    {
+        NMTBGETINFOTIPW *nmtbgit = (NMTBGETINFOTIPW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, NULL, 0, &nmtbgit->pszText, &nmtbgit->cchTextMax, CONVERT_RECEIVE);
+    }
+    /* Tooltip */
+    case TTN_GETDISPINFOW:
+    {
+        NMTTDISPINFOW *nmttdiW = (NMTTDISPINFOW *)hdr;
+        NMTTDISPINFOA nmttdiA = {{0}};
+        INT size;
+
+        nmttdiA.hdr.code = PAGER_GetAnsiNtfCode(nmttdiW->hdr.code);
+        nmttdiA.hdr.hwndFrom = nmttdiW->hdr.hwndFrom;
+        nmttdiA.hdr.idFrom = nmttdiW->hdr.idFrom;
+        nmttdiA.hinst = nmttdiW->hinst;
+        nmttdiA.uFlags = nmttdiW->uFlags;
+        nmttdiA.lParam = nmttdiW->lParam;
+        nmttdiA.lpszText = nmttdiA.szText;
+        WideCharToMultiByte(CP_ACP, 0, nmttdiW->szText, ARRAY_SIZE(nmttdiW->szText), nmttdiA.szText,
+                            ARRAY_SIZE(nmttdiA.szText), NULL, FALSE);
+
+        ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)&nmttdiA);
+
+        nmttdiW->hinst = nmttdiA.hinst;
+        nmttdiW->uFlags = nmttdiA.uFlags;
+        nmttdiW->lParam = nmttdiA.lParam;
+
+        MultiByteToWideChar(CP_ACP, 0, nmttdiA.szText, ARRAY_SIZE(nmttdiA.szText), nmttdiW->szText,
+                            ARRAY_SIZE(nmttdiW->szText));
+        if (!nmttdiA.lpszText)
+            nmttdiW->lpszText = nmttdiW->szText;
+        else if (!IS_INTRESOURCE(nmttdiA.lpszText))
+        {
+            size = MultiByteToWideChar(CP_ACP, 0, nmttdiA.lpszText, -1, 0, 0);
+            if (size > ARRAY_SIZE(nmttdiW->szText))
+            {
+                if (!PAGER_AdjustBuffer(infoPtr, size * sizeof(WCHAR))) return ret;
+                MultiByteToWideChar(CP_ACP, 0, nmttdiA.lpszText, -1, infoPtr->pwszBuffer, size);
+                nmttdiW->lpszText = infoPtr->pwszBuffer;
+                /* Override content in szText */
+                memcpy(nmttdiW->szText, nmttdiW->lpszText, min(sizeof(nmttdiW->szText), size * sizeof(WCHAR)));
+            }
+            else
+            {
+                MultiByteToWideChar(CP_ACP, 0, nmttdiA.lpszText, -1, nmttdiW->szText, ARRAY_SIZE(nmttdiW->szText));
+                nmttdiW->lpszText = nmttdiW->szText;
+            }
+        }
+        else
+        {
+            nmttdiW->szText[0] = 0;
+            nmttdiW->lpszText = (WCHAR *)nmttdiA.lpszText;
+        }
+
+        return ret;
+    }
+    /* Tree View */
+    case TVN_BEGINDRAGW:
+    case TVN_BEGINRDRAGW:
+    case TVN_ITEMEXPANDEDW:
+    case TVN_ITEMEXPANDINGW:
+    {
+        NMTREEVIEWW *nmtv = (NMTREEVIEWW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmtv->itemNew.mask, TVIF_TEXT, &nmtv->itemNew.pszText, NULL,
+                                         CONVERT_SEND);
+    }
+    case TVN_DELETEITEMW:
+    {
+        NMTREEVIEWW *nmtv = (NMTREEVIEWW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmtv->itemOld.mask, TVIF_TEXT, &nmtv->itemOld.pszText, NULL,
+                                         CONVERT_SEND);
+    }
+    case TVN_BEGINLABELEDITW:
+    case TVN_ENDLABELEDITW:
+    {
+        NMTVDISPINFOW *nmtvdi = (NMTVDISPINFOW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmtvdi->item.mask, TVIF_TEXT, &nmtvdi->item.pszText,
+                                         &nmtvdi->item.cchTextMax, SET_NULL_IF_NO_MASK | CONVERT_SEND | CONVERT_RECEIVE);
+    }
+    case TVN_SELCHANGINGW:
+    case TVN_SELCHANGEDW:
+    {
+        NMTREEVIEWW *nmtv = (NMTREEVIEWW *)hdr;
+        WCHAR *oldItemOldText = NULL;
+        WCHAR *oldItemNewText = NULL;
+
+        hdr->code = PAGER_GetAnsiNtfCode(hdr->code);
+
+        if (!((nmtv->itemNew.mask | nmtv->itemOld.mask) & TVIF_TEXT))
+            return SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+
+        if (nmtv->itemOld.mask & TVIF_TEXT) oldItemOldText = PAGER_ConvertText(&nmtv->itemOld.pszText);
+        if (nmtv->itemNew.mask & TVIF_TEXT) oldItemNewText = PAGER_ConvertText(&nmtv->itemNew.pszText);
+
+        ret = SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+        PAGER_RestoreText(&nmtv->itemOld.pszText, oldItemOldText);
+        PAGER_RestoreText(&nmtv->itemNew.pszText, oldItemNewText);
+        return ret;
+    }
+    case TVN_GETDISPINFOW:
+    {
+        NMTVDISPINFOW *nmtvdi = (NMTVDISPINFOW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmtvdi->item.mask, TVIF_TEXT, &nmtvdi->item.pszText,
+                                         &nmtvdi->item.cchTextMax, ZERO_SEND | CONVERT_RECEIVE);
+    }
+    case TVN_SETDISPINFOW:
+    {
+        NMTVDISPINFOW *nmtvdi = (NMTVDISPINFOW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, &nmtvdi->item.mask, TVIF_TEXT, &nmtvdi->item.pszText,
+                                         &nmtvdi->item.cchTextMax, SET_NULL_IF_NO_MASK | CONVERT_SEND | CONVERT_RECEIVE);
+    }
+    case TVN_GETINFOTIPW:
+    {
+        NMTVGETINFOTIPW *nmtvgit = (NMTVGETINFOTIPW *)hdr;
+        return PAGER_SendConvertedNotify(infoPtr, hdr, NULL, 0, &nmtvgit->pszText, &nmtvgit->cchTextMax, CONVERT_RECEIVE);
+    }
+    }
+    /* Other notifications, no need to convert */
+    return SendMessageW(infoPtr->hwndNotify, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr);
+}
+
 static LRESULT WINAPI
 PAGER_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     PAGER_INFO *infoPtr = (PAGER_INFO *)GetWindowLongPtrW(hwnd, 0);
+
+    TRACE("(%p, %#x, %#lx, %#lx)\n", hwnd, uMsg, wParam, lParam);
 
     if (!infoPtr && (uMsg != WM_CREATE))
 	return DefWindowProcW (hwnd, uMsg, wParam, lParam);
@@ -1306,7 +1504,7 @@ PAGER_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             return PAGER_SetChild (infoPtr, (HWND)lParam);
 
         case PGM_SETPOS:
-            return PAGER_SetPos(infoPtr, (INT)lParam, FALSE);
+            return PAGER_SetPos(infoPtr, (INT)lParam, FALSE, TRUE);
 
         case WM_CREATE:
             return PAGER_Create (hwnd, (LPCREATESTRUCTW)lParam);
@@ -1315,13 +1513,10 @@ PAGER_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             return PAGER_Destroy (infoPtr);
 
         case WM_SIZE:
-            return PAGER_Size (infoPtr, (INT)wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return PAGER_Size (infoPtr, (INT)wParam, (short)LOWORD(lParam), (short)HIWORD(lParam));
 
         case WM_NCPAINT:
             return PAGER_NCPaint (infoPtr, (HRGN)wParam);
-
-        case WM_WINDOWPOSCHANGING:
-            return PAGER_WindowPosChanging (infoPtr, (WINDOWPOS*)lParam);
 
         case WM_STYLECHANGED:
             return PAGER_StyleChanged(infoPtr, wParam, (LPSTYLESTRUCT)lParam);
@@ -1330,18 +1525,18 @@ PAGER_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             return PAGER_NCCalcSize (infoPtr, wParam, (LPRECT)lParam);
 
         case WM_NCHITTEST:
-            return PAGER_NCHitTest (infoPtr, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return PAGER_NCHitTest (infoPtr, (short)LOWORD(lParam), (short)HIWORD(lParam));
 
         case WM_MOUSEMOVE:
             if (infoPtr->bForward && infoPtr->hwndChild)
                 PostMessageW(infoPtr->hwndChild, WM_MOUSEMOVE, wParam, lParam);
-            return PAGER_MouseMove (infoPtr, (INT)wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return PAGER_MouseMove (infoPtr, (INT)wParam, (short)LOWORD(lParam), (short)HIWORD(lParam));
 
         case WM_LBUTTONDOWN:
-            return PAGER_LButtonDown (infoPtr, (INT)wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return PAGER_LButtonDown (infoPtr, (INT)wParam, (short)LOWORD(lParam), (short)HIWORD(lParam));
 
         case WM_LBUTTONUP:
-            return PAGER_LButtonUp (infoPtr, (INT)wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return PAGER_LButtonUp (infoPtr, (INT)wParam, (short)LOWORD(lParam), (short)HIWORD(lParam));
 
         case WM_ERASEBKGND:
             return PAGER_EraseBackground (infoPtr, (HDC)wParam);
@@ -1349,7 +1544,12 @@ PAGER_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         case WM_TIMER:
             return PAGER_Timer (infoPtr, (INT)wParam);
 
+        case WM_NOTIFYFORMAT:
+            return PAGER_NotifyFormat (infoPtr, lParam);
+
         case WM_NOTIFY:
+            return PAGER_Notify (infoPtr, (NMHDR *)lParam);
+
         case WM_COMMAND:
             return SendMessageW (infoPtr->hwndNotify, uMsg, wParam, lParam);
 

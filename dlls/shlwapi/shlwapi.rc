@@ -1,5 +1,5 @@
 /*
- * Top level resource file for shlwapi
+ * Resources for shlwapi
  *
  * Copyright 2004 Jon Griffiths
  *
@@ -15,21 +15,43 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "windef.h"
-#include "winbase.h"
-#include "winuser.h"
 #include "resource.h"
 
-#include "version.rc"
+#pragma makedep po
 
-#include "shlwapi_De.rc"
-#include "shlwapi_En.rc"
-#include "shlwapi_Es.rc"
-#include "shlwapi_Nl.rc"
-#include "shlwapi_No.rc"
-#include "shlwapi_It.rc"
-#include "shlwapi_Ja.rc"
-#include "shlwapi_Pt.rc"
+LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
+
+STRINGTABLE
+{
+    IDS_BYTES_FORMAT    "%d bytes"
+    IDS_TIME_INTERVAL_HOURS    "#msgctxt#time unit: hours# hr"
+    IDS_TIME_INTERVAL_MINUTES  "#msgctxt#time unit: minutes# min"
+    IDS_TIME_INTERVAL_SECONDS  "#msgctxt#time unit: seconds# sec"
+}
+
+IDD_ERR_DIALOG DIALOG 0, 0, 220, 60
+STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Error"
+FONT 8, "MS Shell Dlg"
+{
+ LTEXT "", IDS_ERR_USER_MSG2, 15, 5, 28, 20
+ LTEXT "", IDS_ERR_USER_MSG, 15, 5, 210, 8
+ CHECKBOX "Don't show me th&is message again", IDC_ERR_DONT_SHOW, 5, 20, 210, 10, BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP
+ PUSHBUTTON "OK", IDOK, 105, 40, 50, 14, WS_GROUP | WS_TABSTOP
+ PUSHBUTTON "Cancel", IDCANCEL, 160, 40, 50, 14, WS_GROUP | WS_TABSTOP
+ PUSHBUTTON "&Yes", IDYES, 105, 40, 50, 14, WS_GROUP | WS_TABSTOP
+ PUSHBUTTON "&No", IDNO, 160, 40, 50, 14, WS_GROUP | WS_TABSTOP
+}
+
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+
+#define WINE_FILENAME_STR "shlwapi.dll"
+#define WINE_FILEVERSION 6,0,2800,1692
+#define WINE_FILEVERSION_STR "6.0.2800.1692"
+#define WINE_PRODUCTVERSION 6,0,2800,1692
+#define WINE_PRODUCTVERSION_STR "6.0.2800.1692"
+
+#include "wine/wine_common_ver.rc"

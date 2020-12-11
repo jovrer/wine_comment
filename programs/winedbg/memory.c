@@ -3,7 +3,7 @@
  *
  * Copyright 1993 Eric Youngdale
  * Copyright 1995 Alexandre Julliard
- * Copyright 2000-2004 Eric Pouech
+ * Copyright 2000-2005 Eric Pouech
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -29,17 +29,18 @@
 
 #include "debugger.h"
 #include "wine/debug.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
-void* be_cpu_linearize(HANDLE hThread, const ADDRESS* addr)
+void* be_cpu_linearize(HANDLE hThread, const ADDRESS64* addr)
 {
     assert(addr->Mode == AddrModeFlat);
-    return (void*)addr->Offset;
+    return (void*)(DWORD_PTR)addr->Offset;
 }
 
-unsigned be_cpu_build_addr(HANDLE hThread, const CONTEXT* ctx, ADDRESS* addr, 
-                           unsigned seg, unsigned long offset)
+BOOL be_cpu_build_addr(HANDLE hThread, const dbg_ctx_t *ctx, ADDRESS64* addr,
+                       unsigned seg, unsigned long offset)
 {
     addr->Mode    = AddrModeFlat;
     addr->Segment = 0; /* don't need segment */
@@ -47,42 +48,35 @@ unsigned be_cpu_build_addr(HANDLE hThread, const CONTEXT* ctx, ADDRESS* addr,
     return TRUE;
 }
 
-void* memory_to_linear_addr(const ADDRESS* addr)
+void* memory_to_linear_addr(const ADDRESS64* addr)
 {
-    return be_cpu->linearize(dbg_curr_thread->handle, addr);
+    return dbg_curr_process->be_cpu->linearize(dbg_curr_thread->handle, addr);
 }
 
-BOOL memory_get_current_pc(ADDRESS* addr)
+BOOL memory_get_current_pc(ADDRESS64* addr)
 {
-    assert(be_cpu->get_addr);
-    return be_cpu->get_addr(dbg_curr_thread->handle, &dbg_context, 
+    assert(dbg_curr_process->be_cpu->get_addr);
+    return dbg_curr_process->be_cpu->get_addr(dbg_curr_thread->handle, &dbg_context,
                             be_cpu_addr_pc, addr);
 }
 
-BOOL memory_get_current_stack(ADDRESS* addr)
+BOOL memory_get_current_stack(ADDRESS64* addr)
 {
-    assert(be_cpu->get_addr);
-    return be_cpu->get_addr(dbg_curr_thread->handle, &dbg_context, 
+    assert(dbg_curr_process->be_cpu->get_addr);
+    return dbg_curr_process->be_cpu->get_addr(dbg_curr_thread->handle, &dbg_context,
                             be_cpu_addr_stack, addr);
-}
-
-BOOL memory_get_current_frame(ADDRESS* addr)
-{
-    assert(be_cpu->get_addr);
-    return be_cpu->get_addr(dbg_curr_thread->handle, &dbg_context, 
-                            be_cpu_addr_frame, addr);
 }
 
 static void	memory_report_invalid_addr(const void* addr)
 {
-    ADDRESS     address;
+    ADDRESS64   address;
 
     address.Mode    = AddrModeFlat;
     address.Segment = 0;
-    address.Offset  = (unsigned long)addr;
+    address.Offset  = (ULONG_PTR)addr;
     dbg_printf("*** Invalid address ");
     print_address(&address, FALSE);
-    dbg_printf("\n");
+    dbg_printf(" ***\n");
 }
 
 /***********************************************************************
@@ -104,11 +98,11 @@ BOOL memory_read_value(const struct dbg_lvalue* lvalue, DWORD size, void* result
     {
         if (lvalue->addr.Offset)
         {
-            memcpy(result, (void*)lvalue->addr.Offset, size);
+            memcpy(result, (void*)(DWORD_PTR)lvalue->addr.Offset, size);
             ret = TRUE;
         }
     }
-    return TRUE;
+    return ret;
 }
 
 /***********************************************************************
@@ -119,11 +113,15 @@ BOOL memory_read_value(const struct dbg_lvalue* lvalue, DWORD size, void* result
 BOOL memory_write_value(const struct dbg_lvalue* lvalue, DWORD size, void* value)
 {
     BOOL        ret = TRUE;
-    DWORD       os;
+    DWORD64     os;
 
-    os = ~size;
-    types_get_info(&lvalue->type, TI_GET_LENGTH, &os);
-    assert(size == os);
+    if (!types_get_info(&lvalue->type, TI_GET_LENGTH, &os)) return FALSE;
+    if (size != os)
+    {
+        dbg_printf("Size mismatch in memory_write_value, got %u from type while expecting %u\n",
+                   (DWORD)os, size);
+        return FALSE;
+    }
 
     /* FIXME: only works on little endian systems */
     if (lvalue->cookie == DLV_TARGET)
@@ -134,7 +132,7 @@ BOOL memory_write_value(const struct dbg_lvalue* lvalue, DWORD size, void* value
     }
     else 
     {
-        memcpy((void*)lvalue->addr.Offset, value, size);
+        memcpy((void*)(DWORD_PTR)lvalue->addr.Offset, value, size);
     }
     return ret;
 }
@@ -148,20 +146,11 @@ void memory_examine(const struct dbg_lvalue *lvalue, int count, char format)
 {
     int			i;
     char                buffer[256];
-    ADDRESS             addr;
+    ADDRESS64           addr;
     void               *linear;
 
-    if (lvalue->type.id == dbg_itype_none)
-    {
-        be_cpu->build_addr(dbg_curr_thread->handle, &dbg_context,
-                           &addr, lvalue->addr.Segment, lvalue->addr.Offset);
-    }
-    else
-    {
-        addr.Mode = AddrModeFlat;
-        addr.Offset = types_extract_as_integer( lvalue );
-    }
-    linear = memory_to_linear_addr( &addr );
+    types_extract_as_address(lvalue, &addr);
+    linear = memory_to_linear_addr(&addr);
 
     if (format != 'i' && count > 1)
     {
@@ -195,7 +184,7 @@ void memory_examine(const struct dbg_lvalue *lvalue, int count, char format)
                 memory_report_invalid_addr(linear);
                 break;
             }
-            dbg_printf("{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n",
+            dbg_printf("{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n",
                        guid.Data1, guid.Data2, guid.Data3,
                        guid.Data4[0], guid.Data4[1], guid.Data4[2], guid.Data4[3],
                        guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7]);
@@ -225,22 +214,31 @@ void memory_examine(const struct dbg_lvalue *lvalue, int count, char format)
                 }                                                       \
             }                                                           \
             dbg_printf("\n");                                           \
-        }                                                               \
-	return
+        }
 #define DO_DUMP(_t,_l,_f) DO_DUMP2(_t,_l,_f,_v)
 
-    case 'x': DO_DUMP(int, 4, " %8.8x");
-    case 'd': DO_DUMP(unsigned int, 4, " %10d");
-    case 'w': DO_DUMP(unsigned short, 8, " %04x");
-    case 'c': DO_DUMP2(char, 32, " %c", (_v < 0x20) ? ' ' : _v);
-    case 'b': DO_DUMP2(char, 16, " %02x", (_v) & 0xff);
+    case 'x': DO_DUMP(int, 4, " %8.8x"); break;
+    case 'd': DO_DUMP(unsigned int, 4, " %4.4d"); break;
+    case 'w': DO_DUMP(unsigned short, 8, " %04x"); break;
+    case 'a':
+        if (sizeof(DWORD_PTR) == 4)
+        {
+            DO_DUMP(DWORD_PTR, 4, " %8.8lx");
+        }
+        else
+        {
+            DO_DUMP(DWORD_PTR, 2, " %16.16lx");
+        }
+        break;
+    case 'c': DO_DUMP2(char, 32, " %c", (_v < 0x20) ? ' ' : _v); break;
+    case 'b': DO_DUMP2(char, 16, " %02x", (_v) & 0xff); break;
     }
 }
 
 BOOL memory_get_string(struct dbg_process* pcs, void* addr, BOOL in_debuggee,
                        BOOL unicode, char* buffer, int size)
 {
-    DWORD       sz;
+    SIZE_T      sz;
     WCHAR*      buffW;
 
     buffer[0] = 0;
@@ -268,98 +266,184 @@ BOOL memory_get_string(struct dbg_process* pcs, void* addr, BOOL in_debuggee,
     return TRUE;
 }
 
-BOOL memory_get_string_indirect(struct dbg_process* pcs, void* addr, BOOL unicode, char* buffer, int size)
+BOOL memory_get_string_indirect(struct dbg_process* pcs, void* addr, BOOL unicode, WCHAR* buffer, int size)
 {
     void*       ad;
-    DWORD	sz;
+    SIZE_T	sz;
 
     buffer[0] = 0;
-    if (addr && 
+    if (addr &&
         pcs->process_io->read(pcs->handle, addr, &ad, sizeof(ad), &sz) && sz == sizeof(ad) && ad)
     {
-        return memory_get_string(pcs, ad, TRUE, unicode, buffer, size);
+        LPSTR buff;
+        BOOL ret;
+
+        if (unicode)
+            ret = pcs->process_io->read(pcs->handle, ad, buffer, size * sizeof(WCHAR), &sz) && sz != 0;
+        else
+        {
+            if ((buff = HeapAlloc(GetProcessHeap(), 0, size)))
+            {
+                ret = pcs->process_io->read(pcs->handle, ad, buff, size, &sz) && sz != 0;
+                MultiByteToWideChar(CP_ACP, 0, buff, sz, buffer, size);
+                HeapFree(GetProcessHeap(), 0, buff);
+            }
+            else ret = FALSE;
+        }
+        if (size) buffer[size-1] = 0;
+        return ret;
     }
     return FALSE;
 }
 
+/*
+ * Convert an address offset to hex string. If mode == 32, treat offset as
+ * 32 bits (discard upper 32 bits), if mode == 64 use all 64 bits, if mode == 0
+ * treat as either 32 or 64 bits, depending on whether we're running as
+ * Wine32 or Wine64.
+ */
+char* memory_offset_to_string(char *str, DWORD64 offset, unsigned mode)
+{
+    if (mode != 32 && mode != 64)
+    {
+#ifdef _WIN64
+        mode = 64;
+#else
+        mode = 32;
+#endif
+    }
+
+    if (mode == 32)
+        sprintf(str, "0x%08x", (unsigned int) offset);
+    else
+        sprintf(str, "0x%08x%08x", (unsigned int)(offset >> 32),
+                (unsigned int)offset);
+
+    return str;
+}
+
+static void dbg_print_longlong(LONGLONG sv, BOOL is_signed)
+{
+    char      tmp[24], *ptr = tmp + sizeof(tmp) - 1;
+    ULONGLONG uv, div;
+    *ptr = '\0';
+    if (is_signed && sv < 0)    uv = -sv;
+    else                        { uv = sv; is_signed = FALSE; }
+    for (div = 10; uv; div *= 10, uv /= 10)
+        *--ptr = '0' + (uv % 10);
+    if (ptr == tmp + sizeof(tmp) - 1) *--ptr = '0';
+    if (is_signed) *--ptr = '-';
+    dbg_printf("%s", ptr);
+}
+
+static void dbg_print_hex(DWORD size, ULONGLONG sv)
+{
+    if (!sv)
+        dbg_printf("0");
+    else if (size > 4 && (sv >> 32))
+        dbg_printf("0x%x%08x", (DWORD)(sv >> 32), (DWORD)sv);
+    else
+        dbg_printf("0x%x", (DWORD)sv);
+}
+
 static void print_typed_basic(const struct dbg_lvalue* lvalue)
 {
-    long long int       val_int;
+    LONGLONG            val_int;
     void*               val_ptr;
     long double         val_real;
+    DWORD64             size64;
     DWORD               tag, size, count, bt;
-    struct dbg_type     rtype;
+    struct dbg_type     type = lvalue->type;
+    struct dbg_type     sub_type;
+    struct dbg_lvalue   sub_lvalue;
 
-    if (lvalue->type.id == dbg_itype_none ||
-        !types_get_info(&lvalue->type, TI_GET_SYMTAG, &tag))
-        return;
+    if (!types_get_real_type(&type, &tag)) return;
 
     switch (tag)
     {
     case SymTagBaseType:
-        if (!types_get_info(&lvalue->type, TI_GET_LENGTH, &size) ||
-            !types_get_info(&lvalue->type, TI_GET_BASETYPE, &bt))
+        if (!types_get_info(&type, TI_GET_LENGTH, &size64) ||
+            !types_get_info(&type, TI_GET_BASETYPE, &bt))
         {
             WINE_ERR("Couldn't get information\n");
             RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
+            return;
         }
-
+        size = (DWORD)size64;
         switch (bt)
         {
         case btInt:
-            if (!be_cpu->fetch_integer(lvalue, size, TRUE, &val_int)) return;
-            dbg_printf("%lld", val_int);
+        case btLong:
+            if (!dbg_curr_process->be_cpu->fetch_integer(lvalue, size, TRUE, &val_int)) return;
+            if (size == 1) goto print_char;
+            dbg_print_hex(size, val_int);
             break;
         case btUInt:
-            if (!be_cpu->fetch_integer(lvalue, size, FALSE, &val_int)) return;
-            dbg_printf("%llu", val_int);
+        case btULong:
+            if (!dbg_curr_process->be_cpu->fetch_integer(lvalue, size, FALSE, &val_int)) return;
+            dbg_print_hex(size, val_int);
             break;
         case btFloat:
-            if (!be_cpu->fetch_float(lvalue, size, &val_real)) return;
+            if (!dbg_curr_process->be_cpu->fetch_float(lvalue, size, &val_real)) return;
             dbg_printf("%Lf", val_real);
             break;
         case btChar:
-            if (!be_cpu->fetch_integer(lvalue, size, TRUE, &val_int)) return;
-            /* FIXME: should do the same for a Unicode character (size == 2) */
-            if (size == 1 && (val_int < 0x20 || val_int > 0x80))
-                dbg_printf("%d", (int)val_int);
-            else
+        case btWChar:
+            /* sometimes WCHAR is defined as btChar with size = 2, so discrimate
+             * Ansi/Unicode based on size, not on basetype
+             */
+            if (!dbg_curr_process->be_cpu->fetch_integer(lvalue, size, TRUE, &val_int)) return;
+        print_char:
+            if (size == 1 && isprint((char)val_int))
                 dbg_printf("'%c'", (char)val_int);
+            else if (size == 2 && isprintW((WCHAR)val_int))
+            {
+                WCHAR   wch = (WCHAR)val_int;
+                dbg_printf("'");
+                dbg_outputW(&wch, 1);
+                dbg_printf("'");
+            }
+            else
+                dbg_printf("%d", (int)val_int);
+            break;
+        case btBool:
+            if (!dbg_curr_process->be_cpu->fetch_integer(lvalue, size, TRUE, &val_int)) return;
+            dbg_printf("%s", val_int ? "true" : "false");
             break;
         default:
-            WINE_FIXME("Unsupported basetype %lu\n", bt);
+            WINE_FIXME("Unsupported basetype %u\n", bt);
             break;
         }
         break;
     case SymTagPointerType:
-        if (!memory_read_value(lvalue, sizeof(void*), &val_ptr)) return;
-
-        if (!types_get_info(&lvalue->type, TI_GET_TYPE, &rtype.id) ||
-            rtype.id == dbg_itype_none)
+        if (!types_array_index(lvalue, 0, &sub_lvalue))
         {
-            dbg_printf("Internal symbol error: unable to access memory location %p", val_ptr);
+            dbg_printf("Internal symbol error: unable to access memory location %p",
+                       memory_to_linear_addr(&lvalue->addr));
             break;
         }
-        rtype.module = lvalue->type.module;
-        if (types_get_info(&rtype, TI_GET_SYMTAG, &tag) && tag == SymTagBaseType &&
-            types_get_info(&rtype, TI_GET_BASETYPE, &bt) && bt == btChar &&
-            types_get_info(&rtype, TI_GET_LENGTH, &size))
+        val_ptr = memory_to_linear_addr(&sub_lvalue.addr);
+        if (types_get_real_type(&sub_lvalue.type, &tag) && tag == SymTagBaseType &&
+            types_get_info(&sub_lvalue.type, TI_GET_BASETYPE, &bt) &&
+            types_get_info(&sub_lvalue.type, TI_GET_LENGTH, &size64))
         {
             char    buffer[1024];
 
             if (!val_ptr) dbg_printf("0x0");
-            else if (memory_get_string(dbg_curr_process, val_ptr, 
-                                       lvalue->cookie == DLV_TARGET,
-                                       size == 2, buffer, sizeof(buffer)))
-                dbg_printf("\"%s\"", buffer);
-            else
-                dbg_printf("*** invalid address %p ***", val_ptr);
+            else if (((bt == btChar || bt == btInt) && size64 == 1) || (bt == btUInt && size64 == 2))
+            {
+                if (memory_get_string(dbg_curr_process, val_ptr, sub_lvalue.cookie == DLV_TARGET,
+                                      size64 == 2, buffer, sizeof(buffer)))
+                    dbg_printf("\"%s\"", buffer);
+                else
+                    dbg_printf("*** invalid address %p ***", val_ptr);
+                break;
+            }
         }
-        else dbg_printf("%p", val_ptr);
+        dbg_printf("%p", val_ptr);
         break;
     case SymTagArrayType:
     case SymTagUDT:
-        assert(lvalue->cookie == DLV_TARGET);
         if (!memory_read_value(lvalue, sizeof(val_ptr), &val_ptr)) return;
         dbg_printf("%p", val_ptr);
         break;
@@ -367,14 +451,13 @@ static void print_typed_basic(const struct dbg_lvalue* lvalue)
         {
             BOOL        ok = FALSE;
 
-            assert(lvalue->cookie == DLV_TARGET);
             /* FIXME: it depends on underlying type for enums 
              * (not supported yet in dbghelp)
              * Assuming 4 as for an int
              */
-            if (!be_cpu->fetch_integer(lvalue, 4, TRUE, &val_int)) return;
+            if (!dbg_curr_process->be_cpu->fetch_integer(lvalue, 4, TRUE, &val_int)) return;
 
-            if (types_get_info(&lvalue->type, TI_GET_CHILDRENCOUNT, &count))
+            if (types_get_info(&type, TI_GET_CHILDRENCOUNT, &count))
             {
                 char                    buffer[sizeof(TI_FINDCHILDREN_PARAMS) + 256 * sizeof(DWORD)];
                 TI_FINDCHILDREN_PARAMS* fcp = (TI_FINDCHILDREN_PARAMS*)buffer;
@@ -382,19 +465,18 @@ static void print_typed_basic(const struct dbg_lvalue* lvalue)
                 char                    tmp[256];
                 VARIANT                 variant;
                 int                     i;
-                struct dbg_type         type;
 
                 fcp->Start = 0;
                 while (count)
                 {
                     fcp->Count = min(count, 256);
-                    if (types_get_info(&lvalue->type, TI_FINDCHILDREN, fcp))
+                    if (types_get_info(&type, TI_FINDCHILDREN, fcp))
                     {
-                        type.module = lvalue->type.module;
+                        sub_type.module = type.module;
                         for (i = 0; i < min(fcp->Count, count); i++)
                         {
-                            type.id = fcp->ChildId[i];
-                            if (!types_get_info(&type, TI_GET_VALUE, &variant)) 
+                            sub_type.id = fcp->ChildId[i];
+                            if (!types_get_info(&sub_type, TI_GET_VALUE, &variant)) 
                                 continue;
                             switch (variant.n1.n2.vt)
                             {
@@ -404,7 +486,7 @@ static void print_typed_basic(const struct dbg_lvalue* lvalue)
                             if (ok)
                             {
                                 ptr = NULL;
-                                types_get_info(&type, TI_GET_SYMNAME, &ptr);
+                                types_get_info(&sub_type, TI_GET_SYMNAME, &ptr);
                                 if (!ptr) continue;
                                 WideCharToMultiByte(CP_ACP, 0, ptr, -1, tmp, sizeof(tmp), NULL, NULL);
                                 HeapFree(GetProcessHeap(), 0, ptr);
@@ -414,15 +496,15 @@ static void print_typed_basic(const struct dbg_lvalue* lvalue)
                             }
                         }
                     }
+                    count -= min(count, 256);
+                    fcp->Start += 256;
                 }
-                count -= min(count, 256);
-                fcp->Start += 256;
             }
-            if (!ok) dbg_printf("%lld", val_int);
+            if (!ok) dbg_print_longlong(val_int, TRUE);
         }
         break;
     default:
-        WINE_FIXME("Unsupported tag %lu\n", tag);
+        WINE_FIXME("Unsupported tag %u\n", tag);
         break;
     }
 }
@@ -432,72 +514,74 @@ static void print_typed_basic(const struct dbg_lvalue* lvalue)
  *
  * Implementation of the 'print' command.
  */
-void print_basic(const struct dbg_lvalue* lvalue, int count, char format)
+void print_basic(const struct dbg_lvalue* lvalue, char format)
 {
-    long int    res;
-
     if (lvalue->type.id == dbg_itype_none)
     {
         dbg_printf("Unable to evaluate expression\n");
         return;
     }
 
-    res = types_extract_as_integer(lvalue);
-
-    /* FIXME: this implies i386 byte ordering */
-    switch (format)
+    if (format != 0)
     {
-    case 'x':
-        if (lvalue->addr.Mode != AddrModeFlat)
-            dbg_printf("0x%04lx", res);
-        else
-            dbg_printf("0x%08lx", res);
-        break;
+        unsigned size;
+        LONGLONG res = types_extract_as_longlong(lvalue, &size, NULL);
+        WCHAR wch;
 
-    case 'd':
-        dbg_printf("%ld\n", res);
-        break;
-
-    case 'c':
-        dbg_printf("%d = '%c'", (char)(res & 0xff), (char)(res & 0xff));
-        break;
-
-    case 'u':
+        switch (format)
         {
-            WCHAR wch = (WCHAR)(res & 0xFFFF);
+        case 'x':
+            dbg_print_hex(size, (ULONGLONG)res);
+            return;
+
+        case 'd':
+            dbg_print_longlong(res, TRUE);
+            return;
+
+        case 'c':
+            dbg_printf("%d = '%c'", (char)(res & 0xff), (char)(res & 0xff));
+            return;
+
+        case 'u':
+            wch = (WCHAR)(res & 0xFFFF);
             dbg_printf("%d = '", wch);
             dbg_outputW(&wch, 1);
             dbg_printf("'");
-        }
-        break;
+            return;
 
-    case 'i':
-    case 's':
-    case 'w':
-    case 'b':
-        dbg_printf("Format specifier '%c' is meaningless in 'print' command\n", format);
-    case 0:
-        print_typed_basic(lvalue);
-        break;
+        case 'i':
+        case 's':
+        case 'w':
+        case 'b':
+            dbg_printf("Format specifier '%c' is meaningless in 'print' command\n", format);
+        }
     }
+    if (lvalue->type.id == dbg_itype_segptr)
+    {
+        dbg_print_longlong(types_extract_as_longlong(lvalue, NULL, NULL), TRUE);
+    }
+    else print_typed_basic(lvalue);
 }
 
-void print_bare_address(const ADDRESS* addr)
+void print_bare_address(const ADDRESS64* addr)
 {
+    char hexbuf[MAX_OFFSET_TO_STR_LEN];
+
     switch (addr->Mode)
     {
     case AddrModeFlat: 
-        dbg_printf("0x%08lx", addr->Offset); 
+        dbg_printf("%s", memory_offset_to_string(hexbuf, addr->Offset, 0)); 
         break;
     case AddrModeReal:
     case AddrMode1616:
-        dbg_printf("0x%04x:0x%04lx", addr->Segment, addr->Offset);
+        dbg_printf("0x%04x:0x%04x", addr->Segment, (unsigned) addr->Offset);
         break;
     case AddrMode1632:
-        dbg_printf("0x%04x:0x%08lx", addr->Segment, addr->Offset);
+        dbg_printf("0x%04x:%s", addr->Segment,
+                   memory_offset_to_string(hexbuf, addr->Offset, 32));
         break;
     default:
-        dbg_printf("Unknown mode %x\n", addr->Mode);
+        dbg_printf("Unknown mode %x", addr->Mode);
         break;
     }
 }
@@ -507,7 +591,7 @@ void print_bare_address(const ADDRESS* addr)
  *
  * Print an 16- or 32-bit address, with the nearest symbol if any.
  */
-void print_address(const ADDRESS* addr, BOOLEAN with_line)
+void print_address(const ADDRESS64* addr, BOOLEAN with_line)
 {
     char                buffer[sizeof(SYMBOL_INFO) + 256];
     SYMBOL_INFO*        si = (SYMBOL_INFO*)buffer;
@@ -524,97 +608,19 @@ void print_address(const ADDRESS* addr, BOOLEAN with_line)
     if (disp64) dbg_printf("+0x%lx", (DWORD_PTR)disp64);
     if (with_line)
     {
-        IMAGEHLP_LINE               il;
+        IMAGEHLP_LINE64             il;
         IMAGEHLP_MODULE             im;
 
         il.SizeOfStruct = sizeof(il);
-        if (SymGetLineFromAddr(dbg_curr_process->handle, (DWORD_PTR)lin, &disp, &il))
-            dbg_printf(" [%s:%lu]", il.FileName, il.LineNumber);
+        if (SymGetLineFromAddr64(dbg_curr_process->handle, (DWORD_PTR)lin, &disp, &il))
+            dbg_printf(" [%s:%u]", il.FileName, il.LineNumber);
         im.SizeOfStruct = sizeof(im);
         if (SymGetModuleInfo(dbg_curr_process->handle, (DWORD_PTR)lin, &im))
             dbg_printf(" in %s", im.ModuleName);
     }
 }
 
-struct sym_enum
-{
-    char*       tmp;
-    DWORD       frame;
-};
-
-static BOOL WINAPI sym_enum_cb(SYMBOL_INFO* sym_info, ULONG size, void* user)
-{
-    struct sym_enum*    se = (struct sym_enum*)user;
-    DWORD               addr;
-    unsigned            val;
-    long                offset;
-
-    if ((sym_info->Flags & (SYMFLAG_PARAMETER|SYMFLAG_FRAMEREL)) == (SYMFLAG_PARAMETER|SYMFLAG_FRAMEREL))
-    {
-        struct dbg_type     type;
-
-        if (se->tmp[0]) strcat(se->tmp, ", ");
-        addr = se->frame;
-        type.module = sym_info->ModBase;
-        type.id = sym_info->TypeIndex;
-        types_get_info(&type, TI_GET_OFFSET, &offset);
-        addr += offset;
-        if (dbg_read_memory((char*)addr, &val, sizeof(val)))
-            sprintf(se->tmp + strlen(se->tmp), "%s=0x%x", sym_info->Name, val);
-        else
-            sprintf(se->tmp + strlen(se->tmp), "%s=<\?\?\?>", sym_info->Name);
-    }
-    return TRUE;
-}
-
-void print_addr_and_args(const ADDRESS* pc, const ADDRESS* frame)
-{
-    char                        buffer[sizeof(SYMBOL_INFO) + 256];
-    SYMBOL_INFO*                si = (SYMBOL_INFO*)buffer;
-    IMAGEHLP_STACK_FRAME        isf;
-    IMAGEHLP_LINE               il;
-    IMAGEHLP_MODULE             im;
-    DWORD64                     disp64;
-
-    print_bare_address(pc);
-
-    isf.InstructionOffset = (DWORD_PTR)memory_to_linear_addr(pc);
-    isf.FrameOffset       = (DWORD_PTR)memory_to_linear_addr(frame);
-
-    /* grab module where symbol is. If we don't have a module, we cannot print more */
-    im.SizeOfStruct = sizeof(im);
-    if (!SymGetModuleInfo(dbg_curr_process->handle, isf.InstructionOffset, &im))
-        return;
-
-    si->SizeOfStruct = sizeof(*si);
-    si->MaxNameLen   = 256;
-    if (SymFromAddr(dbg_curr_process->handle, isf.InstructionOffset, &disp64, si))
-    {
-        struct sym_enum se;
-        char            tmp[1024];
-        DWORD           disp;
-
-        dbg_printf(" %s", si->Name);
-        if (disp) dbg_printf("+0x%lx", (DWORD_PTR)disp64);
-
-        SymSetContext(dbg_curr_process->handle, &isf, NULL);
-        se.tmp = tmp;
-        se.frame = isf.FrameOffset;
-        tmp[0] = '\0';
-        SymEnumSymbols(dbg_curr_process->handle, 0, NULL, sym_enum_cb, &se);
-        if (tmp[0]) dbg_printf("(%s)", tmp);
-
-        il.SizeOfStruct = sizeof(il);
-        if (SymGetLineFromAddr(dbg_curr_process->handle, isf.InstructionOffset,
-                               &disp, &il))
-            dbg_printf(" [%s:%lu]", il.FileName, il.LineNumber);
-        dbg_printf(" in %s", im.ModuleName);
-    }
-    else dbg_printf(" in %s (+0x%lx)", 
-                    im.ModuleName, (DWORD_PTR)(isf.InstructionOffset - im.BaseOfImage));
-}
-
-BOOL memory_disasm_one_insn(ADDRESS* addr)
+BOOL memory_disasm_one_insn(ADDRESS64* addr)
 {
     char        ch;
 
@@ -625,7 +631,7 @@ BOOL memory_disasm_one_insn(ADDRESS* addr)
         dbg_printf("-- no code accessible --\n");
         return FALSE;
     }
-    be_cpu->disasm_one_insn(addr, TRUE);
+    dbg_curr_process->be_cpu->disasm_one_insn(addr, TRUE);
     dbg_printf("\n");
     return TRUE;
 }
@@ -633,7 +639,7 @@ BOOL memory_disasm_one_insn(ADDRESS* addr)
 void memory_disassemble(const struct dbg_lvalue* xstart, 
                         const struct dbg_lvalue* xend, int instruction_count)
 {
-    static ADDRESS last = {0,0,0};
+    static ADDRESS64 last = {0,0,0};
     int stop = 0;
     int i;
 
@@ -644,22 +650,55 @@ void memory_disassemble(const struct dbg_lvalue* xstart,
     else
     {
         if (xstart)
-        {
-            if (xstart->type.id == dbg_itype_none)
-            {
-                be_cpu->build_addr(dbg_curr_thread->handle, &dbg_context,
-                                   &last, xstart->addr.Segment, xstart->addr.Offset);
-            }
-            else
-            {
-                last.Mode = AddrModeFlat;
-                last.Offset = types_extract_as_integer( xstart );
-            }
-        }
+            types_extract_as_address(xstart, &last);
         if (xend) 
             stop = types_extract_as_integer(xend);
     }
     for (i = 0; (instruction_count == 0 || i < instruction_count)  &&
                 (stop == 0 || last.Offset <= stop); i++)
         memory_disasm_one_insn(&last);
+}
+
+BOOL memory_get_register(DWORD regno, DWORD_PTR** value, char* buffer, int len)
+{
+    const struct dbg_internal_var*  div;
+
+    /* negative register values are wine's dbghelp hacks
+     * see dlls/dbghelp/dbghelp_private.h for the details
+     */
+    switch (regno)
+    {
+    case -1:
+        if (buffer) snprintf(buffer, len, "<internal error>");
+        return FALSE;
+    case -2:
+        if (buffer) snprintf(buffer, len, "<couldn't compute location>");
+        return FALSE;
+    case -3:
+        if (buffer) snprintf(buffer, len, "<is not available>");
+        return FALSE;
+    case -4:
+        if (buffer) snprintf(buffer, len, "<couldn't read memory>");
+        return FALSE;
+    case -5:
+        if (buffer) snprintf(buffer, len, "<has been optimized away by compiler>");
+        return FALSE;
+    }
+
+    for (div = dbg_curr_process->be_cpu->context_vars; div->name; div++)
+    {
+        if (div->val == regno)
+        {
+            if (!stack_get_register_frame(div, value))
+            {
+                if (buffer) snprintf(buffer, len, "<register %s not accessible in this frame>", div->name);
+                return FALSE;
+            }
+
+            if (buffer) lstrcpynA(buffer, div->name, len);
+            return TRUE;
+        }
+    }
+    if (buffer) snprintf(buffer, len, "<unknown register %u>", regno);
+    return FALSE;
 }

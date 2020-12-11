@@ -18,24 +18,23 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
 #include "wine/port.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 
-#include "wine/exception.h"
 #include "debugger.h"
+#include "wine/exception.h"
 #include "expr.h"
 
-int yylex(void);
-int yyerror(const char*);
+int dbg_lex(void);
+static int dbg_error(const char*);
+static void parser(const char*);
 
 %}
 
@@ -43,21 +42,22 @@ int yyerror(const char*);
 {
     struct dbg_lvalue   lvalue;
     char*               string;
-    int                 integer;
-    IMAGEHLP_LINE       listing;
+    INT_PTR             integer;
+    IMAGEHLP_LINE64     listing;
     struct expr*        expression;
     struct type_expr_t  type;
 }
 
 %token tCONT tPASS tSTEP tLIST tNEXT tQUIT tHELP tBACKTRACE tALL tINFO tUP tDOWN
-%token tENABLE tDISABLE tBREAK tWATCH tDELETE tSET tMODE tPRINT tEXAM tABORT tVM86
-%token tCLASS tMAPS tSTACK tSEGMENTS tSYMBOL tREGS tWND tQUEUE tLOCAL tEXCEPTION
-%token tPROCESS tTHREAD tMODREF tEOL tEOF
-%token tFRAME tSHARE tCOND tDISPLAY tUNDISPLAY tDISASSEMBLE
+%token tENABLE tDISABLE tBREAK tHBREAK tWATCH tRWATCH tDELETE tSET tPRINT tEXAM
+%token tABORT tECHO
+%token tCLASS tMAPS tSTACK tSEGMENTS tSYMBOL tREGS tALLREGS tWND tLOCAL tEXCEPTION
+%token tPROCESS tTHREAD tEOL tEOF
+%token tFRAME tSHARE tMODULE tCOND tDISPLAY tUNDISPLAY tDISASSEMBLE
 %token tSTEPI tNEXTI tFINISH tSHOW tDIR tWHATIS tSOURCE
-%token <string> tPATH tIDENTIFIER tSTRING tDEBUGSTR tINTVAR
+%token <string> tPATH tIDENTIFIER tSTRING tINTVAR
 %token <integer> tNUM tFORMAT
-%token tSYMBOLFILE tRUN tATTACH tDETACH tMAINTENANCE tTYPE tMINIDUMP
+%token tSYMBOLFILE tRUN tATTACH tDETACH tKILL tMAINTENANCE tTYPE tMINIDUMP
 %token tNOPROCESS
 
 %token tCHAR tSHORT tINT tLONG tFLOAT tDOUBLE tUNSIGNED tSIGNED
@@ -79,13 +79,13 @@ int yyerror(const char*);
 %left '+' '-'
 %left '*' '/' '%'
 %left OP_SIGN '!' '~' OP_DEREF /* OP_INC OP_DEC OP_ADDR */
-%left '.' '[' OP_DRF
+%left '.' '[' OP_DRF OP_SCOPE
 %nonassoc ':'
 
 %type <expression> expr lvalue
 %type <lvalue> expr_lvalue lvalue_addr
 %type <integer> expr_rvalue
-%type <string> pathname identifier
+%type <string> pathname identifier cpp_identifier
 %type <listing> list_arg
 %type <type> type_expr
 
@@ -120,26 +120,28 @@ command:
     | tNEXTI tNUM               { dbg_wait_next_exception(DBG_CONTINUE, $2, dbg_exec_step_over_insn); }
     | tFINISH     	       	{ dbg_wait_next_exception(DBG_CONTINUE, 0,  dbg_exec_finish); }
     | tABORT                   	{ abort(); }
-    | tBACKTRACE     	       	{ stack_backtrace(dbg_curr_tid, TRUE); }
-    | tBACKTRACE tNUM          	{ stack_backtrace($2, TRUE); }
-    | tBACKTRACE tALL           { stack_backtrace(-1, TRUE); }
-    | tUP     		       	{ stack_set_frame(dbg_curr_frame + 1);  }
-    | tUP tNUM     	       	{ stack_set_frame(dbg_curr_frame + $2); }
-    | tDOWN     	       	{ stack_set_frame(dbg_curr_frame - 1);  }
-    | tDOWN tNUM     	       	{ stack_set_frame(dbg_curr_frame - $2); }
+    | tBACKTRACE     	       	{ stack_backtrace(dbg_curr_tid); }
+    | tBACKTRACE tNUM          	{ stack_backtrace($2); }
+    | tBACKTRACE tALL           { stack_backtrace(-1); }
+    | tUP     		       	{ stack_set_frame(dbg_curr_thread->curr_frame + 1);  }
+    | tUP tNUM     	       	{ stack_set_frame(dbg_curr_thread->curr_frame + $2); }
+    | tDOWN     	       	{ stack_set_frame(dbg_curr_thread->curr_frame - 1);  }
+    | tDOWN tNUM     	       	{ stack_set_frame(dbg_curr_thread->curr_frame - $2); }
     | tFRAME tNUM              	{ stack_set_frame($2); }
     | tSHOW tDIR     	       	{ source_show_path(); }
     | tDIR pathname            	{ source_add_path($2); }
-    | tDIR     		       	{ source_nuke_path(); }
+    | tDIR     		       	{ source_nuke_path(dbg_curr_process); }
     | tCOND tNUM               	{ break_add_condition($2, NULL); }
     | tCOND tNUM expr     	{ break_add_condition($2, $3); }
     | tSOURCE pathname          { parser($2); }
     | tSYMBOLFILE pathname     	{ symbol_read_symtable($2, 0); }
     | tSYMBOLFILE pathname expr_rvalue { symbol_read_symtable($2, $3); }
-    | tWHATIS expr_lvalue       { types_print_type(&$2.type, FALSE); dbg_printf("\n"); }
-    | tATTACH tNUM     		{ dbg_attach_debuggee($2, FALSE, TRUE); }
-    | tDETACH                   { dbg_detach_debuggee(); }
+    | tWHATIS expr_lvalue       { dbg_printf("type = "); types_print_type(&$2.type, FALSE); dbg_printf("\n"); }
+    | tATTACH tNUM     		{ dbg_attach_debuggee($2, FALSE); dbg_active_wait_for_first_exception(); }
+    | tDETACH                   { dbg_curr_process->process_io->close_process(dbg_curr_process, FALSE); }
+    | tKILL                     { dbg_curr_process->process_io->close_process(dbg_curr_process, TRUE); }
     | tMINIDUMP pathname        { minidump_write($2, (dbg_curr_thread && dbg_curr_thread->in_exception) ? &dbg_curr_thread->excpt_record : NULL);}
+    | tECHO tSTRING             { dbg_printf("%s\n", $2); }
     | run_command
     | list_command
     | disassemble_command
@@ -160,21 +162,26 @@ pathname:
     | tPATH                     { $$ = $1; }
     ;
 
-identifier:
+cpp_identifier:
       tIDENTIFIER               { $$ = $1; }
-    | tPATH '!' tIDENTIFIER     { $$ = lexeme_alloc_size(strlen($1) + 1 + strlen($3) + 1);
-                                  sprintf($$, "%s!%s", $1, $3); }
-    | identifier ':' ':' tIDENTIFIER { $$ = lexeme_alloc_size(strlen($1) + 2 + strlen($4) + 1);
-                                       sprintf($$, "%s::%s", $1, $4); }
+    | identifier OP_SCOPE tIDENTIFIER { $$ = lexeme_alloc_size(strlen($1) + 2 + strlen($3) + 1);
+                                       sprintf($$, "%s::%s", $1, $3); }
+    ;
+
+identifier:
+      cpp_identifier            { $$ = $1; }
+    | tIDENTIFIER '!' cpp_identifier { $$ = lexeme_alloc_size(strlen($1) + 1 + strlen($3) + 1);
+                                       sprintf($$, "%s!%s", $1, $3); }
     ;
 
 list_arg:
       tNUM		        { $$.FileName = NULL; $$.LineNumber = $1; }
     | pathname ':' tNUM	        { $$.FileName = $1; $$.LineNumber = $3; }
     | identifier	        { symbol_get_line(NULL, $1, &$$); }
-    | pathname ':' identifier   { symbol_get_line($3, $1, &$$); }
-    | '*' expr_lvalue	        { DWORD disp; $$.SizeOfStruct = sizeof($$);
-                                  SymGetLineFromAddr(dbg_curr_process->handle, (unsigned long)memory_to_linear_addr(& $2.addr), &disp, & $$); }
+    | pathname ':' identifier   { symbol_get_line($1, $3, &$$); }
+    | '*' expr_lvalue	        { DWORD disp; ADDRESS64 addr; $$.SizeOfStruct = sizeof($$);
+                                  types_extract_as_address(&$2, &addr);
+                                  SymGetLineFromAddr64(dbg_curr_process->handle, (ULONG_PTR)memory_to_linear_addr(& addr), &disp, & $$); }
     ;
 
 run_command:
@@ -197,11 +204,17 @@ disassemble_command:
     ;
 
 set_command:
-      tSET lvalue_addr '=' expr_rvalue { memory_write_value(&$2, sizeof(int), &$4); }
+      tSET lvalue_addr '=' expr_lvalue { types_store_value(&$2, &$4); }
     | tSET '+' tIDENTIFIER      { info_wine_dbg_channel(TRUE, NULL, $3); }
+    | tSET '+' tALL             { info_wine_dbg_channel(TRUE, NULL, "all"); }
     | tSET '-' tIDENTIFIER      { info_wine_dbg_channel(FALSE, NULL, $3); }
+    | tSET '-' tALL             { info_wine_dbg_channel(FALSE, NULL, "all"); }
     | tSET tIDENTIFIER '+' tIDENTIFIER { info_wine_dbg_channel(TRUE, $2, $4); }
+    | tSET tIDENTIFIER '+' tALL        { info_wine_dbg_channel(TRUE, $2, "all"); }
     | tSET tIDENTIFIER '-' tIDENTIFIER { info_wine_dbg_channel(FALSE, $2, $4); }
+    | tSET tIDENTIFIER '-' tALL        { info_wine_dbg_channel(FALSE, $2, "all"); }
+    | tSET '!' tIDENTIFIER tIDENTIFIER  { dbg_set_option($3, $4); }
+    | tSET '!' tIDENTIFIER      { dbg_set_option($3, NULL); }
     ;
 
 x_command:
@@ -215,11 +228,16 @@ print_command:
     ;
 
 break_command:
-      tBREAK '*' expr_lvalue    { break_add_break_from_lvalue(&$3); }
-    | tBREAK identifier         { break_add_break_from_id($2, -1); }
-    | tBREAK identifier ':' tNUM { break_add_break_from_id($2, $4); }
-    | tBREAK tNUM     	        { break_add_break_from_lineno($2); }
-    | tBREAK                    { break_add_break_from_lineno(-1); }
+      tBREAK '*' expr_lvalue    { break_add_break_from_lvalue(&$3, TRUE); }
+    | tBREAK identifier         { break_add_break_from_id($2, -1, TRUE); }
+    | tBREAK pathname ':' tNUM  { break_add_break_from_lineno($2, $4, TRUE); }
+    | tBREAK tNUM               { break_add_break_from_lineno(NULL, $2, TRUE); }
+    | tBREAK                    { break_add_break_from_lineno(NULL, -1, TRUE); }
+    | tHBREAK '*' expr_lvalue   { break_add_break_from_lvalue(&$3, FALSE); }
+    | tHBREAK identifier        { break_add_break_from_id($2, -1, FALSE); }
+    | tHBREAK pathname ':' tNUM { break_add_break_from_lineno($2, $4, FALSE); }
+    | tHBREAK tNUM              { break_add_break_from_lineno(NULL, $2, FALSE); }
+    | tHBREAK                   { break_add_break_from_lineno(NULL, -1, FALSE); }
     | tENABLE tNUM              { break_enable_xpoint($2, TRUE); }
     | tENABLE tBREAK tNUM     	{ break_enable_xpoint($3, TRUE); }
     | tDISABLE tNUM             { break_enable_xpoint($2, FALSE); }
@@ -229,9 +247,12 @@ break_command:
     ;
 
 watch_command:
-      tWATCH '*' expr_lvalue    { break_add_watch_from_lvalue(&$3); }
-    | tWATCH identifier         { break_add_watch_from_id($2); }
+      tWATCH '*' expr_lvalue    { break_add_watch_from_lvalue(&$3, TRUE); }
+    | tWATCH identifier         { break_add_watch_from_id($2, TRUE); }
+    | tRWATCH '*' expr_lvalue   { break_add_watch_from_lvalue(&$3, FALSE); }
+    | tRWATCH identifier        { break_add_watch_from_id($2, FALSE); }
     ;
+
 
 display_command:
       tDISPLAY     	       	{ display_print(); }
@@ -249,10 +270,12 @@ info_command:
       tINFO tBREAK              { break_info(); }
     | tINFO tSHARE     		{ info_win32_module(0); }
     | tINFO tSHARE expr_rvalue  { info_win32_module($3); }
-    | tINFO tREGS               { be_cpu->print_context(dbg_curr_thread->handle, &dbg_context); }
+    | tINFO tREGS               { dbg_curr_process->be_cpu->print_context(dbg_curr_thread->handle, &dbg_context, 0); }
+    | tINFO tALLREGS            { dbg_curr_process->be_cpu->print_context(dbg_curr_thread->handle, &dbg_context, 1); }
     | tINFO tSEGMENTS expr_rvalue { info_win32_segments($3 >> 3, 1); }
     | tINFO tSEGMENTS           { info_win32_segments(0, -1); }
-    | tINFO tSTACK              { stack_info(); }
+    | tINFO tSTACK tNUM         { stack_info($3); }
+    | tINFO tSTACK              { stack_info(-1); }
     | tINFO tSYMBOL tSTRING     { symbol_info($3); }
     | tINFO tLOCAL              { symbol_info_locals(); }
     | tINFO tDISPLAY            { display_info(); }
@@ -264,19 +287,22 @@ info_command:
     | tINFO '*' tWND expr_rvalue { info_win32_window((HWND)$4, TRUE); }
     | tINFO tPROCESS            { info_win32_processes(); }
     | tINFO tTHREAD             { info_win32_threads(); }
-    | tINFO tEXCEPTION          { info_win32_exceptions(dbg_curr_tid); }
-    | tINFO tEXCEPTION expr_rvalue { info_win32_exceptions($3); }
+    | tINFO tFRAME              { info_win32_frame_exceptions(dbg_curr_tid); }
+    | tINFO tFRAME expr_rvalue  { info_win32_frame_exceptions($3); }
     | tINFO tMAPS               { info_win32_virtual(dbg_curr_pid); }
     | tINFO tMAPS expr_rvalue   { info_win32_virtual($3); }
+    | tINFO tEXCEPTION          { info_win32_exception(); }
     ;
 
 maintenance_command:
       tMAINTENANCE tTYPE        { print_types(); }
+    | tMAINTENANCE tMODULE tSTRING { tgt_module_load($3, FALSE); }
+    | tMAINTENANCE '*' tMODULE tSTRING { tgt_module_load($4, TRUE); }
     ;
 
 noprocess_state:
       tNOPROCESS                 {} /* <CR> shall not barf anything */
-    | tNOPROCESS tBACKTRACE tALL { stack_backtrace(-1, TRUE); } /* can backtrace all threads with no attached process */
+    | tNOPROCESS tBACKTRACE tALL { stack_backtrace(-1); } /* can backtrace all threads with no attached process */
     | tNOPROCESS tSTRING         { dbg_printf("No process loaded, cannot execute '%s'\n", $2); }
     ;
 
@@ -374,7 +400,8 @@ lvalue_addr:
       lvalue                     { $$ = expr_eval($1); }
     ;
 
-lvalue: tNUM                     { $$ = expr_alloc_sconstant($1); }
+lvalue: 
+      tNUM                       { $$ = expr_alloc_sconstant($1); }
     | tINTVAR                    { $$ = expr_alloc_internal_var($1); }
     | identifier		 { $$ = expr_alloc_symbol($1); }
     | lvalue OP_DRF tIDENTIFIER	 { $$ = expr_alloc_pstruct($1, $3); }
@@ -385,9 +412,9 @@ lvalue: tNUM                     { $$ = expr_alloc_sconstant($1); }
 
 %%
 
-static WINE_EXCEPTION_FILTER(wine_dbg_cmd)
+static LONG WINAPI wine_dbg_cmd(EXCEPTION_POINTERS *eptr)
 {
-    switch (GetExceptionCode())
+    switch (eptr->ExceptionRecord->ExceptionCode)
     {
     case DEBUG_STATUS_INTERNAL_ERROR:
         dbg_printf("\nWineDbg internal error\n");
@@ -420,106 +447,62 @@ static WINE_EXCEPTION_FILTER(wine_dbg_cmd)
         dbg_interrupt_debuggee();
         return EXCEPTION_CONTINUE_EXECUTION;
     default:
-        dbg_printf("\nException %lx\n", GetExceptionCode());
+        dbg_printf("\nException %x\n", eptr->ExceptionRecord->ExceptionCode);
         break;
     }
 
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-#ifndef whitespace
-#define whitespace(c) (((c) == ' ') || ((c) == '\t'))
-#endif
-
-/* Strip whitespace from the start and end of STRING. */
-static void stripwhite(char *string)
-{
-    int         i, last;
-
-    for (i = 0; whitespace(string[i]); i++);
-    if (i) strcpy(string, string + i);
-
-    last = i = strlen(string) - 1;
-    if (string[last] == '\n') i--;
-
-    while (i > 0 && whitespace(string[i])) i--;
-    if (string[last] == '\n')
-        string[++i] = '\n';
-    string[++i] = '\0';
-}
-
 static HANDLE dbg_parser_input;
 static HANDLE dbg_parser_output;
 
-/* command passed in the command line arguments */
-char *arg_command = NULL;
-
-int      input_fetch_entire_line(const char* pfx, char** line, size_t* alloc, BOOL check_nl)
+int      input_fetch_entire_line(const char* pfx, char** line)
 {
-    char 	buf_line[256];
-    DWORD	nread, nwritten;
-    size_t      len;
-    
-    if (arg_command) {
-         /* we only run one command before exiting */
-        const char q[] = "quit\n";
-        *line = arg_command;
-        arg_command = HeapAlloc(GetProcessHeap(), 0, sizeof q);
-        lstrcpyA(arg_command, q);
-        return 1;
-    }
+    char*       buffer;
+    char        ch;
+    DWORD	nread;
+    size_t      len, alloc;
 
     /* as of today, console handles can be file handles... so better use file APIs rather than
      * console's
      */
-    WriteFile(dbg_parser_output, pfx, strlen(pfx), &nwritten, NULL);
+    WriteFile(dbg_parser_output, pfx, strlen(pfx), &nread, NULL);
+
+    buffer = HeapAlloc(GetProcessHeap(), 0, alloc = 16);
+    assert(buffer != NULL);
 
     len = 0;
     do
     {
-	if (!ReadFile(dbg_parser_input, buf_line, sizeof(buf_line) - 1, &nread, NULL) || nread == 0)
-            break;
-	buf_line[nread] = '\0';
-
-        if (check_nl && len == 0 && nread == 1 && buf_line[0] == '\n')
-            return 0;
-
-        /* store stuff at the end of last_line */
-        if (len + nread + 1 > *alloc)
+        if (!ReadFile(dbg_parser_input, &ch, 1, &nread, NULL) || nread == 0)
         {
-            while (len + nread + 1 > *alloc) *alloc *= 2;
-            *line = dbg_heap_realloc(*line, *alloc);
+            HeapFree(GetProcessHeap(), 0, buffer);
+            return -1;
         }
-        strcpy(*line + len, buf_line);
-        len += nread;
-    } while (nread == 0 || buf_line[nread - 1] != '\n');
 
-    if (!len)
-    {
-        *line = HeapReAlloc(GetProcessHeap(), 0, *line, *alloc = 1);
-        **line = '\0';
+        if (len + 2 > alloc)
+        {
+            while (len + 2 > alloc) alloc *= 2;
+            buffer = dbg_heap_realloc(buffer, alloc);
+        }
+        buffer[len++] = ch;
     }
+    while (ch != '\n');
+    buffer[len] = '\0';
 
-    /* Remove leading and trailing whitespace from the line */
-    stripwhite(*line);
-    return 1;
+    *line = buffer;
+    return len;
 }
 
 int input_read_line(const char* pfx, char* buf, int size)
 {
     char*       line = NULL;
-    size_t      len = 0;
 
-    /* first alloc of our current buffer */
-    line = HeapAlloc(GetProcessHeap(), 0, len = 2);
-    assert(line);
-    line[0] = '\n';
-    line[1] = '\0';		      
-
-    input_fetch_entire_line(pfx, &line, &len, FALSE);
-    len = strlen(line);
-    /* remove trailing \n */
-    if (len > 0 && line[len - 1] == '\n') len--;
+    int len = input_fetch_entire_line(pfx, &line);
+    if (len < 0) return 0;
+    /* remove trailing \n and \r */
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) len--;
     len = min(size - 1, len);
     memcpy(buf, line, len);
     buf[len] = '\0';
@@ -528,28 +511,22 @@ int input_read_line(const char* pfx, char* buf, int size)
 }
 
 /***********************************************************************
- *           parser
+ *           parser_handle
  *
  * Debugger command line parser
  */
-void	parser(const char* filename)
+void	parser_handle(HANDLE input)
 {
     BOOL 	        ret_ok;
     HANDLE              in_copy  = dbg_parser_input;
     HANDLE              out_copy = dbg_parser_output;
 
-#ifdef YYDEBUG
-    yydebug = 0;
-#endif
-
     ret_ok = FALSE;
 
-    if (filename)
+    if (input != INVALID_HANDLE_VALUE)
     {
-        HANDLE  h = CreateFile(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0L, 0);
-        if (h == INVALID_HANDLE_VALUE) return;
-        dbg_parser_output = 0;
-        dbg_parser_input  = h;
+        dbg_parser_output = INVALID_HANDLE_VALUE;
+        dbg_parser_input  = input;
     }
     else
     {
@@ -562,7 +539,7 @@ void	parser(const char* filename)
        __TRY
        {
 	  ret_ok = TRUE;
-	  yyparse();
+	  dbg_parse();
        }
        __EXCEPT(wine_dbg_cmd)
        {
@@ -572,13 +549,51 @@ void	parser(const char* filename)
        lexeme_flush();
     } while (!ret_ok);
 
-    if (filename) CloseHandle(dbg_parser_input);
     dbg_parser_input  = in_copy;
     dbg_parser_output = out_copy;
 }
 
-int yyerror(const char* s)
+static void parser(const char* filename)
+{
+    HANDLE h = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0L, 0);
+    if (h != INVALID_HANDLE_VALUE)
+    {
+        parser_handle(h);
+        CloseHandle(h);
+    }
+}
+
+static int dbg_error(const char* s)
 {
     dbg_printf("%s\n", s);
     return 0;
+}
+
+HANDLE parser_generate_command_file(const char* pmt, ...)
+{
+    HANDLE      hFile;
+    char        path[MAX_PATH], file[MAX_PATH];
+    DWORD       w;
+    const char* p;
+
+    GetTempPathA(sizeof(path), path);
+    GetTempFileNameA(path, "WD", 0, file);
+    hFile = CreateFileA(file, GENERIC_READ|GENERIC_WRITE|DELETE, FILE_SHARE_DELETE, 
+                        NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, 0);
+    if (hFile != INVALID_HANDLE_VALUE)
+    {
+        va_list ap;
+
+        WriteFile(hFile, pmt, strlen(pmt), &w, 0);
+        va_start(ap, pmt);
+        while ((p = va_arg(ap, const char*)) != NULL)
+        {
+            WriteFile(hFile, "\n", 1, &w, 0);
+            WriteFile(hFile, p, strlen(p), &w, 0);
+        }
+        va_end(ap);
+        WriteFile(hFile, "\nquit\n", 6, &w, 0);
+        SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
+    }
+    return hFile;
 }

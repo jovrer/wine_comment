@@ -1,16 +1,8 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = imm32.dll
-IMPORTLIB = libimm32.$(IMPLIBEXT)
-IMPORTS   = user32 gdi32 kernel32
+IMPORTLIB = imm32
+IMPORTS   = user32 gdi32 advapi32
 
 C_SRCS = \
 	imm.c
 
-SPEC_SRCS16 = imm.spec
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = version.rc

@@ -1,19 +1,13 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = amstream.dll
-IMPORTS   = ole32 user32 advapi32 kernel32
-EXTRALIBS = -lstrmiids -luuid
+IMPORTS   = strmiids strmbase uuid ole32 advapi32 ddraw
 
 C_SRCS = \
 	amstream.c \
+	audiodata.c \
 	main.c \
 	mediastream.c \
-	regsvr.c
+	mediastreamfilter.c
+
+IDL_SRCS = amstream_classes.idl
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

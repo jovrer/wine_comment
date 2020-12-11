@@ -13,10 +13,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef _LMSERVER_
 #define _LMSERVER_
+
+#include <winsvc.h>
+#include <lmcons.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,9 +39,9 @@ typedef struct _SERVER_INFO_101 {
     LMSTR sv101_comment;
 } SERVER_INFO_101, *PSERVER_INFO_101, *LPSERVER_INFO_101;
 
-NET_API_STATUS WINAPI NetServerEnum(LMCSTR servername, DWORD level,
- LPBYTE *bufptr, DWORD prefmaxlen, LPDWORD entriesread, LPDWORD totalentries,
- DWORD servertype, LMCSTR domain, LPDWORD resume_handle);
+NET_API_STATUS WINAPI NetServerEnum(LMCSTR,DWORD,LPBYTE*,DWORD,LPDWORD,LPDWORD,DWORD,LMCSTR,LPDWORD);
+NET_API_STATUS WINAPI NetServerEnumEx(LMCSTR,DWORD,LPBYTE*,DWORD,LPDWORD,LPDWORD,DWORD,LMCSTR,LMCSTR);
+NET_API_STATUS WINAPI NetServerGetInfo(LMSTR,DWORD,LPBYTE*);
 BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE,DWORD,BOOL,BOOL);
 
 #define SV_TYPE_WORKSTATION       0x00000001
@@ -66,6 +69,10 @@ BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE,DWORD,BOOL,BOOL);
 #define SV_TYPE_SERVER_VMS        0x00200000
 #define SV_TYPE_WINDOWS           0x00400000
 #define SV_TYPE_DFS               0x00800000
+#define SV_TYPE_CLUSTER_NT        0x01000000
+#define SV_TYPE_TERMINALSERVER    0x02000000
+#define SV_TYPE_CLUSTER_VS_NT     0x04000000
+#define SV_TYPE_DCE               0x10000000
 #define SV_TYPE_ALTERNATE_XPORT   0x20000000
 #define SV_TYPE_LOCAL_LIST_ONLY   0x40000000
 #define SV_TYPE_DOMAIN_ENUM       0x80000000

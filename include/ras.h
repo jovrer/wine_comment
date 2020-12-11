@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_RAS_H
@@ -25,6 +25,8 @@
 extern "C" {
 #endif
 #include <pshpack4.h>
+#include <inaddr.h>
+#include <in6addr.h>
 
 #define RAS_MaxCallbackNumber RAS_MaxPhoneNumber
 #define RAS_MaxDeviceName     128
@@ -39,14 +41,21 @@ extern "C" {
 #define RAS_MaxDnsSuffix      256
 
 /* szDeviceType strings for RASDEVINFO */
-#define	RASDT_Direct	"direct"
-#define	RASDT_Modem	"modem"
-#define	RASDT_Isdn	"isdn"
-#define	RASDT_X25	"x25"
-
-#define RASBASE				600
-#define ERROR_BUFFER_TOO_SMALL		(RASBASE+3)
-#define ERROR_INVALID_SIZE		(RASBASE+32)
+#define RASDT_Direct     "direct"
+#define RASDT_Modem      "modem"
+#define RASDT_Isdn       "isdn"
+#define RASDT_X25        "x25"
+#define RASDT_Vpn        "vpn"
+#define RASDT_Pad        "pad"
+#define RASDT_Generic    "GENERIC"
+#define RASDT_Serial     "SERIAL"
+#define RASDT_FrameRelay "FRAMERELAY"
+#define RASDT_Atm        "ATM"
+#define RASDT_Sonet      "SONET"
+#define RASDT_SW56       "SW56"
+#define RASDT_Irda       "IRDA"
+#define RASDT_Parallel   "PARALLEL"
+#define RASDT_PPPoE      "PPPoE"
 
 typedef struct tagRASDEVINFOA {
     DWORD    dwSize;
@@ -74,6 +83,10 @@ typedef struct tagRASCONNA {
     CHAR     szDeviceName[ RAS_MaxDeviceName + 1 ];
     CHAR     szPhonebook[ MAX_PATH ];
     DWORD    dwSubEntry;
+    GUID     guidEntry;
+    DWORD    dwFlags;
+    LUID     luid;
+    GUID     guidCorrelationId;
 } RASCONNA,*LPRASCONNA;
 
 typedef struct tagRASCONNW {
@@ -84,6 +97,10 @@ typedef struct tagRASCONNW {
     WCHAR    szDeviceName[ RAS_MaxDeviceName + 1 ];
     WCHAR    szPhonebook[ MAX_PATH ];
     DWORD    dwSubEntry;
+    GUID     guidEntry;
+    DWORD    dwFlags;
+    LUID     luid;
+    GUID     guidCorrelationId;
 } RASCONNW,*LPRASCONNW;
 
 DECL_WINELIB_TYPE_AW(RASCONN)
@@ -409,6 +426,24 @@ typedef struct tagRASAUTODIALENTRYW
     WCHAR szEntry[ RAS_MaxEntryName + 1 ];
 } RASAUTODIALENTRYW, *LPRASAUTODIALENTRYW;
 
+typedef struct _RAS_STATS
+{
+    DWORD dwSize;
+    DWORD dwBytesXmited;
+    DWORD dwBytesRcved;
+    DWORD dwFramesXmited;
+    DWORD dwFramesRcved;
+    DWORD dwCrcErr;
+    DWORD dwTimeoutErr;
+    DWORD dwAlignmentErr;
+    DWORD dwHardwareOverrunErr;
+    DWORD dwFramingErr;
+    DWORD dwBufferOverrunErr;
+    DWORD dwCompressionRatioIn;
+    DWORD dwCompressionRatioOut;
+    DWORD dwBps;
+    DWORD dwConnectDuration;
+} RAS_STATS, *PRAS_STATS;
 
 DWORD WINAPI RasConnectionNotificationA(HRASCONN,HANDLE,DWORD);
 DWORD WINAPI RasConnectionNotificationW(HRASCONN,HANDLE,DWORD);
@@ -476,6 +511,9 @@ DWORD WINAPI RasSetAutodialAddressW(LPCWSTR,DWORD,LPRASAUTODIALENTRYW,DWORD,DWOR
 DWORD WINAPI RasSetAutodialParamA(DWORD,LPVOID,DWORD);
 DWORD WINAPI RasSetAutodialParamW(DWORD,LPVOID,DWORD);
 #define      RasSetAutodialParam WINELIB_NAME_AW(RasSetAutodialParam)
+DWORD WINAPI RasSetCustomAuthDataA(const CHAR *,const CHAR *,BYTE *,DWORD);
+DWORD WINAPI RasSetCustomAuthDataW(const WCHAR *,const WCHAR *,BYTE *,DWORD);
+#define      RasSetCustomAuthData WINELIB_NAME_AW(RasSetCustomAuthData)
 DWORD WINAPI RasSetEntryDialParamsA(LPCSTR,LPRASDIALPARAMSA,BOOL);
 DWORD WINAPI RasSetEntryDialParamsW(LPCWSTR,LPRASDIALPARAMSW,BOOL);
 #define      RasSetEntryDialParams WINELIB_NAME_AW(RasSetEntryDialParams)

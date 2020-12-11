@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <string.h>
@@ -29,7 +29,6 @@
 #include "winuser.h"
 
 #define COBJMACROS
-#define COM_NO_WINDOWS_H
 
 #include "ole2.h"
 #include "strmif.h"
@@ -43,23 +42,23 @@
  * Dll lifetime tracking declaration for objsel.dll
  */
 
-extern LONG dll_refs;
+extern LONG dll_refs DECLSPEC_HIDDEN;
 
 /**********************************************************************
  * ClassFactory declaration for objsel.dll
  */
 typedef struct
 {
-    IClassFactoryVtbl *lpVtbl;
+    IClassFactory IClassFactory_iface;
     LONG ref;
 } ClassFactoryImpl;
 
 typedef struct
 {
-    IDsObjectPickerVtbl *lpVtbl;
+    IDsObjectPicker IDsObjectPicker_iface;
     LONG ref;
 } IDsObjectPickerImpl;
 
-HRESULT WINAPI OBJSEL_IDsObjectPicker_Create(LPVOID *ppvObj);
+HRESULT WINAPI OBJSEL_IDsObjectPicker_Create(LPVOID *ppvObj) DECLSPEC_HIDDEN;
 
-extern ClassFactoryImpl OBJSEL_ClassFactory;
+extern ClassFactoryImpl OBJSEL_ClassFactory DECLSPEC_HIDDEN;

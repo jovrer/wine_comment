@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /*
@@ -42,20 +42,16 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-#ifndef PATH_MAX
-#define PATH_MAX MAX_PATH
-#endif
+
 #include <stdarg.h>
 #include "windef.h"
 #include "winbase.h"
-#include "winreg.h"
 #include "winternl.h"
 
 #include "wine/exception.h"
 #include "wine/debug.h"
-#include "excpt.h"
 #include "dbghelp_private.h"
-#include "mscvpdb.h"
+#include "wine/mscvpdb.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp_coff);
 
@@ -110,17 +106,24 @@ static int coff_add_file(struct CoffFileSet* coff_files, struct module* module,
 
     if (coff_files->nfiles + 1 >= coff_files->nfiles_alloc)
     {
-	coff_files->nfiles_alloc += 10;
-        coff_files->files = (coff_files->files) ?
-            HeapReAlloc(GetProcessHeap(), 0, coff_files->files,
-                        coff_files->nfiles_alloc * sizeof(struct CoffFile)) :
-            HeapAlloc(GetProcessHeap(), 0,
-                      coff_files->nfiles_alloc * sizeof(struct CoffFile));
+        if (coff_files->files)
+        {
+            coff_files->nfiles_alloc *= 2;
+            coff_files->files = HeapReAlloc(GetProcessHeap(), 0, coff_files->files,
+                                            coff_files->nfiles_alloc * sizeof(struct CoffFile));
+        }
+        else
+        {
+            coff_files->nfiles_alloc = 16;
+            coff_files->files = HeapAlloc(GetProcessHeap(), 0,
+                                          coff_files->nfiles_alloc * sizeof(struct CoffFile));
+        }
     }
     file = coff_files->files + coff_files->nfiles;
     file->startaddr = 0xffffffff;
     file->endaddr   = 0;
-    file->compiland = symt_new_compiland(module, filename);
+    file->compiland = symt_new_compiland(module, 0,
+                                         source_new(module, NULL, filename));
     file->linetab_offset = -1;
     file->linecnt = 0;
     file->entries = NULL;
@@ -133,17 +136,23 @@ static void coff_add_symbol(struct CoffFile* coff_file, struct symt* sym)
 {
     if (coff_file->neps + 1 >= coff_file->neps_alloc)
     {
-        coff_file->neps_alloc += 10;
-        coff_file->entries = (coff_file->entries) ?
-            HeapReAlloc(GetProcessHeap(), 0, coff_file->entries,
-                        coff_file->neps_alloc * sizeof(struct symt*)) :
-            HeapAlloc(GetProcessHeap(), 0, 
-                      coff_file->neps_alloc * sizeof(struct symt*));
+        if (coff_file->entries)
+        {
+            coff_file->neps_alloc *= 2;
+            coff_file->entries = HeapReAlloc(GetProcessHeap(), 0, coff_file->entries,
+                                             coff_file->neps_alloc * sizeof(struct symt*));
+        }
+        else
+        {
+            coff_file->neps_alloc = 32;
+            coff_file->entries = HeapAlloc(GetProcessHeap(), 0,
+                                           coff_file->neps_alloc * sizeof(struct symt*));
+        }
     }
     coff_file->entries[coff_file->neps++] = sym;
 }
 
-BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
+DECLSPEC_HIDDEN BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
 {
     const IMAGE_AUX_SYMBOL*		aux;
     const IMAGE_COFF_SYMBOLS_HEADER*	coff;
@@ -162,7 +171,7 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
     const char*                         nampnt;
     int		       		        naux;
     BOOL                                ret = FALSE;
-    DWORD                               addr;
+    ULONG64                             addr;
 
     TRACE("Processing COFF symbols...\n");
 
@@ -219,15 +228,15 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
                  */
                 const char* fn;
 
-                fn = source_get(msc_dbg->module, 
+                fn = source_get(msc_dbg->module,
                                 coff_files.files[curr_file_idx].compiland->source);
 
-                TRACE("Duplicating sect from %s: %lx %x %x %d %d\n",
+                TRACE("Duplicating sect from %s: %x %x %x %d %d\n",
                       fn, aux->Section.Length,
                       aux->Section.NumberOfRelocations,
                       aux->Section.NumberOfLinenumbers,
                       aux->Section.Number, aux->Section.Selection);
-                TRACE("More sect %d %s %08lx %d %d %d\n",
+                TRACE("More sect %d %s %08x %d %d %d\n",
                       coff_sym->SectionNumber,
                       coff_get_name(coff_sym, coff_strtab),
                       coff_sym->Value, coff_sym->Type,
@@ -241,7 +250,7 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
 	    }
             else
 	    {
-                TRACE("New text sect from %s: %lx %x %x %d %d\n",
+                TRACE("New text sect from %s: %x %x %x %d %d\n",
                       source_get(msc_dbg->module, coff_files.files[curr_file_idx].compiland->source),
                       aux->Section.Length,
                       aux->Section.NumberOfRelocations,
@@ -287,7 +296,6 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
                                                msc_dbg->module->module.BaseOfImage + base + coff_sym->Value,
                                                0 /* FIXME */,
                                                NULL /* FIXME */)->symt);
-            i += naux;
             continue;
 	}
 
@@ -298,8 +306,8 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
             DWORD base = msc_dbg->sectp[coff_sym->SectionNumber - 1].VirtualAddress;
             nampnt = coff_get_name(coff_sym, coff_strtab);
 
-            TRACE("%d: %lx %s\n",
-                  i, msc_dbg->module->module.BaseOfImage + base + coff_sym->Value,
+            TRACE("%d: %s %s\n",
+                  i, wine_dbgstr_longlong(msc_dbg->module->module.BaseOfImage + base + coff_sym->Value),
                   nampnt);
             TRACE("\tAdding global symbol %s (sect=%s)\n",
                   nampnt, msc_dbg->sectp[coff_sym->SectionNumber - 1].Name);
@@ -337,23 +345,27 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
             coff_sym->SectionNumber > 0)
 	{
             DWORD base = msc_dbg->sectp[coff_sym->SectionNumber - 1].VirtualAddress;
+            struct location loc;
+
             /*
              * Similar to above, but for the case of data symbols.
              * These aren't treated as entrypoints.
              */
             nampnt = coff_get_name(coff_sym, coff_strtab);
 
-            TRACE("%d: %lx %s\n",
-                  i, msc_dbg->module->module.BaseOfImage + base + coff_sym->Value,
+            TRACE("%d: %s %s\n",
+                  i, wine_dbgstr_longlong(msc_dbg->module->module.BaseOfImage + base + coff_sym->Value),
                   nampnt);
             TRACE("\tAdding global data symbol %s\n", nampnt);
 
             /*
              * Now we need to figure out which file this guy belongs to.
              */
+            loc.kind = loc_absolute;
+            loc.reg = 0;
+            loc.offset = msc_dbg->module->module.BaseOfImage + base + coff_sym->Value;
             symt_new_global_variable(msc_dbg->module, NULL, nampnt, TRUE /* FIXME */,
-                                     msc_dbg->module->module.BaseOfImage + base + coff_sym->Value,
-                                     0 /* FIXME */, NULL /* FIXME */);
+                                     loc, 0 /* FIXME */, NULL /* FIXME */);
             i += naux;
             continue;
 	}
@@ -364,7 +376,6 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
              * Ignore these.  They don't have anything to do with
              * reality.
              */
-            i += naux;
             continue;
 	}
 
@@ -411,26 +422,26 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
                      * If we have spilled onto the next entrypoint, then
                      * bump the counter..
                      */
-                    for (;;)
+                    for (; l+1 < coff_files.files[j].neps; l++)
                     {
-                        if (l+1 >= coff_files.files[j].neps) break;
-                        symt_get_info(coff_files.files[j].entries[l+1], TI_GET_ADDRESS, &addr);
-                        if (((msc_dbg->module->module.BaseOfImage + linepnt->Type.VirtualAddress) < addr))
+                        if (symt_get_address(coff_files.files[j].entries[l+1], &addr) &&
+                            msc_dbg->module->module.BaseOfImage + linepnt->Type.VirtualAddress < addr)
+                        {
+                            if (coff_files.files[j].entries[l+1]->tag == SymTagFunction)
+                            {
+                                /*
+                                 * Add the line number.  This is always relative to the
+                                 * start of the function, so we need to subtract that offset
+                                 * first.
+                                 */
+                                symt_add_func_line(msc_dbg->module,
+                                                   (struct symt_function*)coff_files.files[j].entries[l+1],
+                                                   coff_files.files[j].compiland->source,
+                                                   linepnt->Linenumber,
+                                                   msc_dbg->module->module.BaseOfImage + linepnt->Type.VirtualAddress - addr);
+                            }
                             break;
-                        l++;
-                    }
-
-                    if (coff_files.files[j].entries[l+1]->tag == SymTagFunction)
-                    {
-                        /*
-                         * Add the line number.  This is always relative to the
-                         * start of the function, so we need to subtract that offset
-                         * first.
-                         */
-                        symt_get_info(coff_files.files[j].entries[l+1], TI_GET_ADDRESS, &addr);
-                        symt_add_func_line(msc_dbg->module, (struct symt_function*)coff_files.files[j].entries[l+1], 
-                                           coff_files.files[j].compiland->source, linepnt->Linenumber,
-                                           msc_dbg->module->module.BaseOfImage + linepnt->Type.VirtualAddress - addr);
+                        }
                     }
                 }
             }
@@ -442,6 +453,12 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
 	}
         HeapFree(GetProcessHeap(), 0, coff_files.files);
         msc_dbg->module->module.SymType = SymCoff;
+        /* FIXME: we could have a finer grain here */
+        msc_dbg->module->module.LineNumbers = TRUE;
+        msc_dbg->module->module.GlobalSymbols = TRUE;
+        msc_dbg->module->module.TypeInfo = FALSE;
+        msc_dbg->module->module.SourceIndexed = TRUE;
+        msc_dbg->module->module.Publics = TRUE;
         ret = TRUE;
     }
 

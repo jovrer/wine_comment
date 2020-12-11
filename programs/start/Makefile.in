@@ -1,15 +1,7 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = start.exe
-APPMODE   = -mconsole
-IMPORTS   = shell32 user32 kernel32
+APPMODE   = -mconsole -municode
+IMPORTS   = shell32 user32
 
 C_SRCS = start.c
 
-RC_SRCS = rsrc.rc
-
-@MAKE_PROG_RULES@
-
-### Dependencies:
+RC_SRCS = start.rc

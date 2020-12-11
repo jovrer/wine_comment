@@ -1,22 +1,16 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = dmime.dll
-IMPORTS   = dsound winmm ole32 user32 advapi32 kernel32
-EXTRALIBS = -ldxguid -luuid
+IMPORTS   = dxguid uuid dsound ole32 user32 advapi32
 
 C_SRCS = \
 	audiopath.c \
 	dmime_main.c \
+	dmobject.c \
 	dmutils.c \
 	graph.c \
 	lyricstrack.c \
 	markertrack.c \
 	paramcontroltrack.c \
-	patterntrack.c \
 	performance.c \
-	regsvr.c \
 	segment.c \
 	segmentstate.c \
 	segtriggertrack.c \
@@ -24,11 +18,8 @@ C_SRCS = \
 	sysextrack.c \
 	tempotrack.c \
 	timesigtrack.c \
-	tool.c \
 	wavetrack.c
 
+IDL_SRCS = dmime.idl
+
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

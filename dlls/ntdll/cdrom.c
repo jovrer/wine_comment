@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -38,6 +38,11 @@
 #ifdef HAVE_SYS_STAT_H
 # include <sys/stat.h>
 #endif
+#ifdef MAJOR_IN_MKDEV
+# include <sys/mkdev.h>
+#elif defined(MAJOR_IN_SYSMACROS)
+# include <sys/sysmacros.h>
+#endif
 #include <sys/types.h>
 
 #ifdef HAVE_SYS_IOCTL_H
@@ -49,6 +54,7 @@
 #ifdef HAVE_SCSI_SCSI_H
 # include <scsi/scsi.h>
 # undef REASSIGN_BLOCKS  /* avoid conflict with winioctl.h */
+# undef FAILED           /* avoid conflict with winerror.h */
 #endif
 #ifdef HAVE_SCSI_SCSI_IOCTL_H
 # include <scsi/scsi_ioctl.h>
@@ -76,21 +82,54 @@
 #endif
 
 #ifdef HAVE_IOKIT_IOKITLIB_H
-# ifndef SENSEBUFLEN
-#  include <IOKit/IOKitLib.h>
-#  include <IOKit/scsi/SCSICmds_REQUEST_SENSE_Defs.h>
-#  define SENSEBUFLEN kSenseDefaultSize
-# endif
+# include <libkern/OSByteOrder.h>
+# include <sys/disk.h>
+# include <IOKit/IOKitLib.h>
+# include <IOKit/storage/IOMedia.h>
+# include <IOKit/storage/IOCDMediaBSDClient.h>
+# include <IOKit/storage/IODVDMediaBSDClient.h>
+# include <IOKit/scsi/SCSITask.h>
+# include <IOKit/scsi/SCSICmds_REQUEST_SENSE_Defs.h>
+# define SENSEBUFLEN kSenseDefaultSize
+
+typedef struct
+{
+    uint32_t attribute;
+    uint32_t timeout;
+    uint32_t response;
+    uint32_t status;
+    uint8_t direction;
+    uint8_t cdbSize;
+    uint8_t reserved0144[2];
+    uint8_t cdb[16];
+    void* buffer;
+    uint64_t bufferSize;
+    void* sense;
+    uint64_t senseLen;
+} dk_scsi_command_t;
+
+typedef struct
+{
+    uint64_t bus;
+    uint64_t port;
+    uint64_t target;
+    uint64_t lun;
+} dk_scsi_identify_t;
+
+#define DKIOCSCSICOMMAND _IOWR('d', 253, dk_scsi_command_t)
+#define DKIOCSCSIIDENTIFY _IOR('d', 254, dk_scsi_identify_t)
+
 #endif
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
+#define WIN32_NO_STATUS
+#define NONAMELESSUNION
 #include "windef.h"
 #include "winternl.h"
 #include "winioctl.h"
 #include "ntddstor.h"
 #include "ntddcdrm.h"
+#include "ddk/ntddcdvd.h"
 #include "ntddscsi.h"
 #include "ntdll_misc.h"
 #include "wine/server.h"
@@ -109,152 +148,11 @@ WINE_DEFAULT_DEBUG_CHANNEL(cdrom);
 # define CD_FRAMES            75 /* frames per second */
 #endif
 
-/* definitions taken from libdvdcss */
-
-#define IOCTL_DVD_BASE                 FILE_DEVICE_DVD
-
-#define IOCTL_DVD_START_SESSION     CTL_CODE(IOCTL_DVD_BASE, 0x0400, METHOD_BUFFERED, FILE_READ_ACCESS)
-#define IOCTL_DVD_READ_KEY          CTL_CODE(IOCTL_DVD_BASE, 0x0401, METHOD_BUFFERED, FILE_READ_ACCESS)
-#define IOCTL_DVD_SEND_KEY          CTL_CODE(IOCTL_DVD_BASE, 0x0402, METHOD_BUFFERED, FILE_READ_ACCESS)
-#define IOCTL_DVD_END_SESSION       CTL_CODE(IOCTL_DVD_BASE, 0x0403, METHOD_BUFFERED, FILE_READ_ACCESS)
-#define IOCTL_DVD_SET_READ_AHEAD    CTL_CODE(IOCTL_DVD_BASE, 0x0404, METHOD_BUFFERED, FILE_READ_ACCESS)
-#define IOCTL_DVD_GET_REGION        CTL_CODE(IOCTL_DVD_BASE, 0x0405, METHOD_BUFFERED, FILE_READ_ACCESS)
-#define IOCTL_DVD_SEND_KEY2         CTL_CODE(IOCTL_DVD_BASE, 0x0406, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
-
-#define IOCTL_DVD_READ_STRUCTURE    CTL_CODE(IOCTL_DVD_BASE, 0x0450, METHOD_BUFFERED, FILE_READ_ACCESS)
-
-typedef enum {
-    DvdChallengeKey = 0x01,
-    DvdBusKey1,
-    DvdBusKey2,
-    DvdTitleKey,
-    DvdAsf,
-    DvdSetRpcKey = 0x6,
-    DvdGetRpcKey = 0x8,
-    DvdDiskKey = 0x80,
-    DvdInvalidateAGID = 0x3f
-} DVD_KEY_TYPE;
-
-typedef ULONG DVD_SESSION_ID, *PDVD_SESSION_ID;
-
-typedef struct _DVD_COPY_PROTECT_KEY {
-    ULONG KeyLength;
-    DVD_SESSION_ID SessionId;
-    DVD_KEY_TYPE KeyType;
-    ULONG KeyFlags;
-    union {
-        struct {
-            ULONG FileHandle;
-            ULONG Reserved;   /* used for NT alignment */
-        } s;
-        LARGE_INTEGER TitleOffset;
-    } Parameters;
-    UCHAR KeyData[1];
-} DVD_COPY_PROTECT_KEY, *PDVD_COPY_PROTECT_KEY;
-
-typedef struct _DVD_RPC_KEY {
-    UCHAR UserResetsAvailable:3;
-    UCHAR ManufacturerResetsAvailable:3;
-    UCHAR TypeCode:2;
-    UCHAR RegionMask;
-    UCHAR RpcScheme;
-    UCHAR Reserved2[1];
-} DVD_RPC_KEY, * PDVD_RPC_KEY;
-
-typedef struct _DVD_ASF {
-    UCHAR Reserved0[3];
-    UCHAR SuccessFlag:1;
-    UCHAR Reserved1:7;
-} DVD_ASF, * PDVD_ASF;
-
-typedef struct _DVD_REGION
-{
-        unsigned char copy_system;
-        unsigned char region_data;              /* current media region (not playable when set) */
-        unsigned char system_region;    /* current drive region (playable when set) */
-        unsigned char reset_count;              /* number of resets available */
-} DVD_REGION, * PDVD_REGION;
-
-typedef struct _DVD_READ_STRUCTURE {
-        /* Contains an offset to the logical block address of the descriptor to be retrieved. */
-        LARGE_INTEGER block_byte_offset;
-
-        /* 0:Physical descriptor, 1:Copyright descriptor, 2:Disk key descriptor
-           3:BCA descriptor, 4:Manufacturer descriptor, 5:Max descriptor
-         */
-        long format;
-
-        /* Session ID, that is obtained by IOCTL_DVD_START_SESSION */
-        long session;
-
-        /* From 0 to 4 */
-        unsigned char layer_no;
-}DVD_READ_STRUCTURE, * PDVD_READ_STRUCTURE;
-
-typedef struct _DVD_LAYER_DESCRIPTOR
-{
-    unsigned short length;
-
-        unsigned char book_version : 4;
-
-        /* 0:DVD-ROM, 1:DVD-RAM, 2:DVD-R, 3:DVD-RW, 9:DVD-RW */
-        unsigned char book_type : 4;
-
-        unsigned char minimum_rate : 4;
-
-        /* The physical size of the media. 0:120 mm, 1:80 mm. */
-    unsigned char disk_size : 4;
-
-    /* 1:Read-only layer, 2:Recordable layer, 4:Rewritable layer */
-        unsigned char layer_type : 4;
-
-        /* 0:parallel track path, 1:opposite track path */
-    unsigned char track_path : 1;
-
-        /* 0:one layers, 1:two layers, and so on */
-    unsigned char num_of_layers : 2;
-
-    unsigned char reserved1 : 1;
-
-        /* 0:0.74 µm/track, 1:0.80 µm/track, 2:0.615 µm/track */
-    unsigned char track_density : 4;
-
-        /* 0:0.267 µm/bit, 1:0.293 µm/bit, 2:0.409 to 0.435 µm/bit, 4:0.280 to 0.291 µm/bit, 8:0.353 µm/bit */
-    unsigned char linear_density : 4;
-
-        /* Must be either 0x30000:DVD-ROM or DVD-R/-RW or 0x31000:DVD-RAM or DVD+RW */
-    unsigned long starting_data_sector;
-
-    unsigned long end_data_sector;
-    unsigned long end_layer_zero_sector;
-    unsigned char reserved5 : 7;
-
-        /* 0 indicates no BCA data */
-        unsigned char BCA_flag : 1;
-
-        unsigned char reserved6;
-}DVD_LAYER_DESCRIPTOR, * PDVD_LAYER_DESCRIPTOR;
-
-typedef struct _DVD_COPYRIGHT_DESCRIPTOR
-{
-        unsigned char protection;
-    unsigned char region;
-    unsigned short reserved;
-}DVD_COPYRIGHT_DESCRIPTOR, * PDVD_COPYRIGHT_DESCRIPTOR;
-
-typedef struct _DVD_MANUFACTURER_DESCRIPTOR
-{
-        unsigned char manufacturing[2048];
-}DVD_MANUFACTURER_DESCRIPTOR, * PDVD_MANUFACTURER_DESCRIPTOR;
-
-#define DVD_CHALLENGE_KEY_LENGTH    (12 + sizeof(DVD_COPY_PROTECT_KEY) - sizeof(UCHAR))
-
-#define DVD_DISK_KEY_LENGTH         (2048 + sizeof(DVD_COPY_PROTECT_KEY) - sizeof(UCHAR))
-
-#define DVD_KEY_SIZE 5
-#define DVD_CHALLENGE_SIZE 10
-#define DVD_DISCKEY_SIZE 2048
-#define DVD_SECTOR_PROTECTED            0x00000020
+#ifdef WORDS_BIGENDIAN
+#define GET_BE_DWORD(x) (x)
+#else
+#define GET_BE_DWORD(x) RtlUlongByteSwap(x)
+#endif
 
 static const struct iocodexs
 {
@@ -281,6 +179,7 @@ X(IOCTL_CDROM_SEEK_AUDIO_MSF)
 X(IOCTL_CDROM_SET_VOLUME)
 X(IOCTL_CDROM_STOP_AUDIO)
 X(IOCTL_CDROM_TRACK_ISRC)
+X(IOCTL_DISK_GET_MEDIA_TYPES)
 X(IOCTL_DISK_MEDIA_REMOVAL)
 X(IOCTL_DVD_END_SESSION)
 X(IOCTL_DVD_GET_REGION)
@@ -294,9 +193,12 @@ X(IOCTL_SCSI_GET_INQUIRY_DATA)
 X(IOCTL_SCSI_PASS_THROUGH)
 X(IOCTL_SCSI_PASS_THROUGH_DIRECT)
 X(IOCTL_STORAGE_CHECK_VERIFY)
+X(IOCTL_STORAGE_CHECK_VERIFY2)
 X(IOCTL_STORAGE_EJECTION_CONTROL)
 X(IOCTL_STORAGE_EJECT_MEDIA)
 X(IOCTL_STORAGE_GET_DEVICE_NUMBER)
+X(IOCTL_STORAGE_GET_MEDIA_TYPES)
+X(IOCTL_STORAGE_GET_MEDIA_TYPES_EX)
 X(IOCTL_STORAGE_LOAD_MEDIA)
 X(IOCTL_STORAGE_MEDIA_REMOVAL)
 X(IOCTL_STORAGE_RESET_DEVICE)
@@ -306,7 +208,7 @@ static const char *iocodex(DWORD code)
 {
    unsigned int i;
    static char buffer[25];
-   for(i=0; i<sizeof(iocodextable)/sizeof(struct iocodexs); i++)
+   for(i=0; i<ARRAY_SIZE(iocodextable); i++)
       if (code==iocodextable[i].code)
 	 return iocodextable[i].codex;
    sprintf(buffer, "IOCTL_CODE_%x", (int)code);
@@ -320,6 +222,27 @@ static const char *iocodex(DWORD code)
 #define FRAME_OF_MSF(a) (((int)(a).M * CD_SECS + (a).S) * CD_FRAMES + (a).F)
 #define FRAME_OF_TOC(toc, idx)  FRAME_OF_ADDR((toc).TrackData[idx - (toc).FirstTrack].Address)
 #define MSF_OF_FRAME(m,fr) {int f=(fr); ((UCHAR *)&(m))[2]=f%CD_FRAMES;f/=CD_FRAMES;((UCHAR *)&(m))[1]=f%CD_SECS;((UCHAR *)&(m))[0]=f/CD_SECS;}
+
+/* The documented format of DVD_LAYER_DESCRIPTOR is wrong. Even the format in the
+ * DDK's header is wrong. There are four bytes at the start  defined by
+ * MMC-5. The first two are the size of the structure in big-endian order as
+ * defined by MMC-5. The other two are reserved.
+ */
+typedef struct
+{
+    DVD_DESCRIPTOR_HEADER Header;
+    DVD_LAYER_DESCRIPTOR Descriptor;
+    UCHAR Padding;
+} internal_dvd_layer_descriptor;
+C_ASSERT(sizeof(internal_dvd_layer_descriptor) == 22);
+
+typedef struct
+{
+    DVD_DESCRIPTOR_HEADER Header;
+    DVD_MANUFACTURER_DESCRIPTOR Descriptor;
+    UCHAR Padding;
+} internal_dvd_manufacturer_descriptor;
+C_ASSERT(sizeof(internal_dvd_manufacturer_descriptor) == 2053);
 
 static NTSTATUS CDROM_ReadTOC(int, int, CDROM_TOC*);
 static NTSTATUS CDROM_GetStatusCode(int);
@@ -421,6 +344,82 @@ static int CDROM_MediaChanged(int dev)
 }
 #endif
 
+
+/******************************************************************
+ *		get_parent_device
+ *
+ * On Mac OS, get the device for the whole disk from a fd that points to a partition.
+ * This is ugly and inefficient, but we have no choice since the partition fd doesn't
+ * support the eject ioctl.
+ */
+#ifdef __APPLE__
+static NTSTATUS get_parent_device( int fd, char *name, size_t len )
+{
+    NTSTATUS status = STATUS_NO_SUCH_FILE;
+    struct stat st;
+    int i;
+    io_service_t service;
+    CFMutableDictionaryRef dict;
+    CFTypeRef val;
+
+    if (fstat( fd, &st ) == -1) return FILE_GetNtStatus();
+    if (!S_ISCHR( st.st_mode )) return STATUS_OBJECT_TYPE_MISMATCH;
+
+    /* create a dictionary with the right major/minor numbers */
+
+    if (!(dict = IOServiceMatching( kIOMediaClass ))) return STATUS_NO_MEMORY;
+
+    i = major( st.st_rdev );
+    val = CFNumberCreate( NULL, kCFNumberIntType, &i );
+    CFDictionaryAddValue( dict, CFSTR( "BSD Major" ), val );
+    CFRelease( val );
+
+    i = minor( st.st_rdev );
+    val = CFNumberCreate( NULL, kCFNumberIntType, &i );
+    CFDictionaryAddValue( dict, CFSTR( "BSD Minor" ), val );
+    CFRelease( val );
+
+    CFDictionaryAddValue( dict, CFSTR("Removable"), kCFBooleanTrue );
+
+    service = IOServiceGetMatchingService( kIOMasterPortDefault, dict );
+
+    /* now look for the parent that has the "Whole" attribute set to TRUE */
+
+    while (service)
+    {
+        io_service_t parent = 0;
+        CFBooleanRef whole;
+        CFStringRef str;
+        int ok;
+
+        if (!IOObjectConformsTo( service, kIOMediaClass ))
+            goto next;
+        if (!(whole = IORegistryEntryCreateCFProperty( service, CFSTR("Whole"), NULL, 0 )))
+            goto next;
+        ok = (whole == kCFBooleanTrue);
+        CFRelease( whole );
+        if (!ok) goto next;
+
+        if ((str = IORegistryEntryCreateCFProperty( service, CFSTR("BSD Name"), NULL, 0 )))
+        {
+            strcpy( name, "/dev/r" );
+            CFStringGetCString( str, name + 6, len - 6, kCFStringEncodingUTF8 );
+            CFRelease( str );
+            status = STATUS_SUCCESS;
+        }
+        IOObjectRelease( service );
+        break;
+
+next:
+        IORegistryEntryGetParentEntry( service, kIOServicePlane, &parent );
+        IOObjectRelease( service );
+        service = parent;
+    }
+    return status;
+}
+#endif
+
+
 /******************************************************************
  *		CDROM_SyncCache                          [internal]
  *
@@ -430,27 +429,20 @@ static int CDROM_MediaChanged(int dev)
  * case the cache will be cleared, causing it to be resynced.
  * The cache section must be held by caller.
  */
-static int CDROM_SyncCache(int dev, int fd)
+static NTSTATUS CDROM_SyncCache(int dev, int fd)
 {
-   int i, io = 0, tsz;
 #ifdef linux
+   int i, tsz;
    struct cdrom_tochdr		hdr;
    struct cdrom_tocentry	entry;
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
-   struct ioc_toc_header	hdr;
-   struct ioc_read_toc_entry	entry;
-   struct cd_toc_entry         toc_buffer;
-#endif
+
    CDROM_TOC *toc = &cdrom_cache[dev].toc;
    cdrom_cache[dev].toc_good = 0;
 
-#ifdef linux
-
-   io = ioctl(fd, CDROMREADTOCHDR, &hdr);
-   if (io == -1)
+   if (ioctl(fd, CDROMREADTOCHDR, &hdr) == -1)
    {
       WARN("(%d) -- Error occurred (%s)!\n", dev, strerror(errno));
-      goto end;
+      return FILE_GetNtStatus();
    }
 
    toc->FirstTrack = hdr.cdth_trk0;
@@ -469,10 +461,10 @@ static int CDROM_SyncCache(int dev, int fd)
      else 
        entry.cdte_track = i;
      entry.cdte_format = CDROM_MSF;
-     io = ioctl(fd, CDROMREADTOCENTRY, &entry);
-     if (io == -1) {
+     if (ioctl(fd, CDROMREADTOCENTRY, &entry) == -1)
+     {
        WARN("error read entry (%s)\n", strerror(errno));
-       goto end;
+       return FILE_GetNtStatus();
      }
      toc->TrackData[i - toc->FirstTrack].Control = entry.cdte_ctrl;
      toc->TrackData[i - toc->FirstTrack].Adr = entry.cdte_adr;
@@ -482,16 +474,24 @@ static int CDROM_SyncCache(int dev, int fd)
      toc->TrackData[i - toc->FirstTrack].Address[1] = entry.cdte_addr.msf.minute;
      toc->TrackData[i - toc->FirstTrack].Address[2] = entry.cdte_addr.msf.second;
      toc->TrackData[i - toc->FirstTrack].Address[3] = entry.cdte_addr.msf.frame;
-    }
-    cdrom_cache[dev].toc_good = 1;
-    io = 0;
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+   }
+   cdrom_cache[dev].toc_good = 1;
+   return STATUS_SUCCESS;
 
-    io = ioctl(fd, CDIOREADTOCHEADER, &hdr);
-    if (io == -1)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
+
+   int i, tsz;
+   struct ioc_toc_header hdr;
+   struct ioc_read_toc_entry entry;
+   struct cd_toc_entry toc_buffer;
+
+   CDROM_TOC *toc = &cdrom_cache[dev].toc;
+   cdrom_cache[dev].toc_good = 0;
+
+    if (ioctl(fd, CDIOREADTOCHEADER, &hdr) == -1)
     {
         WARN("(%d) -- Error occurred (%s)!\n", dev, strerror(errno));
-        goto end;
+        return FILE_GetNtStatus();
     }
     toc->FirstTrack = hdr.starting_track;
     toc->LastTrack  = hdr.ending_track;
@@ -511,14 +511,14 @@ static int CDROM_SyncCache(int dev, int fd)
         } else {
             entry.starting_track = i;
         }
-	memset((char *)&toc_buffer, 0, sizeof(toc_buffer));
+        memset(&toc_buffer, 0, sizeof(toc_buffer));
 	entry.address_format = CD_MSF_FORMAT;
 	entry.data_len = sizeof(toc_buffer);
 	entry.data = &toc_buffer;
-	io = ioctl(fd, CDIOREADTOCENTRYS, &entry);
-	if (io == -1) {
+        if (ioctl(fd, CDIOREADTOCENTRYS, &entry) == -1)
+        {
 	    WARN("error read entry (%s)\n", strerror(errno));
-	    goto end;
+            return FILE_GetNtStatus();
 	}
         toc->TrackData[i - toc->FirstTrack].Control = toc_buffer.control;
         toc->TrackData[i - toc->FirstTrack].Adr = toc_buffer.addr_type;
@@ -530,12 +530,38 @@ static int CDROM_SyncCache(int dev, int fd)
         toc->TrackData[i - toc->FirstTrack].Address[3] = toc_buffer.addr.msf.frame;
     }
     cdrom_cache[dev].toc_good = 1;
-    io = 0;
+    return STATUS_SUCCESS;
+
+#elif defined(__APPLE__)
+    int i;
+    dk_cd_read_toc_t hdr;
+    CDROM_TOC *toc = &cdrom_cache[dev].toc;
+    cdrom_cache[dev].toc_good = 0;
+
+    memset( &hdr, 0, sizeof(hdr) );
+    hdr.buffer = toc;
+    hdr.bufferLength = sizeof(*toc);
+    if (ioctl(fd, DKIOCCDREADTOC, &hdr) == -1)
+    {
+        WARN("(%d) -- Error occurred (%s)!\n", dev, strerror(errno));
+        return FILE_GetNtStatus();
+    }
+    for (i = toc->FirstTrack; i <= toc->LastTrack + 1; i++)
+    {
+        /* convert address format */
+        TRACK_DATA *data = &toc->TrackData[i - toc->FirstTrack];
+        DWORD frame = (((DWORD)data->Address[0] << 24) | ((DWORD)data->Address[1] << 16) |
+                       ((DWORD)data->Address[2] << 8) | data->Address[3]);
+        MSF_OF_FRAME( data->Address[1], frame );
+        data->Address[0] = 0;
+    }
+
+    cdrom_cache[dev].toc_good = 1;
+    return STATUS_SUCCESS;
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
-end:
-    return CDROM_GetStatusCode(io);
 }
 
 static void CDROM_ClearCacheEntry(int dev)
@@ -553,13 +579,13 @@ static void CDROM_ClearCacheEntry(int dev)
  * Determines the ide interface (the number after the ide), and the
  * number of the device on that interface for ide cdroms (*iface <= 1).
  * Determines the scsi information for scsi cdroms (*iface >= 2).
- * Returns false if the info cannot not be obtained.
+ * Returns FALSE if the info cannot not be obtained.
  */
-static int CDROM_GetInterfaceInfo(int fd, UCHAR* iface, UCHAR* port, UCHAR* device, UCHAR* lun)
+static BOOL CDROM_GetInterfaceInfo(int fd, UCHAR* iface, UCHAR* port, UCHAR* device, UCHAR* lun)
 {
 #if defined(linux)
     struct stat st;
-    if ( fstat(fd, &st) == -1 || ! S_ISBLK(st.st_mode)) return 0;
+    if ( fstat(fd, &st) == -1 || ! S_ISBLK(st.st_mode)) return FALSE;
     *port = 0;
     *iface = 0;
     *device = 0;
@@ -582,7 +608,7 @@ static int CDROM_GetInterfaceInfo(int fd, UCHAR* iface, UCHAR* port, UCHAR* devi
     {
 #ifdef SCSI_IOCTL_GET_IDLUN
         UINT32 idlun[2];
-        if (ioctl(fd, SCSI_IOCTL_GET_IDLUN, &idlun) != -1)
+        if (ioctl(fd, SCSI_IOCTL_GET_IDLUN, idlun) != -1)
         {
             *port = (idlun[0] >> 24) & 0xff;
             *iface = ((idlun[0] >> 16) & 0xff) + 2;
@@ -593,36 +619,45 @@ static int CDROM_GetInterfaceInfo(int fd, UCHAR* iface, UCHAR* port, UCHAR* devi
 #endif
         {
             WARN("CD-ROM device (%d, %d) not supported\n", major(st.st_rdev), minor(st.st_rdev));
-            return 0;
+            return FALSE;
         }
     }
-    return 1;
+    return TRUE;
 #elif defined(__NetBSD__)
     struct scsi_addr addr;
     if (ioctl(fd, SCIOCIDENTIFY, &addr) != -1)
     {
-        switch (addr.type) 
+        switch (addr.type)
         {
-        case TYPE_SCSI:  *port = 1;
+        case TYPE_SCSI:
+            *port = 1;
             *iface = addr.addr.scsi.scbus;
             *device = addr.addr.scsi.target;
             *lun = addr.addr.scsi.lun;
-            break;
-        case TYPE_ATAPI: *port = 0;
+            return TRUE;
+        case TYPE_ATAPI:
+            *port = 0;
             *iface = addr.addr.atapi.atbus;
             *device = addr.addr.atapi.drive;
             *lun = 0;
-            break;
+            return TRUE;
         }
-        return 1;
     }
-    return 0;
-#elif defined(__FreeBSD__)
-    FIXME("not implemented for BSD\n");
-    return 0;
+    return FALSE;
+#elif defined(__APPLE__)
+    dk_scsi_identify_t addr;
+    if (ioctl(fd, DKIOCSCSIIDENTIFY, &addr) != -1)
+    {
+       *port = addr.bus;
+       *iface = addr.port;
+       *device = addr.target;
+       *lun = addr.lun;
+       return TRUE;
+    }
+    return FALSE;
 #else
-    FIXME("not implemented for nonlinux\n");
-    return 0;
+    FIXME("not implemented on this O/S\n");
+    return FALSE;
 #endif
 }
 
@@ -637,7 +672,7 @@ static NTSTATUS CDROM_Open(int fd, int* dev)
     NTSTATUS ret = STATUS_SUCCESS;
     int         empty = -1;
 
-    fstat(fd, &st);
+    if (fstat(fd, &st) == -1) return FILE_GetNtStatus();
 
     RtlEnterCriticalSection( &cache_section );
     for (*dev = 0; *dev < MAX_CACHE_ENTRIES; (*dev)++)
@@ -681,10 +716,20 @@ static NTSTATUS CDROM_GetStatusCode(int io)
  *		CDROM_GetControl
  *
  */
-static NTSTATUS CDROM_GetControl(int dev, CDROM_AUDIO_CONTROL* cac)
+static NTSTATUS CDROM_GetControl(int dev, int fd, CDROM_AUDIO_CONTROL* cac)
 {
-    cac->LbaFormat = 0; /* FIXME */
+#ifdef __APPLE__
+    uint16_t speed;
+    int io = ioctl( fd, DKIOCCDGETSPEED, &speed );
+    if (io != 0) return CDROM_GetStatusCode( io );
+    /* DKIOCCDGETSPEED returns the speed in kilobytes per second,
+     * so convert to logical blocks (assumed to be ~2 KB).
+     */
+    cac->LogicalBlocksPerSecond = speed/2;
+#else
     cac->LogicalBlocksPerSecond = 1; /* FIXME */
+#endif
+    cac->LbaFormat = 0; /* FIXME */
     return  STATUS_NOT_SUPPORTED;
 }
 
@@ -694,7 +739,11 @@ static NTSTATUS CDROM_GetControl(int dev, CDROM_AUDIO_CONTROL* cac)
  */
 static NTSTATUS CDROM_GetDeviceNumber(int dev, STORAGE_DEVICE_NUMBER* devnum)
 {
-    return STATUS_NOT_SUPPORTED;
+    FIXME( "stub\n" );
+    devnum->DeviceType = FILE_DEVICE_DISK;
+    devnum->DeviceNumber = 1;
+    devnum->PartitionNumber = 1;
+    return STATUS_SUCCESS;
 }
 
 /******************************************************************
@@ -704,21 +753,32 @@ static NTSTATUS CDROM_GetDeviceNumber(int dev, STORAGE_DEVICE_NUMBER* devnum)
 static NTSTATUS CDROM_GetDriveGeometry(int dev, int fd, DISK_GEOMETRY* dg)
 {
   CDROM_TOC     toc;
-  NTSTATUS      ret = 0;
-  int           fsize = 0;
+  NTSTATUS      ret;
+  int           fsize;
 
   if ((ret = CDROM_ReadTOC(dev, fd, &toc)) != 0) return ret;
 
   fsize = FRAME_OF_TOC(toc, toc.LastTrack+1)
         - FRAME_OF_TOC(toc, 1); /* Total size in frames */
-  
-  dg->Cylinders.u.LowPart = fsize / (64 * 32); 
-  dg->Cylinders.u.HighPart = 0; 
+
+  dg->Cylinders.QuadPart = fsize / (64 * 32);
   dg->MediaType = RemovableMedia;  
   dg->TracksPerCylinder = 64; 
   dg->SectorsPerTrack = 32;  
   dg->BytesPerSector= 2048; 
   return ret;
+}
+
+/******************************************************************
+ *		CDROM_GetMediaType
+ *
+ */
+static NTSTATUS CDROM_GetMediaType(int dev, GET_MEDIA_TYPES* medtype)
+{
+    FIXME(": faking success\n");
+    medtype->DeviceType = FILE_DEVICE_CD_ROM;
+    medtype->MediaInfoCount = 0;
+    return STATUS_SUCCESS;
 }
 
 /**************************************************************************
@@ -728,9 +788,10 @@ static NTSTATUS CDROM_ResetAudio(int fd)
 {
 #if defined(linux)
     return CDROM_GetStatusCode(ioctl(fd, CDROMRESET));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     return CDROM_GetStatusCode(ioctl(fd, CDIOCRESET, NULL));
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -744,11 +805,15 @@ static NTSTATUS CDROM_SetTray(int fd, BOOL doEject)
 {
 #if defined(linux)
     return CDROM_GetStatusCode(ioctl(fd, doEject ? CDROMEJECT : CDROMCLOSETRAY));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     return CDROM_GetStatusCode((ioctl(fd, CDIOCALLOW, NULL)) ||
                                (ioctl(fd, doEject ? CDIOCEJECT : CDIOCCLOSE, NULL)) ||
                                (ioctl(fd, CDIOCPREVENT, NULL)));
+#elif defined(__APPLE__)
+    if (doEject) return CDROM_GetStatusCode( ioctl( fd, DKIOCEJECT, NULL ) );
+    else return STATUS_NOT_SUPPORTED;
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -762,9 +827,10 @@ static NTSTATUS CDROM_ControlEjection(int fd, const PREVENT_MEDIA_REMOVAL* rmv)
 {
 #if defined(linux)
     return CDROM_GetStatusCode(ioctl(fd, CDROM_LOCKDOOR, rmv->PreventMediaRemoval));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     return CDROM_GetStatusCode(ioctl(fd, (rmv->PreventMediaRemoval) ? CDIOCPREVENT : CDIOCALLOW, NULL));
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -823,7 +889,6 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
 {
     NTSTATUS            ret = STATUS_NOT_SUPPORTED;
 #ifdef linux
-    unsigned            size;
     SUB_Q_HEADER*       hdr = (SUB_Q_HEADER*)data;
     int                 io;
     struct cdrom_subchnl	sc;
@@ -863,12 +928,11 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
         break;
     default:
 	TRACE("status=%02X !\n", sc.cdsc_audiostatus);
-        break;
+        hdr->AudioStatus = AUDIO_STATUS_NO_STATUS;
     }
     switch (fmt->Format)
     {
     case IOCTL_CDROM_CURRENT_POSITION:
-        size = sizeof(SUB_Q_CURRENT_POSITION);
         RtlEnterCriticalSection( &cache_section );
 	if (hdr->AudioStatus==AUDIO_STATUS_IN_PROGRESS) {
           data->CurrentPosition.FormatCode = IOCTL_CDROM_CURRENT_POSITION;
@@ -897,7 +961,6 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
         RtlLeaveCriticalSection( &cache_section );
         break;
     case IOCTL_CDROM_MEDIA_CATALOG:
-        size = sizeof(SUB_Q_MEDIA_CATALOG_NUMBER);
         data->MediaCatalog.FormatCode = IOCTL_CDROM_MEDIA_CATALOG;
         {
             struct cdrom_mcn mcn;
@@ -910,7 +973,6 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
         }
         break;
     case IOCTL_CDROM_TRACK_ISRC:
-        size = sizeof(SUB_Q_CURRENT_POSITION);
         FIXME("TrackIsrc: NIY on linux\n");
         data->TrackIsrc.FormatCode = IOCTL_CDROM_TRACK_ISRC;
         data->TrackIsrc.Tcval = 0;
@@ -920,8 +982,7 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
 
  end:
     ret = CDROM_GetStatusCode(io);
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
-    unsigned            size;
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     SUB_Q_HEADER*       hdr = (SUB_Q_HEADER*)data;
     int                 io;
     struct ioc_read_subchannel	read_sc;
@@ -978,11 +1039,11 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
         break;
     default:
 	TRACE("status=%02X !\n", sc.header.audio_status);
+        hdr->AudioStatus = AUDIO_STATUS_NO_STATUS;
     }
     switch (fmt->Format)
     {
     case IOCTL_CDROM_CURRENT_POSITION:
-        size = sizeof(SUB_Q_CURRENT_POSITION);
         RtlEnterCriticalSection( &cache_section );
 	if (hdr->AudioStatus==AUDIO_STATUS_IN_PROGRESS) {
           data->CurrentPosition.FormatCode = IOCTL_CDROM_CURRENT_POSITION;
@@ -1008,13 +1069,11 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
         RtlLeaveCriticalSection( &cache_section );
         break;
     case IOCTL_CDROM_MEDIA_CATALOG:
-        size = sizeof(SUB_Q_MEDIA_CATALOG_NUMBER);
         data->MediaCatalog.FormatCode = IOCTL_CDROM_MEDIA_CATALOG;
         data->MediaCatalog.Mcval = sc.what.media_catalog.mc_valid;
         memcpy(data->MediaCatalog.MediaCatalog, sc.what.media_catalog.mc_number, 15);
         break;
     case IOCTL_CDROM_TRACK_ISRC:
-        size = sizeof(SUB_Q_CURRENT_POSITION);
         data->TrackIsrc.FormatCode = IOCTL_CDROM_TRACK_ISRC;
         data->TrackIsrc.Tcval = sc.what.track_info.ti_valid;
         memcpy(data->TrackIsrc.TrackIsrc, sc.what.track_info.ti_number, 15);
@@ -1022,6 +1081,37 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
     }
 
  end:
+    ret = CDROM_GetStatusCode(io);
+#elif defined(__APPLE__)
+    SUB_Q_HEADER* hdr = (SUB_Q_HEADER*)data;
+    int io = 0;
+    union
+    {
+        dk_cd_read_mcn_t mcn;
+        dk_cd_read_isrc_t isrc;
+    } ioc;
+    /* We need IOCDAudioControl for IOCTL_CDROM_CURRENT_POSITION */
+    if (fmt->Format == IOCTL_CDROM_CURRENT_POSITION)
+    {
+        FIXME("NIY\n");
+        return STATUS_NOT_SUPPORTED;
+    }
+    /* No IOCDAudioControl support; just set the audio status to none */
+    hdr->AudioStatus = AUDIO_STATUS_NO_STATUS;
+    switch(fmt->Format)
+    {
+    case IOCTL_CDROM_MEDIA_CATALOG:
+        if ((io = ioctl(fd, DKIOCCDREADMCN, &ioc.mcn)) == -1) break;
+        memcpy(data->MediaCatalog.MediaCatalog, ioc.mcn.mcn, kCDMCNMaxLength);
+        data->MediaCatalog.Mcval = 1;
+        break;
+    case IOCTL_CDROM_TRACK_ISRC:
+        ioc.isrc.track = fmt->Track;
+        if ((io = ioctl(fd, DKIOCCDREADISRC, &ioc.isrc)) == -1) break;
+        memcpy(data->TrackIsrc.TrackIsrc, ioc.isrc.isrc, kCDISRCMaxLength);
+        data->TrackIsrc.Tcval = 1;
+        data->TrackIsrc.Track = ioc.isrc.track;
+    }
     ret = CDROM_GetStatusCode(io);
 #endif
     return ret;
@@ -1031,6 +1121,7 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
  *		CDROM_Verify
  *  Implements: IOCTL_STORAGE_CHECK_VERIFY
  *              IOCTL_CDROM_CHECK_VERIFY
+ *              IOCTL_DISK_CHECK_VERIFY
  *
  */
 static NTSTATUS CDROM_Verify(int dev, int fd)
@@ -1048,9 +1139,21 @@ static NTSTATUS CDROM_Verify(int dev, int fd)
         return STATUS_SUCCESS;
     else
         return STATUS_NO_MEDIA_IN_DEVICE;
-#endif
-    FIXME("not implemented for non-linux\n");
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
+    int ret;
+    ret = ioctl(fd, CDIOCSTART, NULL);
+    if(ret == 0)
+        return STATUS_SUCCESS;
+    else
+        return STATUS_NO_MEDIA_IN_DEVICE;
+#elif defined(__APPLE__)
+	/* At this point, we know that we have media, because in Mac OS X, the
+	 * device file is only created when media is present. */
+	return STATUS_SUCCESS;
+#else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
+#endif
 }
 
 /******************************************************************
@@ -1089,7 +1192,7 @@ static NTSTATUS CDROM_PlayAudioMSF(int fd, const CDROM_PLAY_AUDIO_MSF* audio_msf
 	  msf.cdmsf_min1, msf.cdmsf_sec1, msf.cdmsf_frame1);
  end:
     ret = CDROM_GetStatusCode(io);
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     struct	ioc_play_msf	msf;
     int         io;
 
@@ -1134,7 +1237,7 @@ static NTSTATUS CDROM_SeekAudioMSF(int dev, int fd, const CDROM_SEEK_AUDIO_MSF* 
 #if defined(linux)
     struct cdrom_msf0	msf;
     struct cdrom_subchnl sc;
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     struct ioc_play_msf	msf;
     struct ioc_read_subchannel	read_sc;
     struct cd_sub_channel_info	sc;
@@ -1187,7 +1290,7 @@ static NTSTATUS CDROM_SeekAudioMSF(int dev, int fd, const CDROM_SEEK_AUDIO_MSF* 
       return CDROM_GetStatusCode(ioctl(fd, CDROMSEEK, &msf));
     }
     return STATUS_SUCCESS;
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     read_sc.address_format = CD_MSF_FORMAT;
     read_sc.track          = 0;
     read_sc.data_len       = sizeof(sc);
@@ -1214,6 +1317,7 @@ static NTSTATUS CDROM_SeekAudioMSF(int dev, int fd, const CDROM_SEEK_AUDIO_MSF* 
     }
     return STATUS_SUCCESS;
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1227,9 +1331,10 @@ static NTSTATUS CDROM_PauseAudio(int fd)
 {
 #if defined(linux)
     return CDROM_GetStatusCode(ioctl(fd, CDROMPAUSE));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     return CDROM_GetStatusCode(ioctl(fd, CDIOCPAUSE, NULL));
 #else
+    FIXME(": not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1243,9 +1348,10 @@ static NTSTATUS CDROM_ResumeAudio(int fd)
 {
 #if defined(linux)
     return CDROM_GetStatusCode(ioctl(fd, CDROMRESUME));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     return CDROM_GetStatusCode(ioctl(fd, CDIOCRESUME, NULL));
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1259,9 +1365,10 @@ static NTSTATUS CDROM_StopAudio(int fd)
 {
 #if defined(linux)
     return CDROM_GetStatusCode(ioctl(fd, CDROMSTOP));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     return CDROM_GetStatusCode(ioctl(fd, CDIOCSTOP, NULL));
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1286,7 +1393,7 @@ static NTSTATUS CDROM_GetVolume(int fd, VOLUME_CONTROL* vc)
         vc->PortVolume[3] = volc.channel3;
     }
     return CDROM_GetStatusCode(io);
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     struct  ioc_vol     volc;
     int io;
 
@@ -1300,6 +1407,7 @@ static NTSTATUS CDROM_GetVolume(int fd, VOLUME_CONTROL* vc)
     }
     return CDROM_GetStatusCode(io);
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1320,7 +1428,7 @@ static NTSTATUS CDROM_SetVolume(int fd, const VOLUME_CONTROL* vc)
     volc.channel3 = vc->PortVolume[3];
 
     return CDROM_GetStatusCode(ioctl(fd, CDROMVOLCTRL, &volc));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
     struct  ioc_vol     volc;
 
     volc.vol[0] = vc->PortVolume[0];
@@ -1330,6 +1438,7 @@ static NTSTATUS CDROM_SetVolume(int fd, const VOLUME_CONTROL* vc)
 
     return CDROM_GetStatusCode(ioctl(fd, CDIOCSETVOL, &volc));
 #else
+    FIXME(": not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1337,101 +1446,151 @@ static NTSTATUS CDROM_SetVolume(int fd, const VOLUME_CONTROL* vc)
 /******************************************************************
  *		CDROM_RawRead
  *
+ * Some features of this IOCTL are rather poorly documented and
+ * not really intuitive either:
+ *
+ *   1. Although the DiskOffset parameter is meant to be a
+ *      byte offset into the disk, it is in fact the sector
+ *      number multiplied by 2048 regardless of the actual
+ *      sector size.
+ *
+ *   2. The least significant 11 bits of DiskOffset are ignored.
+ *
+ *   3. The TrackMode parameter has no effect on the sector
+ *      size. The entire raw sector (i.e. 2352 bytes of data)
+ *      is always returned. IMO the TrackMode is only used
+ *      to check the correct sector type.
  *
  */
 static NTSTATUS CDROM_RawRead(int fd, const RAW_READ_INFO* raw, void* buffer, DWORD len, DWORD* sz)
 {
-    int	        ret = STATUS_NOT_SUPPORTED;
+    int         ret = STATUS_NOT_SUPPORTED;
     int         io = -1;
-    DWORD       sectSize;
+#ifdef __APPLE__
+    dk_cd_read_t cdrd;
+#endif
 
-    TRACE("RAW_READ_INFO: DiskOffset=%li,%li SectorCount=%li TrackMode=%i\n buffer=%p len=%li sz=%p\n",
+    TRACE("RAW_READ_INFO: DiskOffset=%i,%i SectorCount=%i TrackMode=%i\n buffer=%p len=%i sz=%p\n",
           raw->DiskOffset.u.HighPart, raw->DiskOffset.u.LowPart, raw->SectorCount, raw->TrackMode, buffer, len, sz);
+
+    if (len < raw->SectorCount * 2352) return STATUS_BUFFER_TOO_SMALL;
+
+#if defined(linux)
+    if (raw->DiskOffset.u.HighPart & ~2047) {
+        WARN("DiskOffset points to a sector >= 2**32\n");
+        return ret;
+    }
 
     switch (raw->TrackMode)
     {
-    case YellowMode2:   sectSize = 2336;        break;
-    case XAForm2:       sectSize = 2328;        break;
-    case CDDA:          sectSize = 2352;        break;
-    default:    return STATUS_INVALID_PARAMETER;
+    case YellowMode2:
+    case XAForm2:
+    {
+        DWORD lba = raw->DiskOffset.QuadPart >> 11;
+        struct cdrom_msf*       msf;
+        PBYTE                   *bp; /* current buffer pointer */
+        DWORD i;
+
+        if ((lba + raw->SectorCount) >
+            ((1 << 8*sizeof(msf->cdmsf_min0)) * CD_SECS * CD_FRAMES
+             - CD_MSF_OFFSET)) {
+            WARN("DiskOffset not accessible with MSF\n");
+            return ret;
+        }
+
+        /* Linux reads only one sector at a time.
+         * ioctl CDROMREADRAW takes struct cdrom_msf as an argument
+         * on the contrary to what header comments state.
+         */
+        lba += CD_MSF_OFFSET;
+        for (i = 0, bp = buffer; i < raw->SectorCount;
+             i++, lba++, bp += 2352)
+        {
+            msf = (struct cdrom_msf*)bp;
+            msf->cdmsf_min0   = lba / CD_FRAMES / CD_SECS;
+            msf->cdmsf_sec0   = lba / CD_FRAMES % CD_SECS;
+            msf->cdmsf_frame0 = lba % CD_FRAMES;
+            io = ioctl(fd, CDROMREADRAW, msf);
+            if (io != 0)
+            {
+                *sz = 2352 * i;
+                return CDROM_GetStatusCode(io);
+            }
+        }
+        break;
     }
-    if (len < raw->SectorCount * sectSize) return STATUS_BUFFER_TOO_SMALL;
-    /* strangely enough, it seems that sector offsets are always indicated with a size of 2048,
-     * even if a larger size if read...
-     */
-#if defined(linux)
+
+    case CDDA:
     {
         struct cdrom_read_audio cdra;
-        struct cdrom_msf*       msf;
-        int i;
-        LONGLONG t = ((LONGLONG)raw->DiskOffset.u.HighPart << 32) +
-                                raw->DiskOffset.u.LowPart + CD_MSF_OFFSET;
 
-        switch (raw->TrackMode)
-        {
-        case YellowMode2:
-            /* Linux reads only one sector at a time.
-             * ioctl CDROMREADMODE2 takes struct cdrom_msf as an argument
-             * on the contrary to what header comments state.
-             */
-            for (i = 0; i < raw->SectorCount; i++, t += sectSize)
-            {
-                msf = (struct cdrom_msf*)buffer + i * sectSize;
-                msf->cdmsf_min0   = t / CD_FRAMES / CD_SECS;
-                msf->cdmsf_sec0   = t / CD_FRAMES % CD_SECS;
-                msf->cdmsf_frame0 = t % CD_FRAMES;
-                io = ioctl(fd, CDROMREADMODE2, msf);
-                if (io != 0)
-                {
-                    *sz = sectSize * i;
-                    return CDROM_GetStatusCode(io);
-                }
-            }
-            break;
-        case XAForm2:
-            FIXME("XAForm2: NIY\n");
-            return ret;
-        case CDDA:
-            /* FIXME: the output doesn't seem 100% correct... in fact output is shifted
-             * between by NT2K box and this... should check on the same drive...
-             * otherwise, I fear a 2352/2368 mismatch somewhere in one of the drivers
-             * (linux/NT).
-             * Anyway, that's not critical at all. We're talking of 16/32 bytes, we're
-             * talking of 0.2 ms of sound
-             */
-            /* 2048 = 2 ** 11 */
-            if (raw->DiskOffset.u.HighPart & ~2047) FIXME("Unsupported value\n");
-            cdra.addr.lba = ((raw->DiskOffset.u.LowPart >> 11) |
-                (raw->DiskOffset.u.HighPart << (32 - 11))) - 1;
-            FIXME("reading at %u\n", cdra.addr.lba);
-            cdra.addr_format = CDROM_LBA;
-            cdra.nframes = raw->SectorCount;
-            cdra.buf = buffer;
-            io = ioctl(fd, CDROMREADAUDIO, &cdra);
-            break;
-        default:
-            FIXME("NIY: %d\n", raw->TrackMode);
-            return ret;
-        }
+        cdra.addr.lba = raw->DiskOffset.QuadPart >> 11;
+        TRACE("reading at %u\n", cdra.addr.lba);
+        cdra.addr_format = CDROM_LBA;
+        cdra.nframes = raw->SectorCount;
+        cdra.buf = buffer;
+        io = ioctl(fd, CDROMREADAUDIO, &cdra);
+        break;
+    }
+
+    default:
+        FIXME("NIY: %d\n", raw->TrackMode);
+        return STATUS_INVALID_PARAMETER;
+    }
+#elif defined(__APPLE__)
+    /* Mac OS lets us read multiple parts of the sector at a time.
+     * We can read all the sectors in at once, unlike Linux.
+     */
+    memset(&cdrd, 0, sizeof(cdrd));
+    cdrd.offset = (raw->DiskOffset.QuadPart >> 11) * kCDSectorSizeWhole;
+    cdrd.buffer = buffer;
+    cdrd.bufferLength = raw->SectorCount * kCDSectorSizeWhole;
+    switch (raw->TrackMode)
+    {
+    case YellowMode2:
+        cdrd.sectorType = kCDSectorTypeMode2;
+        cdrd.sectorArea = kCDSectorAreaSync | kCDSectorAreaHeader | kCDSectorAreaUser;
+        break;
+
+    case XAForm2:
+        cdrd.sectorType = kCDSectorTypeMode2Form2;
+        cdrd.sectorArea = kCDSectorAreaSync | kCDSectorAreaHeader | kCDSectorAreaSubHeader | kCDSectorAreaUser;
+        break;
+
+    case CDDA:
+        cdrd.sectorType = kCDSectorTypeCDDA;
+        cdrd.sectorArea = kCDSectorAreaUser;
+        break;
+
+    default:
+        FIXME("NIY: %d\n", raw->TrackMode);
+        return STATUS_INVALID_PARAMETER;
+    }
+    io = ioctl(fd, DKIOCCDREAD, &cdrd);
+    if (io != 0)
+    {
+        *sz = cdrd.bufferLength;
+        return CDROM_GetStatusCode(io);
     }
 #else
+    switch (raw->TrackMode)
     {
-        switch (raw->TrackMode)
-        {
-        case YellowMode2:
-            FIXME("YellowMode2: NIY\n");
-            return ret;
-        case XAForm2:
-            FIXME("XAForm2: NIY\n");
-            return ret;
-        case CDDA:
-            FIXME("CDDA: NIY\n");
-            return ret;
-        }
+    case YellowMode2:
+        FIXME("YellowMode2: NIY\n");
+        return ret;
+    case XAForm2:
+        FIXME("XAForm2: NIY\n");
+        return ret;
+    case CDDA:
+        FIXME("CDDA: NIY\n");
+        return ret;
+    default:
+        FIXME("NIY: %d\n", raw->TrackMode);
+        return STATUS_INVALID_PARAMETER;
     }
 #endif
 
-    *sz = sectSize * raw->SectorCount;
+    *sz = 2352 * raw->SectorCount;
     ret = CDROM_GetStatusCode(io);
     return ret;
 }
@@ -1449,6 +1608,9 @@ static NTSTATUS CDROM_ScsiPassThroughDirect(int fd, PSCSI_PASS_THROUGH_DIRECT pP
     int io;
 #elif defined HAVE_SCSIREQ_T_CMD
     scsireq_t cmd;
+    int io;
+#elif defined __APPLE__
+    dk_scsi_command_t cmd;
     int io;
 #endif
 
@@ -1553,6 +1715,64 @@ static NTSTATUS CDROM_ScsiPassThroughDirect(int fd, PSCSI_PASS_THROUGH_DIRECT pP
     pPacket->ScsiStatus = cmd.status;
 
     ret = CDROM_GetStatusCode(io);
+
+#elif defined(__APPLE__)
+
+    memset(&cmd, 0, sizeof(cmd));
+    memcpy(cmd.cdb, pPacket->Cdb, pPacket->CdbLength);
+
+    cmd.cdbSize        = pPacket->CdbLength;
+    cmd.buffer         = pPacket->DataBuffer;
+    cmd.bufferSize     = pPacket->DataTransferLength;
+    cmd.sense          = (char*)pPacket + pPacket->SenseInfoOffset;
+    cmd.senseLen       = pPacket->SenseInfoLength;
+    cmd.timeout        = pPacket->TimeOutValue*1000; /* in milliseconds */
+
+    switch (pPacket->DataIn)
+    {
+    case SCSI_IOCTL_DATA_OUT:
+        cmd.direction = kSCSIDataTransfer_FromInitiatorToTarget;
+	break;
+    case SCSI_IOCTL_DATA_IN:
+        cmd.direction = kSCSIDataTransfer_FromTargetToInitiator;
+	break;
+    case SCSI_IOCTL_DATA_UNSPECIFIED:
+        cmd.direction = kSCSIDataTransfer_NoDataTransfer;
+	break;
+    default:
+       return STATUS_INVALID_PARAMETER;
+    }
+
+    io = ioctl(fd, DKIOCSCSICOMMAND, &cmd);
+
+    if (cmd.response == kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE)
+    {
+        /* Command failed */
+        switch (cmd.status)
+        {
+        case kSCSITaskStatus_TaskTimeoutOccurred:     return STATUS_TIMEOUT;
+                                                      break;
+        case kSCSITaskStatus_ProtocolTimeoutOccurred: return STATUS_IO_TIMEOUT;
+                                                      break;
+        case kSCSITaskStatus_DeviceNotResponding:     return STATUS_DEVICE_BUSY;
+                                                      break;
+        case kSCSITaskStatus_DeviceNotPresent:
+            return STATUS_NO_SUCH_DEVICE;
+            break;
+        case kSCSITaskStatus_DeliveryFailure:
+            return STATUS_DEVICE_PROTOCOL_ERROR;
+            break;
+        case kSCSITaskStatus_No_Status:
+        default:
+            return STATUS_UNSUCCESSFUL;
+            break;
+        }
+    }
+
+    if (cmd.status != kSCSITaskStatus_No_Status)
+        pPacket->ScsiStatus = cmd.status;
+
+    ret = CDROM_GetStatusCode(io);
 #endif
     return ret;
 }
@@ -1570,6 +1790,9 @@ static NTSTATUS CDROM_ScsiPassThrough(int fd, PSCSI_PASS_THROUGH pPacket)
     int io;
 #elif defined HAVE_SCSIREQ_T_CMD
     scsireq_t cmd;
+    int io;
+#elif defined __APPLE__
+    dk_scsi_command_t cmd;
     int io;
 #endif
 
@@ -1684,6 +1907,67 @@ static NTSTATUS CDROM_ScsiPassThrough(int fd, PSCSI_PASS_THROUGH pPacket)
     pPacket->ScsiStatus = cmd.status;
 
     ret = CDROM_GetStatusCode(io);
+
+#elif defined(__APPLE__)
+
+    memset(&cmd, 0, sizeof(cmd));
+    memcpy(cmd.cdb, pPacket->Cdb, pPacket->CdbLength);
+
+    cmd.cdbSize        = pPacket->CdbLength;
+    cmd.buffer         = (char*)pPacket + pPacket->DataBufferOffset;
+    cmd.bufferSize     = pPacket->DataTransferLength;
+    cmd.sense          = (char*)pPacket + pPacket->SenseInfoOffset;
+    cmd.senseLen       = pPacket->SenseInfoLength;
+    cmd.timeout        = pPacket->TimeOutValue*1000; /* in milliseconds */
+
+    switch (pPacket->DataIn)
+    {
+    case SCSI_IOCTL_DATA_OUT:
+        cmd.direction = kSCSIDataTransfer_FromInitiatorToTarget;
+	break;
+    case SCSI_IOCTL_DATA_IN:
+        cmd.direction = kSCSIDataTransfer_FromTargetToInitiator;
+	break;
+    case SCSI_IOCTL_DATA_UNSPECIFIED:
+        cmd.direction = kSCSIDataTransfer_NoDataTransfer;
+	break;
+    default:
+       return STATUS_INVALID_PARAMETER;
+    }
+
+    io = ioctl(fd, DKIOCSCSICOMMAND, &cmd);
+
+    if (cmd.response == kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE)
+    {
+        /* Command failed */
+        switch (cmd.status)
+        {
+        case kSCSITaskStatus_TaskTimeoutOccurred:
+            return STATUS_TIMEOUT;
+            break;
+        case kSCSITaskStatus_ProtocolTimeoutOccurred:
+            return STATUS_IO_TIMEOUT;
+            break;
+        case kSCSITaskStatus_DeviceNotResponding:
+            return STATUS_DEVICE_BUSY;
+            break;
+        case kSCSITaskStatus_DeviceNotPresent:
+            return STATUS_NO_SUCH_DEVICE;
+            break;
+        case kSCSITaskStatus_DeliveryFailure:
+            return STATUS_DEVICE_PROTOCOL_ERROR;
+            break;
+        case kSCSITaskStatus_No_Status:
+        default:
+            return STATUS_UNSUCCESSFUL;
+            break;
+        }
+    }
+
+    if (cmd.status != kSCSITaskStatus_No_Status)
+        pPacket->ScsiStatus = cmd.status;
+
+    ret = CDROM_GetStatusCode(io);
 #endif
     return ret;
 }
@@ -1693,16 +1977,33 @@ static NTSTATUS CDROM_ScsiPassThrough(int fd, PSCSI_PASS_THROUGH pPacket)
  *
  *
  */
-static NTSTATUS CDROM_ScsiGetCaps(PIO_SCSI_CAPABILITIES caps)
+static NTSTATUS CDROM_ScsiGetCaps(int fd, PIO_SCSI_CAPABILITIES caps)
 {
     NTSTATUS    ret = STATUS_NOT_IMPLEMENTED;
 
-    caps->Length = sizeof(*caps);
 #ifdef SG_SCATTER_SZ
+    caps->Length = sizeof(*caps);
     caps->MaximumTransferLength = SG_SCATTER_SZ; /* FIXME */
-    caps->MaximumPhysicalPages = SG_SCATTER_SZ / getpagesize();
+    caps->MaximumPhysicalPages = SG_SCATTER_SZ / page_size;
     caps->SupportedAsynchronousEvents = TRUE;
-    caps->AlignmentMask = getpagesize();
+    caps->AlignmentMask = page_size;
+    caps->TaggedQueuing = FALSE; /* we could check that it works and answer TRUE */
+    caps->AdapterScansDown = FALSE; /* FIXME ? */
+    caps->AdapterUsesPio = FALSE; /* FIXME ? */
+    ret = STATUS_SUCCESS;
+#elif defined __APPLE__
+    uint64_t bytesr, bytesw, align;
+    int io = ioctl(fd, DKIOCGETMAXBYTECOUNTREAD, &bytesr);
+    if (io != 0) return CDROM_GetStatusCode(io);
+    io = ioctl(fd, DKIOCGETMAXBYTECOUNTWRITE, &bytesw);
+    if (io != 0) return CDROM_GetStatusCode(io);
+    io = ioctl(fd, DKIOCGETMINSEGMENTALIGNMENTBYTECOUNT, &align);
+    if (io != 0) return CDROM_GetStatusCode(io);
+    caps->Length = sizeof(*caps);
+    caps->MaximumTransferLength = bytesr < bytesw ? bytesr : bytesw;
+    caps->MaximumPhysicalPages = caps->MaximumTransferLength / page_size;
+    caps->SupportedAsynchronousEvents = TRUE;
+    caps->AlignmentMask = align-1;
     caps->TaggedQueuing = FALSE; /* we could check that it works and answer TRUE */
     caps->AdapterScansDown = FALSE; /* FIXME ? */
     caps->AdapterUsesPio = FALSE; /* FIXME ? */
@@ -1738,7 +2039,7 @@ static NTSTATUS CDROM_GetAddress(int fd, SCSI_ADDRESS* address)
  *
  *
  */
-static NTSTATUS DVD_StartSession(int fd, PDVD_SESSION_ID sid_in, PDVD_SESSION_ID sid_out)
+static NTSTATUS DVD_StartSession(int fd, const DVD_SESSION_ID *sid_in, PDVD_SESSION_ID sid_out)
 {
 #if defined(linux)
     NTSTATUS ret = STATUS_NOT_SUPPORTED;
@@ -1746,15 +2047,28 @@ static NTSTATUS DVD_StartSession(int fd, PDVD_SESSION_ID sid_in, PDVD_SESSION_ID
 
     memset( &auth_info, 0, sizeof( auth_info ) );
     auth_info.type = DVD_LU_SEND_AGID;
-    if (sid_in) auth_info.lsa.agid = *(int*)sid_in; /* ?*/
+    if (sid_in) auth_info.lsa.agid = *(const int*)sid_in; /* ?*/
 
     TRACE("fd 0x%08x\n",fd);
     ret =CDROM_GetStatusCode(ioctl(fd, DVD_AUTH, &auth_info));
     *sid_out = auth_info.lsa.agid;
     return ret;
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
-    return STATUS_NOT_SUPPORTED;
+#elif defined(__APPLE__)
+    NTSTATUS ret = STATUS_NOT_SUPPORTED;
+    dk_dvd_report_key_t dvdrk;
+    DVDAuthenticationGrantIDInfo agid_info;
+
+    dvdrk.format = kDVDKeyFormatAGID_CSS;
+    dvdrk.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+    if(sid_in) dvdrk.grantID = *(uint8_t*)sid_in; /* ? */
+    dvdrk.bufferLength = sizeof(DVDAuthenticationGrantIDInfo);
+    dvdrk.buffer = &agid_info;
+
+    ret = CDROM_GetStatusCode(ioctl(fd, DKIOCDVDREPORTKEY, &dvdrk));
+    *sid_out = agid_info.grantID;
+    return ret;
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1764,20 +2078,27 @@ static NTSTATUS DVD_StartSession(int fd, PDVD_SESSION_ID sid_in, PDVD_SESSION_ID
  *
  *
  */
-static NTSTATUS DVD_EndSession(int fd, PDVD_SESSION_ID sid)
+static NTSTATUS DVD_EndSession(int fd, const DVD_SESSION_ID *sid)
 {
 #if defined(linux)
     dvd_authinfo auth_info;
 
     memset( &auth_info, 0, sizeof( auth_info ) );
     auth_info.type = DVD_INVALIDATE_AGID;
-    auth_info.lsa.agid = *(int*)sid;
+    auth_info.lsa.agid = *(const int*)sid;
 
     TRACE("\n");
     return CDROM_GetStatusCode(ioctl(fd, DVD_AUTH, &auth_info));
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
-    return STATUS_NOT_SUPPORTED;
+#elif defined(__APPLE__)
+    dk_dvd_send_key_t dvdsk;
+
+    dvdsk.format = kDVDKeyFormatAGID_Invalidate;
+    dvdsk.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+    dvdsk.grantID = (uint8_t)*sid;
+
+    return CDROM_GetStatusCode(ioctl(fd, DKIOCDVDSENDKEY, &dvdsk));
 #else
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -1787,7 +2108,7 @@ static NTSTATUS DVD_EndSession(int fd, PDVD_SESSION_ID sid)
  *
  *
  */
-static NTSTATUS DVD_SendKey(int fd, PDVD_COPY_PROTECT_KEY key)
+static NTSTATUS DVD_SendKey(int fd, const DVD_COPY_PROTECT_KEY *key)
 {
 #if defined(linux)
     NTSTATUS ret = STATUS_NOT_SUPPORTED;
@@ -1817,8 +2138,53 @@ static NTSTATUS DVD_SendKey(int fd, PDVD_COPY_PROTECT_KEY key)
 	FIXME("Unknown Keytype 0x%x\n",key->KeyType);
     }
     return ret;
+#elif defined(__APPLE__)
+    dk_dvd_send_key_t dvdsk;
+    union
+    {
+        DVDChallengeKeyInfo chal;
+        DVDKey2Info key2;
+    } key_desc;
+
+    switch(key->KeyType)
+    {
+    case DvdChallengeKey:
+        dvdsk.format = kDVDKeyFormatChallengeKey;
+        dvdsk.bufferLength = sizeof(key_desc.chal);
+        dvdsk.buffer = &key_desc.chal;
+        OSWriteBigInt16(key_desc.chal.dataLength, 0, key->KeyLength);
+        memcpy(key_desc.chal.challengeKeyValue, key->KeyData, key->KeyLength);
+        break;
+    case DvdBusKey2:
+        dvdsk.format = kDVDKeyFormatKey2;
+        dvdsk.bufferLength = sizeof(key_desc.key2);
+        dvdsk.buffer = &key_desc.key2;
+        OSWriteBigInt16(key_desc.key2.dataLength, 0, key->KeyLength);
+        memcpy(key_desc.key2.key2Value, key->KeyData, key->KeyLength);
+        break;
+    case DvdInvalidateAGID:
+        dvdsk.format = kDVDKeyFormatAGID_Invalidate;
+        break;
+    case DvdBusKey1:
+    case DvdTitleKey:
+    case DvdAsf:
+    case DvdGetRpcKey:
+    case DvdDiskKey:
+        ERR("attempted to write read-only key type 0x%x\n", key->KeyType);
+        return STATUS_NOT_SUPPORTED;
+    case DvdSetRpcKey:
+        FIXME("DvdSetRpcKey NIY\n");
+        return STATUS_NOT_SUPPORTED;
+    default:
+        FIXME("got unknown key type 0x%x\n", key->KeyType);
+        return STATUS_NOT_SUPPORTED;
+    }
+    dvdsk.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+    dvdsk.grantID = (uint8_t)key->SessionId;
+
+    return CDROM_GetStatusCode(ioctl(fd, DKIOCDVDSENDKEY, &dvdsk));
 #else
-    FIXME("unsupported on this platform\n");
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif    
 }
@@ -1899,42 +2265,502 @@ static NTSTATUS DVD_ReadKey(int fd, PDVD_COPY_PROTECT_KEY key)
 	    ((PDVD_RPC_KEY)key->KeyData)->TypeCode = auth_info.lrpcs.type;
 	    ((PDVD_RPC_KEY)key->KeyData)->RegionMask = auth_info.lrpcs.region_mask;
 	    ((PDVD_RPC_KEY)key->KeyData)->RpcScheme = auth_info.lrpcs.rpc_scheme;
+	    ((PDVD_RPC_KEY)key->KeyData)->UserResetsAvailable = auth_info.lrpcs.ucca;
+	    ((PDVD_RPC_KEY)key->KeyData)->ManufacturerResetsAvailable = auth_info.lrpcs.vra;
 	}
 	break;
     default:
 	FIXME("Unknown keytype 0x%x\n",key->KeyType);
     }
     return ret;
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
-    TRACE("bsd\n");
-    return STATUS_NOT_SUPPORTED;
+#elif defined(__APPLE__)
+    union
+    {
+        dk_dvd_report_key_t key;
+        dk_dvd_read_structure_t disk_key;
+    } ioc;
+    union
+    {
+        DVDDiscKeyInfo disk_key;
+        DVDChallengeKeyInfo chal;
+        DVDKey1Info key1;
+        DVDTitleKeyInfo title;
+        DVDAuthenticationSuccessFlagInfo asf;
+        DVDRegionPlaybackControlInfo rpc;
+    } desc;
+    NTSTATUS ret = STATUS_NOT_SUPPORTED;
+
+    switch(key->KeyType)
+    {
+    case DvdChallengeKey:
+        ioc.key.format = kDVDKeyFormatChallengeKey;
+        ioc.key.grantID = (uint8_t)key->SessionId;
+        ioc.key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+        ioc.key.bufferLength = sizeof(desc.chal);
+        ioc.key.buffer = &desc.chal;
+        OSWriteBigInt16(desc.chal.dataLength, 0, key->KeyLength);
+        break;
+    case DvdBusKey1:
+        ioc.key.format = kDVDKeyFormatKey1;
+        ioc.key.grantID = (uint8_t)key->SessionId;
+        ioc.key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+        ioc.key.bufferLength = sizeof(desc.key1);
+        ioc.key.buffer = &desc.key1;
+        OSWriteBigInt16(desc.key1.dataLength, 0, key->KeyLength);
+        break;
+    case DvdTitleKey:
+        ioc.key.format = kDVDKeyFormatTitleKey;
+        ioc.key.grantID = (uint8_t)key->SessionId;
+        ioc.key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+        ioc.key.bufferLength = sizeof(desc.title);
+        ioc.key.buffer = &desc.title;
+        ioc.key.address = (uint32_t)(key->Parameters.TitleOffset.QuadPart>>11);
+        OSWriteBigInt16(desc.title.dataLength, 0, key->KeyLength);
+        break;
+    case DvdAsf:
+        ioc.key.format = kDVDKeyFormatASF;
+        ioc.key.grantID = (uint8_t)key->SessionId;
+        ioc.key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+        ioc.key.bufferLength = sizeof(desc.asf);
+        ioc.key.buffer = &desc.asf;
+        OSWriteBigInt16(desc.asf.dataLength, 0, key->KeyLength);
+        break;
+    case DvdGetRpcKey:
+        ioc.key.format = kDVDKeyFormatRegionState;
+        ioc.key.grantID = (uint8_t)key->SessionId;
+        ioc.key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+        ioc.key.bufferLength = sizeof(desc.rpc);
+        ioc.key.buffer = &desc.rpc;
+        OSWriteBigInt16(desc.rpc.dataLength, 0, key->KeyLength);
+        break;
+    case DvdDiskKey:
+        ioc.disk_key.format = kDVDStructureFormatDiscKeyInfo;
+        ioc.disk_key.grantID = (uint8_t)key->SessionId;
+        ioc.disk_key.bufferLength = sizeof(desc.disk_key);
+        ioc.disk_key.buffer = &desc.disk_key;
+        break;
+    case DvdInvalidateAGID:
+        ioc.key.format = kDVDKeyFormatAGID_Invalidate;
+        ioc.key.grantID = (uint8_t)key->SessionId;
+        ioc.key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+        break;
+    case DvdBusKey2:
+    case DvdSetRpcKey:
+        ERR("attempted to read write-only key type 0x%x\n", key->KeyType);
+        return STATUS_NOT_SUPPORTED;
+    default:
+        FIXME("got unknown key type 0x%x\n", key->KeyType);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    ret = CDROM_GetStatusCode(ioctl(fd, (key->KeyType == DvdDiskKey ? DKIOCDVDREADSTRUCTURE : DKIOCDVDREPORTKEY), &ioc));
+
+    if (ret == STATUS_SUCCESS)
+    {
+        switch(key->KeyType)
+        {
+        case DvdChallengeKey:
+            key->KeyLength = OSReadBigInt16(desc.chal.dataLength, 0);
+            memcpy(key->KeyData, desc.chal.challengeKeyValue, key->KeyLength);
+            break;
+        case DvdBusKey1:
+            key->KeyLength = OSReadBigInt16(desc.key1.dataLength, 0);
+            memcpy(key->KeyData, desc.key1.key1Value, key->KeyLength);
+            break;
+        case DvdTitleKey:
+            key->KeyLength = OSReadBigInt16(desc.title.dataLength, 0);
+            memcpy(key->KeyData, desc.title.titleKeyValue, key->KeyLength);
+            key->KeyFlags = 0;
+            if (desc.title.CPM)
+            {
+                /*key->KeyFlags |= DVD_COPYRIGHTED;*/
+                if (desc.title.CP_SEC) key->KeyFlags |= DVD_SECTOR_PROTECTED;
+                /*else key->KeyFlags |= DVD_SECTOR_NOT_PROTECTED;*/
+#if 0
+                switch (desc.title.CGMS)
+                {
+                case 0:
+                    key->KeyFlags |= DVD_CGMS_COPY_PERMITTED;
+                    break;
+                case 2:
+                    key->KeyFlags |= DVD_CGMS_COPY_ONCE;
+                    break;
+                case 3:
+                    key->KeyFlags |= DVD_CGMS_NO_COPY;
+                    break;
+                }
+#endif
+            } /*else key->KeyFlags |= DVD_NOT_COPYRIGHTED;*/
+            break;
+        case DvdAsf:
+            key->KeyLength = OSReadBigInt16(desc.title.dataLength, 0);
+            ((PDVD_ASF)key->KeyData)->SuccessFlag = desc.asf.successFlag;
+            break;
+        case DvdGetRpcKey:
+            key->KeyLength = OSReadBigInt16(desc.rpc.dataLength, 0);
+            ((PDVD_RPC_KEY)key->KeyData)->UserResetsAvailable =
+                desc.rpc.numberUserResets;
+            ((PDVD_RPC_KEY)key->KeyData)->ManufacturerResetsAvailable =
+                desc.rpc.numberVendorResets;
+            ((PDVD_RPC_KEY)key->KeyData)->TypeCode =
+                desc.rpc.typeCode;
+            ((PDVD_RPC_KEY)key->KeyData)->RegionMask =
+                desc.rpc.driveRegion;
+            ((PDVD_RPC_KEY)key->KeyData)->RpcScheme =
+                desc.rpc.rpcScheme;
+        case DvdDiskKey:
+            key->KeyLength = OSReadBigInt16(desc.disk_key.dataLength, 0);
+            memcpy(key->KeyData, desc.disk_key.discKeyStructures, key->KeyLength);
+            break;
+        case DvdBusKey2:
+        case DvdSetRpcKey:
+        case DvdInvalidateAGID:
+        default:
+            /* Silence warning */
+            ;
+        }
+    }
+    return ret;
 #else
-    TRACE("outside\n");
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
-    TRACE("not reached\n");
 }
 
 /******************************************************************
  *		DVD_GetRegion
  *
- *
+ * This IOCTL combines information from both IOCTL_DVD_READ_KEY
+ * with key type DvdGetRpcKey and IOCTL_DVD_READ_STRUCTURE with
+ * structure type DvdCopyrightInformation into one structure.
  */
-static NTSTATUS DVD_GetRegion(int dev, PDVD_REGION region)
+static NTSTATUS DVD_GetRegion(int fd, PDVD_REGION region)
 {
-    FIXME("\n");
-    return STATUS_SUCCESS;
+#if defined(linux)
+    NTSTATUS ret;
+    dvd_struct dvd;
+    dvd_authinfo auth_info;
 
+    dvd.type = DVD_STRUCT_COPYRIGHT;
+    dvd.copyright.layer_num = 0;
+    auth_info.type = DVD_LU_SEND_RPC_STATE;
+
+    ret = CDROM_GetStatusCode(ioctl( fd, DVD_AUTH, &auth_info ));
+
+    if (ret == STATUS_SUCCESS)
+    {
+        ret = CDROM_GetStatusCode(ioctl( fd, DVD_READ_STRUCT, &dvd ));
+
+        if (ret == STATUS_SUCCESS)
+        {
+            region->CopySystem = dvd.copyright.cpst;
+            region->RegionData = dvd.copyright.rmi;
+            region->SystemRegion = auth_info.lrpcs.region_mask;
+            region->ResetCount = auth_info.lrpcs.ucca;
+        }
+    }
+    return ret;
+#elif defined(__APPLE__)
+    dk_dvd_report_key_t key;
+    dk_dvd_read_structure_t dvd;
+    DVDRegionPlaybackControlInfo rpc;
+    DVDCopyrightInfo copy;
+    NTSTATUS ret;
+
+    key.format = kDVDKeyFormatRegionState;
+    key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+    key.bufferLength = sizeof(rpc);
+    key.buffer = &rpc;
+    dvd.format = kDVDStructureFormatCopyrightInfo;
+    dvd.bufferLength = sizeof(copy);
+    dvd.buffer = &copy;
+
+    ret = CDROM_GetStatusCode(ioctl( fd, DKIOCDVDREPORTKEY, &key ));
+
+    if (ret == STATUS_SUCCESS)
+    {
+        ret = CDROM_GetStatusCode(ioctl( fd, DKIOCDVDREADSTRUCTURE, &dvd ));
+
+        if (ret == STATUS_SUCCESS)
+        {
+            region->CopySystem = copy.copyrightProtectionSystemType;
+            region->RegionData = copy.regionMask;
+            region->SystemRegion = rpc.driveRegion;
+            region->ResetCount = rpc.numberUserResets;
+        }
+    }
+    return ret;
+#else
+    FIXME("not supported on this O/S\n");
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
+static DWORD DVD_ReadStructureSize(const DVD_READ_STRUCTURE *structure, DWORD size)
+{
+    if (!structure || size != sizeof(DVD_READ_STRUCTURE))
+        return 0;
+
+    switch (structure->Format)
+    {
+    case DvdPhysicalDescriptor:
+        return sizeof(DVD_LAYER_DESCRIPTOR);
+    case DvdCopyrightDescriptor:
+        return sizeof(DVD_COPYRIGHT_DESCRIPTOR);
+    case DvdDiskKeyDescriptor:
+        return sizeof(DVD_DISK_KEY_DESCRIPTOR);
+    case DvdBCADescriptor:
+        return sizeof(DVD_BCA_DESCRIPTOR);
+    case DvdManufacturerDescriptor:
+        return sizeof(DVD_MANUFACTURER_DESCRIPTOR);
+    default:
+        return 0;
+    }
 }
 
 /******************************************************************
- *		DVD_GetRegion
+ *		DVD_ReadStructure
  *
  *
  */
-static NTSTATUS DVD_ReadStructure(int dev, PDVD_READ_STRUCTURE structure, PDVD_LAYER_DESCRIPTOR layer)
+static NTSTATUS DVD_ReadStructure(int dev, const DVD_READ_STRUCTURE *structure, PDVD_LAYER_DESCRIPTOR layer)
 {
+#ifdef DVD_READ_STRUCT
+    /* dvd_struct is not defined consistently across platforms */
+    union
+    {
+	struct dvd_physical	physical;
+	struct dvd_copyright	copyright;
+	struct dvd_disckey	disckey;
+	struct dvd_bca		bca;
+	struct dvd_manufact	manufact;
+    } s;
+
+    if (structure->BlockByteOffset.QuadPart) FIXME(": BlockByteOffset is not handled\n");
+
+    switch (structure->Format)
+    {
+    case DvdPhysicalDescriptor:
+        s.physical.type = DVD_STRUCT_PHYSICAL;
+        s.physical.layer_num = structure->LayerNumber;
+        break;
+
+    case DvdCopyrightDescriptor:
+        s.copyright.type = DVD_STRUCT_COPYRIGHT;
+        s.copyright.layer_num = structure->LayerNumber;
+        break;
+
+    case DvdDiskKeyDescriptor:
+        s.disckey.type = DVD_STRUCT_DISCKEY;
+        s.disckey.agid = structure->SessionId;
+        break;
+
+    case DvdBCADescriptor:
+        s.bca.type = DVD_STRUCT_BCA;
+        break;
+
+    case DvdManufacturerDescriptor:
+        s.manufact.type = DVD_STRUCT_MANUFACT;
+        s.manufact.layer_num = structure->LayerNumber;
+        break;
+
+    case DvdMaxDescriptor: /* This is not a real request, no matter what MSDN says! */
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (ioctl(dev, DVD_READ_STRUCT, &s) < 0)
+       return STATUS_INVALID_PARAMETER;
+
+    switch (structure->Format)
+    {
+    case DvdPhysicalDescriptor:
+        {
+            internal_dvd_layer_descriptor *p = (internal_dvd_layer_descriptor *) layer;
+            struct dvd_layer *l = &s.physical.layer[s.physical.layer_num];
+
+            p->Header.Length = 0x0802;
+            p->Header.Reserved[0] = 0;
+            p->Header.Reserved[1] = 0;
+            p->Descriptor.BookVersion = l->book_version;
+            p->Descriptor.BookType = l->book_type;
+            p->Descriptor.MinimumRate = l->min_rate;
+            p->Descriptor.DiskSize = l->disc_size;
+            p->Descriptor.LayerType = l->layer_type;
+            p->Descriptor.TrackPath = l->track_path;
+            p->Descriptor.NumberOfLayers = l->nlayers;
+            p->Descriptor.Reserved1 = 0;
+            p->Descriptor.TrackDensity = l->track_density;
+            p->Descriptor.LinearDensity = l->linear_density;
+            p->Descriptor.StartingDataSector = GET_BE_DWORD(l->start_sector);
+            p->Descriptor.EndDataSector = GET_BE_DWORD(l->end_sector);
+            p->Descriptor.EndLayerZeroSector = GET_BE_DWORD(l->end_sector_l0);
+            p->Descriptor.Reserved5 = 0;
+            p->Descriptor.BCAFlag = l->bca;
+        }
+        break;
+
+    case DvdCopyrightDescriptor:
+        {
+            PDVD_COPYRIGHT_DESCRIPTOR p = (PDVD_COPYRIGHT_DESCRIPTOR) layer;
+
+            p->CopyrightProtectionType = s.copyright.cpst;
+            p->RegionManagementInformation = s.copyright.rmi;
+            p->Reserved = 0;
+        }
+        break;
+
+    case DvdDiskKeyDescriptor:
+        {
+            PDVD_DISK_KEY_DESCRIPTOR p = (PDVD_DISK_KEY_DESCRIPTOR) layer;
+
+            memcpy(p->DiskKeyData, s.disckey.value, 2048);
+        }
+        break;
+
+    case DvdBCADescriptor:
+        {
+            PDVD_BCA_DESCRIPTOR p = (PDVD_BCA_DESCRIPTOR) layer;
+
+            memcpy(p->BCAInformation, s.bca.value, s.bca.len);
+        }
+        break;
+
+    case DvdManufacturerDescriptor:
+        {
+            internal_dvd_manufacturer_descriptor *p = (internal_dvd_manufacturer_descriptor*) layer;
+
+            p->Header.Length = 0x0802;
+            p->Header.Reserved[0] = 0;
+            p->Header.Reserved[1] = 0;
+            memcpy(p->Descriptor.ManufacturingInformation, s.manufact.value, 2048);
+        }
+        break;
+
+    case DvdMaxDescriptor: /* Suppress warning */
+	break;
+    }
+#elif defined(__APPLE__)
+    NTSTATUS ret;
+    dk_dvd_read_structure_t dvdrs;
+    union
+    {
+        DVDPhysicalFormatInfo phys;
+        DVDCopyrightInfo copy;
+        DVDDiscKeyInfo disk_key;
+        DVDManufacturingInfo manf;
+    } desc;
+    union
+    {
+        PDVD_LAYER_DESCRIPTOR layer;
+        internal_dvd_layer_descriptor *xlayer;
+        PDVD_COPYRIGHT_DESCRIPTOR copy;
+        PDVD_DISK_KEY_DESCRIPTOR disk_key;
+        internal_dvd_manufacturer_descriptor *manf;
+    } nt_desc;
+
+    nt_desc.layer = layer;
+    RtlZeroMemory(&dvdrs, sizeof(dvdrs));
+    dvdrs.address = (uint32_t)(structure->BlockByteOffset.QuadPart>>11);
+    dvdrs.grantID = (uint8_t)structure->SessionId;
+    dvdrs.layer = structure->LayerNumber;
+    switch(structure->Format)
+    {
+    case DvdPhysicalDescriptor:
+        dvdrs.format = kDVDStructureFormatPhysicalFormatInfo;
+        dvdrs.bufferLength = sizeof(desc.phys);
+        dvdrs.buffer = &desc.phys;
+        break;
+
+    case DvdCopyrightDescriptor:
+        dvdrs.format = kDVDStructureFormatCopyrightInfo;
+        dvdrs.bufferLength = sizeof(desc.copy);
+        dvdrs.buffer = &desc.copy;
+        break;
+
+    case DvdDiskKeyDescriptor:
+        dvdrs.format = kDVDStructureFormatDiscKeyInfo;
+        dvdrs.bufferLength = sizeof(desc.disk_key);
+        dvdrs.buffer = &desc.disk_key;
+        break;
+
+    case DvdBCADescriptor:
+        FIXME("DvdBCADescriptor NIY\n");
+        return STATUS_NOT_SUPPORTED;
+
+    case DvdManufacturerDescriptor:
+        dvdrs.format = kDVDStructureFormatManufacturingInfo;
+        dvdrs.bufferLength = sizeof(desc.manf);
+        dvdrs.buffer = &desc.manf;
+        break;
+
+    case DvdMaxDescriptor:
+    default:
+        FIXME("got unknown structure type 0x%x\n", structure->Format);
+        return STATUS_NOT_SUPPORTED;
+    }
+    ret = CDROM_GetStatusCode(ioctl(dev, DKIOCDVDREADSTRUCTURE, &dvdrs));
+    if(ret == STATUS_SUCCESS)
+    {
+        switch(structure->Format)
+        {
+        case DvdPhysicalDescriptor:
+            nt_desc.xlayer->Header.Length = 0x0802;
+            nt_desc.xlayer->Header.Reserved[0] = 0;
+            nt_desc.xlayer->Header.Reserved[1] = 0;
+            nt_desc.xlayer->Descriptor.BookVersion = desc.phys.partVersion;
+            nt_desc.xlayer->Descriptor.BookType = desc.phys.bookType;
+            nt_desc.xlayer->Descriptor.MinimumRate = desc.phys.minimumRate;
+            nt_desc.xlayer->Descriptor.DiskSize = desc.phys.discSize;
+            nt_desc.xlayer->Descriptor.LayerType = desc.phys.layerType;
+            nt_desc.xlayer->Descriptor.TrackPath = desc.phys.trackPath;
+            nt_desc.xlayer->Descriptor.NumberOfLayers = desc.phys.numberOfLayers;
+            nt_desc.xlayer->Descriptor.Reserved1 = 0;
+            nt_desc.xlayer->Descriptor.TrackDensity = desc.phys.trackDensity;
+            nt_desc.xlayer->Descriptor.LinearDensity = desc.phys.linearDensity;
+            nt_desc.xlayer->Descriptor.StartingDataSector = GET_BE_DWORD(*(DWORD *)&desc.phys.zero1);
+            nt_desc.xlayer->Descriptor.EndDataSector = GET_BE_DWORD(*(DWORD *)&desc.phys.zero2);
+            nt_desc.xlayer->Descriptor.EndLayerZeroSector = GET_BE_DWORD(*(DWORD *)&desc.phys.zero3);
+            nt_desc.xlayer->Descriptor.Reserved5 = 0;
+            nt_desc.xlayer->Descriptor.BCAFlag = desc.phys.bcaFlag;
+            break;
+
+        case DvdCopyrightDescriptor:
+            nt_desc.copy->CopyrightProtectionType =
+                desc.copy.copyrightProtectionSystemType;
+            nt_desc.copy->RegionManagementInformation =
+                desc.copy.regionMask;
+            nt_desc.copy->Reserved = 0;
+            break;
+
+        case DvdDiskKeyDescriptor:
+            memcpy(
+                nt_desc.disk_key->DiskKeyData,
+                desc.disk_key.discKeyStructures,
+                2048);
+            break;
+
+        case DvdManufacturerDescriptor:
+            nt_desc.manf->Header.Length = 0x0802;
+            nt_desc.manf->Header.Reserved[0] = 0;
+            nt_desc.manf->Header.Reserved[1] = 0;
+            memcpy(
+                nt_desc.manf->Descriptor.ManufacturingInformation,
+                desc.manf.discManufacturingInfo,
+                2048);
+            break;
+
+        case DvdBCADescriptor:
+        case DvdMaxDescriptor:
+        default:
+            /* Silence warning */
+            break;
+        }
+    }
+    return ret;
+#else
     FIXME("\n");
+#endif
     return STATUS_SUCCESS;
 
 }
@@ -1950,7 +2776,7 @@ static NTSTATUS DVD_ReadStructure(int dev, PDVD_READ_STRUCTURE structure, PDVD_L
 static NTSTATUS GetInquiryData(int fd, PSCSI_ADAPTER_BUS_INFO BufferOut, DWORD OutBufferSize)
 {
 #ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
-    PSCSI_INQUIRY_DATA pInquiryData = NULL;
+    PSCSI_INQUIRY_DATA pInquiryData;
     UCHAR sense_buffer[32];
     int iochk, version;
     sg_io_hdr_t iocmd;
@@ -1993,7 +2819,7 @@ static NTSTATUS GetInquiryData(int fd, PSCSI_ADAPTER_BUS_INFO BufferOut, DWORD O
     pInquiryData->NextInquiryDataOffset = 0;
     return STATUS_SUCCESS;
 #else
-    FIXME("not implemented for nonlinux\n");
+    FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
 }
@@ -2013,25 +2839,57 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
 {
     DWORD       sz = 0;
     NTSTATUS    status = STATUS_SUCCESS;
-    int fd, dev;
+    int fd, needs_close, dev = 0;
 
-    TRACE("%p %s %p %ld %p %ld %p\n",
+    TRACE("%p %s %p %d %p %d %p\n",
           hDevice, iocodex(dwIoControlCode), lpInBuffer, nInBufferSize,
           lpOutBuffer, nOutBufferSize, piosb);
 
     piosb->Information = 0;
 
-    if ((status = wine_server_handle_to_fd( hDevice, 0, &fd, NULL ))) goto error;
-    if ((status = CDROM_Open(fd, &dev)))
+    if ((status = server_get_unix_fd( hDevice, 0, &fd, &needs_close, NULL, NULL )))
     {
-        wine_server_release_fd( hDevice, fd );
+        if (status == STATUS_BAD_DEVICE_TYPE) return status;  /* no associated fd */
         goto error;
     }
 
+    if ((status = CDROM_Open(fd, &dev)))
+    {
+        if (needs_close) close( fd );
+        goto error;
+    }
+
+#ifdef __APPLE__
+    {
+        char name[100];
+
+        /* This is ugly as hell, but Mac OS is unable to do anything from the
+         * partition fd, it wants an fd for the whole device, and it sometimes
+         * also requires the device fd to be closed first, so we have to close
+         * the handle that the caller gave us.
+         * Also for some reason it wants the fd to be closed before we even
+         * open the parent if we're trying to eject the disk.
+         */
+        if ((status = get_parent_device( fd, name, sizeof(name) ))) goto error;
+        if (dwIoControlCode == IOCTL_STORAGE_EJECT_MEDIA)
+            NtClose( hDevice );
+        if (needs_close) close( fd );
+        TRACE("opening parent %s\n", name );
+        if ((fd = open( name, O_RDONLY )) == -1)
+        {
+            status = FILE_GetNtStatus();
+            goto error;
+        }
+        needs_close = 1;
+    }
+#endif
+
     switch (dwIoControlCode)
     {
-    case IOCTL_STORAGE_CHECK_VERIFY:
     case IOCTL_CDROM_CHECK_VERIFY:
+    case IOCTL_DISK_CHECK_VERIFY:
+    case IOCTL_STORAGE_CHECK_VERIFY:
+    case IOCTL_STORAGE_CHECK_VERIFY2:
         sz = 0;
 	CDROM_ClearCacheEntry(dev);
         if (lpInBuffer != NULL || nInBufferSize != 0 || lpOutBuffer != NULL || nOutBufferSize != 0)
@@ -2057,7 +2915,8 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
 	CDROM_ClearCacheEntry(dev);
         if (lpInBuffer != NULL || nInBufferSize != 0 || lpOutBuffer != NULL || nOutBufferSize != 0)
             status = STATUS_INVALID_PARAMETER;
-        else status = CDROM_SetTray(fd, TRUE);
+        else
+            status = CDROM_SetTray(fd, TRUE);
         break;
 
     case IOCTL_CDROM_MEDIA_REMOVAL:
@@ -2070,16 +2929,23 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
 	CDROM_ClearCacheEntry(dev);
         if (lpOutBuffer != NULL || nOutBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nInBufferSize < sizeof(PREVENT_MEDIA_REMOVAL)) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_ControlEjection(fd, (const PREVENT_MEDIA_REMOVAL*)lpInBuffer);
+        else status = CDROM_ControlEjection(fd, lpInBuffer);
         break;
 
-/* EPP     case IOCTL_STORAGE_GET_MEDIA_TYPES: */
+    case IOCTL_DISK_GET_MEDIA_TYPES:
+    case IOCTL_STORAGE_GET_MEDIA_TYPES:
+    case IOCTL_STORAGE_GET_MEDIA_TYPES_EX:
+        sz = sizeof(GET_MEDIA_TYPES);
+        if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
+        else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
+        else status = CDROM_GetMediaType(dev, lpOutBuffer);
+        break;
 
     case IOCTL_STORAGE_GET_DEVICE_NUMBER:
         sz = sizeof(STORAGE_DEVICE_NUMBER);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_GetDeviceNumber(dev, (STORAGE_DEVICE_NUMBER*)lpOutBuffer);
+        else status = CDROM_GetDeviceNumber(dev, lpOutBuffer);
         break;
 
     case IOCTL_STORAGE_RESET_DEVICE:
@@ -2094,14 +2960,14 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         sz = sizeof(CDROM_AUDIO_CONTROL);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_GetControl(dev, (CDROM_AUDIO_CONTROL*)lpOutBuffer);
+        else status = CDROM_GetControl(dev, fd, lpOutBuffer);
         break;
 
     case IOCTL_CDROM_GET_DRIVE_GEOMETRY:
         sz = sizeof(DISK_GEOMETRY);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_GetDriveGeometry(dev, fd, (DISK_GEOMETRY*)lpOutBuffer);
+        else status = CDROM_GetDriveGeometry(dev, fd, lpOutBuffer);
         break;
 
     case IOCTL_CDROM_DISK_TYPE:
@@ -2109,7 +2975,7 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
 	/* CDROM_ClearCacheEntry(dev); */
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_GetDiskData(dev, fd, (CDROM_DISK_DATA*)lpOutBuffer);
+        else status = CDROM_GetDiskData(dev, fd, lpOutBuffer);
         break;
 
 /* EPP     case IOCTL_CDROM_GET_LAST_SESSION: */
@@ -2119,15 +2985,14 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         if (lpInBuffer == NULL || nInBufferSize < sizeof(CDROM_SUB_Q_DATA_FORMAT))
             status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_ReadQChannel(dev, fd, (const CDROM_SUB_Q_DATA_FORMAT*)lpInBuffer,
-                                        (SUB_Q_CHANNEL_DATA*)lpOutBuffer);
+        else status = CDROM_ReadQChannel(dev, fd, lpInBuffer, lpOutBuffer);
         break;
 
     case IOCTL_CDROM_READ_TOC:
         sz = sizeof(CDROM_TOC);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_ReadTOC(dev, fd, (CDROM_TOC*)lpOutBuffer);
+        else status = CDROM_ReadTOC(dev, fd, lpOutBuffer);
         break;
 
 /* EPP     case IOCTL_CDROM_READ_TOC_EX: */
@@ -2142,7 +3007,7 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         sz = 0;
         if (lpOutBuffer != NULL || nOutBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nInBufferSize < sizeof(CDROM_PLAY_AUDIO_MSF)) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_PlayAudioMSF(fd, (const CDROM_PLAY_AUDIO_MSF*)lpInBuffer);
+        else status = CDROM_PlayAudioMSF(fd, lpInBuffer);
         break;
     case IOCTL_CDROM_RESUME_AUDIO:
         sz = 0;
@@ -2154,7 +3019,7 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         sz = 0;
         if (lpOutBuffer != NULL || nOutBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nInBufferSize < sizeof(CDROM_SEEK_AUDIO_MSF)) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_SeekAudioMSF(dev, fd, (const CDROM_SEEK_AUDIO_MSF*)lpInBuffer);
+        else status = CDROM_SeekAudioMSF(dev, fd, lpInBuffer);
         break;
     case IOCTL_CDROM_STOP_AUDIO:
         sz = 0;
@@ -2167,45 +3032,45 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         sz = sizeof(VOLUME_CONTROL);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_GetVolume(fd, (VOLUME_CONTROL*)lpOutBuffer);
+        else status = CDROM_GetVolume(fd, lpOutBuffer);
         break;
     case IOCTL_CDROM_SET_VOLUME:
         sz = 0;
 	CDROM_ClearCacheEntry(dev);
         if (lpInBuffer == NULL || nInBufferSize < sizeof(VOLUME_CONTROL) || lpOutBuffer != NULL)
             status = STATUS_INVALID_PARAMETER;
-        else status = CDROM_SetVolume(fd, (const VOLUME_CONTROL*)lpInBuffer);
+        else status = CDROM_SetVolume(fd, lpInBuffer);
         break;
     case IOCTL_CDROM_RAW_READ:
         sz = 0;
         if (nInBufferSize < sizeof(RAW_READ_INFO)) status = STATUS_INVALID_PARAMETER;
         else if (lpOutBuffer == NULL) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_RawRead(fd, (const RAW_READ_INFO*)lpInBuffer,
-                                   lpOutBuffer, nOutBufferSize, &sz);
+        else status = CDROM_RawRead(fd, lpInBuffer, lpOutBuffer,
+                                    nOutBufferSize, &sz);
         break;
     case IOCTL_SCSI_GET_ADDRESS:
         sz = sizeof(SCSI_ADDRESS);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_GetAddress(fd, (SCSI_ADDRESS*)lpOutBuffer);
+        else status = CDROM_GetAddress(fd, lpOutBuffer);
         break;
     case IOCTL_SCSI_PASS_THROUGH_DIRECT:
         sz = sizeof(SCSI_PASS_THROUGH_DIRECT);
         if (lpOutBuffer == NULL) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sizeof(SCSI_PASS_THROUGH_DIRECT)) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_ScsiPassThroughDirect(fd, (PSCSI_PASS_THROUGH_DIRECT)lpOutBuffer);
+        else status = CDROM_ScsiPassThroughDirect(fd, lpOutBuffer);
         break;
     case IOCTL_SCSI_PASS_THROUGH:
         sz = sizeof(SCSI_PASS_THROUGH);
         if (lpOutBuffer == NULL) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sizeof(SCSI_PASS_THROUGH)) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_ScsiPassThrough(fd, (PSCSI_PASS_THROUGH)lpOutBuffer);
+        else status = CDROM_ScsiPassThrough(fd, lpOutBuffer);
         break;
     case IOCTL_SCSI_GET_CAPABILITIES:
         sz = sizeof(IO_SCSI_CAPABILITIES);
         if (lpOutBuffer == NULL) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sizeof(IO_SCSI_CAPABILITIES)) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_ScsiGetCaps((PIO_SCSI_CAPABILITIES)lpOutBuffer);
+        else status = CDROM_ScsiGetCaps(fd, lpOutBuffer);
         break;
     case IOCTL_DVD_START_SESSION:
         sz = sizeof(DVD_SESSION_ID);
@@ -2213,17 +3078,17 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
         else
         {
-            TRACE("before in 0x%08lx out 0x%08lx\n",(lpInBuffer)?*(PDVD_SESSION_ID)lpInBuffer:0,
+            TRACE("before in 0x%08x out 0x%08x\n",(lpInBuffer)?*(PDVD_SESSION_ID)lpInBuffer:0,
                   *(PDVD_SESSION_ID)lpOutBuffer);
-            status = DVD_StartSession(fd, (PDVD_SESSION_ID)lpInBuffer, (PDVD_SESSION_ID)lpOutBuffer);
-            TRACE("before in 0x%08lx out 0x%08lx\n",(lpInBuffer)?*(PDVD_SESSION_ID)lpInBuffer:0,
+            status = DVD_StartSession(fd, lpInBuffer, lpOutBuffer);
+            TRACE("before in 0x%08x out 0x%08x\n",(lpInBuffer)?*(PDVD_SESSION_ID)lpInBuffer:0,
                   *(PDVD_SESSION_ID)lpOutBuffer);
         }
         break;
     case IOCTL_DVD_END_SESSION:
         sz = sizeof(DVD_SESSION_ID);
         if ((lpInBuffer == NULL) ||  (nInBufferSize < sz))status = STATUS_INVALID_PARAMETER;
-        else status = DVD_EndSession(fd, (PDVD_SESSION_ID)lpInBuffer);
+        else status = DVD_EndSession(fd, lpInBuffer);
         break;
     case IOCTL_DVD_SEND_KEY:
         sz = 0;
@@ -2233,7 +3098,7 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         else
         {
             TRACE("doing DVD_SendKey\n");
-            status = DVD_SendKey(fd, (PDVD_COPY_PROTECT_KEY)lpInBuffer);
+            status = DVD_SendKey(fd, lpInBuffer);
         }
         break;
     case IOCTL_DVD_READ_KEY:
@@ -2245,38 +3110,40 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         {
             TRACE("doing DVD_READ_KEY\n");
             sz = ((PDVD_COPY_PROTECT_KEY)lpInBuffer)->KeyLength;
-            status = DVD_ReadKey(fd, (PDVD_COPY_PROTECT_KEY)lpInBuffer);
+            status = DVD_ReadKey(fd, lpInBuffer);
         }
         break;
     case IOCTL_DVD_GET_REGION:
         sz = sizeof(DVD_REGION);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        TRACE("doing DVD_Get_REGION\n");
-        status = DVD_GetRegion(fd, (PDVD_REGION)lpOutBuffer);
+        else
+        {
+            TRACE("doing DVD_Get_REGION\n");
+            status = DVD_GetRegion(fd, lpOutBuffer);
+        }
         break;
     case IOCTL_DVD_READ_STRUCTURE:
-        sz = sizeof(DVD_LAYER_DESCRIPTOR);
+        sz = DVD_ReadStructureSize(lpInBuffer, nInBufferSize);
         if (lpInBuffer == NULL || nInBufferSize != sizeof(DVD_READ_STRUCTURE)) status = STATUS_INVALID_PARAMETER;
-        else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        TRACE("doing DVD_READ_STRUCTURE\n");
-        status = DVD_ReadStructure(fd, (PDVD_READ_STRUCTURE)lpInBuffer, (PDVD_LAYER_DESCRIPTOR)lpOutBuffer);
+        else if (nOutBufferSize < sz || !lpOutBuffer) status = STATUS_BUFFER_TOO_SMALL;
+        else
+        {
+            TRACE("doing DVD_READ_STRUCTURE\n");
+            status = DVD_ReadStructure(fd, lpInBuffer, lpOutBuffer);
+        }
         break;
 
     case IOCTL_SCSI_GET_INQUIRY_DATA:
         sz = INQ_REPLY_LEN;
-        status = GetInquiryData(fd, (PSCSI_ADAPTER_BUS_INFO)lpOutBuffer, nOutBufferSize);
+        status = GetInquiryData(fd, lpOutBuffer, nOutBufferSize);
         break;
 
     default:
-        FIXME("Unsupported IOCTL %lx (type=%lx access=%lx func=%lx meth=%lx)\n", 
-              dwIoControlCode, dwIoControlCode >> 16, (dwIoControlCode >> 14) & 3,
-              (dwIoControlCode >> 2) & 0xFFF, dwIoControlCode & 3);
-        sz = 0;
-        status = STATUS_INVALID_PARAMETER;
-        break;
+        if (needs_close) close( fd );
+        return STATUS_NOT_SUPPORTED;
     }
-    wine_server_release_fd( hDevice, fd );
+    if (needs_close) close( fd );
  error:
     piosb->u.Status = status;
     piosb->Information = sz;

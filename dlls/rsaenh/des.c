@@ -7,7 +7,7 @@
  * and Dobes Vandermeer.
  * 
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public 
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /*
@@ -1282,7 +1282,7 @@ static const ulong64 des_fp[8][256] = {
 
 static void cookey(const ulong32 *raw1, ulong32 *keyout);
 
-void deskey(const unsigned char *key, short edf, ulong32 *keyout)
+static void deskey(const unsigned char *key, short edf, ulong32 *keyout)
 {
     ulong32 i, j, l, m, n, kn[32];
     unsigned char pc1m[56], pcr[56];
@@ -1450,7 +1450,7 @@ int des3_setup(const unsigned char *key, int keylen, int num_rounds, des3_key *d
     return CRYPT_OK;
 }
 
-void des_ecb_encrypt(const unsigned char *pt, unsigned char *ct, des_key *des)
+void des_ecb_encrypt(const unsigned char *pt, unsigned char *ct, const des_key *des)
 {
     ulong32 work[2];
     LOAD32H(work[0], pt+0);
@@ -1460,7 +1460,7 @@ void des_ecb_encrypt(const unsigned char *pt, unsigned char *ct, des_key *des)
     STORE32H(work[1],ct+4);
 }
 
-void des_ecb_decrypt(const unsigned char *ct, unsigned char *pt, des_key *des)
+void des_ecb_decrypt(const unsigned char *ct, unsigned char *pt, const des_key *des)
 {
     ulong32 work[2];
     LOAD32H(work[0], ct+0);
@@ -1470,10 +1470,9 @@ void des_ecb_decrypt(const unsigned char *ct, unsigned char *pt, des_key *des)
     STORE32H(work[1],pt+4);
 }
 
-void des3_ecb_encrypt(const unsigned char *pt, unsigned char *ct, des3_key *des3)
+void des3_ecb_encrypt(const unsigned char *pt, unsigned char *ct, const des3_key *des3)
 {
     ulong32 work[2];
-    
     LOAD32H(work[0], pt+0);
     LOAD32H(work[1], pt+4);
     desfunc(work, des3->ek[0]);
@@ -1483,7 +1482,7 @@ void des3_ecb_encrypt(const unsigned char *pt, unsigned char *ct, des3_key *des3
     STORE32H(work[1],ct+4);
 }
 
-void des3_ecb_decrypt(const unsigned char *ct, unsigned char *pt, des3_key *des3)
+void des3_ecb_decrypt(const unsigned char *ct, unsigned char *pt, const des3_key *des3)
 {
     ulong32 work[2];
     LOAD32H(work[0], ct+0);

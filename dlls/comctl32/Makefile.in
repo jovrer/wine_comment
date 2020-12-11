@@ -1,16 +1,13 @@
 EXTRADEFS = -D_COMCTL32_
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = comctl32.dll
-IMPORTLIB = libcomctl32.$(IMPLIBEXT)
-IMPORTS   = user32 gdi32 advapi32 kernel32
+IMPORTLIB = comctl32
+IMPORTS   = uuid user32 gdi32 advapi32 usp10 imm32
 DELAYIMPORTS = winmm uxtheme
-EXTRALIBS = $(LIBUNICODE)
 
 C_SRCS = \
 	animate.c \
+	button.c \
+	combo.c \
 	comboex.c \
 	comctl32undoc.c \
 	commctrl.c \
@@ -18,11 +15,13 @@ C_SRCS = \
 	dpa.c \
 	draglist.c \
 	dsa.c \
+	edit.c \
 	flatsb.c \
 	header.c \
 	hotkey.c \
 	imagelist.c \
 	ipaddress.c \
+	listbox.c \
 	listview.c \
 	monthcal.c \
 	nativefont.c \
@@ -31,14 +30,14 @@ C_SRCS = \
 	propsheet.c \
 	rebar.c \
 	smoothscroll.c \
+	static.c \
 	status.c \
 	string.c \
 	syslink.c \
 	tab.c \
-	theme_combo.c \
+	taskdialog.c \
 	theme_dialog.c \
-	theme_edit.c \
-	theme_listbox.c \
+	theme_scrollbar.c \
 	theming.c \
 	toolbar.c \
 	tooltips.c \
@@ -46,27 +45,16 @@ C_SRCS = \
 	treeview.c \
 	updown.c
 
-RC_SRCS = rsrc.rc
-RC_BINSRC = rsrc.rc
-RC_BINARIES = \
-	idb_hist_large.bmp \
-	idb_hist_small.bmp \
-	idb_std_large.bmp \
-	idb_std_small.bmp \
-	idb_view_large.bmp \
-	idb_view_small.bmp \
-	idc_copy.cur \
-	idc_divider.cur \
-	idc_divideropen.cur \
-	idc_movebutton.cur \
-	idi_dragarrow.ico \
-	idi_tt_error_sm.ico \
-	idi_tt_info_sm.ico \
-	idi_tt_warn_sm.ico \
-	idt_check.bmp
+RC_SRCS = comctl32.rc
 
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+SVG_SRCS = \
+	idb_hist_large.svg \
+	idb_hist_small.svg \
+	idb_std_large.svg \
+	idb_std_small.svg \
+	idb_view_large.svg \
+	idb_view_small.svg \
+	idc_copy.svg \
+	idc_divider.svg \
+	idc_divideropen.svg \
+	idc_movebutton.svg

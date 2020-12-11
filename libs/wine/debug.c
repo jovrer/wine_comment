@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -26,20 +26,28 @@
 #include <stdarg.h>
 #include <string.h>
 #include <ctype.h>
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
 
 #include "wine/debug.h"
 #include "wine/library.h"
-#include "wine/unicode.h"
+
+#if defined(__MINGW32__) || defined(_MSC_VER)
+WINE_DECLARE_DEBUG_CHANNEL(pid);
+#endif
 
 static const char * const debug_classes[] = { "fixme", "err", "warn", "trace" };
 
 #define MAX_DEBUG_OPTIONS 256
 
 static unsigned char default_flags = (1 << __WINE_DBCL_ERR) | (1 << __WINE_DBCL_FIXME);
-static unsigned int nb_debug_options = 0;
+static int nb_debug_options = -1;
 static struct __wine_debug_channel debug_options[MAX_DEBUG_OPTIONS];
 
 static struct __wine_debug_functions funcs;
+
+static void debug_init(void);
 
 static int cmp_name( const void *p1, const void *p2 )
 {
@@ -51,6 +59,8 @@ static int cmp_name( const void *p1, const void *p2 )
 /* get the flags to use for a given channel, possibly setting them too in case of lazy init */
 unsigned char __wine_dbg_get_channel_flags( struct __wine_debug_channel *channel )
 {
+    if (nb_debug_options == -1) debug_init();
+
     if (nb_debug_options)
     {
         struct __wine_debug_channel *opt = bsearch( channel->name, debug_options, nb_debug_options,
@@ -66,6 +76,8 @@ unsigned char __wine_dbg_get_channel_flags( struct __wine_debug_channel *channel
 int __wine_dbg_set_channel_flags( struct __wine_debug_channel *channel,
                                   unsigned char set, unsigned char clear )
 {
+    if (nb_debug_options == -1) debug_init();
+
     if (nb_debug_options)
     {
         struct __wine_debug_channel *opt = bsearch( channel->name, debug_options, nb_debug_options,
@@ -132,7 +144,7 @@ static void parse_options( const char *str )
 
         if (p > opt)
         {
-            for (i = 0; i < sizeof(debug_classes)/sizeof(debug_classes[0]); i++)
+            for (i = 0; i < ARRAY_SIZE(debug_classes); i++)
             {
                 int len = strlen(debug_classes[i]);
                 if (len != (p - opt)) continue;
@@ -143,7 +155,7 @@ static void parse_options( const char *str )
                     break;
                 }
             }
-            if (i == sizeof(debug_classes)/sizeof(debug_classes[0])) /* bad class name, skip it */
+            if (i == ARRAY_SIZE(debug_classes)) /* bad class name, skip it */
                 continue;
         }
         else
@@ -178,10 +190,22 @@ static void debug_usage(void)
 
 
 /* initialize all options at startup */
-void debug_init(void)
+static void debug_init(void)
 {
     char *wine_debug;
+    struct stat st1, st2;
 
+    if (nb_debug_options != -1) return;  /* already initialized */
+    nb_debug_options = 0;
+
+    /* check for stderr pointing to /dev/null */
+    if (!fstat( 2, &st1 ) && S_ISCHR(st1.st_mode) &&
+        !stat( "/dev/null", &st2 ) && S_ISCHR(st2.st_mode) &&
+        st1.st_rdev == st2.st_rdev)
+    {
+        default_flags = 0;
+        return;
+    }
     if ((wine_debug = getenv("WINEDEBUG")))
     {
         if (!strcmp( wine_debug, "help" )) debug_usage();
@@ -244,7 +268,7 @@ static char *get_temp_buffer( size_t size )
     char *ret;
     int idx;
 
-    idx = interlocked_xchg_add( &pos, 1 ) % (sizeof(list)/sizeof(list[0]));
+    idx = interlocked_xchg_add( &pos, 1 ) % ARRAY_SIZE(list);
     if ((ret = realloc( list[idx], size ))) list[idx] = ret;
     return ret;
 }
@@ -299,7 +323,7 @@ static const char *default_dbgstr_an( const char *str, int n )
         }
     }
     *dst++ = '"';
-    if (*str)
+    if (n > 0)
     {
         *dst++ = '.';
         *dst++ = '.';
@@ -324,10 +348,15 @@ static const char *default_dbgstr_wn( const WCHAR *str, int n )
         sprintf( res, "#%04x", LOWORD(str) );
         return res;
     }
-    if (n == -1) n = strlenW(str);
+    if (n == -1)
+    {
+        const WCHAR *end = str;
+        while (*end) end++;
+        n = end - str;
+    }
     if (n < 0) n = 0;
     size = 12 + min( 300, n * 5 );
-    dst = res = funcs.get_temp_buffer( n * 5 + 7 );
+    dst = res = funcs.get_temp_buffer( size );
     *dst++ = 'L';
     *dst++ = '"';
     while (n-- > 0 && dst <= res + size - 10)
@@ -352,7 +381,7 @@ static const char *default_dbgstr_wn( const WCHAR *str, int n )
         }
     }
     *dst++ = '"';
-    if (*str)
+    if (n > 0)
     {
         *dst++ = '.';
         *dst++ = '.';
@@ -377,7 +406,12 @@ static int default_dbg_vlog( enum __wine_debug_class cls, struct __wine_debug_ch
 {
     int ret = 0;
 
-    if (cls < sizeof(debug_classes)/sizeof(debug_classes[0]))
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    if (TRACE_ON(pid))
+        ret += wine_dbg_printf( "%04x:", GetCurrentProcessId() );
+    ret += wine_dbg_printf( "%04x:", GetCurrentThreadId() );
+#endif
+    if (cls < ARRAY_SIZE(debug_classes))
         ret += wine_dbg_printf( "%s:%s:%s ", debug_classes[cls], channel->name, func );
     if (format)
         ret += funcs.dbg_vprintf( format, args );

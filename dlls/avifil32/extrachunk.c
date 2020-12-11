@@ -1,5 +1,5 @@
 /*
- * Copyright 2002 Michael Günnewig
+ * Copyright 2002 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,26 +13,23 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define COM_NO_WINDOWS_H
 #include <assert.h>
 
 #include "extrachunk.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "windowsx.h"
 #include "vfw.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(avifile);
 
-/* reads a chunk outof the extrachunk-structure */
-HRESULT ReadExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPVOID lpData,
-		       LPLONG size)
+/* reads a chunk out of the extrachunk-structure */
+HRESULT ReadExtraChunk(const EXTRACHUNKS *extra,FOURCC ckid,LPVOID lpData,LPLONG size)
 {
   LPBYTE lp;
   DWORD  cb;
@@ -70,8 +67,7 @@ HRESULT ReadExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPVOID lpData,
 }
 
 /* writes a chunk into the extrachunk-structure */
-HRESULT WriteExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPVOID lpData,
-			LONG size)
+HRESULT WriteExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPCVOID lpData, LONG size)
 {
   LPDWORD lp;
 
@@ -81,9 +77,9 @@ HRESULT WriteExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPVOID lpData,
   assert(size > 0);
 
   if (extra->lp)
-    lp = (LPDWORD)GlobalReAllocPtr(extra->lp, extra->cb + size + 2 * sizeof(DWORD), GHND);
+    lp = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, extra->lp, extra->cb + size + 2 * sizeof(DWORD));
   else
-    lp = (LPDWORD)GlobalAllocPtr(GHND, size + 2 * sizeof(DWORD));
+    lp = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size + 2 * sizeof(DWORD));
 
   if (lp == NULL)
     return AVIERR_MEMORY;
@@ -102,8 +98,8 @@ HRESULT WriteExtraChunk(LPEXTRACHUNKS extra,FOURCC ckid,LPVOID lpData,
   return AVIERR_OK;
 }
 
-/* reads a chunk fomr the HMMIO into the extrachunk-structure */
-HRESULT ReadChunkIntoExtra(LPEXTRACHUNKS extra,HMMIO hmmio,MMCKINFO *lpck)
+/* reads a chunk from the HMMIO into the extrachunk-structure */
+HRESULT ReadChunkIntoExtra(LPEXTRACHUNKS extra,HMMIO hmmio,const MMCKINFO *lpck)
 {
   LPDWORD lp;
   DWORD   cb;
@@ -116,10 +112,10 @@ HRESULT ReadChunkIntoExtra(LPEXTRACHUNKS extra,HMMIO hmmio,MMCKINFO *lpck)
   cb  = lpck->cksize + 2 * sizeof(DWORD);
   cb += (cb & 1);
 
-  if (extra->lp != NULL) {
-    lp = (LPDWORD)GlobalReAllocPtr(extra->lp, extra->cb + cb, GHND);
-  } else
-    lp = (LPDWORD)GlobalAllocPtr(GHND, cb);
+  if (extra->lp != NULL)
+    lp = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, extra->lp, extra->cb + cb);
+  else
+    lp = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cb);
 
   if (lp == NULL)
     return AVIERR_MEMORY;
@@ -149,14 +145,14 @@ HRESULT FindChunkAndKeepExtras(LPEXTRACHUNKS extra,HMMIO hmmio,MMCKINFO *lpck,
 {
   FOURCC  ckid;
   FOURCC  fccType;
-  HRESULT hr;
+  MMRESULT mmr;
 
   /* pre-conditions */
   assert(extra != NULL);
   assert(hmmio != NULL);
   assert(lpck  != NULL);
 
-  TRACE("({%p,%lu},%p,%p,%p,0x%X)\n", extra->lp, extra->cb, hmmio, lpck,
+  TRACE("({%p,%u},%p,%p,%p,0x%X)\n", extra->lp, extra->cb, hmmio, lpck,
 	lpckParent, flags);
 
   /* what chunk id and form/list type should we search? */
@@ -172,29 +168,35 @@ HRESULT FindChunkAndKeepExtras(LPEXTRACHUNKS extra,HMMIO hmmio,MMCKINFO *lpck,
   } else
     ckid = fccType = (FOURCC)-1; /* collect everything into extra! */
 
-  TRACE(": find ckid=0x%08lX fccType=0x%08lX\n", ckid, fccType);
+  TRACE(": find ckid=0x%08X fccType=0x%08X\n", ckid, fccType);
 
   for (;;) {
-    hr = mmioDescend(hmmio, lpck, lpckParent, 0);
-    if (hr != S_OK) {
+    mmr = mmioDescend(hmmio, lpck, lpckParent, 0);
+    if (mmr != MMSYSERR_NOERROR) {
       /* No extra chunks in front of desired chunk? */
-      if (flags == 0 && hr == MMIOERR_CHUNKNOTFOUND)
-	hr = AVIERR_OK;
-      return hr;
+      if (flags == 0 && mmr == MMIOERR_CHUNKNOTFOUND)
+	return AVIERR_OK;
+      else
+        return AVIERR_FILEREAD;
     }
 
     /* Have we found what we search for? */
     if ((lpck->ckid == ckid) &&
-	(fccType == (FOURCC)0 || lpck->fccType == fccType))
+	(fccType == 0 || lpck->fccType == fccType))
       return AVIERR_OK;
 
     /* Skip padding chunks, the others put into the extrachunk-structure */
     if (lpck->ckid == ckidAVIPADDING ||
 	lpck->ckid == mmioFOURCC('p','a','d','d'))
-      hr = mmioAscend(hmmio, lpck, 0);
+    {
+      mmr = mmioAscend(hmmio, lpck, 0);
+      if (mmr != MMSYSERR_NOERROR) return AVIERR_FILEREAD;
+    }
     else
-      hr = ReadChunkIntoExtra(extra, hmmio, lpck);
-    if (FAILED(hr))
-      return hr;
+    {
+      HRESULT hr = ReadChunkIntoExtra(extra, hmmio, lpck);
+      if (FAILED(hr))
+        return hr;
+    }
   }
 }

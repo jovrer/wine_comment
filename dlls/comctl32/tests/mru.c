@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #include <stdarg.h>
 
@@ -28,6 +28,7 @@
 #include "commctrl.h"
 #include "shlwapi.h"
 
+#include "wine/heap.h"
 #include "wine/test.h"
 
 /* Keys for testing MRU functions */
@@ -37,41 +38,129 @@
 #define REG_TEST_SUBKEYA "MRUTest"
 #define REG_TEST_FULLKEY REG_TEST_KEYA "\\" REG_TEST_SUBKEYA
 
-/* Undocumented MRU structures & functions */
-typedef struct tagCREATEMRULISTA
+/* Undocumented MRU functions */
+typedef struct tagMRUINFOA
 {
     DWORD   cbSize;
-    DWORD   nMaxItems;
-    DWORD   dwFlags;
+    UINT    uMax;
+    UINT    fFlags;
     HKEY    hKey;
     LPCSTR  lpszSubKey;
-    PROC    lpfnCompare;
-} CREATEMRULISTA, *LPCREATEMRULISTA;
+    int (CALLBACK *lpfnCompare)(LPCSTR, LPCSTR);
+} MRUINFOA;
 
-#define MRUF_STRING_LIST  0
-#define MRUF_BINARY_LIST  1
-#define MRUF_DELAYED_SAVE 2
+typedef struct tagMRUINFOW
+{
+    DWORD   cbSize;
+    UINT    uMax;
+    UINT    fFlags;
+    HKEY    hKey;
+    LPCWSTR lpszSubKey;
+    int (CALLBACK *lpfnCompare)(LPCWSTR, LPCWSTR);
+} MRUINFOW;
+
+#define MRU_STRING     0  /* this one's invented */
+#define MRU_BINARY     1
+#define MRU_CACHEWRITE 2
 
 #define LIST_SIZE 3 /* Max entries for each mru */
 
-static CREATEMRULISTA mruA =
-{
-    sizeof(CREATEMRULISTA),
-    LIST_SIZE,
-    0,
-    NULL,
-    REG_TEST_SUBKEYA,
-    NULL
-};
-
 static HMODULE hComctl32;
-static HANDLE (WINAPI *pCreateMRUListA)(LPCREATEMRULISTA);
+static HANDLE (WINAPI *pCreateMRUListA)(MRUINFOA*);
 static void   (WINAPI *pFreeMRUList)(HANDLE);
 static INT    (WINAPI *pAddMRUStringA)(HANDLE,LPCSTR);
-/*
-static INT    (WINAPI *pFindMRUStringA)(HANDLE,LPCSTR,LPINT);
-static INT    (WINAPI *pEnumMRUList)(HANDLE,INT,LPVOID,DWORD);
-*/
+static INT    (WINAPI *pEnumMRUListA)(HANDLE,INT,LPVOID,DWORD);
+static INT    (WINAPI *pEnumMRUListW)(HANDLE,INT,LPVOID,DWORD);
+static HANDLE (WINAPI *pCreateMRUListLazyA)(MRUINFOA*, DWORD, DWORD, DWORD);
+static HANDLE (WINAPI *pCreateMRUListLazyW)(MRUINFOW*, DWORD, DWORD, DWORD);
+static INT    (WINAPI *pFindMRUData)(HANDLE, LPCVOID, DWORD, LPINT);
+static INT    (WINAPI *pAddMRUData)(HANDLE, LPCVOID, DWORD);
+static HANDLE (WINAPI *pCreateMRUListW)(MRUINFOW*);
+
+static void init_functions(void)
+{
+    hComctl32 = LoadLibraryA("comctl32.dll");
+
+#define X2(f, ord) p##f = (void*)GetProcAddress(hComctl32, (const char *)ord);
+    X2(CreateMRUListA, 151);
+    X2(FreeMRUList, 152);
+    X2(AddMRUStringA, 153);
+    X2(EnumMRUListA, 154);
+    X2(CreateMRUListLazyA, 157);
+    X2(AddMRUData, 167);
+    X2(FindMRUData, 169);
+    X2(CreateMRUListW, 400);
+    X2(EnumMRUListW, 403);
+    X2(CreateMRUListLazyW, 404);
+#undef X2
+}
+
+/* Based on RegDeleteTreeW from dlls/advapi32/registry.c */
+static LSTATUS mru_RegDeleteTreeA(HKEY hKey, LPCSTR lpszSubKey)
+{
+    LONG ret;
+    DWORD dwMaxSubkeyLen, dwMaxValueLen;
+    DWORD dwMaxLen, dwSize;
+    CHAR szNameBuf[MAX_PATH], *lpszName = szNameBuf;
+    HKEY hSubKey = hKey;
+
+    if(lpszSubKey)
+    {
+        ret = RegOpenKeyExA(hKey, lpszSubKey, 0, KEY_READ, &hSubKey);
+        if (ret) return ret;
+    }
+
+    /* Get highest length for keys, values */
+    ret = RegQueryInfoKeyA(hSubKey, NULL, NULL, NULL, NULL,
+            &dwMaxSubkeyLen, NULL, NULL, &dwMaxValueLen, NULL, NULL, NULL);
+    if (ret) goto cleanup;
+
+    dwMaxSubkeyLen++;
+    dwMaxValueLen++;
+    dwMaxLen = max(dwMaxSubkeyLen, dwMaxValueLen);
+    if (dwMaxLen > ARRAY_SIZE(szNameBuf))
+    {
+        /* Name too big: alloc a buffer for it */
+        if (!(lpszName = heap_alloc(dwMaxLen * sizeof(CHAR))))
+        {
+            ret = ERROR_NOT_ENOUGH_MEMORY;
+            goto cleanup;
+        }
+    }
+
+
+    /* Recursively delete all the subkeys */
+    while (TRUE)
+    {
+        dwSize = dwMaxLen;
+        if (RegEnumKeyExA(hSubKey, 0, lpszName, &dwSize, NULL,
+                          NULL, NULL, NULL)) break;
+
+        ret = mru_RegDeleteTreeA(hSubKey, lpszName);
+        if (ret) goto cleanup;
+    }
+
+    if (lpszSubKey)
+        ret = RegDeleteKeyA(hKey, lpszSubKey);
+    else
+        while (TRUE)
+        {
+            dwSize = dwMaxLen;
+            if (RegEnumValueA(hKey, 0, lpszName, &dwSize,
+                  NULL, NULL, NULL, NULL)) break;
+
+            ret = RegDeleteValueA(hKey, lpszName);
+            if (ret) goto cleanup;
+        }
+
+cleanup:
+    /* Free buffer if allocated */
+    if (lpszName != szNameBuf)
+        heap_free(lpszName);
+    if(lpszSubKey)
+        RegCloseKey(hSubKey);
+    return ret;
+}
 
 static BOOL create_reg_entries(void)
 {
@@ -91,7 +180,7 @@ static void delete_reg_entries(void)
     if (RegOpenKeyExA(HKEY_CURRENT_USER, REG_TEST_BASEKEYA, 0, KEY_ALL_ACCESS,
                       &hKey))
         return;
-    SHDeleteKeyA(hKey, REG_TEST_BASESUBKEYA);
+    mru_RegDeleteTreeA(hKey, REG_TEST_BASESUBKEYA);
     RegCloseKey(hKey);
 }
 
@@ -100,7 +189,7 @@ static void check_reg_entries(const char *mrulist, const char**items)
     char buff[128];
     HKEY hKey = NULL;
     DWORD type, size, ret;
-    size_t i;
+    unsigned int i;
 
     ok(!RegOpenKeyA(HKEY_CURRENT_USER, REG_TEST_FULLKEY, &hKey),
        "Couldn't open test key \"%s\"\n", REG_TEST_FULLKEY);
@@ -111,7 +200,7 @@ static void check_reg_entries(const char *mrulist, const char**items)
     buff[0] = '\0';
     ret = RegQueryValueExA(hKey, "MRUList", NULL, &type, (LPBYTE)buff, &size);
 
-    ok(!ret && buff[0], "Checking MRU: got %ld from RegQueryValueExW\n", ret);
+    ok(!ret && buff[0], "Checking MRU: got %d from RegQueryValueExW\n", ret);
     if(ret || !buff[0]) return;
 
     ok(strcmp(buff, mrulist) == 0, "Checking MRU: Expected list %s, got %s\n",
@@ -128,7 +217,7 @@ static void check_reg_entries(const char *mrulist, const char**items)
         buff[0] = '\0';
         ret = RegQueryValueExA(hKey, name, NULL, &type, (LPBYTE)buff, &size);
         ok(!ret && buff[0],
-           "Checking MRU item %d ('%c'): got %ld from RegQueryValueExW\n",
+           "Checking MRU item %d ('%c'): got %d from RegQueryValueExW\n",
            i, mrulist[i], ret);
         if(ret || !buff[0]) return;
         ok(!strcmp(buff, items[mrulist[i]-'a']),
@@ -137,80 +226,107 @@ static void check_reg_entries(const char *mrulist, const char**items)
     }
 }
 
-static INT CALLBACK cmp_mru_strA(LPCVOID data1, LPCVOID data2)
+static int CALLBACK cmp_mru_strA(LPCSTR data1, LPCSTR data2)
 {
     return lstrcmpiA(data1, data2);
-}
-
-static HANDLE create_mruA(HKEY hKey, DWORD flags, PROC cmp)
-{
-    mruA.dwFlags = flags;
-    mruA.lpfnCompare = cmp;
-    mruA.hKey = hKey;
-
-    SetLastError(0);
-    return pCreateMRUListA(&mruA);
 }
 
 static void test_MRUListA(void)
 {
     const char *checks[LIST_SIZE+1];
+    MRUINFOA infoA;
     HANDLE hMRU;
     HKEY hKey;
     INT iRet;
 
-    pCreateMRUListA = (void*)GetProcAddress(hComctl32,(LPCSTR)151);
-    pFreeMRUList = (void*)GetProcAddress(hComctl32,(LPCSTR)152);
-    pAddMRUStringA = (void*)GetProcAddress(hComctl32,(LPCSTR)153);
-    if (!pCreateMRUListA || !pFreeMRUList || !pAddMRUStringA)
+    if (!pCreateMRUListA || !pFreeMRUList || !pAddMRUStringA || !pEnumMRUListA)
+    {
+        win_skip("MRU entry points not found\n");
         return;
+    }
 
-#if 0 /* Create (NULL) - crashes native */
+    if (0)
+    {
+    /* Create (NULL) - crashes native */
     hMRU = pCreateMRUListA(NULL);
-#endif
+    }
 
-    /* Create (size too small) */
-    mruA.cbSize = sizeof(mruA) - 2;
-    hMRU = create_mruA(NULL, MRUF_STRING_LIST, cmp_mru_strA);
-    ok (!hMRU && !GetLastError(),
-        "CreateMRUListA(too small) expected NULL,0 got %p,%ld\n",
-        hMRU, GetLastError());
-    mruA.cbSize = sizeof(mruA);
+    /* size too small */
+    infoA.cbSize = sizeof(infoA) - 2;
+    infoA.uMax = LIST_SIZE;
+    infoA.fFlags = MRU_STRING;
+    infoA.hKey = NULL;
+    infoA.lpszSubKey = REG_TEST_SUBKEYA;
+    infoA.lpfnCompare = cmp_mru_strA;
 
-    /* Create (size too big) */
-    mruA.cbSize = sizeof(mruA) + 2;
-    hMRU = create_mruA(NULL, MRUF_STRING_LIST, cmp_mru_strA);
+    SetLastError(0);
+    hMRU = pCreateMRUListA(&infoA);
     ok (!hMRU && !GetLastError(),
-        "CreateMRUListA(too big) expected NULL,0 got %p,%ld\n",
-        hMRU, GetLastError());
-    mruA.cbSize = sizeof(mruA);
-
-    /* Create (NULL hKey) */
-    hMRU = create_mruA(NULL, MRUF_STRING_LIST, cmp_mru_strA);
-    ok (!hMRU && !GetLastError(),
-        "CreateMRUListA(NULL key) expected NULL,0 got %p,%ld\n",
+        "CreateMRUListA(too small) expected NULL,0 got %p,%d\n",
         hMRU, GetLastError());
 
-    /* Create (NULL name) */
-    mruA.lpszSubKey = NULL;
-    hMRU = create_mruA(NULL, MRUF_STRING_LIST, cmp_mru_strA);
+    /* size too big */
+    infoA.cbSize = sizeof(infoA) + 2;
+    infoA.uMax = LIST_SIZE;
+    infoA.fFlags = MRU_STRING;
+    infoA.hKey = NULL;
+    infoA.lpszSubKey = REG_TEST_SUBKEYA;
+    infoA.lpfnCompare = cmp_mru_strA;
+
+    SetLastError(0);
+    hMRU = pCreateMRUListA(&infoA);
     ok (!hMRU && !GetLastError(),
-        "CreateMRUListA(NULL name) expected NULL,0 got %p,%ld\n",
+        "CreateMRUListA(too big) expected NULL,0 got %p,%d\n",
         hMRU, GetLastError());
-    mruA.lpszSubKey = REG_TEST_SUBKEYA;
+
+    /* NULL hKey */
+    infoA.cbSize = sizeof(infoA);
+    infoA.uMax = LIST_SIZE;
+    infoA.fFlags = MRU_STRING;
+    infoA.hKey = NULL;
+    infoA.lpszSubKey = REG_TEST_SUBKEYA;
+    infoA.lpfnCompare = cmp_mru_strA;
+
+    SetLastError(0);
+    hMRU = pCreateMRUListA(&infoA);
+    ok (!hMRU && !GetLastError(),
+        "CreateMRUListA(NULL key) expected NULL,0 got %p,%d\n",
+        hMRU, GetLastError());
+
+    /* NULL subkey name */
+    infoA.cbSize = sizeof(infoA);
+    infoA.uMax = LIST_SIZE;
+    infoA.fFlags = MRU_STRING;
+    infoA.hKey = NULL;
+    infoA.lpszSubKey = NULL;
+    infoA.lpfnCompare = cmp_mru_strA;
+
+    SetLastError(0);
+    hMRU = pCreateMRUListA(&infoA);
+    ok (!hMRU && !GetLastError(),
+        "CreateMRUListA(NULL name) expected NULL,0 got %p,%d\n",
+        hMRU, GetLastError());
 
     /* Create a string MRU */
     ok(!RegCreateKeyA(HKEY_CURRENT_USER, REG_TEST_KEYA, &hKey),
        "Couldn't create test key \"%s\"\n", REG_TEST_KEYA);
-    if (!hKey)
-        return;
-    hMRU = create_mruA(hKey, MRUF_STRING_LIST, cmp_mru_strA);
+    if (!hKey) return;
+
+    infoA.cbSize = sizeof(infoA);
+    infoA.uMax = LIST_SIZE;
+    infoA.fFlags = MRU_STRING;
+    infoA.hKey = hKey;
+    infoA.lpszSubKey = REG_TEST_SUBKEYA;
+    infoA.lpfnCompare = cmp_mru_strA;
+
+    hMRU = pCreateMRUListA(&infoA);
     ok(hMRU && !GetLastError(),
-       "CreateMRUListA(string) expected non-NULL,0 got %p,%ld\n",
+       "CreateMRUListA(string) expected non-NULL,0 got %p,%d\n",
        hMRU, GetLastError());
 
     if (hMRU)
     {
+        char buffer[255];
         checks[0] = "Test 1";
         checks[1] = "Test 2";
         checks[2] = "Test 3";
@@ -220,38 +336,39 @@ static void test_MRUListA(void)
         SetLastError(0);
         iRet = pAddMRUStringA(NULL, checks[0]);
         ok(iRet == -1 && !GetLastError(),
-           "AddMRUStringA(NULL list) expected -1,0 got %d,%ld\n",
+           "AddMRUStringA(NULL list) expected -1,0 got %d,%d\n",
            iRet, GetLastError());
 
         /* Add (NULL string) */
-#if 0
+        if (0)
+        {
 	/* Some native versions crash when passed NULL or fail to SetLastError()  */
         SetLastError(0);
         iRet = pAddMRUStringA(hMRU, NULL);
         ok(iRet == 0 && GetLastError() == ERROR_INVALID_PARAMETER,
-           "AddMRUStringA(NULL str) expected 0,ERROR_INVALID_PARAMETER got %d,%ld\n",
+           "AddMRUStringA(NULL str) expected 0,ERROR_INVALID_PARAMETER got %d,%d\n",
            iRet, GetLastError());
-#endif
+        }
 
         /* Add 3 strings. Check the registry is correct after each add */
         SetLastError(0);
         iRet = pAddMRUStringA(hMRU, checks[0]);
         ok(iRet == 0 && !GetLastError(),
-           "AddMRUStringA(1) expected 0,0 got %d,%ld\n",
+           "AddMRUStringA(1) expected 0,0 got %d,%d\n",
            iRet, GetLastError());
         check_reg_entries("a", checks);
 
         SetLastError(0);
         iRet = pAddMRUStringA(hMRU, checks[1]);
         ok(iRet == 1 && !GetLastError(),
-           "AddMRUStringA(2) expected 1,0 got %d,%ld\n",
+           "AddMRUStringA(2) expected 1,0 got %d,%d\n",
            iRet, GetLastError());
         check_reg_entries("ba", checks);
 
         SetLastError(0);
         iRet = pAddMRUStringA(hMRU, checks[2]);
         ok(iRet == 2 && !GetLastError(),
-           "AddMRUStringA(2) expected 2,0 got %d,%ld\n",
+           "AddMRUStringA(2) expected 2,0 got %d,%d\n",
            iRet, GetLastError());
         check_reg_entries("cba", checks);
 
@@ -261,7 +378,7 @@ static void test_MRUListA(void)
         SetLastError(0);
         iRet = pAddMRUStringA(hMRU, checks[1]);
         ok(iRet == 1 && !GetLastError(),
-           "AddMRUStringA(re-add 1) expected 1,0 got %d,%ld\n",
+           "AddMRUStringA(re-add 1) expected 1,0 got %d,%d\n",
            iRet, GetLastError());
         check_reg_entries("bca", checks);
 
@@ -269,30 +386,343 @@ static void test_MRUListA(void)
         SetLastError(0);
         iRet = pAddMRUStringA(hMRU, checks[3]);
         ok(iRet == 0 && !GetLastError(),
-           "AddMRUStringA(add new) expected 0,0 got %d,%ld\n",
+           "AddMRUStringA(add new) expected 0,0 got %d,%d\n",
            iRet, GetLastError());
         checks[0] = checks[3];
         check_reg_entries("abc", checks);
+
+        /* NULL buffer = get list size */
+        iRet = pEnumMRUListA(hMRU, 0, NULL, 0);
+        ok(iRet == 3 || iRet == -1 /* Vista */, "EnumMRUList expected %d or -1, got %d\n", LIST_SIZE, iRet);
+
+        /* negative item pos = get list size */
+        iRet = pEnumMRUListA(hMRU, -1, NULL, 0);
+        ok(iRet == 3 || iRet == -1 /* Vista */, "EnumMRUList expected %d or -1, got %d\n", LIST_SIZE, iRet);
+
+        /* negative item pos = get list size */
+        iRet = pEnumMRUListA(hMRU, -5, NULL, 0);
+        ok(iRet == 3 || iRet == -1 /* Vista */, "EnumMRUList expected %d or -1, got %d\n", LIST_SIZE, iRet);
+
+        /* negative item pos = get list size */
+        iRet = pEnumMRUListA(hMRU, -1, buffer, 255);
+        ok(iRet == 3, "EnumMRUList expected %d, got %d\n", LIST_SIZE, iRet);
+
+        /* negative item pos = get list size */
+        iRet = pEnumMRUListA(hMRU, -5, buffer, 255);
+        ok(iRet == 3, "EnumMRUList expected %d, got %d\n", LIST_SIZE, iRet);
+
+        /* check entry 0 */
+        buffer[0] = 0;
+        iRet = pEnumMRUListA(hMRU, 0, buffer, 255);
+        ok(iRet == lstrlenA(checks[3]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[3]), iRet);
+        ok(strcmp(buffer, checks[3]) == 0, "EnumMRUList expected %s, got %s\n", checks[3], buffer);
+
+        /* check entry 0 with a too small buffer */
+        buffer[0] = 0;   /* overwritten with 'T' */
+        buffer[1] = 'A'; /* overwritten with 0   */
+        buffer[2] = 'A'; /* unchanged */
+        buffer[3] = 0;   /* unchanged */
+        iRet = pEnumMRUListA(hMRU, 0, buffer, 2);
+        ok(iRet == lstrlenA(checks[3]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[3]), iRet);
+        ok(strcmp(buffer, "T") == 0, "EnumMRUList expected %s, got %s\n", "T", buffer);
+        /* make sure space after buffer has old values */
+        ok(buffer[2] == 'A', "EnumMRUList expected %02x, got %02x\n", 'A', buffer[2]);
+
+        /* check entry 1 */
+        buffer[0] = 0;
+        iRet = pEnumMRUListA(hMRU, 1, buffer, 255);
+        ok(iRet == lstrlenA(checks[1]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[1]), iRet);
+        ok(strcmp(buffer, checks[1]) == 0, "EnumMRUList expected %s, got %s\n", checks[1], buffer);
+
+        /* check entry 2 */
+        buffer[0] = 0;
+        iRet = pEnumMRUListA(hMRU, 2, buffer, 255);
+        ok(iRet == lstrlenA(checks[2]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[2]), iRet);
+        ok(strcmp(buffer, checks[2]) == 0, "EnumMRUList expected %s, got %s\n", checks[2], buffer);
+
+        /* check out of bounds entry 3 */
+        strcpy(buffer, "dummy");
+        iRet = pEnumMRUListA(hMRU, 3, buffer, 255);
+        ok(iRet == -1, "EnumMRUList expected %d, got %d\n", -1, iRet);
+        ok(strcmp(buffer, "dummy") == 0, "EnumMRUList expected unchanged buffer %s, got %s\n", "dummy", buffer);
 
         /* Finished with this MRU */
         pFreeMRUList(hMRU);
     }
 
-    /* Free (NULL list) - Doesn't crash */
-    pFreeMRUList(NULL);
+    /* FreeMRUList(NULL) crashes on Win98 OSR0 */
+}
+
+typedef struct {
+    MRUINFOA mruA;
+    BOOL ret;
+} create_lazya_t;
+
+static const create_lazya_t create_lazyA[] = {
+    {{ sizeof(MRUINFOA) + 1, 0, 0, HKEY_CURRENT_USER, NULL, NULL }, FALSE },
+    {{ sizeof(MRUINFOA) - 1, 0, 0, HKEY_CURRENT_USER, NULL, NULL }, FALSE },
+    {{ sizeof(MRUINFOA) + 1, 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE },
+    {{ sizeof(MRUINFOA) - 1, 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE },
+    {{ sizeof(MRUINFOA), 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE },
+    {{ sizeof(MRUINFOA), 0, 0, HKEY_CURRENT_USER, NULL, NULL }, FALSE },
+    {{ sizeof(MRUINFOA), 0, 0, NULL, "WineTest", NULL }, FALSE },
+    {{ 0, 0, 0, NULL, "WineTest", NULL }, FALSE },
+    {{ 0, 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE }
+};
+
+static void test_CreateMRUListLazyA(void)
+{
+    int i;
+
+    if (!pCreateMRUListLazyA || !pFreeMRUList)
+    {
+        win_skip("CreateMRUListLazyA or FreeMRUList entry points not found\n");
+        return;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(create_lazyA); i++)
+    {
+        const create_lazya_t *ptr = &create_lazyA[i];
+        HANDLE hMRU;
+
+        hMRU = pCreateMRUListLazyA((MRUINFOA*)&ptr->mruA, 0, 0, 0);
+        if (ptr->ret)
+        {
+            ok(hMRU != NULL, "%d: got %p\n", i, hMRU);
+            pFreeMRUList(hMRU);
+        }
+        else
+            ok(hMRU == NULL, "%d: got %p\n", i, hMRU);
+    }
+}
+
+static void test_EnumMRUList(void)
+{
+    if (!pEnumMRUListA || !pEnumMRUListW)
+    {
+        win_skip("EnumMRUListA/EnumMRUListW entry point not found\n");
+        return;
+    }
+
+    /* NULL handle */
+    if (0)
+    {
+        /* crashes on NT4, passed on Win2k, XP, 2k3, Vista, 2k8 */
+        pEnumMRUListA(NULL, 0, NULL, 0);
+        pEnumMRUListW(NULL, 0, NULL, 0);
+    }
+}
+
+static void test_FindMRUData(void)
+{
+    INT iRet;
+
+    if (!pFindMRUData)
+    {
+        win_skip("FindMRUData entry point not found\n");
+        return;
+    }
+
+    /* NULL handle */
+    iRet = pFindMRUData(NULL, NULL, 0, NULL);
+    ok(iRet == -1, "FindMRUData expected -1, got %d\n", iRet);
+}
+
+static void test_AddMRUData(void)
+{
+    INT iRet;
+
+    if (!pAddMRUData)
+    {
+        win_skip("AddMRUData entry point not found\n");
+        return;
+    }
+
+    /* NULL handle */
+    iRet = pFindMRUData(NULL, NULL, 0, NULL);
+    ok(iRet == -1, "AddMRUData expected -1, got %d\n", iRet);
+}
+
+static void test_CreateMRUListW(void)
+{
+    static const WCHAR mrutestW[] = {'M','R','U','T','e','s','t',0};
+    MRUINFOW infoW;
+    void *named;
+    HKEY hKey;
+    HANDLE hMru;
+
+    if (!pCreateMRUListW)
+    {
+        win_skip("CreateMRUListW entry point not found\n");
+        return;
+    }
+
+    /* exported by name too on recent versions */
+    named = GetProcAddress(hComctl32, "CreateMRUListW");
+    if (named)
+        ok(named == pCreateMRUListW, "got %p, expected %p\n", named, pCreateMRUListW);
+
+    ok(!RegCreateKeyA(HKEY_CURRENT_USER, REG_TEST_KEYA, &hKey),
+       "Couldn't create test key \"%s\"\n", REG_TEST_KEYA);
+
+    infoW.cbSize = sizeof(infoW);
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListW(&infoW);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* smaller size */
+    infoW.cbSize = sizeof(infoW) - 1;
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListW(&infoW);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* increased size */
+    infoW.cbSize = sizeof(infoW) + 1;
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListW(&infoW);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* zero size */
+    infoW.cbSize = 0;
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListW(&infoW);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* NULL hKey */
+    infoW.cbSize = sizeof(infoW);
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = NULL;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListW(&infoW);
+    ok(hMru == NULL, "got %p\n", hMru);
+
+    RegCloseKey(hKey);
+}
+
+static void test_CreateMRUListLazyW(void)
+{
+    static const WCHAR mrutestW[] = {'M','R','U','T','e','s','t',0};
+    MRUINFOW infoW;
+    void *named;
+    HKEY hKey;
+    HANDLE hMru;
+
+    if (!pCreateMRUListLazyW)
+    {
+        win_skip("CreateMRUListLazyW entry point not found\n");
+        return;
+    }
+
+    /* check that it's not exported by name */
+    named = GetProcAddress(hComctl32, "CreateMRUListLazyW");
+    ok(named == NULL, "got %p\n", named);
+
+    ok(!RegCreateKeyA(HKEY_CURRENT_USER, REG_TEST_KEYA, &hKey),
+       "Couldn't create test key \"%s\"\n", REG_TEST_KEYA);
+
+    infoW.cbSize = sizeof(infoW);
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListLazyW(&infoW, 0, 0, 0);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* smaller size */
+    infoW.cbSize = sizeof(infoW) - 1;
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListLazyW(&infoW, 0, 0, 0);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* increased size */
+    infoW.cbSize = sizeof(infoW) + 1;
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListLazyW(&infoW, 0, 0, 0);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* zero size */
+    infoW.cbSize = 0;
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = hKey;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListLazyW(&infoW, 0, 0, 0);
+    ok(hMru != NULL, "got %p\n", hMru);
+    pFreeMRUList(hMru);
+
+    /* NULL hKey */
+    infoW.cbSize = sizeof(infoW);
+    infoW.uMax = 1;
+    infoW.fFlags = 0;
+    infoW.lpszSubKey = mrutestW;
+    infoW.hKey = NULL;
+    infoW.lpfnCompare = NULL;
+
+    hMru = pCreateMRUListLazyW(&infoW, 0, 0, 0);
+    ok(hMru == NULL, "got %p\n", hMru);
+
+    RegCloseKey(hKey);
 }
 
 START_TEST(mru)
 {
-    hComctl32 = GetModuleHandleA("comctl32.dll");
-    if (!hComctl32)
-        return;
-
     delete_reg_entries();
     if (!create_reg_entries())
         return;
 
+    init_functions();
+
     test_MRUListA();
+    test_CreateMRUListLazyA();
+    test_CreateMRUListLazyW();
+    test_EnumMRUList();
+    test_FindMRUData();
+    test_AddMRUData();
+    test_CreateMRUListW();
 
     delete_reg_entries();
 }

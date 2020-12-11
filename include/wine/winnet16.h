@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINNET16_H
@@ -105,7 +105,7 @@ WORD WINAPI WNetUnlockQueueData16(LPSTR);
  * Connections
  */
 
-WORD WINAPI WNetAddConnection16(LPSTR,LPSTR,LPSTR);
+WORD WINAPI WNetAddConnection16(LPCSTR,LPCSTR,LPCSTR);
 WORD WINAPI WNetCancelConnection16(LPSTR,BOOL16);
 WORD WINAPI WNetGetConnection16(LPSTR,LPSTR,UINT16 *);
 WORD WINAPI WNetRestoreConnection16(HWND16,LPSTR);
@@ -199,7 +199,7 @@ WORD WINAPI WNetGetCaps16(WORD);
  * Get User
  */
 
-WORD WINAPI WNetGetUser16(LPCSTR,LPSTR,LPINT16);
+WORD WINAPI WNetGetUser16(LPSTR,LPINT16);
 
 
 /*

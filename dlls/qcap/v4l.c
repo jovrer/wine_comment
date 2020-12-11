@@ -19,17 +19,40 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
 #include "wine/port.h"
 
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 #define COBJMACROS
 
 #include <stdarg.h>
+#include <stdio.h>
+#include <fcntl.h>
+#ifdef HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>
+#endif
+#ifdef HAVE_SYS_MMAN_H
+#include <sys/mman.h>
+#endif
+#include <errno.h>
+#ifdef HAVE_SYS_TIME_H
+#include <sys/time.h>
+#endif
+#ifdef HAVE_ASM_TYPES_H
+#include <asm/types.h>
+#endif
+#ifdef HAVE_LIBV4L1_H
+#include <libv4l1.h>
+#endif
+#ifdef HAVE_LINUX_VIDEODEV_H
+#include <linux/videodev.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
 #include "windef.h"
 #include "winbase.h"
 #include "wtypes.h"
@@ -39,41 +62,42 @@
 #include "vfwmsgs.h"
 #include "amvideo.h"
 #include "wine/debug.h"
+#include "wine/library.h"
 
 #include "capture.h"
 #include "qcap_main.h"
-#include "pin.h"
-
-#include <stdio.h>
-#include <fcntl.h>
-
-#ifdef HAVE_SYS_IOCTL_H
-#include <sys/ioctl.h>
-#endif
-#ifdef HAVE_SYS_MMAN_H
-#include <sys/mman.h>
-#endif
-#ifdef HAVE_SYS_ERRNO_H
-#include <sys/errno.h>
-#endif
-#ifdef HAVE_SYS_TIME_H
-#include <sys/time.h>
-#endif
-#ifdef HAVE_ASM_TYPES_H
-#include <asm/types.h>
-#endif
-#ifdef HAVE_LINUX_VIDEODEV_H
-#include <linux/videodev.h>
-#endif
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(qcap_v4l);
 
-#ifdef HAVE_LINUX_VIDEODEV_H
+#ifdef VIDIOCMCAPTURE
 
-typedef void (* Renderer)(Capture *, LPBYTE bufferin, LPBYTE stream);
+static typeof(open) *video_open = open;
+static typeof(close) *video_close = close;
+static typeof(ioctl) *video_ioctl = ioctl;
+static typeof(read) *video_read = read;
+static typeof(mmap) *video_mmap = mmap;
+static typeof(munmap) *video_munmap = munmap;
+
+static void video_init(void)
+{
+#ifdef SONAME_LIBV4L1
+    static void *video_lib;
+
+    if (video_lib)
+        return;
+    video_lib = wine_dlopen(SONAME_LIBV4L1, RTLD_NOW, NULL, 0);
+    if (!video_lib)
+        return;
+    video_open = wine_dlsym(video_lib, "v4l1_open", NULL, 0);
+    video_close = wine_dlsym(video_lib, "v4l1_close", NULL, 0);
+    video_ioctl = wine_dlsym(video_lib, "v4l1_ioctl", NULL, 0);
+    video_read = wine_dlsym(video_lib, "v4l1_read", NULL, 0);
+    video_mmap = wine_dlsym(video_lib, "v4l1_mmap", NULL, 0);
+    video_munmap = wine_dlsym(video_lib, "v4l1_munmap", NULL, 0);
+#endif
+}
+
+typedef void (* Renderer)(const Capture *, LPBYTE bufferin, const BYTE *stream);
 
 struct _Capture
 {
@@ -84,7 +108,7 @@ struct _Capture
 
     IPin *pOut;
     int fd, mmap;
-    int iscommitted, stopped;
+    BOOL iscommitted, stopped;
     struct video_picture pict;
     int dbrightness, dhue, dcolour, dcontrast;
 
@@ -111,8 +135,8 @@ struct renderlist
     Renderer renderer;
 };
 
-static void renderer_RGB(Capture *capBox, LPBYTE bufferin, LPBYTE stream);
-static void renderer_YUV(Capture *capBox, LPBYTE bufferin, LPBYTE stream);
+static void renderer_RGB(const Capture *capBox, LPBYTE bufferin, const BYTE *stream);
+static void renderer_YUV(const Capture *capBox, LPBYTE bufferin, const BYTE *stream);
 
 static const struct renderlist renderlist_V4l[] = {
     {  0, "NULL renderer",               NULL },
@@ -136,7 +160,7 @@ static const struct renderlist renderlist_V4l[] = {
     {  0, NULL,                          NULL },
 };
 
-const int fallback_V4l[] = { 4, 5, 7, 8, 9, 13, 15, 14, 16, 11, -1 };
+static const int fallback_V4l[] = { 4, 5, 7, 8, 9, 13, 15, 14, 16, 11, -1 };
 /* Fallback: First try raw formats (Should try yuv first perhaps?), then yuv */
 
 /* static const Capture defbox; */
@@ -146,7 +170,7 @@ static int xioctl(int fd, int request, void * arg)
     int r;
 
     do {
-        r = ioctl (fd, request, arg);
+        r = video_ioctl (fd, request, arg);
     } while (-1 == r && EINTR == errno);
 
     return r;
@@ -168,8 +192,8 @@ static HRESULT V4l_Prepare(Capture *capBox)
         TRACE("%p: Using %d/%d buffers\n", capBox,
               capBox->buffers, capBox->gb_buffers.frames);
 
-        capBox->pmap = mmap( 0, capBox->gb_buffers.size, PROT_READ|PROT_WRITE,
-                             MAP_SHARED, capBox->fd, 0 );
+        capBox->pmap = video_mmap( 0, capBox->gb_buffers.size, PROT_READ|PROT_WRITE,
+                                   MAP_SHARED, capBox->fd, 0 );
         if (capBox->pmap != MAP_FAILED)
         {
             int i;
@@ -177,7 +201,7 @@ static HRESULT V4l_Prepare(Capture *capBox)
             capBox->grab_buf = CoTaskMemAlloc(sizeof(struct video_mmap) * capBox->buffers);
             if (!capBox->grab_buf)
             {
-                munmap(capBox->pmap, capBox->gb_buffers.size);
+                video_munmap(capBox->pmap, capBox->gb_buffers.size);
                 return E_OUTOFMEMORY;
             }
 
@@ -211,7 +235,7 @@ static void V4l_Unprepare(Capture *capBox)
     {
         for (capBox->curframe = 0; capBox->curframe < capBox->buffers; capBox->curframe++) 
             xioctl(capBox->fd, VIDIOCSYNC, &capBox->grab_buf[capBox->curframe]);
-        munmap(capBox->pmap, capBox->gb_buffers.size);
+        video_munmap(capBox->pmap, capBox->gb_buffers.size);
         CoTaskMemFree(capBox->grab_buf);
     }
     else
@@ -223,7 +247,8 @@ HRESULT qcap_driver_destroy(Capture *capBox)
     TRACE("%p\n", capBox);
 
     if( capBox->fd != -1 )
-        close(capBox->fd);
+        video_close(capBox->fd);
+    capBox->CritSect.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&capBox->CritSect);
     CoTaskMemFree(capBox);
     return S_OK;
@@ -241,7 +266,7 @@ HRESULT qcap_driver_set_format(Capture *capBox, AM_MEDIA_TYPE * mT)
     if (format->bmiHeader.biBitCount != 24 ||
         format->bmiHeader.biCompression != BI_RGB)
     {
-        FIXME("unsupported media type %d %ld\n", format->bmiHeader.biBitCount,
+        FIXME("unsupported media type %d %d\n", format->bmiHeader.biBitCount,
               format->bmiHeader.biCompression );
         return VFW_E_INVALIDMEDIATYPE;
     }
@@ -278,7 +303,7 @@ HRESULT qcap_driver_set_format(Capture *capBox, AM_MEDIA_TYPE * mT)
     return S_OK;
 }
 
-HRESULT qcap_driver_get_format(Capture *capBox, AM_MEDIA_TYPE ** mT)
+HRESULT qcap_driver_get_format(const Capture *capBox, AM_MEDIA_TYPE ** mT)
 {
     VIDEOINFOHEADER *vi;
 
@@ -290,16 +315,17 @@ HRESULT qcap_driver_get_format(Capture *capBox, AM_MEDIA_TYPE ** mT)
     if (!vi)
     {
         CoTaskMemFree(mT[0]);
+        mT[0] = NULL;
         return E_OUTOFMEMORY;
     }
-    memcpy(&mT[0]->majortype, &MEDIATYPE_Video, sizeof(GUID));
-    memcpy(&mT[0]->subtype, &MEDIASUBTYPE_RGB24, sizeof(GUID));
-    memcpy(&mT[0]->formattype, &FORMAT_VideoInfo, sizeof(GUID));
+    mT[0]->majortype = MEDIATYPE_Video;
+    mT[0]->subtype = MEDIASUBTYPE_RGB24;
+    mT[0]->formattype = FORMAT_VideoInfo;
     mT[0]->bFixedSizeSamples = TRUE;
     mT[0]->bTemporalCompression = FALSE;
     mT[0]->pUnk = NULL;
     mT[0]->lSampleSize = capBox->outputwidth * capBox->outputheight * capBox->bitDepth / 8;
-    TRACE("Output format: %dx%d - %d bits = %lu KB\n", capBox->outputwidth,
+    TRACE("Output format: %dx%d - %d bits = %u KB\n", capBox->outputwidth,
           capBox->outputheight, capBox->bitDepth, mT[0]->lSampleSize/1024);
     vi->rcSource.left = 0; vi->rcSource.top = 0;
     vi->rcTarget.left = 0; vi->rcTarget.top = 0;
@@ -323,10 +349,11 @@ HRESULT qcap_driver_get_format(Capture *capBox, AM_MEDIA_TYPE ** mT)
     return S_OK;
 }
 
-HRESULT qcap_driver_get_prop_range( Capture *capBox, long Property, long *pMin,
-            long *pMax, long *pSteppingDelta, long *pDefault, long *pCapsFlags )
+HRESULT qcap_driver_get_prop_range( Capture *capBox,
+            VideoProcAmpProperty Property, LONG *pMin, LONG *pMax,
+            LONG *pSteppingDelta, LONG *pDefault, LONG *pCapsFlags )
 {
-    TRACE("%p -> %ld %p %p %p %p %p\n", capBox, Property,
+    TRACE("%p -> %d %p %p %p %p %p\n", capBox, Property,
           pMin, pMax, pSteppingDelta, pDefault, pCapsFlags);
 
     switch (Property)
@@ -344,7 +371,7 @@ HRESULT qcap_driver_get_prop_range( Capture *capBox, long Property, long *pMin,
         *pDefault = capBox->dcolour;
         break;
     default:
-        FIXME("Not implemented %ld\n", Property);
+        FIXME("Not implemented %d\n", Property);
         return E_NOTIMPL;
     }
     *pMin = 0;
@@ -354,9 +381,10 @@ HRESULT qcap_driver_get_prop_range( Capture *capBox, long Property, long *pMin,
     return S_OK;
 }
 
-HRESULT qcap_driver_get_prop( Capture *capBox, long Property, long *lValue, long *Flags )
+HRESULT qcap_driver_get_prop( Capture *capBox,
+            VideoProcAmpProperty Property, LONG *lValue, LONG *Flags )
 {
-    TRACE("%p -> %ld %p %p\n", capBox, Property, lValue, Flags);
+    TRACE("%p -> %d %p %p\n", capBox, Property, lValue, Flags);
 
     switch (Property)
     {
@@ -373,16 +401,17 @@ HRESULT qcap_driver_get_prop( Capture *capBox, long Property, long *lValue, long
         *lValue = capBox->pict.colour;
         break;
     default:
-        FIXME("Not implemented %ld\n", Property);
+        FIXME("Not implemented %d\n", Property);
         return E_NOTIMPL;
     }
     *Flags = VideoProcAmp_Flags_Manual;
     return S_OK;
 }
 
-HRESULT qcap_driver_set_prop(Capture *capBox, long Property, long lValue, long Flags)
+HRESULT qcap_driver_set_prop(Capture *capBox, VideoProcAmpProperty Property,
+            LONG lValue, LONG Flags)
 {
-    TRACE("%p -> %ld %ld %ld\n", capBox, Property, lValue, Flags);
+    TRACE("%p -> %d %d %d\n", capBox, Property, lValue, Flags);
 
     switch (Property)
     {
@@ -399,7 +428,7 @@ HRESULT qcap_driver_set_prop(Capture *capBox, long Property, long lValue, long F
         capBox->pict.colour = lValue;
         break;
     default:
-        FIXME("Not implemented %ld\n", Property);
+        FIXME("Not implemented %d\n", Property);
         return E_NOTIMPL;
     }
 
@@ -411,7 +440,7 @@ HRESULT qcap_driver_set_prop(Capture *capBox, long Property, long lValue, long F
     return S_OK;
 }
 
-static void renderer_RGB(Capture *capBox, LPBYTE bufferin, LPBYTE stream)
+static void renderer_RGB(const Capture *capBox, LPBYTE bufferin, const BYTE *stream)
 {
     int depth = renderlist_V4l[capBox->pict.palette].depth;
     int size = capBox->height * capBox->width * depth / 8;
@@ -442,7 +471,7 @@ static void renderer_RGB(Capture *capBox, LPBYTE bufferin, LPBYTE stream)
     }
 }
 
-static void renderer_YUV(Capture *capBox, LPBYTE bufferin, LPBYTE stream)
+static void renderer_YUV(const Capture *capBox, LPBYTE bufferin, const BYTE *stream)
 {
     enum YUV_Format format;
 
@@ -477,7 +506,7 @@ static void renderer_YUV(Capture *capBox, LPBYTE bufferin, LPBYTE stream)
     YUV_To_RGB24(format, bufferin, stream, capBox->width, capBox->height);
 }
 
-static void Resize(Capture * capBox, LPBYTE output, LPBYTE input)
+static void Resize(const Capture * capBox, LPBYTE output, const BYTE *input)
 {
     /* the whole image needs to be reversed,
        because the dibs are messed up in windows */
@@ -535,7 +564,7 @@ static void Resize(Capture * capBox, LPBYTE output, LPBYTE input)
 
 static void V4l_GetFrame(Capture * capBox, unsigned char ** pInput)
 {
-    if (capBox->pmap)
+    if (capBox->mmap)
     {
         if (xioctl(capBox->fd, VIDIOCSYNC, &capBox->grab_buf[capBox->curframe]) == -1)
             WARN("Syncing ioctl failed: %d\n", errno);
@@ -545,7 +574,7 @@ static void V4l_GetFrame(Capture * capBox, unsigned char ** pInput)
     else
     {
         int retval;
-        while ((retval = read(capBox->fd, capBox->grab_data, capBox->imagesize)) == -1)
+        while ((retval = video_read(capBox->fd, capBox->grab_data, capBox->imagesize)) == -1)
             if (errno != EAGAIN) break;
         if (retval == -1)
             WARN("Error occurred while reading from device: %s\n", strerror(errno));
@@ -567,15 +596,20 @@ static void V4l_FreeFrame(Capture * capBox)
 
 static DWORD WINAPI ReadThread(LPVOID lParam)
 {
-    Capture * capBox = (Capture *)lParam;
+    Capture * capBox = lParam;
     HRESULT hr;
     IMediaSample *pSample = NULL;
-    unsigned long framecount = 0;
+    ULONG framecount = 0;
     unsigned char *pTarget, *pInput, *pOutput;
 
     hr = V4l_Prepare(capBox);
     if (FAILED(hr))
-        goto fail;
+    {
+        ERR("Stop IFilterGraph: %x\n", hr);
+        capBox->thread = 0;
+        capBox->stopped = TRUE;
+        return 0;
+    }
 
     pOutput = CoTaskMemAlloc(capBox->width * capBox->height * capBox->bitDepth / 8);
     capBox->curframe = 0;
@@ -588,7 +622,7 @@ static DWORD WINAPI ReadThread(LPVOID lParam)
         EnterCriticalSection(&capBox->CritSect);
         if (capBox->stopped)
             break;
-        hr = OutputPin_GetDeliveryBuffer((OutputPin *)capBox->pOut, &pSample, NULL, NULL, 0);
+        hr = BaseOutputPinImpl_GetDeliveryBuffer((BaseOutputPin *)capBox->pOut, &pSample, NULL, NULL, 0);
         if (SUCCEEDED(hr))
         {
             int len;
@@ -607,31 +641,24 @@ static DWORD WINAPI ReadThread(LPVOID lParam)
             V4l_GetFrame(capBox, &pInput);
             capBox->renderer(capBox, pOutput, pInput);
             Resize(capBox, pTarget, pOutput);
-            hr = OutputPin_SendSample((OutputPin *)capBox->pOut, pSample);
-            TRACE("%p -> Frame %lu: %lx\n", capBox, ++framecount, hr);
+            hr = BaseOutputPinImpl_Deliver((BaseOutputPin *)capBox->pOut, pSample);
+            TRACE("%p -> Frame %u: %x\n", capBox, ++framecount, hr);
             IMediaSample_Release(pSample);
             V4l_FreeFrame(capBox);
         }
-        LeaveCriticalSection(&capBox->CritSect);
         if (FAILED(hr) && hr != VFW_E_NOT_CONNECTED)
         {
-            ERR("Received error: %lx\n", hr);
-            goto cfail;
+            TRACE("Return %x, stop IFilterGraph\n", hr);
+            V4l_Unprepare(capBox);
+            capBox->thread = 0;
+            capBox->stopped = TRUE;
+            break;
         }
+        LeaveCriticalSection(&capBox->CritSect);
     }
+
     LeaveCriticalSection(&capBox->CritSect);
     CoTaskMemFree(pOutput);
-
-    return 0;
-
-cfail:
-    CoTaskMemFree(pOutput);
-    V4l_Unprepare(capBox);
-    LeaveCriticalSection(&capBox->CritSect);
-
-fail:
-    capBox->thread = 0; capBox->stopped = 1;
-    FIXME("Stop IFilterGraph\n");
     return 0;
 }
 
@@ -646,16 +673,17 @@ HRESULT qcap_driver_run(Capture *capBox, FILTER_STATE *state)
 
     EnterCriticalSection(&capBox->CritSect);
 
-    capBox->stopped = 0;
+    capBox->stopped = FALSE;
 
     if (*state == State_Stopped)
     {
         *state = State_Running;
-        if (!capBox->iscommitted++)
+        if (!capBox->iscommitted)
         {
-            IMemAllocator * pAlloc = NULL;
             ALLOCATOR_PROPERTIES ap, actual;
-            OutputPin *out;
+            BaseOutputPin *out;
+
+            capBox->iscommitted = TRUE;
 
             ap.cBuffers = 3;
             if (!capBox->swresize)
@@ -666,19 +694,14 @@ HRESULT qcap_driver_run(Capture *capBox, FILTER_STATE *state)
             ap.cbAlign = 1;
             ap.cbPrefix = 0;
 
-            out = (OutputPin *)capBox->pOut;
-            hr = IMemInputPin_GetAllocator(out->pMemInputPin, &pAlloc);
+            out = (BaseOutputPin *)capBox->pOut;
+
+            hr = IMemAllocator_SetProperties(out->pAllocator, &ap, &actual);
 
             if (SUCCEEDED(hr))
-                hr = IMemAllocator_SetProperties(pAlloc, &ap, &actual);
+                hr = IMemAllocator_Commit(out->pAllocator);
 
-            if (SUCCEEDED(hr))
-                hr = IMemAllocator_Commit(pAlloc);
-
-            if (pAlloc)
-                IMemAllocator_Release(pAlloc);
-
-            TRACE("Committing allocator: %lx\n", hr);
+            TRACE("Committing allocator: %x\n", hr);
         }
 
         thread = CreateThread(NULL, 0, ReadThread, capBox, 0, NULL);
@@ -689,7 +712,7 @@ HRESULT qcap_driver_run(Capture *capBox, FILTER_STATE *state)
             LeaveCriticalSection(&capBox->CritSect);
             return S_OK;
         }
-        ERR("Creating thread failed.. %lx\n", GetLastError());
+        ERR("Creating thread failed.. %u\n", GetLastError());
         LeaveCriticalSection(&capBox->CritSect);
         return E_FAIL;
     }
@@ -730,39 +753,21 @@ HRESULT qcap_driver_stop(Capture *capBox, FILTER_STATE *state)
     {
         if (*state == State_Paused)
             ResumeThread(capBox->thread);
-        capBox->stopped = 1;
+        capBox->stopped = TRUE;
         capBox->thread = 0;
         if (capBox->iscommitted)
         {
-            IMemInputPin *pMem = NULL;
-            IMemAllocator * pAlloc = NULL;
-            IPin *pConnect = NULL;
+            BaseOutputPin *out;
             HRESULT hr;
 
-            capBox->iscommitted = 0;
+            capBox->iscommitted = FALSE;
 
-            hr = IPin_ConnectedTo(capBox->pOut, &pConnect);
+            out = (BaseOutputPin*)capBox->pOut;
 
-            if (SUCCEEDED(hr))
-                hr = IPin_QueryInterface(pConnect, &IID_IMemInputPin, (void **) &pMem);
-
-            if (SUCCEEDED(hr))
-                hr = IMemInputPin_GetAllocator(pMem, &pAlloc);
-
-            if (SUCCEEDED(hr))
-                hr = IMemAllocator_Decommit(pAlloc);
-
-            if (pAlloc)
-                IMemAllocator_Release(pAlloc);
-
-            if (pMem)
-                IMemInputPin_Release(pMem);
-
-            if (pConnect)
-                IPin_Release(pConnect);
+            hr = IMemAllocator_Decommit(out->pAllocator);
 
             if (hr != S_OK && hr != VFW_E_NOT_COMMITTED)
-                WARN("Decommitting allocator: %lx\n", hr);
+                WARN("Decommitting allocator: %x\n", hr);
         }
         V4l_Unprepare(capBox);
     }
@@ -781,6 +786,7 @@ Capture * qcap_driver_init( IPin *pOut, USHORT card )
     struct video_window window;
 
     YUV_Init();
+    video_init();
 
     capBox = CoTaskMemAlloc(sizeof(Capture));
     if (!capBox)
@@ -789,15 +795,20 @@ Capture * qcap_driver_init( IPin *pOut, USHORT card )
     /* capBox->vtbl = &defboxVtbl; */
 
     InitializeCriticalSection( &capBox->CritSect );
+    capBox->CritSect.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": Capture.CritSect");
 
     sprintf(device, "/dev/video%i", card);
     TRACE("opening %s\n", device);
-    capBox->fd = open(device, O_RDWR | O_NONBLOCK);
+#ifdef O_CLOEXEC
+    if ((capBox->fd = video_open(device, O_RDWR | O_NONBLOCK | O_CLOEXEC)) == -1 && errno == EINVAL)
+#endif
+        capBox->fd = video_open(device, O_RDWR | O_NONBLOCK);
     if (capBox->fd == -1)
     {
         WARN("open failed (%d)\n", errno);
         goto error;
     }
+    fcntl( capBox->fd, F_SETFD, FD_CLOEXEC );  /* in case O_CLOEXEC isn't supported */
 
     memset(&capa, 0, sizeof(capa));
 
@@ -885,17 +896,17 @@ Capture * qcap_driver_init( IPin *pOut, USHORT card )
     capBox->bitDepth = 24;
     capBox->pOut = pOut;
     capBox->fps = 3;
-    capBox->stopped = 0;
+    capBox->stopped = FALSE;
     capBox->curframe = 0;
-    capBox->iscommitted = 0;
+    capBox->iscommitted = FALSE;
 
     TRACE("format: %d bits - %d x %d\n", capBox->bitDepth, capBox->width, capBox->height);
 
-    return (Capture*) capBox;
+    return capBox;
 
 error:
     if (capBox)
-        qcap_driver_destroy( (Capture*) capBox );
+        qcap_driver_destroy( capBox );
 
     return NULL;
 }
@@ -904,7 +915,7 @@ error:
 
 Capture * qcap_driver_init( IPin *pOut, USHORT card )
 {
-    const char msg[] = 
+    static const char msg[] =
         "The v4l headers were not available at compile time,\n"
         "so video capture support is not available.\n";
     MESSAGE(msg);
@@ -925,23 +936,26 @@ HRESULT qcap_driver_set_format(Capture *capBox, AM_MEDIA_TYPE * mT)
     FAIL_WITH_ERR;
 }
 
-HRESULT qcap_driver_get_format(Capture *capBox, AM_MEDIA_TYPE ** mT)
+HRESULT qcap_driver_get_format(const Capture *capBox, AM_MEDIA_TYPE ** mT)
 {
     FAIL_WITH_ERR;
 }
 
-HRESULT qcap_driver_get_prop_range( Capture *capBox, long Property, long *pMin,
-          long *pMax, long *pSteppingDelta, long *pDefault, long *pCapsFlags )
+HRESULT qcap_driver_get_prop_range( Capture *capBox,
+        VideoProcAmpProperty  Property, LONG *pMin, LONG *pMax,
+        LONG *pSteppingDelta, LONG *pDefault, LONG *pCapsFlags )
 {
     FAIL_WITH_ERR;
 }
 
-HRESULT qcap_driver_get_prop(Capture *capBox, long Property, long *lValue, long *Flags)
+HRESULT qcap_driver_get_prop(Capture *capBox,
+        VideoProcAmpProperty Property, LONG *lValue, LONG *Flags)
 {
     FAIL_WITH_ERR;
 }
 
-HRESULT qcap_driver_set_prop(Capture *capBox, long Property, long lValue, long Flags)
+HRESULT qcap_driver_set_prop(Capture *capBox, VideoProcAmpProperty Property,
+        LONG lValue, LONG Flags)
 {
     FAIL_WITH_ERR;
 }
@@ -961,4 +975,4 @@ HRESULT qcap_driver_stop(Capture *capBox, FILTER_STATE *state)
     FAIL_WITH_ERR;
 }
 
-#endif /* HAVE_LINUX_VIDEODEV_H */
+#endif /* defined(VIDIOCMCAPTURE) */

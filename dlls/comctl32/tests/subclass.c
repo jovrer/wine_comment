@@ -14,13 +14,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#define _WIN32_WINNT 0x0501 /* For SetWindowSubclass/etc */
 
 #include <assert.h>
 #include <stdarg.h>
-
-#define _WIN32_WINNT 0x0501 /* For SetWindowSubclass/etc */
 
 #include "windef.h"
 #include "winbase.h"
@@ -28,6 +28,7 @@
 #include "winuser.h"
 #include "commctrl.h"
 
+#include "wine/heap.h"
 #include "wine/test.h"
 
 static BOOL (WINAPI *pSetWindowSubclass)(HWND, SUBCLASSPROC, UINT_PTR, DWORD_PTR);
@@ -119,12 +120,12 @@ static void add_message(const struct message *msg)
     if (!sequence)
     {
         sequence_size = 10;
-        sequence = HeapAlloc( GetProcessHeap(), 0, sequence_size * sizeof (struct message) );
+        sequence = heap_alloc( sequence_size * sizeof (struct message) );
     }
     if (sequence_cnt == sequence_size)
     {
         sequence_size *= 2;
-        sequence = HeapReAlloc( GetProcessHeap(), 0, sequence, sequence_size * sizeof (struct message) );
+        sequence = heap_realloc( sequence, sequence_size * sizeof (struct message) );
     }
     assert(sequence);
 
@@ -136,8 +137,8 @@ static void add_message(const struct message *msg)
 
 static void flush_sequence(void)
 {
-    HeapFree(GetProcessHeap(), 0, sequence);
-    sequence = 0;
+    heap_free(sequence);
+    sequence = NULL;
     sequence_cnt = sequence_size = 0;
 }
 
@@ -156,7 +157,7 @@ static void ok_sequence(const struct message *expected, const char *context)
             "%s: the procnum %d was expected, but got procnum %d instead\n",
             context, expected->procnum, actual->procnum);
         ok(expected->wParam == actual->wParam,
-            "%s: in procnum %d expecting wParam 0x%x got 0x%x\n",
+            "%s: in procnum %d expecting wParam 0x%lx got 0x%lx\n",
             context, expected->procnum, expected->wParam, actual->wParam);
         expected++;
         actual++;
@@ -166,7 +167,7 @@ static void ok_sequence(const struct message *expected, const char *context)
     flush_sequence();
 }
 
-static LRESULT WINAPI WndProc1(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+static LRESULT WINAPI wnd_proc_1(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     struct message msg;
     
@@ -175,12 +176,12 @@ static LRESULT WINAPI WndProc1(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         msg.procnum = 1;
         add_message(&msg);
     }
-    return DefWindowProc(hwnd, message, wParam, lParam);
+    return DefWindowProcA(hwnd, message, wParam, lParam);
 }
 
 
-static WNDPROC origProc3;
-static LRESULT WINAPI WndProc3(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+static WNDPROC orig_proc_3;
+static LRESULT WINAPI wnd_proc_3(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     struct message msg;
     
@@ -189,10 +190,10 @@ static LRESULT WINAPI WndProc3(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         msg.procnum = 3;
         add_message(&msg);
     }
-    return CallWindowProc(origProc3, hwnd, message, wParam, lParam);
+    return CallWindowProcA(orig_proc_3, hwnd, message, wParam, lParam);
 }
 
-static LRESULT WINAPI WndProcSub(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR uldSubclass, DWORD_PTR dwRefData)
+static LRESULT WINAPI wnd_proc_sub(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR uldSubclass, DWORD_PTR dwRefData)
 {
     struct message msg;
     
@@ -203,13 +204,13 @@ static LRESULT WINAPI WndProcSub(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         
         if(lParam) {
             if(dwRefData & DELETE_SELF) {
-                pRemoveWindowSubclass(hwnd, WndProcSub, uldSubclass);
-                pRemoveWindowSubclass(hwnd, WndProcSub, uldSubclass);
+                pRemoveWindowSubclass(hwnd, wnd_proc_sub, uldSubclass);
+                pRemoveWindowSubclass(hwnd, wnd_proc_sub, uldSubclass);
             }
             if(dwRefData & DELETE_PREV)
-                pRemoveWindowSubclass(hwnd, WndProcSub, uldSubclass-1);
+                pRemoveWindowSubclass(hwnd, wnd_proc_sub, uldSubclass-1);
             if(dwRefData & SEND_NEST)
-                SendMessage(hwnd, WM_USER, wParam+1, 0);
+                SendMessageA(hwnd, WM_USER, wParam+1, 0);
         }
     }
     return pDefSubclassProc(hwnd, message, wParam, lParam);
@@ -217,55 +218,71 @@ static LRESULT WINAPI WndProcSub(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
 static void test_subclass(void)
 {
+    BOOL ret;
     HWND hwnd = CreateWindowExA(0, "TestSubclass", "Test subclass", WS_OVERLAPPEDWINDOW,
                            100, 100, 200, 200, 0, 0, 0, NULL);
-    assert(hwnd);
+    ok(hwnd != NULL, "failed to create test subclass wnd\n");
 
-    pSetWindowSubclass(hwnd, WndProcSub, 2, 0);
-    SendMessage(hwnd, WM_USER, 1, 0);
-    SendMessage(hwnd, WM_USER, 2, 0);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 2, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
+    SendMessageA(hwnd, WM_USER, 1, 0);
+    SendMessageA(hwnd, WM_USER, 2, 0);
     ok_sequence(Sub_BasicTest, "Basic");
 
-    pSetWindowSubclass(hwnd, WndProcSub, 2, DELETE_SELF);
-    SendMessage(hwnd, WM_USER, 1, 1);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 2, DELETE_SELF);
+    ok(ret == TRUE, "Expected TRUE\n");
+    SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_DeletedTest, "Deleted");
 
-    SendMessage(hwnd, WM_USER, 1, 0);
+    SendMessageA(hwnd, WM_USER, 1, 0);
     ok_sequence(Sub_AfterDeletedTest, "After Deleted");
 
-    pSetWindowSubclass(hwnd, WndProcSub, 2, 0);
-    origProc3 = (WNDPROC)SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG)WndProc3);
-    SendMessage(hwnd, WM_USER, 1, 0);
-    SendMessage(hwnd, WM_USER, 2, 0);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 2, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
+    orig_proc_3 = (WNDPROC)SetWindowLongPtrA(hwnd, GWLP_WNDPROC, (LONG_PTR)wnd_proc_3);
+    SendMessageA(hwnd, WM_USER, 1, 0);
+    SendMessageA(hwnd, WM_USER, 2, 0);
     ok_sequence(Sub_OldAfterNewTest, "Old after New");
 
-    pSetWindowSubclass(hwnd, WndProcSub, 4, 0);
-    SendMessage(hwnd, WM_USER, 1, 0);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
+    SendMessageA(hwnd, WM_USER, 1, 0);
     ok_sequence(Sub_MixTest, "Mix");
 
     /* Now the fun starts */
-    pSetWindowSubclass(hwnd, WndProcSub, 4, SEND_NEST);
-    SendMessage(hwnd, WM_USER, 1, 1);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, SEND_NEST);
+    ok(ret == TRUE, "Expected TRUE\n");
+    SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_MixAndNestTest, "Mix and nest");
 
-    pSetWindowSubclass(hwnd, WndProcSub, 4, SEND_NEST | DELETE_SELF);
-    SendMessage(hwnd, WM_USER, 1, 1);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, SEND_NEST | DELETE_SELF);
+    ok(ret == TRUE, "Expected TRUE\n");
+    SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_MixNestDelTest, "Mix, nest, del");
 
-    pSetWindowSubclass(hwnd, WndProcSub, 4, 0);
-    pSetWindowSubclass(hwnd, WndProcSub, 5, DELETE_PREV);
-    SendMessage(hwnd, WM_USER, 1, 1);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 5, DELETE_PREV);
+    ok(ret == TRUE, "Expected TRUE\n");
+    SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_MixDelPrevTest, "Mix and del prev");
+
+    ret = pSetWindowSubclass(NULL, wnd_proc_sub, 1, 0);
+    ok(ret == FALSE, "Expected FALSE\n");
+
+    ret = pSetWindowSubclass(hwnd, NULL, 1, 0);
+    ok(ret == FALSE, "Expected FALSE\n");
 
     DestroyWindow(hwnd);
 }
 
-static BOOL RegisterWindowClasses(void)
+static BOOL register_window_classes(void)
 {
     WNDCLASSA cls;
+    ATOM atom;
 
     cls.style = 0;
-    cls.lpfnWndProc = WndProc1;
+    cls.lpfnWndProc = wnd_proc_1;
     cls.cbClsExtra = 0;
     cls.cbWndExtra = 0;
     cls.hInstance = GetModuleHandleA(0);
@@ -274,25 +291,57 @@ static BOOL RegisterWindowClasses(void)
     cls.hbrBackground = NULL;
     cls.lpszMenuName = NULL;
     cls.lpszClassName = "TestSubclass";
-    if(!RegisterClassA(&cls)) return FALSE;
-    
+    atom = RegisterClassA(&cls);
+    ok(atom, "failed to register test class\n");
+
+    return atom != 0;
+}
+
+static BOOL init_function_pointers(void)
+{
+    HMODULE hmod;
+    void *ptr;
+
+    hmod = LoadLibraryA("comctl32.dll");
+    ok(hmod != NULL, "got %p\n", hmod);
+
+    /* Functions have to be loaded by ordinal. Only XP and W2K3 export
+     * them by name.
+     */
+#define MAKEFUNC_ORD(f, ord) (p##f = (void*)GetProcAddress(hmod, (LPSTR)(ord)))
+    MAKEFUNC_ORD(SetWindowSubclass, 410);
+    MAKEFUNC_ORD(RemoveWindowSubclass, 412);
+    MAKEFUNC_ORD(DefSubclassProc, 413);
+#undef MAKEFUNC_ORD
+
+    if(!pSetWindowSubclass || !pRemoveWindowSubclass || !pDefSubclassProc)
+    {
+        win_skip("SetWindowSubclass and friends are not available\n");
+        return FALSE;
+    }
+
+    /* test named exports */
+    ptr = GetProcAddress(hmod, "SetWindowSubclass");
+    ok(broken(ptr == 0) || ptr != 0, "expected named export for SetWindowSubclass\n");
+    if(ptr)
+    {
+#define TESTNAMED(f) \
+    ptr = (void*)GetProcAddress(hmod, #f); \
+    ok(ptr != 0, "expected named export for " #f "\n");
+        TESTNAMED(RemoveWindowSubclass);
+        TESTNAMED(DefSubclassProc);
+        /* GetWindowSubclass exported for V6 only */
+#undef TESTNAMED
+    }
+
     return TRUE;
 }
 
 START_TEST(subclass)
 {
-    HMODULE hdll;
-    
-    hdll = GetModuleHandleA("comctl32.dll");
-    assert(hdll);
-    pSetWindowSubclass = (void*)GetProcAddress(hdll, "SetWindowSubclass");
-    pRemoveWindowSubclass = (void*)GetProcAddress(hdll, "RemoveWindowSubclass");
-    pDefSubclassProc = (void*)GetProcAddress(hdll, "DefSubclassProc");
-    
-    if(!pSetWindowSubclass || !pRemoveWindowSubclass || !pDefSubclassProc)
-        return;
+    if(!init_function_pointers()) return;
 
-    if(!RegisterWindowClasses()) assert(0);
+    if(!register_window_classes()) return;
 
     test_subclass();
 }

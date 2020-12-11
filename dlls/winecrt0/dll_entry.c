@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -34,7 +34,7 @@ BOOL WINAPI DECLSPEC_HIDDEN __wine_spec_dll_entry( HINSTANCE inst, DWORD reason,
     if (reason == DLL_PROCESS_ATTACH && __wine_spec_init_state != CONSTRUCTORS_DONE)
     {
         call_fini = TRUE;
-        _init( __wine_main_argc, __wine_main_argv, __wine_main_environ );
+        _init( __wine_main_argc, __wine_main_argv, NULL );
     }
 
     ret = DllMain( inst, reason, reserved );

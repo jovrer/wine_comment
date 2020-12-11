@@ -16,18 +16,18 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_DDRAWI_H
-#define __WINE_DDRAWI_H
+#ifndef __DDRAWI_INCLUDED__
+#define __DDRAWI_INCLUDED__
+
+#include <ddraw.h>
+#include <dciddi.h> /* the DD HAL is layered onto DCI escapes */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <ddraw.h>
-#include <dciddi.h> /* the DD HAL is layered onto DCI escapes */
 
 typedef struct _DDVIDEOPORTCAPS *LPDDVIDEOPORTCAPS; /* should be in dvp.h */
 typedef struct _DDKERNELCAPS *LPDDKERNELCAPS; /* should be in ddkernel.h */
@@ -432,7 +432,7 @@ typedef struct _DDHAL_DDMISCELLANEOUS2CALLBACKS {
     LPDDHAL_DESTROYDDLOCAL		DestroyDDLocal;
 } DDHAL_DDMISCELLANEOUS2CALLBACKS,*LPDDHAL_DDMISCELLANEOUS2CALLBACKS;
 
-typedef HRESULT (WINAPI *LPDDGAMMACALIBRATORPROC)(LPDDGAMMARAMP, LPBYTE);
+typedef HRESULT (WINAPI *LPDDGAMMACALIBRATORPROC)(DDGAMMARAMP *, BYTE *);
 
 /*****************************************************************************
  * driver info structure
@@ -505,7 +505,7 @@ typedef struct _DDHAL_SETMODEDATA {
 
 typedef struct _DDHAL_CREATESURFACEDATA {
     LPDDRAWI_DIRECTDRAW_GBL	lpDD;
-    LPDDSURFACEDESC		lpDDSurfaceDesc;
+    DDSURFACEDESC              *lpDDSurfaceDesc;
     LPDDRAWI_DDRAWSURFACE_LCL *	lplpSList;
     DWORD			dwSCnt;
     HRESULT			ddRVal;
@@ -514,7 +514,7 @@ typedef struct _DDHAL_CREATESURFACEDATA {
 
 typedef struct _DDHAL_CANCREATESURFACEDATA {
     LPDDRAWI_DIRECTDRAW_GBL	lpDD;
-    LPDDSURFACEDESC		lpDDSurfaceDesc;
+    DDSURFACEDESC              *lpDDSurfaceDesc;
     DWORD			bIsDifferentPixelFormat;
     HRESULT			ddRVal;
     LPDDHAL_CANCREATESURFACE	CanCreateSurface;
@@ -591,6 +591,18 @@ typedef struct _DDHAL_BLTDATA {
     DWORD			dwRectCnt;
     LPRECT			prDestRects;
 } DDHAL_BLTDATA;
+
+typedef struct _DDHAL_UPDATEOVERLAYDATA {
+ LPDDRAWI_DIRECTDRAW_GBL lpDD;
+ LPDDRAWI_DDRAWSURFACE_LCL lpDDDestSurface;
+ RECTL rDest;
+ LPDDRAWI_DDRAWSURFACE_LCL lpDDSrcSurface;
+ RECTL rSrc;
+ DWORD dwFlags;
+ DDOVERLAYFX overlayFX;
+ HRESULT ddRVal;
+ LPDDHALSURFCB_UPDATEOVERLAY UpdateOverlay;
+} DDHAL_UPDATEOVERLAYDATA;
 
 typedef struct _DDHAL_SETPALETTEDATA {
     LPDDRAWI_DIRECTDRAW_GBL	lpDD;
@@ -808,7 +820,7 @@ typedef struct _DDRAWI_DIRECTDRAW_GBL {
     /* DirectX 6.0 */
     ULONG_PTR			lpD3DHALCallbacks3;
     DWORD			dwNumZPixelFormats;
-    LPDDPIXELFORMAT		lpZPixelFormats;
+    DDPIXELFORMAT              *lpZPixelFormats;
     LPDDRAWI_DDMOTIONCOMP_INT	mcList;
     DWORD			hDDVxd;
     DDSCAPSEX			ddsCapsMore;
@@ -894,7 +906,7 @@ typedef struct _DDRAWI_DDRAWSURFACE_GBL_MORE {
     DWORD			cPageUnlocks;
     ULONG_PTR			hKernelSurface;
     DWORD			dwKernelRefCnt;
-    LPDDCOLORCONTROL		lpColorInfo;
+    DDCOLORCONTROL             *lpColorInfo;
     FLATPTR			fpNTAlias;
     DWORD			dwContentsStamp;
     LPVOID			lpvUnswappedDriverReserved;
@@ -924,7 +936,7 @@ typedef struct _DDRAWI_DDRAWSURFACE_MORE {
     DWORD			dwOverlayFlags;
     VOID			*rgjunc;
     LPDDRAWI_DDVIDEOPORT_LCL	lpVideoPort;
-    LPDDOVERLAYFX		lpddOverlayFX;
+    DDOVERLAYFX                *lpddOverlayFX;
     DDSCAPSEX			ddsCapsEx;
     DWORD			dwTextureStage;
     LPVOID			lpDDRAWReserved;
@@ -939,7 +951,7 @@ typedef struct _DDRAWI_DDRAWSURFACE_MORE {
     DWORD			qwDDrawReserved8[2];
     LPVOID			lpDDrawReserved9;
     DWORD			cSurfaces;
-    LPDDSURFACEDESC2		pCreatedDDSurfaceDesc2;
+    DDSURFACEDESC2             *pCreatedDDSurfaceDesc2;
     LPDDRAWI_DDRAWSURFACE_LCL	*slist;
     DWORD			dwFVF;
     LPVOID			lpVB;
@@ -1055,4 +1067,4 @@ typedef struct _DDRAWI_DDRAWPALETTE_LCL {
 } /* extern "C" */
 #endif
 
-#endif /* __WINE_DDRAWI_H */
+#endif /* __DDRAWI_INCLUDED__ */

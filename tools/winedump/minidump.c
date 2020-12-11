@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -37,17 +37,17 @@ static void dump_mdmp_data(const MINIDUMP_LOCATION_DESCRIPTOR* md, const char* p
 
 static void dump_mdmp_string(DWORD rva)
 {
-    MINIDUMP_STRING*    ms = PRD(rva, sizeof(MINIDUMP_STRING));
+    const MINIDUMP_STRING*      ms = PRD(rva, sizeof(MINIDUMP_STRING));
     if (ms)
         dump_unicode_str( ms->Buffer, ms->Length / sizeof(WCHAR) );
     else
         printf("<<?>>");
 }
 
-static MINIDUMP_DIRECTORY* get_mdmp_dir(const MINIDUMP_HEADER* hdr, int str_idx)
+static const MINIDUMP_DIRECTORY* get_mdmp_dir(const MINIDUMP_HEADER* hdr, unsigned int str_idx)
 {
-    MINIDUMP_DIRECTORY* dir;
-    unsigned int        i;
+    const MINIDUMP_DIRECTORY*   dir;
+    unsigned int                i;
 
     for (i = 0; i < hdr->NumberOfStreams; i++)
     {
@@ -59,12 +59,23 @@ static MINIDUMP_DIRECTORY* get_mdmp_dir(const MINIDUMP_HEADER* hdr, int str_idx)
     return NULL;
 }
 
+enum FileSig get_kind_mdmp(void)
+{
+    const DWORD*        pdw;
+
+    pdw = PRD(0, sizeof(DWORD));
+    if (!pdw) {printf("Can't get main signature, aborting\n"); return SIG_UNKNOWN;}
+
+    if (*pdw == 0x504D444D /* "MDMP" */) return SIG_MDMP;
+    return SIG_UNKNOWN;
+}
+
 void mdmp_dump(void)
 {
-    MINIDUMP_HEADER*        hdr = (MINIDUMP_HEADER*)PRD(0, sizeof(MINIDUMP_HEADER));
-    ULONG                   idx, ndir = 0;
-    MINIDUMP_DIRECTORY*     dir;
-    void*                   stream;
+    const MINIDUMP_HEADER*      hdr = PRD(0, sizeof(MINIDUMP_HEADER));
+    ULONG                       idx, ndir = 0;
+    const MINIDUMP_DIRECTORY*   dir;
+    const void*                 stream;
 
     if (!hdr)
     {
@@ -72,40 +83,42 @@ void mdmp_dump(void)
         return;
     }
 
-    printf("Signature: %lu (%.4s)\n", hdr->Signature, (char*)&hdr->Signature);
-    printf("Version: %lx\n", hdr->Version);
-    printf("NumberOfStreams: %lu\n", hdr->NumberOfStreams);
-    printf("StreamDirectoryRva: %lu\n", hdr->StreamDirectoryRva);
-    printf("CheckSum: %lu\n", hdr->CheckSum);
+    printf("Signature: %u (%.4s)\n", hdr->Signature, (const char*)&hdr->Signature);
+    printf("Version: %x\n", hdr->Version);
+    printf("NumberOfStreams: %u\n", hdr->NumberOfStreams);
+    printf("StreamDirectoryRva: %u\n", hdr->StreamDirectoryRva);
+    printf("CheckSum: %u\n", hdr->CheckSum);
     printf("TimeDateStamp: %s\n", get_time_str(hdr->u.TimeDateStamp));
-    printf("Flags: %llx\n", hdr->Flags);
+    printf("Flags: %x%08x\n", (DWORD)(hdr->Flags >> 32), (DWORD)hdr->Flags);
 
     for (idx = 0; idx <= LastReservedStream; idx++)
     {
         if (!(dir = get_mdmp_dir(hdr, idx))) continue;
 
         stream = PRD(dir->Location.Rva, dir->Location.DataSize);
-        printf("Directory [%lu]: ", ndir++);
+        printf("Directory [%u]: ", ndir++);
         switch (dir->StreamType)
         {
         case ThreadListStream:
         {
-            MINIDUMP_THREAD_LIST*   mtl = (MINIDUMP_THREAD_LIST*)stream;
-            MINIDUMP_THREAD*        mt = &mtl->Threads[0];
-            unsigned int            i;
+            const MINIDUMP_THREAD_LIST* mtl = (const MINIDUMP_THREAD_LIST*)stream;
+            const MINIDUMP_THREAD*      mt = mtl->Threads;
+            unsigned int                i;
 
-            printf("Threads: %lu\n", mtl->NumberOfThreads);
+            printf("Threads: %u\n", mtl->NumberOfThreads);
             for (i = 0; i < mtl->NumberOfThreads; i++, mt++)
             {
                 printf("  Thread: #%d\n", i);
-                printf("    ThreadId: %lu\n", mt->ThreadId);
-                printf("    SuspendCount: %lu\n", mt->SuspendCount);
-                printf("    PriorityClass: %lu\n", mt->PriorityClass);
-                printf("    Priority: %lu\n", mt->Priority);
-                printf("    Teb: 0x%llx\n", mt->Teb);
-                printf("    Stack: 0x%llx-0x%llx\n", 
-                       mt->Stack.StartOfMemoryRange, 
-                       mt->Stack.StartOfMemoryRange + mt->Stack.Memory.DataSize);
+                printf("    ThreadId: %u\n", mt->ThreadId);
+                printf("    SuspendCount: %u\n", mt->SuspendCount);
+                printf("    PriorityClass: %u\n", mt->PriorityClass);
+                printf("    Priority: %u\n", mt->Priority);
+                printf("    Teb: 0x%x%08x\n", (DWORD)(mt->Teb >> 32), (DWORD)mt->Teb);
+                printf("    Stack: 0x%x%08x-0x%x%08x\n",
+                       (DWORD)(mt->Stack.StartOfMemoryRange >> 32),
+                       (DWORD)mt->Stack.StartOfMemoryRange,
+                       (DWORD)((mt->Stack.StartOfMemoryRange + mt->Stack.Memory.DataSize) >> 32),
+                       (DWORD)(mt->Stack.StartOfMemoryRange + mt->Stack.Memory.DataSize));
                 dump_mdmp_data(&mt->Stack.Memory, "    ");
                 printf("    ThreadContext:\n");
                 dump_mdmp_data(&mt->ThreadContext, "    ");
@@ -115,28 +128,29 @@ void mdmp_dump(void)
         case ModuleListStream:
         case 0xFFF0:
         {
-            MINIDUMP_MODULE_LIST*   mml = (MINIDUMP_MODULE_LIST*)stream;
-            MINIDUMP_MODULE*        mm = &mml->Modules[0];
-            unsigned int            i;
-            const char*             p1;
-            const char*             p2;
+            const MINIDUMP_MODULE_LIST* mml = (const MINIDUMP_MODULE_LIST*)stream;
+            const MINIDUMP_MODULE*      mm = mml->Modules;
+            unsigned int                i;
+            const char*                 p1;
+            const char*                 p2;
 
-            printf("Modules (%s): %lu\n",
+            printf("Modules (%s): %u\n",
                    dir->StreamType == ModuleListStream ? "PE" : "ELF",
                    mml->NumberOfModules);
             for (i = 0; i < mml->NumberOfModules; i++, mm++)
             {
                 printf("  Module #%d:\n", i);
-                printf("    BaseOfImage: 0x%llx\n", mm->BaseOfImage);
-                printf("    SizeOfImage: %lu\n", mm->SizeOfImage);
-                printf("    CheckSum: %lu\n", mm->CheckSum);
+                printf("    BaseOfImage: 0x%x%08x\n",
+		    (DWORD)(mm->BaseOfImage >> 32), (DWORD) mm->BaseOfImage);
+                printf("    SizeOfImage: %u\n", mm->SizeOfImage);
+                printf("    CheckSum: %u\n", mm->CheckSum);
                 printf("    TimeDateStamp: %s\n", get_time_str(mm->TimeDateStamp));
                 printf("    ModuleName: ");
                 dump_mdmp_string(mm->ModuleNameRva);
                 printf("\n");
                 printf("    VersionInfo:\n");
-                printf("      dwSignature: %lx\n", mm->VersionInfo.dwSignature);
-                printf("      dwStrucVersion: %lx\n", 
+                printf("      dwSignature: %x\n", mm->VersionInfo.dwSignature);
+                printf("      dwStrucVersion: %x\n",
                        mm->VersionInfo.dwStrucVersion);
                 printf("      dwFileVersion: %d,%d,%d,%d\n", 
                        HIWORD(mm->VersionInfo.dwFileVersionMS),
@@ -148,7 +162,7 @@ void mdmp_dump(void)
                        LOWORD(mm->VersionInfo.dwProductVersionMS),
                        HIWORD(mm->VersionInfo.dwProductVersionLS),
                        LOWORD(mm->VersionInfo.dwProductVersionLS));
-                printf("      dwFileFlagsMask: %lu\n", 
+                printf("      dwFileFlagsMask: %u\n",
                        mm->VersionInfo.dwFileFlagsMask);
                 printf("      dwFileFlags: %s%s%s%s%s%s\n", 
                        mm->VersionInfo.dwFileFlags & VS_FF_DEBUG ? "Debug " : "",
@@ -192,67 +206,73 @@ void mdmp_dump(void)
                 default:                p1 = "---"; break;
                 }
                 printf("      dwFileType: %s\n", p1);
-                printf("      dwFileSubtype: %lu\n",
+                printf("      dwFileSubtype: %u\n",
                        mm->VersionInfo.dwFileSubtype);
-                printf("      dwFileDate: %lx%08lx\n",
+                printf("      dwFileDate: %x%08x\n",
                        mm->VersionInfo.dwFileDateMS, mm->VersionInfo.dwFileDateLS);
-                printf("    CvRecord: <%lu>\n", mm->CvRecord.DataSize);
+                printf("    CvRecord: <%u>\n", mm->CvRecord.DataSize);
                 dump_mdmp_data(&mm->CvRecord, "    ");
-                printf("    MiscRecord: <%lu>\n", mm->MiscRecord.DataSize);
+                printf("    MiscRecord: <%u>\n", mm->MiscRecord.DataSize);
                 dump_mdmp_data(&mm->MiscRecord, "    ");
-                printf("    Reserved0: %llu\n", mm->Reserved0);
-                printf("    Reserved1: %llu\n", mm->Reserved1);
+                printf("    Reserved0: 0x%x%08x\n",
+		    (DWORD)(mm->Reserved0 >> 32), (DWORD)mm->Reserved0);
+                printf("    Reserved1: 0x%x%08x\n",
+		    (DWORD)(mm->Reserved1 >> 32), (DWORD)mm->Reserved1);
             }
         }       
         break;
         case MemoryListStream:
         {
-            MINIDUMP_MEMORY_LIST*   mml = (MINIDUMP_MEMORY_LIST*)stream;
-            MINIDUMP_MEMORY_DESCRIPTOR* mmd = &mml->MemoryRanges[0];
-            unsigned int                i;
+            const MINIDUMP_MEMORY_LIST*         mml = (const MINIDUMP_MEMORY_LIST*)stream;
+            const MINIDUMP_MEMORY_DESCRIPTOR*   mmd = mml->MemoryRanges;
+            unsigned int                        i;
 
-            printf("Memory Ranges: %lu\n", mml->NumberOfMemoryRanges);
+            printf("Memory Ranges: %u\n", mml->NumberOfMemoryRanges);
             for (i = 0; i < mml->NumberOfMemoryRanges; i++, mmd++)
             {
                 printf("  Memory Range #%d:\n", i);
-                printf("    Range: 0x%llx-0x%llx\n",
-                       mmd->StartOfMemoryRange, 
-                       mmd->StartOfMemoryRange + mmd->Memory.DataSize);
+                printf("    Range: 0x%x%08x-0x%x%08x\n",
+                       (DWORD)(mmd->StartOfMemoryRange >> 32),
+                       (DWORD)mmd->StartOfMemoryRange,
+		       (DWORD)((mmd->StartOfMemoryRange + mmd->Memory.DataSize) >> 32),
+		       (DWORD)(mmd->StartOfMemoryRange + mmd->Memory.DataSize));
                 dump_mdmp_data(&mmd->Memory, "    ");
             }   
         }
         break;
         case SystemInfoStream:
         {
-            MINIDUMP_SYSTEM_INFO*       msi = (MINIDUMP_SYSTEM_INFO*)stream;
+            const MINIDUMP_SYSTEM_INFO* msi = (const MINIDUMP_SYSTEM_INFO*)stream;
             const char*                 str;
             char                        tmp[128];
 
             printf("System Information:\n");
             switch (msi->ProcessorArchitecture)
             {
-            case PROCESSOR_ARCHITECTURE_UNKNOWN: 
+            case PROCESSOR_ARCHITECTURE_UNKNOWN:
                 str = "Unknown";
                 break;
             case PROCESSOR_ARCHITECTURE_INTEL:
                 strcpy(tmp, "Intel ");
                 switch (msi->ProcessorLevel)
                 {
-                case 3: str = "80386"; break;
-                case 4: str = "80486"; break;
-                case 5: str = "Pentium"; break;
-                case 6: str = "Pentium Pro/II"; break;
+                case  3: str = "80386"; break;
+                case  4: str = "80486"; break;
+                case  5: str = "Pentium"; break;
+                case  6: str = "Pentium Pro/II or AMD Athlon"; break;
+                case 15: str = "Pentium 4 or AMD Athlon64"; break;
                 default: str = "???"; break;
                 }
                 strcat(tmp, str);
+                strcat(tmp, " (");
                 if (msi->ProcessorLevel == 3 || msi->ProcessorLevel == 4)
                 {
-                    if (HIWORD(msi->ProcessorRevision) == 0xFF)
-                        sprintf(tmp + strlen(tmp), "-%c%d", 'A' + HIBYTE(LOWORD(msi->ProcessorRevision)), LOBYTE(LOWORD(msi->ProcessorRevision)));
+                    if (HIBYTE(msi->ProcessorRevision) == 0xFF)
+                        sprintf(tmp + strlen(tmp), "%c%d", 'A' + ((msi->ProcessorRevision>>4)&0xf)-0x0a, msi->ProcessorRevision&0xf);
                     else
-                        sprintf(tmp + strlen(tmp), "-%c%d", 'A' + HIWORD(msi->ProcessorRevision), LOWORD(msi->ProcessorRevision));
+                        sprintf(tmp + strlen(tmp), "%c%d", 'A' + HIBYTE(msi->ProcessorRevision), LOBYTE(msi->ProcessorRevision));
                 }
-                else sprintf(tmp + strlen(tmp), "-%d.%d", HIWORD(msi->ProcessorRevision), LOWORD(msi->ProcessorRevision));
+                else sprintf(tmp + strlen(tmp), "%d.%d", HIBYTE(msi->ProcessorRevision), LOBYTE(msi->ProcessorRevision));
                 str = tmp;
                 break;
             case PROCESSOR_ARCHITECTURE_MIPS:
@@ -263,6 +283,21 @@ void mdmp_dump(void)
                 break;
             case PROCESSOR_ARCHITECTURE_PPC:
                 str = "PowerPC";
+                break;
+            case PROCESSOR_ARCHITECTURE_ARM:
+                str = "ARM";
+                break;
+            case PROCESSOR_ARCHITECTURE_ARM64:
+                str = "ARM64";
+                break;
+            case PROCESSOR_ARCHITECTURE_AMD64:
+                str = "X86_64";
+                break;
+            case PROCESSOR_ARCHITECTURE_MSIL:
+                str = "MSIL";
+                break;
+            case PROCESSOR_ARCHITECTURE_NEUTRAL:
+                str = "Neutral";
                 break;
             default:
                 str = "???";
@@ -284,7 +319,7 @@ void mdmp_dump(void)
                 case 0: str = (msi->PlatformId == VER_PLATFORM_WIN32_NT) ? "NT 4.0" : "95"; break;
                 case 10: str = "98"; break;
                 case 90: str = "ME"; break;
-                default: str = "5-????"; break;
+                default: str = "4-????"; break;
                 }
                 break;
             case 5:
@@ -292,69 +327,128 @@ void mdmp_dump(void)
                 {
                 case 0: str = "2000"; break;
                 case 1: str = "XP"; break;
-                case 2: str = "Server 2003"; break;
+                case 2:
+                    if (msi->u.s.ProductType == 1) str = "XP";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2003";
+                    else str = "5-????";
+                    break;
                 default: str = "5-????"; break;
+                }
+                break;
+            case 6:
+                switch (msi->MinorVersion)
+                {
+                case 0:
+                    if (msi->u.s.ProductType == 1) str = "Vista";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2008";
+                    else str = "6-????";
+                    break;
+                case 1:
+                    if (msi->u.s.ProductType == 1) str = "Win7";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2008 R2";
+                    else str = "6-????";
+                    break;
+                case 2:
+                    if (msi->u.s.ProductType == 1) str = "Win8";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2012";
+                    else str = "6-????";
+                    break;
+                case 3:
+                    if (msi->u.s.ProductType == 1) str = "Win8.1";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2012 R2";
+                    else str = "6-????";
+                    break;
+                default: str = "6-????"; break;
+                }
+                break;
+            case 10:
+                switch (msi->MinorVersion)
+                {
+                case 0:
+                    if (msi->u.s.ProductType == 1) str = "Win10";
+                    else str = "10-????";
+                    break;
+                default: str = "10-????"; break;
                 }
                 break;
             default: str = "???"; break;
             }
-            printf("  Version: Windows %s (%lu)\n", str, msi->BuildNumber);
-            printf("  PlatformId: %lu\n", msi->PlatformId);
+            printf("  Version: Windows %s (%u)\n", str, msi->BuildNumber);
+            printf("  PlatformId: %u\n", msi->PlatformId);
             printf("  CSD: ");
             dump_mdmp_string(msi->CSDVersionRva);
             printf("\n");
-            printf("  Reserved1: %lu\n", msi->u1.Reserved1);
+            printf("  Reserved1: %u\n", msi->u1.Reserved1);
             if (msi->ProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL)
             {
-                printf("  x86.VendorId: %.12s\n", 
-                       (char*)&msi->Cpu.X86CpuInfo.VendorId[0]);
-                printf("  x86.VersionInformation: %lx\n", 
+                printf("  x86.VendorId: %.12s\n",
+                       (const char*)msi->Cpu.X86CpuInfo.VendorId);
+                printf("  x86.VersionInformation: %x\n",
                        msi->Cpu.X86CpuInfo.VersionInformation);
-                printf("  x86.FeatureInformation: %lx\n", 
+                printf("  x86.FeatureInformation: %x\n",
                        msi->Cpu.X86CpuInfo.FeatureInformation);
-                printf("  x86.AMDExtendedCpuFeatures: %lu\n", 
+                printf("  x86.AMDExtendedCpuFeatures: %x\n",
                        msi->Cpu.X86CpuInfo.AMDExtendedCpuFeatures);
+            }
+            if (sizeof(MINIDUMP_SYSTEM_INFO) + 4 > dir->Location.DataSize &&
+                msi->CSDVersionRva >= dir->Location.Rva + 4)
+            {
+                const char*  code = PRD(dir->Location.Rva + sizeof(MINIDUMP_SYSTEM_INFO), 4);
+                const DWORD* wes;
+                if (code && code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E' &&
+                    *(wes = (const DWORD*)(code += 4)) >= 3)
+                {
+                    /* assume we have wine extensions */
+                    printf("  Wine details:\n");
+                    printf("    build-id: %s\n", code + wes[1]);
+                    printf("    system: %s\n", code + wes[2]);
+                    printf("    release: %s\n", code + wes[3]);
+                }
             }
         }
         break;
         case MiscInfoStream:
         {
-            MINIDUMP_MISC_INFO* mmi = (MINIDUMP_MISC_INFO*)stream;
+            const MINIDUMP_MISC_INFO* mmi = (const MINIDUMP_MISC_INFO*)stream;
+
             printf("Misc Information\n");
-            printf("  Size: %lu\n", mmi->SizeOfInfo);
+            printf("  Size: %u\n", mmi->SizeOfInfo);
             printf("  Flags: %s%s\n", 
                    mmi->Flags1 & MINIDUMP_MISC1_PROCESS_ID ? "ProcessId " : "",
                    mmi->Flags1 & MINIDUMP_MISC1_PROCESS_TIMES ? "ProcessTimes " : "");
             if (mmi->Flags1 & MINIDUMP_MISC1_PROCESS_ID)
-                printf("  ProcessId: %lu\n", mmi->ProcessId);
+                printf("  ProcessId: %u\n", mmi->ProcessId);
             if (mmi->Flags1 & MINIDUMP_MISC1_PROCESS_TIMES)
             {
-                printf("  ProcessCreateTime: %lu\n", mmi->ProcessCreateTime);
-                printf("  ProcessUserTime: %lu\n", mmi->ProcessUserTime);
-                printf("  ProcessKernelTime: %lu\n", mmi->ProcessKernelTime);
+                printf("  ProcessCreateTime: %u\n", mmi->ProcessCreateTime);
+                printf("  ProcessUserTime: %u\n", mmi->ProcessUserTime);
+                printf("  ProcessKernelTime: %u\n", mmi->ProcessKernelTime);
             }
         }
         break;
         case ExceptionStream:
         {
-            MINIDUMP_EXCEPTION_STREAM*  mes = (MINIDUMP_EXCEPTION_STREAM*)stream;
-            unsigned int                i;
+            const MINIDUMP_EXCEPTION_STREAM*    mes = (const MINIDUMP_EXCEPTION_STREAM*)stream;
+            unsigned int                        i;
 
             printf("Exception:\n");
-            printf("  ThreadId: %08lx\n", mes->ThreadId);
+            printf("  ThreadId: %08x\n", mes->ThreadId);
             printf("  ExceptionRecord:\n");
-            printf("  ExceptionCode: %lu\n", mes->ExceptionRecord.ExceptionCode);
-            printf("  ExceptionFlags: %lu\n", mes->ExceptionRecord.ExceptionFlags);
-            printf("  ExceptionRecord: 0x%llx\n", 
-                   mes->ExceptionRecord.ExceptionRecord);
-            printf("  ExceptionAddress: 0x%llx\n",
-                   mes->ExceptionRecord.ExceptionAddress);
-            printf("  ExceptionNumberParameters: %lu\n",
+            printf("  ExceptionCode: %u\n", mes->ExceptionRecord.ExceptionCode);
+            printf("  ExceptionFlags: %u\n", mes->ExceptionRecord.ExceptionFlags);
+            printf("  ExceptionRecord: 0x%x%08x\n",
+                   (DWORD)(mes->ExceptionRecord.ExceptionRecord  >> 32),
+                   (DWORD)mes->ExceptionRecord.ExceptionRecord);
+            printf("  ExceptionAddress: 0x%x%08x\n",
+                   (DWORD)(mes->ExceptionRecord.ExceptionAddress >> 32),
+                   (DWORD)(mes->ExceptionRecord.ExceptionAddress));
+            printf("  ExceptionNumberParameters: %u\n",
                    mes->ExceptionRecord.NumberParameters);
             for (i = 0; i < mes->ExceptionRecord.NumberParameters; i++)
             {
-                printf("    [%d]: 0x%llx\n", i, 
-                       mes->ExceptionRecord.ExceptionInformation[i]);
+                printf("    [%d]: 0x%x%08x\n", i,
+                       (DWORD)(mes->ExceptionRecord.ExceptionInformation[i] >> 32),
+                       (DWORD)mes->ExceptionRecord.ExceptionInformation[i]);
             }
             printf("  ThreadContext:\n");
             dump_mdmp_data(&mes->ThreadContext, "    ");
@@ -362,9 +456,9 @@ void mdmp_dump(void)
         break;
 
         default:
-            printf("NIY %ld\n", dir->StreamType);
-            printf("  RVA: %lu\n", dir->Location.Rva);
-            printf("  Size: %lu\n", dir->Location.DataSize);
+            printf("NIY %d\n", dir->StreamType);
+            printf("  RVA: %u\n", dir->Location.Rva);
+            printf("  Size: %u\n", dir->Location.DataSize);
             dump_mdmp_data(&dir->Location, "    ");
             break;
         }

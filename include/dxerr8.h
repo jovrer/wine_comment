@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DXERR8_H
@@ -40,7 +40,7 @@ HRESULT WINAPI  DXTraceW(const char* strFile, DWORD dwLine, HRESULT hr, const WC
 #define DXTRACE_ERR(str,hr)             DXTrace(__FILE__, (DWORD)__LINE__, hr, str, TRUE)
 #define DXTRACE_ERR_NOMSGBOX(str,hr)    DXTrace(__FILE__, (DWORD)__LINE__, hr, str, FALSE)
 #else
-#define DXTRACE_MSG(str)                (0L)
+#define DXTRACE_MSG(str)                __MSABI_LONG(0)
 #define DXTRACE_ERR(str,hr)             (hr)
 #define DXTRACE_ERR_NOMSGBOX(str,hr)    (hr)
 #endif

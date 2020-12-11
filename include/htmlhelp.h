@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __HTMLHELP_H__
@@ -48,6 +48,7 @@
 #define HH_SET_EXCLUSIVE_FILTER 0x19
 #define HH_INITIALIZE           0x1C
 #define HH_UNINITIALIZE         0x1D
+#define HH_SAFE_DISPLAY_TOPIC   0x20
 #define HH_PRETRANSLATEMESSAGE  0xFD
 #define HH_SET_GLOBAL_PROPERTY  0xFC
 
@@ -419,8 +420,8 @@ typedef struct tagHH_NTRACKW {
 
 DECL_WINELIB_TYPE_AW(HH_NTRACK)
 
-HWND WINAPI HtmlHelpA(HWND,LPCSTR,UINT,DWORD);
-HWND WINAPI HtmlHelpW(HWND,LPCWSTR,UINT,DWORD);
+HWND WINAPI HtmlHelpA(HWND,LPCSTR,UINT,DWORD_PTR);
+HWND WINAPI HtmlHelpW(HWND,LPCWSTR,UINT,DWORD_PTR);
 #define HtmlHelp WINELIB_NAME_AW(HtmlHelp)
 
 #define ATOM_HTMLHELP_API_ANSI    (LPTSTR)14
@@ -434,7 +435,7 @@ typedef enum tagHH_GPROPID {
     HH_GPROPID_CONTENT_LANGUAGE = 5
 } HH_GPROPID;
 
-#ifdef __WIDL_OAIDL_H
+#ifdef __oaidl_h__
 
 typedef struct tagHH_GLOBAL_PROPERTY
 {
@@ -442,7 +443,7 @@ typedef struct tagHH_GLOBAL_PROPERTY
     VARIANT     var;
 } HH_GLOBAL_PROPERTY ;
 
-#endif /* __WIDL_OAIDL_H */
+#endif /* __oaidl_h__ */
 
 #ifdef __cplusplus
 }

@@ -13,17 +13,21 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_FDI_H
 #define __WINE_FDI_H
 
+#include <basetsd.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+#ifndef _WIN64
 #include <pshpack4.h>
+#endif
 
 #ifndef INCLUDED_TYPES_FCI_FDI
 #define INCLUDED_TYPES_FCI_FDI 1
@@ -32,10 +36,10 @@ extern "C" {
  * Common FCI/TDI declarations
  */
 
-typedef unsigned long CHECKSUM;
+typedef ULONG CHECKSUM;
 
-typedef unsigned long UOFF;
-typedef unsigned long COFF;
+typedef ULONG UOFF;
+typedef ULONG COFF;
 
 /**********************************************************************/
 
@@ -48,7 +52,7 @@ typedef struct {
 /**********************************************************************/
 
 #define CB_MAX_CHUNK         32768U
-#define CB_MAX_DISK          0x7fffffffL
+#define CB_MAX_DISK          __MSABI_LONG(0x7fffffff)
 #define CB_MAX_FILENAME      256
 #define CB_MAX_CABINET_NAME  256
 #define CB_MAX_CAB_PATH      256
@@ -143,7 +147,7 @@ typedef void *HFDI;
 /**********************************************************************/
 
 typedef struct {
-    long    cbCabinet;  /* Total length of cabinet file */
+    LONG    cbCabinet;  /* Total length of cabinet file */
     USHORT  cFolders;   /* Count of folders in cabinet */
     USHORT  cFiles;     /* Count of files in cabinet */
     USHORT  setID;      /* Cabinet set ID */
@@ -217,14 +221,14 @@ typedef UINT (__cdecl *PFNWRITE)(INT_PTR hf, void *pv, UINT cb);
 typedef int  (__cdecl *PFNCLOSE)(INT_PTR hf);
 #define FNCLOSE(fn) int __cdecl fn(INT_PTR hf)
 
-typedef long (__cdecl *PFNSEEK) (INT_PTR hf, long dist, int seektype);
-#define FNSEEK(fn) long __cdecl fn(INT_PTR hf, long dist, int seektype)
+typedef LONG (__cdecl *PFNSEEK) (INT_PTR hf, LONG dist, int seektype);
+#define FNSEEK(fn) LONG __cdecl fn(INT_PTR hf, LONG dist, int seektype)
 
 typedef int (__cdecl *PFNFDIDECRYPT)(PFDIDECRYPT pfdid);
 #define FNFDIDECRYPT(fn) int __cdecl fn(PFDIDECRYPT pfdid)
 
 typedef struct {
-    long  cb;
+    LONG  cb;
     char *psz1;
     char *psz2;
     char *psz3;  /* Points to a 256 character buffer */
@@ -257,14 +261,18 @@ typedef INT_PTR (__cdecl *PFNFDINOTIFY)(FDINOTIFICATIONTYPE fdint,
 #define FNFDINOTIFY(fn) INT_PTR __cdecl fn(FDINOTIFICATIONTYPE fdint, \
 					   PFDINOTIFICATION pfdin)
 
+#ifndef _WIN64
 #include <pshpack1.h>
+#endif
 
 typedef struct {
     char ach[2];  /* Set to { '*', '\0' } */
-    long cbFile;  /* Required spill file size */
+    LONG cbFile;  /* Required spill file size */
 } FDISPILLFILE, *PFDISPILLFILE;
 
+#ifndef _WIN64
 #include <poppack.h>
+#endif
 
 #define cpuUNKNOWN (-1)  /* FDI does detection */
 #define cpu80286   (0)   /* '286 opcodes only */
@@ -282,7 +290,9 @@ BOOL __cdecl FDITruncateCabinet(HFDI, char *, USHORT);
 
 /**********************************************************************/
 
+#ifndef _WIN64
 #include <poppack.h>
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" */

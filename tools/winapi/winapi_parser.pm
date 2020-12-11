@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package winapi_parser;
@@ -22,6 +22,13 @@ use strict;
 
 use output qw($output);
 use options qw($options);
+
+# Defined a couple common regexp tidbits
+my $CALL_CONVENTION="__cdecl|__stdcall|" .
+                    "__RPC_API|__RPC_STUB|__RPC_USER|RPC_ENTRY|" .
+		    "RPC_VAR_ENTRY|STDMETHODCALLTYPE|NET_API_FUNCTION|" .
+                    "CALLBACK|CDECL|NTAPI|PASCAL|APIENTRY|" .
+		    "SEC_ENTRY|VFWAPI|VFWAPIV|WINGDIPAPI|WMIAPI|WINAPI|WINAPIV|";
 
 sub parse_c_file($$) {
     my $file = shift;
@@ -140,7 +147,7 @@ sub parse_c_file($$) {
 	    my $names = shift;
 
 	    foreach my $name (@$names) {
-		if($type =~ /^(?:struct|enum)/) {
+		if($type =~ /^(?:enum|interface|struct|union)/) {
 		    # $output->write("typedef $type {\n");
 		    # $output->write("} $name;\n");
 		} else {
@@ -372,8 +379,9 @@ sub parse_c_file($$) {
 		}
 	    }
 	    next;
-	} elsif(/(extern\s+|static\s+)?((struct\s+|union\s+|enum\s+|signed\s+|unsigned\s+)?\w+((\s*\*)+\s*|\s+))
-            ((__cdecl|__stdcall|__RPC_STUB|CDECL|NET_API_FUNCTION|RPC_ENTRY|VFWAPIV|VFWAPI|WINAPIV|WINAPI|CALLBACK)\s+)?
+	} elsif(/(extern\s+|static\s+)?((interface\s+|struct\s+|union\s+|enum\s+|signed\s+|unsigned\s+)?\w+((\s*\*)+\s*|\s+))
+            (($CALL_CONVENTION)\s+)?
+            (?:DECLSPEC_HOTPATCH\s+)?
 	    (\w+(\(\w+\))?)\s*\((.*?)\)\s*(\{|\;)/sx)
         {
 	    my @lines = split(/\n/, $&);
@@ -426,15 +434,15 @@ sub parse_c_file($$) {
 
 		$argument =~ s/^\s*(.*?)\s*$/$1/;
 		# print "  " . ($n + 1) . ": '$argument'\n";
-		$argument =~ s/^(IN OUT(?=\s)|IN(?=\s)|OUT(?=\s)|\s*)\s*//;
-		$argument =~ s/^(const(?=\s)|CONST(?=\s)|volatile(?=\s)|\s*)\s*//;
+		$argument =~ s/^(?:IN OUT|IN|OUT)?\s+//;
+		$argument =~ s/^(?:const|CONST|GDIPCONST|volatile)?\s+//;
 		if($argument =~ /^\.\.\.$/) {
 		    $argument_type = "...";
 		    $argument_name = "...";
 		} elsif($argument =~ /^
-			((?:struct\s+|union\s+|enum\s+|register\s+|(?:signed\s+|unsigned\s+)
+			((?:interface\s+|struct\s+|union\s+|enum\s+|register\s+|(?:signed\s+|unsigned\s+)?
 			  (?:short\s+(?=int)|long\s+(?=int))?)?(?:\w+|ElfW\(\w+\)|WS\(\w+\)))\s*
-			((?:__RPC_FAR|const|CONST|volatile)?\s*(?:\*\s*(?:__RPC_FAR|const|CONST|volatile)?\s*?)*)\s*
+			((?:__RPC_FAR|const|CONST|GDIPCONST|volatile)?\s*(?:\*\s*(?:__RPC_FAR|const|CONST|volatile)?\s*?)*)\s*
 			(\w*)\s*(\[\])?(?:\s+OPTIONAL)?$/x)
 		{
 		    $argument_type = $1;
@@ -446,11 +454,11 @@ sub parse_c_file($$) {
 		    }
 		    $argument_name = $3;
 		} elsif ($argument =~ /^
-			((?:struct\s+|union\s+|enum\s+|register\s+|(?:signed\s+|unsigned\s+)
+			((?:interface\s+|struct\s+|union\s+|enum\s+|register\s+|(?:signed\s+|unsigned\s+)?
 			  (?:short\s+(?=int)|long\s+(?=int))?)?\w+)\s*
 			((?:const|volatile)?\s*(?:\*\s*(?:const|volatile)?\s*?)*)\s*
-			(?:__cdecl\s+|__stdcall\s+|__RPC_STUB\s+|CALLBACK\s+|CDECL\s+|NET_API_FUNCTION\s+|RPC_ENTRY\s+|STDMETHODCALLTYPE\s+|VFWAPIV\s+|VFWAPI\s+|WINAPIV\s+|WINAPI\s+)?
-			\(\s*(?:__cdecl|__stdcall|__RPC_STUB|CALLBACK|CDECL|NET_API_FUNCTION|RPC_ENTRY|STDMETHODCALLTYPE|VFWAPIV|VFWAPI|WINAPIV|WINAPI)?\s*\*\s*((?:\w+)?)\s*\)\s*
+			(?:(?:$CALL_CONVENTION)\s+)?
+			\(\s*(?:$CALL_CONVENTION)?\s*\*\s*((?:\w+)?)\s*\)\s*
 			\(\s*(.*?)\s*\)$/x) 
 		{
 		    my $return_type = $1;
@@ -465,7 +473,7 @@ sub parse_c_file($$) {
 		    
 		    $argument_type = "$return_type (*)($arguments)";
 		} elsif ($argument =~ /^
-			((?:struct\s+|union\s+|enum\s+|register\s+|(?:signed\s+|unsigned\s+)
+			((?:interface\s+|struct\s+|union\s+|enum\s+|register\s+|(?:signed\s+|unsigned\s+)
 			  (?:short\s+(?=int)|long\s+(?=int))?)?\w+)\s*
 			((?:const|volatile)?\s*(?:\*\s*(?:const|volatile)?\s*?)*)\s*
 			(\w+)\s*\[\s*(.*?)\s*\](?:\[\s*(.*?)\s*\])?$/x)
@@ -548,7 +556,7 @@ sub parse_c_file($$) {
 	} elsif(/(DEFAULT|DECLARE)_DEBUG_CHANNEL\s*\((\S+)\)/s) {
 	    $_ = $'; $again = 1;
 	    push @$debug_channels, $1;
-	} elsif(/typedef\s+(enum|struct|union)(?:\s+(\w+))?\s*\{/s) {
+	} elsif(/typedef\s+(enum|interface|struct|union)(?:\s+(\w+))?\s*\{/s) {
 	    $_ = $'; $again = 1;
 	    $level++;
 	    my $type = $1;
@@ -557,7 +565,7 @@ sub parse_c_file($$) {
 	    }
 	    &$type_begin($type);
 	} elsif(/typedef\s+
-		((?:const\s+|CONST\s+|enum\s+|long\s+|signed\s+|short\s+|struct\s+|union\s+|unsigned\s+|volatile\s+)*?)
+		((?:const\s+|CONST\s+|enum\s+|interface\s+|long\s+|signed\s+|short\s+|struct\s+|union\s+|unsigned\s+|volatile\s+)*?)
 		(\w+)
 		(?:\s+const|\s+volatile)?
 		((?:\s*(?:(?:FAR|__RPC_FAR|TW_HUGE)?\s*)?\*+\s*|\s+)(?:volatile\s+|DECLSPEC_ALIGN\(\d+\)\s+)?\w+\s*(?:\[[^\]]*\])*
@@ -585,7 +593,7 @@ sub parse_c_file($$) {
 	    &$type_begin($type);
 	    &$type_end([@names]);
 	} elsif(/typedef\s+
-		(?:(?:const\s+|enum\s+|long\s+|signed\s+|short\s+|struct\s+|union\s+|unsigned\s+|volatile\s+)*?)
+		(?:(?:const\s+|enum\s+|interface\s+|long\s+|signed\s+|short\s+|struct\s+|union\s+|unsigned\s+|volatile\s+)*?)
 		(\w+(?:\s*\*+\s*)?)\s*
 		(?:(\w+)\s*)?
 		\((?:(\w+)\s*)?\s*(?:\*\s*(\w+)|_ATL_CATMAPFUNC)\s*\)\s*

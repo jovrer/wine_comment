@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -25,13 +25,13 @@
 #include "crt0_private.h"
 
 struct _DRIVER_OBJECT;
-extern NTSTATUS DriverEntry( struct _DRIVER_OBJECT *obj, UNICODE_STRING *path );
+extern NTSTATUS WINAPI DriverEntry( struct _DRIVER_OBJECT *obj, UNICODE_STRING *path );
 
-NTSTATUS DECLSPEC_HIDDEN __wine_spec_drv_entry( struct _DRIVER_OBJECT *obj, UNICODE_STRING *path )
+NTSTATUS DECLSPEC_HIDDEN WINAPI __wine_spec_drv_entry( struct _DRIVER_OBJECT *obj, UNICODE_STRING *path )
 {
     BOOL needs_init = (__wine_spec_init_state != CONSTRUCTORS_DONE);
 
-    if (needs_init) _init( __wine_main_argc, __wine_main_argv, __wine_main_environ );
+    if (needs_init) _init( __wine_main_argc, __wine_main_argv, NULL );
     return DriverEntry( obj, path );
     /* there is no detach routine so we can't call destructors */
 }

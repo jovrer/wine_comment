@@ -1,4 +1,4 @@
-/*****************************************************************************
+/*
  * Copyright 1995, Technion, Israel Institute of Technology
  * Electrical Eng, Software Lab.
  * Author:    Michael Veksler.
@@ -16,9 +16,9 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *****************************************************************************
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
 #ifndef __WINE_DDE_H
 #define __WINE_DDE_H
 
@@ -28,17 +28,13 @@
 extern "C" {
 #endif
 
-#define WM_DDE_INITIATE   0x3E0
-#define WM_DDE_TERMINATE  0x3E1
-#define WM_DDE_ADVISE	  0x3E2
-#define WM_DDE_UNADVISE   0x3E3
-#define WM_DDE_ACK	  0x3E4
-#define WM_DDE_DATA	  0x3E5
-#define WM_DDE_REQUEST	  0x3E6
-#define WM_DDE_POKE	  0x3E7
-#define WM_DDE_EXECUTE	  0x3E8
-#define WM_DDE_LAST	  WM_DDE_EXECUTE
-#define WM_DDE_FIRST	  WM_DDE_INITIATE
+#ifdef _USER32_
+#define WINUSERAPI
+#else
+#define WINUSERAPI DECLSPEC_IMPORT
+#endif
+
+#include <dde.rh>
 
 /* DDEACK: wStatus in WM_DDE_ACK message */
 typedef struct
@@ -69,19 +65,12 @@ typedef struct
     BYTE Value[1];   	/* undetermined array */
 } DDEPOKE;
 
-BOOL WINAPI DdeSetQualityOfService(HWND hwndClient,
-				   CONST SECURITY_QUALITY_OF_SERVICE *pqosNew,
-				   PSECURITY_QUALITY_OF_SERVICE pqosPrev);
-
-BOOL WINAPI ImpersonateDdeClientWindow(HWND hWndClient, HWND hWndServer);
-
-/* lParam packing/unpacking API */
-
-LPARAM      WINAPI PackDDElParam(UINT,UINT_PTR,UINT_PTR);
-BOOL        WINAPI UnpackDDElParam(UINT,LPARAM,PUINT_PTR,PUINT_PTR);
-BOOL        WINAPI FreeDDElParam(UINT,LPARAM);
-LPARAM      WINAPI ReuseDDElParam(LPARAM,UINT,UINT,UINT_PTR,UINT_PTR);
-
+WINUSERAPI BOOL        WINAPI DdeSetQualityOfService(HWND,const SECURITY_QUALITY_OF_SERVICE *,PSECURITY_QUALITY_OF_SERVICE);
+WINUSERAPI BOOL        WINAPI FreeDDElParam(UINT,LPARAM);
+WINUSERAPI BOOL        WINAPI ImpersonateDdeClientWindow(HWND,HWND);
+WINUSERAPI LPARAM      WINAPI PackDDElParam(UINT,UINT_PTR,UINT_PTR);
+WINUSERAPI LPARAM      WINAPI ReuseDDElParam(LPARAM,UINT,UINT,UINT_PTR,UINT_PTR);
+WINUSERAPI BOOL        WINAPI UnpackDDElParam(UINT,LPARAM,PUINT_PTR,PUINT_PTR);
 
 #ifdef __cplusplus
 }

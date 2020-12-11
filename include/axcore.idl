@@ -13,15 +13,21 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#if 0
+#pragma makedep install
+#endif
 
 #define CHARS_IN_GUID 39
 cpp_quote("#define CHARS_IN_GUID 39")
 
 /* GetTimeFormat is defined in winnls.h as
  * either the W or A suffixed version */
+cpp_quote("#ifdef WINE_NO_UNICODE_MACROS")
 cpp_quote("#undef GetTimeFormat")
+cpp_quote("#endif")
 
 typedef struct _AMMediaType
 {
@@ -47,8 +53,15 @@ typedef enum _PinDirection
 cpp_quote("#define MAX_PIN_NAME    128")
 cpp_quote("#define MAX_FILTER_NAME 128")
 
+cpp_quote("#ifndef REFERENCE_TIME_DEFINED")
+cpp_quote("#define REFERENCE_TIME_DEFINED")
 typedef LONGLONG REFERENCE_TIME;
+cpp_quote("#endif")
+
+cpp_quote("#ifndef REFTIME_DEFINED")
+cpp_quote("#define REFTIME_DEFINED")
 typedef DOUBLE REFTIME;
+cpp_quote("#endif")
 
 typedef DWORD_PTR HSEMAPHORE;
 typedef DWORD_PTR HEVENT;
@@ -465,6 +478,7 @@ cpp_quote("#define AM_GBF_PREVFRAMESKIPPED 1")
 cpp_quote("#define AM_GBF_NOTASYNCPOINT 2")
 
 cpp_quote("#define AM_GBF_NOWAIT 4")
+cpp_quote("#define AM_GBF_NODDSURFACELOCK 8")
 
 [
 object,
@@ -645,3 +659,42 @@ enum tagAM_MEDIAEVENT_FLAGS
 {
     AM_MEDIAEVENT_NONOTIFY = 0x01
 };
+
+enum _AMSTREAMSELECTINFOFLAGS
+{
+    AMSTREAMSELECTINFO_ENABLED      = 0x1,
+    AMSTREAMSELECTINFO_EXCLUSIVE    = 0x2
+};
+
+enum _AMSTREAMSELECTENABLEFLAGS
+{
+    AMSTREAMSELECTENABLE_ENABLE     = 0x1,
+    AMSTREAMSELECTENABLE_ENABLEALL  = 0x2
+};
+
+[
+object,
+uuid(c1960960-17f5-11d1-abe1-00a0c905f375),
+pointer_default(unique)
+]
+interface IAMStreamSelect : IUnknown
+{
+    HRESULT Count(
+        [out] DWORD *streams);
+
+    HRESULT Info(
+        [in] long index,
+        [out] AM_MEDIA_TYPE **media_type,
+        [out] DWORD *flags,
+        [out] LCID *lcid,
+        [out] DWORD *group,
+        [out] WCHAR **name,
+        [out] IUnknown **object,
+        [out] IUnknown **unknown);
+
+    HRESULT Enable(
+        [in] long index,
+        [in] DWORD flags);
+}
+
+typedef IAMStreamSelect *PAMSTREAMSELECT;

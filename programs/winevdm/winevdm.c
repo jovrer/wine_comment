@@ -15,22 +15,25 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include "config.h"
+#include "wine/port.h"
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "windef.h"
 #include "winbase.h"
 #include "wine/winbase16.h"
 #include "winuser.h"
 #include "wincon.h"
+#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winevdm);
-
-static void (WINAPI *wine_load_dos_exe)( LPCSTR filename, LPCSTR cmdline );
 
 
 /*** PIF file structures ***/
@@ -102,6 +105,118 @@ typedef struct {
 #include "poppack.h"
 
 /***********************************************************************
+ *           find_dosbox
+ */
+static char *find_dosbox(void)
+{
+    const char *envpath = getenv( "PATH" );
+    struct stat st;
+    char *path, *p, *buffer, *dir;
+    size_t envpath_len;
+
+    if (!envpath) return NULL;
+
+    envpath_len = strlen( envpath );
+    path = HeapAlloc( GetProcessHeap(), 0, envpath_len + 1 );
+    buffer = HeapAlloc( GetProcessHeap(), 0, envpath_len + sizeof("/dosbox") );
+    strcpy( path, envpath );
+
+    p = path;
+    while (*p)
+    {
+        while (*p == ':') p++;
+        if (!*p) break;
+        dir = p;
+        while (*p && *p != ':') p++;
+        if (*p == ':') *p++ = 0;
+        strcpy( buffer, dir );
+        strcat( buffer, "/dosbox" );
+        if (!stat( buffer, &st ))
+        {
+            HeapFree( GetProcessHeap(), 0, path );
+            return buffer;
+        }
+    }
+    HeapFree( GetProcessHeap(), 0, buffer );
+    HeapFree( GetProcessHeap(), 0, path );
+    return NULL;
+}
+
+
+/***********************************************************************
+ *           start_dosbox
+ */
+static void start_dosbox( const char *appname, const char *args )
+{
+    static const WCHAR cfgW[] = {'c','f','g',0};
+    const char *config_dir = wine_get_config_dir();
+    WCHAR path[MAX_PATH], config[MAX_PATH];
+    HANDLE file;
+    char *p, *buffer, app[MAX_PATH];
+    int i;
+    int ret = 1;
+    DWORD written, drives = GetLogicalDrives();
+    char *dosbox = find_dosbox();
+
+    if (!dosbox) return;
+    if (!GetTempPathW( MAX_PATH, path )) return;
+    if (!GetTempFileNameW( path, cfgW, 0, config )) return;
+    if (!GetCurrentDirectoryW( MAX_PATH, path )) return;
+    if (!GetShortPathNameA( appname, app, MAX_PATH )) return;
+    GetShortPathNameW( path, path, MAX_PATH );
+    file = CreateFileW( config, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    if (file == INVALID_HANDLE_VALUE) return;
+
+    buffer = HeapAlloc( GetProcessHeap(), 0, sizeof("[autoexec]") +
+                        sizeof("mount -z c") + sizeof("config -securemode") +
+                        25 * (strlen(config_dir) + sizeof("mount c /dosdevices/c:")) +
+                        4 * strlenW( path ) +
+                        6 + strlen( app ) + strlen( args ) + 20 );
+    p = buffer;
+    p += sprintf( p, "[autoexec]\n" );
+    for (i = 25; i >= 0; i--)
+        if (!(drives & (1 << i)))
+        {
+            p += sprintf( p, "mount -z %c\n", 'a' + i );
+            break;
+        }
+    for (i = 0; i <= 25; i++)
+        if (drives & (1 << i))
+            p += sprintf( p, "mount %c %s/dosdevices/%c:\n", 'a' + i, config_dir, 'a' + i );
+    p += sprintf( p, "%c:\ncd ", path[0] );
+    p += WideCharToMultiByte( CP_UNIXCP, 0, path + 2, -1, p, 4 * strlenW(path), NULL, NULL ) - 1;
+    p += sprintf( p, "\nconfig -securemode\n" );
+    p += sprintf( p, "%s %s\n", app, args );
+    p += sprintf( p, "exit\n" );
+    if (WriteFile( file, buffer, strlen(buffer), &written, NULL ) && written == strlen(buffer))
+    {
+        const char *args[5];
+        char *config_file = wine_get_unix_file_name( config );
+        args[0] = dosbox;
+        args[1] = "-userconf";
+        args[2] = "-conf";
+        args[3] = config_file;
+        args[4] = NULL;
+        ret = _spawnvp( _P_WAIT, args[0], args );
+    }
+    CloseHandle( file );
+    DeleteFileW( config );
+    HeapFree( GetProcessHeap(), 0, buffer );
+    ExitProcess( ret );
+}
+
+
+/***********************************************************************
+ *           start_dos_exe
+ */
+static void start_dos_exe( LPCSTR filename, LPCSTR cmdline )
+{
+    start_dosbox( filename, cmdline );
+    WINE_MESSAGE( "winevdm: %s is a DOS application, you need to install DOSBox.\n", filename );
+    ExitProcess(1);
+}
+
+/***********************************************************************
  *           read_pif_file
  *pif386rec_tu
  * Read a pif file and return the header and possibly the 286 (real mode)
@@ -119,9 +234,7 @@ static BOOL read_pif_file( HANDLE hFile, char *progname, char *title,
     pifhead_t pifheader;
     if( !GetFileSizeEx( hFile, &filesize) ||
             filesize.QuadPart <  (sizeof(pifhead_t) + sizeof(recordhead_t))) {
-        WINE_ERR("Invalid pif file: size error %d must be >= %d\n",
-                (int)filesize.QuadPart,
-                (sizeof(pifhead_t) + sizeof(recordhead_t)));
+        WINE_ERR("Invalid pif file: size error %d\n", (int)filesize.QuadPart);
         return FALSE;
     }
     SetFilePointer( hFile, 0, NULL, FILE_BEGIN);
@@ -161,7 +274,7 @@ static BOOL read_pif_file( HANDLE hFile, char *progname, char *title,
                     pif386rec.memmin, pif386rec.memmax,
                     pif386rec.emsmin, pif386rec.emsmax,
                     pif386rec.xmsmin, pif386rec.xmsmax);
-            WINE_TRACE("386rec: option 0x%x memory 0x%x video 0x%x \n",
+            WINE_TRACE("386rec: option 0x%x memory 0x%x video 0x%x\n",
                     pif386rec.optflags, pif386rec.memflags,
                     pif386rec.videoflags);
             WINE_TRACE("386rec: optional parameters %s\n",
@@ -169,14 +282,13 @@ static BOOL read_pif_file( HANDLE hFile, char *progname, char *title,
         }
     }
     /* prepare the return data */
-    strncpy( progname, pifheader.program, sizeof(pifheader.program));
-    memcpy( title, pifheader.windowtitle, sizeof(pifheader.windowtitle));
-    title[ sizeof(pifheader.windowtitle) ] = '\0';
+    lstrcpynA( progname, pifheader.program, sizeof(pifheader.program)+1);
+    lstrcpynA( title, pifheader.windowtitle, sizeof(pifheader.windowtitle)+1);
     if( found386rec)
-        strncpy( optparams, pif386rec.optparams, sizeof( pif386rec.optparams));
+        lstrcpynA( optparams, pif386rec.optparams, sizeof( pif386rec.optparams)+1);
     else
-        strncpy( optparams, pifheader.optparams, sizeof(pifheader.optparams));
-    strncpy( startdir, pifheader.startdir, sizeof(pifheader.startdir));
+        lstrcpynA( optparams, pifheader.optparams, sizeof(pifheader.optparams)+1);
+    lstrcpynA( startdir, pifheader.startdir, sizeof(pifheader.startdir)+1);
     *closeonexit = pifheader.hdrflags1 & 0x10;
     *textmode = found386rec ? pif386rec.videoflags & 0x0010
                             : pifheader.hdrflags1 & 0x0002;
@@ -195,8 +307,8 @@ static VOID pif_cmd( char *filename, char *cmdline)
     char buf[128];
     char progname[64];
     char title[31];
-    char optparams[64];
-    char startdir[64];
+    char optparams[65];
+    char startdir[65];
     char *p;
     int closeonexit;
     int textmode;
@@ -220,7 +332,7 @@ static VOID pif_cmd( char *filename, char *cmdline)
     if( (p = strrchr( progname, '.')) && !strcasecmp( p, ".bat"))
         WINE_FIXME(".bat programs in pif files are not supported.\n"); 
     /* first change dir, so the search below can start from there */
-    if( startdir[0] && !SetCurrentDirectory( startdir)) {
+    if( startdir[0] && !SetCurrentDirectoryA( startdir)) {
         WINE_ERR("Cannot change directory %s\n", wine_dbgstr_a( startdir));
         sprintf( buf, "%s\nInvalid startup directory. Check your pif file.", 
                 filename);
@@ -246,8 +358,7 @@ static VOID pif_cmd( char *filename, char *cmdline)
      * - hot key's
      * - etc.
      */ 
-    wine_load_dos_exe( progpath, cmdline );
-    return;
+    start_dos_exe( progpath, cmdline );
 }
 
 /***********************************************************************
@@ -264,19 +375,20 @@ static char *build_command_line( char **argv )
     len = 0;
     for (arg = argv; *arg; arg++)
     {
-        int has_space,bcount;
+        BOOL has_space;
+        int bcount;
         char* a;
 
-        has_space=0;
+        has_space=FALSE;
         bcount=0;
         a=*arg;
-        if( !*a ) has_space=1;
+        if( !*a ) has_space=TRUE;
         while (*a!='\0') {
             if (*a=='\\') {
                 bcount++;
             } else {
                 if (*a==' ' || *a=='\t') {
-                    has_space=1;
+                    has_space=TRUE;
                 } else if (*a=='"') {
                     /* doubling of '\' preceding a '"',
                      * plus escaping of said '"'
@@ -299,20 +411,20 @@ static char *build_command_line( char **argv )
     *p++ = (len < 256) ? len : 255;
     for (arg = argv; *arg; arg++)
     {
-        int has_space,has_quote;
+        BOOL has_space,has_quote;
         char* a;
 
         /* Check for quotes and spaces in this argument */
-        has_space=has_quote=0;
+        has_space=has_quote=FALSE;
         a=*arg;
-        if( !*a ) has_space=1;
+        if( !*a ) has_space=TRUE;
         while (*a!='\0') {
             if (*a==' ' || *a=='\t') {
-                has_space=1;
+                has_space=TRUE;
                 if (has_quote)
                     break;
             } else if (*a=='"') {
-                has_quote=1;
+                has_quote=TRUE;
                 if (has_space)
                     break;
             }
@@ -324,7 +436,6 @@ static char *build_command_line( char **argv )
             *p++='"';
         if (has_quote) {
             int bcount;
-            char* a;
 
             bcount=0;
             a=*arg;
@@ -384,7 +495,6 @@ int main( int argc, char *argv[] )
     STARTUPINFOA info;
     char *cmdline, *appname, **first_arg;
     char *p;
-    HMODULE winedos;
 
     if (!argv[1]) usage();
 
@@ -402,13 +512,6 @@ int main( int argc, char *argv[] )
         }
         appname = buffer;
         first_arg = argv + 1;
-    }
-
-    if (!(winedos = LoadLibraryA( "winedos.dll" )) ||
-        !(wine_load_dos_exe = (void *)GetProcAddress( winedos, "wine_load_dos_exe" )))
-    {
-        WINE_MESSAGE( "winevdm: unable to exec '%s': 16-bit support missing\n", argv[1] );
-        ExitProcess(1);
     }
 
     if (*first_arg) first_arg++;  /* skip program name */
@@ -439,12 +542,6 @@ int main( int argc, char *argv[] )
     LoadLibrary16( "user.exe" );
     LoadLibrary16( "mmsystem.dll" );
 
-    /* make sure system drivers are loaded */
-    LoadLibrary16( "comm.drv" );
-    LoadLibrary16( "display.drv" );
-    LoadLibrary16( "keyboard.drv" );
-    LoadLibrary16( "mouse.drv" );
-
     if ((instance = LoadModule16( appname, &params )) < 32)
     {
         if (instance == 11)
@@ -452,10 +549,12 @@ int main( int argc, char *argv[] )
             /* first see if it is a .pif file */
             if( ( p = strrchr( appname, '.' )) && !strcasecmp( p, ".pif"))
                 pif_cmd( appname, cmdline + 1);
-            else 
+            else
+            {
                 /* try DOS format */
                 /* loader expects arguments to be regular C strings */
-                wine_load_dos_exe( appname, cmdline + 1 );
+                start_dos_exe( appname, cmdline + 1 );
+            }
             /* if we get back here it failed */
             instance = GetLastError();
         }

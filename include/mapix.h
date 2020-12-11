@@ -13,24 +13,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef MAPIX_H
 #define MAPIX_H
 
-#ifndef MAPIDEFS_H
 #include <mapidefs.h>
-#endif
-#ifndef MAPICODE_H
 #include <mapicode.h>
-#endif
-#ifndef MAPIGUID_H
 #include <mapiguid.h>
-#endif
-#ifndef MAPITAGS_H
 #include <mapitags.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,23 +34,39 @@ typedef struct IMsgServiceAdmin IMsgServiceAdmin;
 typedef IMsgServiceAdmin *LPSERVICEADMIN;
 typedef struct IMAPISession *LPMAPISESSION;
 
-typedef unsigned long FLAGS;
+#ifndef WINE_FLAGS_DEFINED
+#define WINE_FLAGS_DEFINED
+typedef ULONG                   FLAGS;
+#endif
 
 /* Flags for MAPILogon and MAPILogonEx */
-#define MAPI_LOGON_UI          0x000001
-#define MAPI_NEW_SESSION       0x000002
-#define MAPI_EXTENDED          0x000020
-#define MAPI_FORCE_DOWNLOAD    0x001000
-#define MAPI_PASSWORD_UI       0x020000
-#define MAPI_ALLOW_OTHERS      0x000008
-#define MAPI_EXPLICIT_PROFILE  0x000010
-#define MAPI_SERVICE_UI_ALWAYS 0x002000
-#define MAPI_NO_MAIL           0x008000
-#define MAPI_NT_SERVICE        0x010000
-#define MAPI_TIMEOUT_SHORT     0x100000
+#ifndef MAPI_LOGON_UI
+#define MAPI_LOGON_UI           0x00000001
+#endif
+#ifndef MAPI_NEW_SESSION
+#define MAPI_NEW_SESSION        0x00000002
+#endif
+#define MAPI_ALLOW_OTHERS       0x00000008
+#define MAPI_EXPLICIT_PROFILE   0x00000010
+#ifndef MAPI_EXTENDED
+#define MAPI_EXTENDED           0x00000020
+#endif
+#ifndef MAPI_FORCE_DOWNLOAD
+#define MAPI_FORCE_DOWNLOAD     0x00001000
+#endif
+#ifndef MAPI_PASSWORD_UI
+#define MAPI_PASSWORD_UI        0x00020000
+#endif
+#define MAPI_SERVICE_UI_ALWAYS  0x00002000
+#define MAPI_NO_MAIL            0x00008000
+#define MAPI_NT_SERVICE         0x00010000
+#define MAPI_TIMEOUT_SHORT      0x00100000
 
 #define MAPI_SIMPLE_DEFAULT  (MAPI_LOGON_UI|MAPI_ALLOW_OTHERS|MAPI_FORCE_DOWNLOAD)
 #define MAPI_SIMPLE_EXPLICIT (MAPI_NEW_SESSION|MAPI_EXPLICIT_PROFILE|MAPI_FORCE_DOWNLOAD)
+
+#define MAPI_MULTITHREAD_NOTIFICATIONS  0x00000001
+#define MAPI_NO_COINIT                  0x00000008
 
 typedef struct tagMAPIINIT_0
 {
@@ -94,9 +102,16 @@ typedef SCODE (WINAPI MAPIALLOCATEMORE)(ULONG,LPVOID,LPVOID*);
 typedef MAPIALLOCATEMORE *LPMAPIALLOCATEMORE;
 MAPIALLOCATEMORE MAPIAllocateMore;
 
+#ifndef MAPIFREEBUFFER_DEFINED
+#define MAPIFREEBUFFER_DEFINED
 typedef ULONG (WINAPI MAPIFREEBUFFER)(LPVOID);
 typedef MAPIFREEBUFFER *LPMAPIFREEBUFFER;
 MAPIFREEBUFFER MAPIFreeBuffer;
+#endif
+
+typedef HRESULT (WINAPI MAPIADMINPROFILES)(ULONG,LPPROFADMIN*);
+typedef MAPIADMINPROFILES *LPMAPIADMINPROFILES;
+MAPIADMINPROFILES MAPIAdminProfiles;
 
 /*****************************************************************************
  * IMAPISession interface

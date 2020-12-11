@@ -1,5 +1,5 @@
 /*
- * Copyright 2002 Michael Günnewig
+ * Copyright 2002 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,10 +13,9 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define COM_NO_WINDOWS_H
 #include <assert.h>
 #include <stdarg.h>
 
@@ -24,12 +23,9 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "winnls.h"
 #include "winerror.h"
-#include "windowsx.h"
 #include "mmsystem.h"
 #include "vfw.h"
-#include "msacm.h"
 
 #include "avifile_private.h"
 
@@ -42,42 +38,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(avifile);
 
 /***********************************************************************/
 
-static HRESULT WINAPI ICMStream_fnQueryInterface(IAVIStream*iface,REFIID refiid,LPVOID *obj);
-static ULONG   WINAPI ICMStream_fnAddRef(IAVIStream*iface);
-static ULONG   WINAPI ICMStream_fnRelease(IAVIStream* iface);
-static HRESULT WINAPI ICMStream_fnCreate(IAVIStream*iface,LPARAM lParam1,LPARAM lParam2);
-static HRESULT WINAPI ICMStream_fnInfo(IAVIStream*iface,AVISTREAMINFOW *psi,LONG size);
-static LONG    WINAPI ICMStream_fnFindSample(IAVIStream*iface,LONG pos,LONG flags);
-static HRESULT WINAPI ICMStream_fnReadFormat(IAVIStream*iface,LONG pos,LPVOID format,LONG *formatsize);
-static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream*iface,LONG pos,LPVOID format,LONG formatsize);
-static HRESULT WINAPI ICMStream_fnRead(IAVIStream*iface,LONG start,LONG samples,LPVOID buffer,LONG buffersize,LONG *bytesread,LONG *samplesread);
-static HRESULT WINAPI ICMStream_fnWrite(IAVIStream*iface,LONG start,LONG samples,LPVOID buffer,LONG buffersize,DWORD flags,LONG *sampwritten,LONG *byteswritten);
-static HRESULT WINAPI ICMStream_fnDelete(IAVIStream*iface,LONG start,LONG samples);
-static HRESULT WINAPI ICMStream_fnReadData(IAVIStream*iface,DWORD fcc,LPVOID lp,LONG *lpread);
-static HRESULT WINAPI ICMStream_fnWriteData(IAVIStream*iface,DWORD fcc,LPVOID lp,LONG size);
-static HRESULT WINAPI ICMStream_fnSetInfo(IAVIStream*iface,AVISTREAMINFOW*info,LONG infolen);
-
-static const struct IAVIStreamVtbl iicmst = {
-  ICMStream_fnQueryInterface,
-  ICMStream_fnAddRef,
-  ICMStream_fnRelease,
-  ICMStream_fnCreate,
-  ICMStream_fnInfo,
-  ICMStream_fnFindSample,
-  ICMStream_fnReadFormat,
-  ICMStream_fnSetFormat,
-  ICMStream_fnRead,
-  ICMStream_fnWrite,
-  ICMStream_fnDelete,
-  ICMStream_fnReadData,
-  ICMStream_fnWriteData,
-  ICMStream_fnSetInfo
-};
-
 typedef struct _IAVIStreamImpl {
   /* IUnknown stuff */
-  const IAVIStreamVtbl *lpVtbl;
-  LONG		     ref;
+  IAVIStream         IAVIStream_iface;
+  LONG               ref;
 
   /* IAVIStream stuff */
   PAVISTREAM         pStream;
@@ -111,6 +75,11 @@ static HRESULT AVIFILE_EncodeFrame(IAVIStreamImpl *This,
 				   LPBITMAPINFOHEADER lpbi, LPVOID lpBits);
 static HRESULT AVIFILE_OpenGetFrame(IAVIStreamImpl *This);
 
+static inline IAVIStreamImpl *impl_from_IAVIStream(IAVIStream *iface)
+{
+  return CONTAINING_RECORD(iface, IAVIStreamImpl, IAVIStream_iface);
+}
+
 static inline void AVIFILE_Reset(IAVIStreamImpl *This)
 {
   This->lCurrent      = -1;
@@ -119,39 +88,16 @@ static inline void AVIFILE_Reset(IAVIStreamImpl *This)
   This->dwUnusedBytes = 0;
 }
 
-HRESULT AVIFILE_CreateICMStream(REFIID riid, LPVOID *ppv)
-{
-  IAVIStreamImpl *pstream;
-  HRESULT         hr;
-
-  assert(riid != NULL && ppv != NULL);
-
-  *ppv = NULL;
-
-  pstream = (IAVIStreamImpl*)LocalAlloc(LPTR, sizeof(IAVIStreamImpl));
-  if (pstream == NULL)
-    return AVIERR_MEMORY;
-
-  pstream->lpVtbl  = &iicmst;
-  AVIFILE_Reset(pstream);
-
-  hr = IAVIStream_QueryInterface((IAVIStream*)pstream, riid, ppv);
-  if (FAILED(hr))
-    LocalFree((HLOCAL)pstream);
-
-  return hr;
-}
-
 static HRESULT WINAPI ICMStream_fnQueryInterface(IAVIStream *iface,
 						  REFIID refiid, LPVOID *obj)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
   TRACE("(%p,%s,%p)\n", iface, debugstr_guid(refiid), obj);
 
   if (IsEqualGUID(&IID_IUnknown, refiid) ||
       IsEqualGUID(&IID_IAVIStream, refiid)) {
-    *obj = This;
+    *obj = &This->IAVIStream_iface;
     IAVIStream_AddRef(iface);
 
     return S_OK;
@@ -162,10 +108,10 @@ static HRESULT WINAPI ICMStream_fnQueryInterface(IAVIStream *iface,
 
 static ULONG WINAPI ICMStream_fnAddRef(IAVIStream *iface)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
   ULONG ref = InterlockedIncrement(&This->ref);
 
-  TRACE("(%p) -> %ld\n", iface, ref);
+  TRACE("(%p) -> %d\n", iface, ref);
 
   /* also add reference to the nested stream */
   if (This->pStream != NULL)
@@ -176,10 +122,10 @@ static ULONG WINAPI ICMStream_fnAddRef(IAVIStream *iface)
 
 static ULONG WINAPI ICMStream_fnRelease(IAVIStream* iface)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
   ULONG ref = InterlockedDecrement(&This->ref);
 
-  TRACE("(%p) -> %ld\n", iface, ref);
+  TRACE("(%p) -> %d\n", iface, ref);
 
   if (ref == 0) {
     /* destruct */
@@ -194,7 +140,7 @@ static ULONG WINAPI ICMStream_fnRelease(IAVIStream* iface)
     if (This->hic != NULL) {
       if (This->lpbiPrev != NULL) {
 	ICDecompressEnd(This->hic);
-	GlobalFreePtr(This->lpbiPrev);
+	HeapFree(GetProcessHeap(), 0, This->lpbiPrev);
 	This->lpbiPrev = NULL;
 	This->lpPrev   = NULL;
       }
@@ -202,22 +148,22 @@ static ULONG WINAPI ICMStream_fnRelease(IAVIStream* iface)
       This->hic = NULL;
     }
     if (This->lpbiCur != NULL) {
-      GlobalFreePtr(This->lpbiCur);
+      HeapFree(GetProcessHeap(), 0, This->lpbiCur);
       This->lpbiCur = NULL;
       This->lpCur   = NULL;
     }
     if (This->lpbiOutput != NULL) {
-      GlobalFreePtr(This->lpbiOutput);
+      HeapFree(GetProcessHeap(), 0, This->lpbiOutput);
       This->lpbiOutput = NULL;
       This->cbOutput   = 0;
     }
     if (This->lpbiInput != NULL) {
-      GlobalFreePtr(This->lpbiInput);
+      HeapFree(GetProcessHeap(), 0, This->lpbiInput);
       This->lpbiInput = NULL;
       This->cbInput   = 0;
     }
 
-    LocalFree((HLOCAL)This);
+    HeapFree(GetProcessHeap(), 0, This);
 
     return 0;
   }
@@ -235,7 +181,7 @@ static ULONG WINAPI ICMStream_fnRelease(IAVIStream* iface)
 static HRESULT WINAPI ICMStream_fnCreate(IAVIStream *iface, LPARAM lParam1,
 					  LPARAM lParam2)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
   ICINFO               icinfo;
   ICCOMPRESSFRAMES     icFrames;
@@ -324,9 +270,9 @@ static HRESULT WINAPI ICMStream_fnCreate(IAVIStream *iface, LPARAM lParam1,
 static HRESULT WINAPI ICMStream_fnInfo(IAVIStream *iface,LPAVISTREAMINFOW psi,
 					LONG size)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
-  TRACE("(%p,%p,%ld)\n", iface, psi, size);
+  TRACE("(%p,%p,%d)\n", iface, psi, size);
 
   if (psi == NULL)
     return AVIERR_BADPARAM;
@@ -343,9 +289,9 @@ static HRESULT WINAPI ICMStream_fnInfo(IAVIStream *iface,LPAVISTREAMINFOW psi,
 static LONG WINAPI ICMStream_fnFindSample(IAVIStream *iface, LONG pos,
 					   LONG flags)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
-  TRACE("(%p,%ld,0x%08lX)\n",iface,pos,flags);
+  TRACE("(%p,%d,0x%08X)\n",iface,pos,flags);
 
   if (flags & FIND_FROM_START) {
     pos = This->sInfo.dwStart;
@@ -368,7 +314,7 @@ static LONG WINAPI ICMStream_fnFindSample(IAVIStream *iface, LONG pos,
       return This->lLastKey;
     }
   } else if (flags & FIND_ANY) {
-    return pos; /* We really don't know, reread is to expensive, so guess. */
+    return pos; /* We really don't know, reread is too expensive, so guess. */
   } else if (flags & FIND_FORMAT) {
     if (flags & FIND_PREV)
       return 0;
@@ -380,12 +326,12 @@ static LONG WINAPI ICMStream_fnFindSample(IAVIStream *iface, LONG pos,
 static HRESULT WINAPI ICMStream_fnReadFormat(IAVIStream *iface, LONG pos,
 					      LPVOID format, LONG *formatsize)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
   LPBITMAPINFOHEADER lpbi;
   HRESULT            hr;
 
-  TRACE("(%p,%ld,%p,%p)\n", iface, pos, format, formatsize);
+  TRACE("(%p,%d,%p,%p)\n", iface, pos, format, formatsize);
 
   if (formatsize == NULL)
     return AVIERR_BADPARAM;
@@ -397,7 +343,7 @@ static HRESULT WINAPI ICMStream_fnReadFormat(IAVIStream *iface, LONG pos,
       return hr;
   }
 
-  lpbi = (LPBITMAPINFOHEADER)AVIStreamGetFrame(This->pg, pos);
+  lpbi = AVIStreamGetFrame(This->pg, pos);
   if (lpbi == NULL)
     return AVIERR_MEMORY;
 
@@ -431,9 +377,9 @@ static HRESULT WINAPI ICMStream_fnReadFormat(IAVIStream *iface, LONG pos,
 static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
 					     LPVOID format, LONG formatsize)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
-  TRACE("(%p,%ld,%p,%ld)\n", iface, pos, format, formatsize);
+  TRACE("(%p,%d,%p,%d)\n", iface, pos, format, formatsize);
 
   /* check parameters */
   if (format == NULL || formatsize <= 0)
@@ -479,7 +425,7 @@ static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
     assert(This->hic != NULL);
 
     /* get memory for input format */
-    This->lpbiInput = (LPBITMAPINFOHEADER)GlobalAllocPtr(GHND, formatsize);
+    This->lpbiInput = HeapAlloc(GetProcessHeap(), 0, formatsize);
     if (This->lpbiInput == NULL)
       return AVIERR_MEMORY;
     This->cbInput = formatsize;
@@ -489,7 +435,7 @@ static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
     size = ICCompressGetFormatSize(This->hic, This->lpbiInput);
     if (size < sizeof(BITMAPINFOHEADER))
       return AVIERR_COMPRESSOR;
-    This->lpbiOutput = (LPBITMAPINFOHEADER)GlobalAllocPtr(GHND, size);
+    This->lpbiOutput = HeapAlloc(GetProcessHeap(), 0, size);
     if (This->lpbiOutput == NULL)
       return AVIERR_MEMORY;
     This->cbOutput = size;
@@ -508,8 +454,7 @@ static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
 
     /* allocate memory for compressed frame */
     size = ICCompressGetSize(This->hic, This->lpbiInput, This->lpbiOutput);
-    This->lpbiCur =
-      (LPBITMAPINFOHEADER)GlobalAllocPtr(GMEM_MOVEABLE, This->cbOutput + size);
+    This->lpbiCur = HeapAlloc(GetProcessHeap(), 0, This->cbOutput + size);
     if (This->lpbiCur == NULL)
       return AVIERR_MEMORY;
     memcpy(This->lpbiCur, This->lpbiOutput, This->cbOutput);
@@ -519,7 +464,7 @@ static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
     if (This->lKeyFrameEvery != 1 &&
 	(This->dwICMFlags & VIDCF_FASTTEMPORALC) == 0) {
       size = ICDecompressGetFormatSize(This->hic, This->lpbiOutput);
-      This->lpbiPrev = (LPBITMAPINFOHEADER)GlobalAllocPtr(GHND, size);
+      This->lpbiPrev = HeapAlloc(GetProcessHeap(), 0, size);
       if (This->lpbiPrev == NULL)
 	return AVIERR_MEMORY;
       if (ICDecompressGetFormat(This->hic, This->lpbiOutput, This->lpbiPrev) < S_OK)
@@ -532,8 +477,7 @@ static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
 
       /* get memory for format and picture */
       size += This->lpbiPrev->biSizeImage;
-      This->lpbiPrev =
-       (LPBITMAPINFOHEADER)GlobalReAllocPtr(This->lpbiPrev,size,GMEM_MOVEABLE);
+      This->lpbiPrev = HeapReAlloc(GetProcessHeap(), 0, This->lpbiPrev, size);
       if (This->lpbiPrev == NULL)
 	return AVIERR_MEMORY;
       This->lpPrev = DIBPTR(This->lpbiPrev);
@@ -544,7 +488,7 @@ static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
     }
   } else {
     /* format change -- check that's only the palette */
-    LPBITMAPINFOHEADER lpbi = (LPBITMAPINFOHEADER)format;
+    LPBITMAPINFOHEADER lpbi = format;
 
     if (lpbi->biSize != This->lpbiInput->biSize ||
 	lpbi->biWidth != This->lpbiInput->biWidth ||
@@ -564,7 +508,7 @@ static HRESULT WINAPI ICMStream_fnSetFormat(IAVIStream *iface, LONG pos,
     if (ICCompressBegin(This->hic, lpbi, This->lpbiOutput) != S_OK)
       return AVIERR_COMPRESSOR;
 
-    /* check if we need to restart decompresion also */
+    /* check if we need to restart decompression also */
     if (This->lKeyFrameEvery != 1 &&
 	(This->dwICMFlags & VIDCF_FASTTEMPORALC) == 0) {
       ICDecompressEnd(This->hic);
@@ -585,11 +529,11 @@ static HRESULT WINAPI ICMStream_fnRead(IAVIStream *iface, LONG start,
 					LONG buffersize, LPLONG bytesread,
 					LPLONG samplesread)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
   LPBITMAPINFOHEADER lpbi;
 
-  TRACE("(%p,%ld,%ld,%p,%ld,%p,%p)\n", iface, start, samples, buffer,
+  TRACE("(%p,%d,%d,%p,%d,%p,%p)\n", iface, start, samples, buffer,
  	buffersize, bytesread, samplesread);
 
   /* clear return parameters if given */
@@ -617,7 +561,7 @@ static HRESULT WINAPI ICMStream_fnRead(IAVIStream *iface, LONG start,
   /* compress or decompress? */
   if (This->hic == NULL) {
     /* decompress */
-    lpbi = (LPBITMAPINFOHEADER)AVIStreamGetFrame(This->pg, start);
+    lpbi = AVIStreamGetFrame(This->pg, start);
     if (lpbi == NULL)
       return AVIERR_MEMORY;
 
@@ -640,7 +584,7 @@ static HRESULT WINAPI ICMStream_fnRead(IAVIStream *iface, LONG start,
     while (start > This->lCurrent) {
       HRESULT hr;
 
-      lpbi = (LPBITMAPINFOHEADER)AVIStreamGetFrame(This->pg, ++This->lCurrent);
+      lpbi = AVIStreamGetFrame(This->pg, ++This->lCurrent);
       if (lpbi == NULL) {
 	AVIFILE_Reset(This);
 	return AVIERR_MEMORY;
@@ -679,11 +623,11 @@ static HRESULT WINAPI ICMStream_fnWrite(IAVIStream *iface, LONG start,
 					 LPLONG sampwritten,
 					 LPLONG byteswritten)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
   HRESULT hr;
 
-  TRACE("(%p,%ld,%ld,%p,%ld,0x%08lX,%p,%p)\n", iface, start, samples,
+  TRACE("(%p,%d,%d,%p,%d,0x%08X,%p,%p)\n", iface, start, samples,
 	buffer, buffersize, flags, sampwritten, byteswritten);
 
   /* clear return parameters if given */
@@ -724,9 +668,9 @@ static HRESULT WINAPI ICMStream_fnWrite(IAVIStream *iface, LONG start,
 static HRESULT WINAPI ICMStream_fnDelete(IAVIStream *iface, LONG start,
 					  LONG samples)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
-  TRACE("(%p,%ld,%ld)\n", iface, start, samples);
+  TRACE("(%p,%d,%d)\n", iface, start, samples);
 
   return IAVIStream_Delete(This->pStream, start, samples);
 }
@@ -734,9 +678,9 @@ static HRESULT WINAPI ICMStream_fnDelete(IAVIStream *iface, LONG start,
 static HRESULT WINAPI ICMStream_fnReadData(IAVIStream *iface, DWORD fcc,
 					    LPVOID lp, LPLONG lpread)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
-  TRACE("(%p,0x%08lX,%p,%p)\n", iface, fcc, lp, lpread);
+  TRACE("(%p,0x%08X,%p,%p)\n", iface, fcc, lp, lpread);
 
   assert(This->pStream != NULL);
 
@@ -746,9 +690,9 @@ static HRESULT WINAPI ICMStream_fnReadData(IAVIStream *iface, DWORD fcc,
 static HRESULT WINAPI ICMStream_fnWriteData(IAVIStream *iface, DWORD fcc,
 					     LPVOID lp, LONG size)
 {
-  IAVIStreamImpl *This = (IAVIStreamImpl *)iface;
+  IAVIStreamImpl *This = impl_from_IAVIStream(iface);
 
-  TRACE("(%p,0x%08lx,%p,%ld)\n", iface, fcc, lp, size);
+  TRACE("(%p,0x%08x,%p,%d)\n", iface, fcc, lp, size);
 
   assert(This->pStream != NULL);
 
@@ -758,9 +702,49 @@ static HRESULT WINAPI ICMStream_fnWriteData(IAVIStream *iface, DWORD fcc,
 static HRESULT WINAPI ICMStream_fnSetInfo(IAVIStream *iface,
 					   LPAVISTREAMINFOW info, LONG infolen)
 {
-  FIXME("(%p,%p,%ld): stub\n", iface, info, infolen);
+  FIXME("(%p,%p,%d): stub\n", iface, info, infolen);
 
   return E_FAIL;
+}
+
+static const struct IAVIStreamVtbl iicmst = {
+  ICMStream_fnQueryInterface,
+  ICMStream_fnAddRef,
+  ICMStream_fnRelease,
+  ICMStream_fnCreate,
+  ICMStream_fnInfo,
+  ICMStream_fnFindSample,
+  ICMStream_fnReadFormat,
+  ICMStream_fnSetFormat,
+  ICMStream_fnRead,
+  ICMStream_fnWrite,
+  ICMStream_fnDelete,
+  ICMStream_fnReadData,
+  ICMStream_fnWriteData,
+  ICMStream_fnSetInfo
+};
+
+HRESULT AVIFILE_CreateICMStream(REFIID riid, LPVOID *ppv)
+{
+  IAVIStreamImpl *pstream;
+  HRESULT         hr;
+
+  assert(riid != NULL && ppv != NULL);
+
+  *ppv = NULL;
+
+  pstream = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IAVIStreamImpl));
+  if (pstream == NULL)
+    return AVIERR_MEMORY;
+
+  pstream->IAVIStream_iface.lpVtbl = &iicmst;
+  AVIFILE_Reset(pstream);
+
+  hr = IAVIStream_QueryInterface(&pstream->IAVIStream_iface, riid, ppv);
+  if (FAILED(hr))
+    HeapFree(GetProcessHeap(), 0, pstream);
+
+  return hr;
 }
 
 /***********************************************************************/
@@ -787,11 +771,11 @@ static HRESULT AVIFILE_EncodeFrame(IAVIStreamImpl *This,
   if (This->lKeyFrameEvery != 0) {
     if (This->lCurrent == This->sInfo.dwStart) {
       if (idxFlags & AVIIF_KEYFRAME) {
-	/* for keyframes allow to consume all unused bytes */
+	/* allow keyframes to consume all unused bytes */
 	dwRequest = This->dwBytesPerFrame + This->dwUnusedBytes;
 	This->dwUnusedBytes = 0;
       } else {
-	/* for non-keyframes only allow something of the unused bytes to be consumed */
+	/* for non-keyframes only allow some of the unused bytes to be consumed */
 	DWORD tmp1 = 0;
 	DWORD tmp2;
 
@@ -813,8 +797,8 @@ static HRESULT AVIFILE_EncodeFrame(IAVIStreamImpl *This,
       dwRequest = MAX_FRAMESIZE;
   }
 
-  /* must we check for framesize to gain requested
-   * datarate or could we trust codec? */
+  /* must we check for frame size to gain the requested
+   * data rate or can we trust the codec? */
   doSizeCheck = (dwRequest != 0 && ((This->dwICMFlags & (VIDCF_CRUNCH|VIDCF_QUALITY)) == 0));
 
   dwMaxQual = dwCurQual = This->sInfo.dwQuality;
@@ -827,14 +811,14 @@ static HRESULT AVIFILE_EncodeFrame(IAVIStreamImpl *This,
 
   do {
     DWORD   idxCkid = 0;
-    HRESULT hr;
+    DWORD   res;
 
-    hr = ICCompress(This->hic,icmFlags,This->lpbiCur,This->lpCur,lpbi,lpBits,
-		    &idxCkid, &idxFlags, This->lCurrent, dwRequest, dwCurQual,
-		    noPrev ? NULL:This->lpbiPrev, noPrev ? NULL:This->lpPrev);
-    if (hr == ICERR_NEWPALETTE) {
+    res = ICCompress(This->hic,icmFlags,This->lpbiCur,This->lpCur,lpbi,lpBits,
+		     &idxCkid, &idxFlags, This->lCurrent, dwRequest, dwCurQual,
+		     noPrev ? NULL:This->lpbiPrev, noPrev ? NULL:This->lpPrev);
+    if (res == ICERR_NEWPALETTE) {
       FIXME(": codec has changed palette -- unhandled!\n");
-    } else if (hr != ICERR_OK)
+    } else if (res != ICERR_OK)
       return AVIERR_COMPRESSOR;
 
     /* need to check for framesize */
@@ -865,7 +849,7 @@ static HRESULT AVIFILE_EncodeFrame(IAVIStreamImpl *This,
       if (bDecreasedQual || dwCurQual == This->dwLastQuality)
 	dwCurQual = (dwMinQual + dwMaxQual) / 2;
       else
-	FIXME(": no new quality computed min=%lu cur=%lu max=%lu last=%lu\n",
+	FIXME(": no new quality computed min=%u cur=%u max=%u last=%u\n",
 	      dwMinQual, dwCurQual, dwMaxQual, This->dwLastQuality);
 
       bDecreasedQual = TRUE;
@@ -908,7 +892,7 @@ static HRESULT AVIFILE_OpenGetFrame(IAVIStreamImpl *This)
   assert(This->lpbiOutput == NULL);
 
   /* get input format */
-  lpbi = (LPBITMAPINFOHEADER)AVIStreamGetFrame(This->pg, This->sInfo.dwStart);
+  lpbi = AVIStreamGetFrame(This->pg, This->sInfo.dwStart);
   if (lpbi == NULL)
     return AVIERR_MEMORY;
 
@@ -916,7 +900,7 @@ static HRESULT AVIFILE_OpenGetFrame(IAVIStreamImpl *This)
   size = ICCompressGetFormatSize(This->hic, lpbi);
   if ((LONG)size < (LONG)sizeof(BITMAPINFOHEADER))
     return AVIERR_COMPRESSOR;
-  This->lpbiOutput = (LPBITMAPINFOHEADER)GlobalAllocPtr(GHND, size);
+  This->lpbiOutput = HeapAlloc(GetProcessHeap(), 0, size);
   if (This->lpbiOutput == NULL)
     return AVIERR_MEMORY;
   This->cbOutput = size;
@@ -938,7 +922,7 @@ static HRESULT AVIFILE_OpenGetFrame(IAVIStreamImpl *This)
 
   /* allocate memory for current frame */
   size += This->sInfo.dwSuggestedBufferSize;
-  This->lpbiCur = (LPBITMAPINFOHEADER)GlobalAllocPtr(GMEM_MOVEABLE, size);
+  This->lpbiCur = HeapAlloc(GetProcessHeap(), 0, size);
   if (This->lpbiCur == NULL)
     return AVIERR_MEMORY;
   memcpy(This->lpbiCur, This->lpbiOutput, This->cbOutput);
@@ -948,7 +932,7 @@ static HRESULT AVIFILE_OpenGetFrame(IAVIStreamImpl *This)
   if (This->lKeyFrameEvery != 1 &&
       (This->dwICMFlags & VIDCF_FASTTEMPORALC) == 0) {
     size = ICDecompressGetFormatSize(This->hic, This->lpbiOutput);
-    This->lpbiPrev = (LPBITMAPINFOHEADER)GlobalAllocPtr(GHND, size);
+    This->lpbiPrev = HeapAlloc(GetProcessHeap(), 0, size);
     if (This->lpbiPrev == NULL)
       return AVIERR_MEMORY;
     if (ICDecompressGetFormat(This->hic, This->lpbiOutput, This->lpbiPrev) < S_OK)
@@ -961,8 +945,7 @@ static HRESULT AVIFILE_OpenGetFrame(IAVIStreamImpl *This)
 
     /* get memory for format and picture */
     size += This->lpbiPrev->biSizeImage;
-    This->lpbiPrev =
-      (LPBITMAPINFOHEADER)GlobalReAllocPtr(This->lpbiPrev,size,GMEM_MOVEABLE);
+    This->lpbiPrev = HeapReAlloc(GetProcessHeap(), 0, This->lpbiPrev, size );
     if (This->lpbiPrev == NULL)
       return AVIERR_MEMORY;
     This->lpPrev = DIBPTR(This->lpbiPrev);

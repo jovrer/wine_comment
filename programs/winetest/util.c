@@ -16,28 +16,45 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <unistd.h>
-#include <errno.h>
+#include <stdarg.h>
+#include <windef.h>
+#include <winbase.h>
 
 #include "winetest.h"
 
-void *xmalloc (size_t len)
+HANDLE logfile = 0;
+
+void *heap_alloc (size_t len)
 {
-    void *p = malloc (len);
+    void *p = HeapAlloc(GetProcessHeap(), 0, len);
 
     if (!p) report (R_FATAL, "Out of memory.");
     return p;
 }
 
-void *xrealloc (void *op, size_t len)
+void *heap_realloc (void *op, size_t len)
 {
-    void *p = realloc (op, len);
+    void *p = HeapReAlloc(GetProcessHeap(), 0, op, len);
 
     if (len && !p) report (R_FATAL, "Out of memory.");
     return p;
+}
+
+char *heap_strdup( const char *str )
+{
+    int len = strlen(str) + 1;
+    char* res = HeapAlloc(GetProcessHeap(), 0, len);
+    if (!res) report (R_FATAL, "Out of memory.");
+    memcpy(res, str, len);
+    return res;
+}
+
+void heap_free (void *op)
+{
+    HeapFree(GetProcessHeap(), 0, op);
 }
 
 static char *vstrfmtmake (size_t *lenp, const char *fmt, va_list ap)
@@ -46,16 +63,16 @@ static char *vstrfmtmake (size_t *lenp, const char *fmt, va_list ap)
     char *p, *q;
     int n;
 
-    p = malloc (size);
+    p = HeapAlloc(GetProcessHeap(), 0, size);
     if (!p) return NULL;
     while (1) {
         n = vsnprintf (p, size, fmt, ap);
         if (n < 0) size *= 2;   /* Windows */
         else if ((unsigned)n >= size) size = n+1; /* glibc */
         else break;
-        q = realloc (p, size);
+        q = HeapReAlloc(GetProcessHeap(), 0, p, size);
         if (!q) {
-          free (p);
+          heap_free (p);
           return NULL;
        }
        p = q;
@@ -88,20 +105,20 @@ void xprintf (const char *fmt, ...)
 {
     va_list ap;
     size_t size;
-    ssize_t written;
+    DWORD written;
     char *buffer, *head;
 
     va_start (ap, fmt);
     buffer = vstrfmtmake (&size, fmt, ap);
     head = buffer;
     va_end (ap);
-    while ((written = write (1, head, size)) != size) {
-        if (written == -1)
-            report (R_FATAL, "Can't write logs: %d", errno);
+    while (size) {
+        if (!WriteFile( logfile, head, size, &written, NULL ))
+            report (R_FATAL, "Can't write logs: %u", GetLastError());
         head += written;
         size -= written;
     }
-    free (buffer);
+    heap_free (buffer);
 }
 
 int

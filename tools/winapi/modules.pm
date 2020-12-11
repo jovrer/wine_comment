@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package modules;
@@ -100,7 +100,7 @@ sub find_spec_files($) {
     my $allowed_dir;
     my $spec_file;
 
-    my @spec_files = <{dlls/*/*.spec,dlls/*/*/*.spec}>;
+    my @spec_files = <{dlls/*/*.spec}>;
 
     foreach $spec_file (@spec_files) {
         $spec_file =~ /(.*)\/.*\.spec/;
@@ -110,6 +110,17 @@ sub find_spec_files($) {
         $$spec_file_found{$spec_file}++;
         $$spec_file2dir{$spec_file}{$allowed_dir}++;
         $$dir2spec_file{$allowed_dir}{$spec_file}++;
+        # gdi32.dll and gdi.exe have some extra sources in subdirectories
+        if ($spec_file =~ m!/gdi32\.spec$!)
+        {
+            $$spec_file2dir{$spec_file}{"$allowed_dir/enhmfdrv"}++;
+            $$dir2spec_file{"$allowed_dir/enhmfdrv"}{$spec_file}++;
+        }
+        if ($spec_file =~ m!/gdi(?:32|\.exe)\.spec$!)
+        {
+            $$spec_file2dir{$spec_file}{"$allowed_dir/mfdrv"}++;
+            $$dir2spec_file{"$allowed_dir/mfdrv"}{$spec_file}++;
+        }
     }
 
     return $spec_file_found;

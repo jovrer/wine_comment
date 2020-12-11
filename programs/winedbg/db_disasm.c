@@ -64,7 +64,7 @@
 
 #include "debugger.h"
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__x86_64__)
 
 /*
  * Switch to disassemble 16-bit code.
@@ -85,11 +85,12 @@ static BOOL db_display = FALSE;
 #define	WORD	1
 #define	LONG	2
 #define	QUAD	3
-#define	SNGL	4
-#define	DBLR	5
-#define	EXTR	6
-#define	SDEP	7
-#define	NONE	8
+#define	DQUA    4
+#define	SNGL	5
+#define	DBLR	6
+#define	EXTR	7
+#define	SDEP	8
+#define	NONE	9
 
 /*
  * Addressing modes
@@ -225,9 +226,9 @@ static const struct inst db_inst_0f0x[] = {
 /*02*/	{ "lar",   TRUE,  LONG,  op2(E,R),    0 },
 /*03*/	{ "lsl",   TRUE,  LONG,  op2(E,R),    0 },
 /*04*/	{ "",      FALSE, NONE,  0,	      0 },
-/*05*/	{ "",      FALSE, NONE,  0,	      0 },
+/*05*/	{ "syscall", FALSE, NONE,  0,	      0 },
 /*06*/	{ "clts",  FALSE, NONE,  0,	      0 },
-/*07*/	{ "",      FALSE, NONE,  0,	      0 },
+/*07*/	{ "sysret", FALSE, NONE,  0,	      0 },
 
 /*08*/	{ "invd",  FALSE, NONE,  0,	      0 },
 /*09*/	{ "wbinvd",FALSE, NONE,  0,	      0 },
@@ -300,23 +301,23 @@ static const struct inst db_inst_0f4x[] = {
 };
 
 static const struct inst db_inst_0f5x[] = {
-/*50*/	{ "movmskps",TRUE, NONE, op2(E, XMM), 0 },
-/*51*/	{ "sqrtps",  TRUE, NONE, op2(XMM, EXMM), 0 },
-/*52*/	{ "rsqrtps", TRUE, NONE, op2(XMM, EXMM), 0 },
-/*53*/	{ "rcpps",   TRUE, NONE, op2(XMM, EXMM), 0 },
-/*54*/	{ "andps",   TRUE, NONE, op2(XMM, EXMM), 0 },
-/*55*/	{ "andnps",  TRUE, NONE, op2(XMM, EXMM), 0 },
-/*56*/	{ "orps",    TRUE, NONE, op2(XMM, EXMM), 0 },
-/*57*/	{ "xorps",   TRUE, NONE, op2(XMM, EXMM), 0 },
+/*50*/	{ "movmskps",TRUE, NONE, op2(EXMM, R),   0 },
+/*51*/	{ "sqrtps",  TRUE, NONE, op2(EXMM, XMM), 0 },
+/*52*/	{ "rsqrtps", TRUE, NONE, op2(EXMM, XMM), 0 },
+/*53*/	{ "rcpps",   TRUE, NONE, op2(EXMM, XMM), 0 },
+/*54*/	{ "andps",   TRUE, NONE, op2(EXMM, XMM), 0 },
+/*55*/	{ "andnps",  TRUE, NONE, op2(EXMM, XMM), 0 },
+/*56*/	{ "orps",    TRUE, NONE, op2(EXMM, XMM), 0 },
+/*57*/	{ "xorps",   TRUE, NONE, op2(EXMM, XMM), 0 },
 
-/*58*/	{ "addps",   TRUE, NONE, op2(XMM, EXMM), 0 },
-/*59*/	{ "mulps",   TRUE, NONE, op2(XMM, EXMM), 0 },
-/*5a*/	{ "(bad)",   FALSE, NONE,  0,   0 },
-/*5b*/	{ "(bad)",   FALSE, NONE,  0,   0 },
-/*5c*/	{ "subps",   TRUE, NONE, op2(XMM, EXMM), 0 },
-/*5d*/	{ "minps",   TRUE, NONE, op2(XMM, EXMM), 0 },
-/*5e*/	{ "divps",   TRUE, NONE, op2(XMM, EXMM), 0 },
-/*5f*/	{ "maxps",   TRUE, NONE, op2(XMM, EXMM), 0 },
+/*58*/	{ "addps",   TRUE, NONE, op2(EXMM, XMM), 0 },
+/*59*/	{ "mulps",   TRUE, NONE, op2(EXMM, XMM), 0 },
+/*5a*/	{ "cvtps2pd",TRUE, NONE, op2(EXMM, XMM), 0 },
+/*5b*/	{ "cvtdq2ps",TRUE, NONE, op2(EXMM, XMM), 0 },
+/*5c*/	{ "subps",   TRUE, NONE, op2(EXMM, XMM), 0 },
+/*5d*/	{ "minps",   TRUE, NONE, op2(EXMM, XMM), 0 },
+/*5e*/	{ "divps",   TRUE, NONE, op2(EXMM, XMM), 0 },
+/*5f*/	{ "maxps",   TRUE, NONE, op2(EXMM, XMM), 0 },
 };
 
 static const struct inst db_inst_0f6x[] = {
@@ -336,7 +337,7 @@ static const struct inst db_inst_0f6x[] = {
 /*6c*/	{ "(bad)",     TRUE, NONE,  0, 0 },
 /*6d*/	{ "(bad)",     TRUE, NONE,  0, 0 },
 /*6e*/	{ "movd",      TRUE, NONE,  op2(E, MX), 0 },
-/*6f*/	{ "movq",      TRUE, NONE,  op2(E, MX), 0 },
+/*6f*/	{ "movq",      TRUE, NONE,  op2(EMX, MX), 0 },
 };
 
 static const struct inst db_inst_0f7x[] = {
@@ -356,7 +357,7 @@ static const struct inst db_inst_0f7x[] = {
 /*7c*/	{ "(bad)",     TRUE, NONE,  0, 0 },
 /*7d*/	{ "(bad)",     TRUE, NONE,  0, 0 },
 /*7e*/	{ "movd",      TRUE, NONE,  op2(E, MX), 0 },
-/*7f*/	{ "movq",      TRUE, NONE,  op2(EMX, MX), 0 },
+/*7f*/	{ "movq",      TRUE, NONE,  op2(MX, EMX), 0 },
 };
 
 static const struct inst db_inst_0f8x[] = {
@@ -991,7 +992,7 @@ static const struct inst db_inst_table[256] = {
 /*ef*/	{ "out",   FALSE, LONG,  op2(A, DX) , 0 },
 
 /*f0*/	{ "",      FALSE, NONE,  0,	     0 },
-/*f1*/	{ "",      FALSE, NONE,  0,	     0 },
+/*f1*/	{ "icebp", FALSE, NONE,  0,	     0 },
 /*f2*/	{ "",      FALSE, NONE,  0,	     0 },
 /*f3*/	{ "",      FALSE, NONE,  0,	     0 },
 /*f4*/	{ "hlt",   FALSE, NONE,  0,	     0 },
@@ -1040,10 +1041,12 @@ static const char * const db_index_reg_16[8] = {
 	"%bx"
 };
 
-static const char * const db_reg[3][8] = {
-	{ "%al",  "%cl",  "%dl",  "%bl",  "%ah",  "%ch",  "%dh",  "%bh" },
-	{ "%ax",  "%cx",  "%dx",  "%bx",  "%sp",  "%bp",  "%si",  "%di" },
-	{ "%eax", "%ecx", "%edx", "%ebx", "%esp", "%ebp", "%esi", "%edi" }
+static const char * const db_reg[5][8] = {
+/*BYTE*/{ "%al",  "%cl",  "%dl",  "%bl",  "%ah",  "%ch",  "%dh",  "%bh" },
+/*WORD*/{ "%ax",  "%cx",  "%dx",  "%bx",  "%sp",  "%bp",  "%si",  "%di" },
+/*LONG*/{ "%eax", "%ecx", "%edx", "%ebx", "%esp", "%ebp", "%esi", "%edi" },
+/*QUAD*/{ "%mm0", "%mm1", "%mm2", "%mm3", "%mm4", "%mm5", "%mm6", "%mm7" },
+/*DQUA*/{ "%xmm0","%xmm1","%xmm2","%xmm3","%xmm4","%xmm5","%xmm6","%xmm7" }
 };
 
 static const char * const db_seg_reg[8] = {
@@ -1058,12 +1061,13 @@ static const int db_lengths[] = {
 	2,	/* WORD */
 	4,	/* LONG */
 	8,	/* QUAD */
+	16,     /* DQUA */
 	4,	/* SNGL */
 	8,	/* DBLR */
 	10,	/* EXTR */
 };
 
-static unsigned int db_get_task_value( const ADDRESS* addr,
+static unsigned int db_get_task_value( const ADDRESS64* addr,
                                        int size, int is_signed )
 {
     unsigned int 	result = 0;
@@ -1104,7 +1108,7 @@ static unsigned int db_get_task_value( const ADDRESS* addr,
 /*
  * Read address at location and return updated location.
  */
-static void db_read_address( ADDRESS* addr, int short_addr, int regmodrm,
+static void db_read_address( ADDRESS64* addr, int short_addr, int regmodrm,
                              struct i_addr *addrp )
 {
 	int mod, rm, sib, index, disp;
@@ -1186,7 +1190,7 @@ static void db_read_address( ADDRESS* addr, int short_addr, int regmodrm,
 
 static void db_task_printsym(unsigned int addr, int size)
 {
-    ADDRESS     a;
+    ADDRESS64   a;
     a.Mode   = AddrModeFlat;
     a.Offset = addr;
 
@@ -1221,12 +1225,12 @@ static void db_print_address(const char *seg, int size, struct i_addr *addrp, in
                void*    a2;
                
                dbg_printf("0x%x -> ", addrp->disp);
-	       if (!dbg_read_memory((void*)addrp->disp, &a1, sizeof(a1))) {
+	       if (!dbg_read_memory((void*)(INT_PTR)addrp->disp, &a1, sizeof(a1))) {
 		   dbg_printf("(invalid source)");
 	       } else if (!dbg_read_memory(a1, &a2, sizeof(a2))) {
 		  dbg_printf("(invalid destination)");
 	       } else {
-                   db_task_printsym((unsigned long)a1, 0);
+                   db_task_printsym((ULONG_PTR)a1, 0);
                }
 	    }
 	    else
@@ -1238,7 +1242,7 @@ static void db_print_address(const char *seg, int size, struct i_addr *addrp, in
  * Disassemble floating-point ("escape") instruction
  * and return updated location.
  */
-static void db_disasm_esc( ADDRESS* addr, int inst, int short_addr,
+static void db_disasm_esc( ADDRESS64* addr, int inst, int short_addr,
                            int size, const char *seg )
 {
 	int		regmodrm;
@@ -1261,7 +1265,7 @@ static void db_disasm_esc( ADDRESS* addr, int inst, int short_addr,
 	     * Normal address modes.
 	     */
 	    db_read_address( addr, short_addr, regmodrm, &address);
-	    dbg_printf(fp->f_name);
+	    dbg_printf("%s", fp->f_name);
 	    switch(fp->f_size) {
 		case SNGL: p = "s"; break;
 		case DBLR: p = "l"; break;
@@ -1311,7 +1315,7 @@ static void db_disasm_esc( ADDRESS* addr, int inst, int short_addr,
  * Disassemble instruction at 'addr'.  addr is changed to point to the
  * start of the next instruction.
  */
-void be_i386_disasm_one_insn(ADDRESS *addr, int display)
+void be_i386_disasm_one_insn(ADDRESS64 *addr, int display)
 {
 	int	inst;
 	int	size;
@@ -1330,7 +1334,7 @@ void be_i386_disasm_one_insn(ADDRESS *addr, int display)
 	struct i_addr	address;
 
 	/*
-	 * Set this so we get can suppress the printout if we need to.
+         * Set this so we can suppress the printout if we need to.
 	 */
 	db_display = display;
         switch (addr->Mode)
@@ -1463,15 +1467,15 @@ void be_i386_disasm_one_insn(ADDRESS *addr, int display)
 	  if( db_display )
 	    {
 	      if (size == WORD)
-		dbg_printf(i_name);
+		dbg_printf("%s", i_name);
 	      else
-		dbg_printf(ip->i_extra);
+		dbg_printf("%s", ip->i_extra);
 	    }
 	}
 	else {
 	  if( db_display )
 	    {
-	      dbg_printf(i_name);
+	      dbg_printf("%s", i_name);
 	    }
 	    if (i_size != NONE) {
 		if (i_size == BYTE) {
@@ -1561,7 +1565,7 @@ void be_i386_disasm_one_insn(ADDRESS *addr, int display)
 		case EMX:
 		  if( db_display )
 		    {
-		      dbg_printf("%%mm%d", f_rm(regmodrm));
+                      db_print_address(seg, QUAD, &address, 0);
 		    }
 		    break;
 		case XMM:
@@ -1573,7 +1577,7 @@ void be_i386_disasm_one_insn(ADDRESS *addr, int display)
 		case EXMM:
 		  if( db_display )
 		    {
-		      dbg_printf("%%xmm%d", f_rm(regmodrm));
+                      db_print_address(seg, DQUA, &address, 0);
 		    }
 		    break;
 
@@ -1791,13 +1795,13 @@ void be_i386_disasm_one_insn(ADDRESS *addr, int display)
 
 		case OS:
                     {
-                        ADDRESS address;
+                        ADDRESS64 address;
                         get_value_inc( address.Offset, addr,  /* offset */
                                        short_addr ? 2 : 4, FALSE );
                         get_value_inc( address.Segment, addr,  /* segment */
                                        2, FALSE );
-                        be_cpu->build_addr(dbg_curr_thread->handle, &dbg_context,
-                                           &address, address.Segment, address.Offset);
+                        dbg_curr_process->be_cpu->build_addr(dbg_curr_thread->handle,
+                            &dbg_context, &address, address.Segment, address.Offset);
 			if( db_display )
 			  {
                               print_address( &address, TRUE );

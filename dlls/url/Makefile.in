@@ -1,13 +1,5 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = url.dll
-IMPORTLIB = liburl.$(IMPLIBEXT)
-IMPORTS   = kernel32
+IMPORTLIB = url
+IMPORTS   = shell32 shlwapi
 
 C_SRCS = url_main.c
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

@@ -1,18 +1,6 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = msvcrtd.dll
-IMPORTLIB = libmsvcrtd.$(IMPLIBEXT)
-IMPORTS   = msvcrt kernel32
-MODCFLAGS = @BUILTINFLAG@
-EXTRAINCL = -I$(TOPSRCDIR)/include/msvcrt
+IMPORTLIB = msvcrtd
+IMPORTS   = msvcrt
 
 C_SRCS = \
 	debug.c
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

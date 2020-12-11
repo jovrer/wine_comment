@@ -4,6 +4,7 @@
  * Copyright 2001 ReactOS project
  * Copyright 2001 Jurgen Van Gael [jurgen.vangael@student.kuleuven.ac.be]
  * Copyright 2002 Andriy Palamarchuk
+ * Copyright 2014, 2015 Hugh McMaster
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,57 +18,74 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- * This version deliberately differs in error handling compared to the
- * windows version.
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-/*
- *
- *  regsvr32 [/u] [/s] [/n] [/i[:cmdline]] dllname ...
- *  [/u]    unregister server
- *  [/s]    silent (no message boxes)
- *  [/i]    Call DllInstall passing it an optional [cmdline];
- *          when used with /u calls dll uninstall.
- *  [/n]    Do not call DllRegisterServer; this option must be used with [/i]
- *
- *  Note the complication that this version may be passed unix format file names
- *  which might be mistaken for flags.  Conveniently the Windows version
- *  requires each flag to be separate (e.g. no /su ) and so we will simply
- *  assume that anything longer than /. is a filename.
- */
-
-/**
- * FIXME - currently receives command-line parameters in ASCII only and later
- * converts to Unicode. Ideally the function should have wWinMain entry point
- * and then work in Unicode only, but it seems Wine does not have necessary
- * support.
- */
+#define WIN32_LEAN_AND_MEAN
 
 #include "config.h"
 #include "wine/port.h"
 
-#include <stdio.h>
-#include <string.h>
 #include <windows.h>
+#include <ole2.h>
+#include "regsvr32.h"
+#include "wine/unicode.h"
+#include "wine/debug.h"
 
-typedef HRESULT (*DLLREGISTER)          (void);
-typedef HRESULT (*DLLUNREGISTER)        (void);
-typedef HRESULT (*DLLINSTALL)           (BOOL,LPCWSTR);
+WINE_DEFAULT_DEBUG_CHANNEL(regsvr32);
 
-int Silent = 0;
+typedef HRESULT (WINAPI *DLLREGISTER)   (void);
+typedef HRESULT (WINAPI *DLLUNREGISTER) (void);
+typedef HRESULT (WINAPI *DLLINSTALL)    (BOOL,LPCWSTR);
 
-static int Usage(void)
+static BOOL Silent = FALSE;
+
+static void WINAPIV output_write(UINT id, ...)
 {
-    printf("regsvr32 [/u] [/s] [/n] [/i[:cmdline]] dllname ...\n");
-    printf("\t[/u]  unregister server\n");
-    printf("\t[/s]  silent (no message boxes)\n");
-    printf("\t[/i]  Call DllInstall passing it an optional [cmdline];\n");
-    printf("\t      when used with /u calls dll uninstall\n");
-    printf("\t[/n]  Do not call DllRegisterServer; this option "
-           "must be used with [/i]\n");
-    return 0;
+    WCHAR fmt[1024];
+    __ms_va_list va_args;
+    WCHAR *str;
+    DWORD len, nOut, ret;
+
+    if (Silent) return;
+
+    if (!LoadStringW(GetModuleHandleW(NULL), id, fmt, ARRAY_SIZE(fmt)))
+    {
+        WINE_FIXME("LoadString failed with %d\n", GetLastError());
+        return;
+    }
+
+    __ms_va_start(va_args, id);
+    SetLastError(NO_ERROR);
+    len = FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER,
+                         fmt, 0, 0, (LPWSTR)&str, 0, &va_args);
+    __ms_va_end(va_args);
+    if (len == 0 && GetLastError() != NO_ERROR)
+    {
+        WINE_FIXME("Could not format string: le=%u, fmt=%s\n", GetLastError(), wine_dbgstr_w(fmt));
+        return;
+    }
+
+    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, len, &nOut, NULL);
+
+    /* WriteConsole fails if its output is redirected to a file.
+     * If this occurs, we should use an OEM codepage and call WriteFile.
+     */
+    if (!ret)
+    {
+        DWORD lenA;
+        char *strA;
+
+        lenA = WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len, NULL, 0, NULL, NULL);
+        strA = HeapAlloc(GetProcessHeap(), 0, lenA);
+        if (strA)
+        {
+            WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len, strA, lenA, NULL, NULL);
+            WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), strA, lenA, &nOut, FALSE);
+            HeapFree(GetProcessHeap(), 0, strA);
+        }
+    }
+    LocalFree(str);
 }
 
 /**
@@ -75,106 +93,132 @@ static int Usage(void)
  *
  * Parameters:
  * strDll - name of the dll.
- * procName - name of the procedure to load from dll
- * pDllHanlde - output variable receives handle of the loaded dll.
+ * procName - name of the procedure to load from the dll.
+ * DllHandle - a variable that receives the handle of the loaded dll.
  */
-static VOID *LoadProc(const char* strDll, const char* procName, HMODULE* DllHandle)
+static VOID *LoadProc(const WCHAR* strDll, const char* procName, HMODULE* DllHandle)
 {
     VOID* (*proc)(void);
 
-    *DllHandle = LoadLibraryEx(strDll, 0, LOAD_WITH_ALTERED_SEARCH_PATH);
+    *DllHandle = LoadLibraryExW(strDll, 0, LOAD_WITH_ALTERED_SEARCH_PATH);
     if(!*DllHandle)
     {
-        if(!Silent)
-            printf("Failed to load DLL %s\n", strDll);
-
-        exit(-1);
+        output_write(STRING_DLL_LOAD_FAILED, strDll);
+        ExitProcess(LOADLIBRARY_FAILED);
     }
     proc = (VOID *) GetProcAddress(*DllHandle, procName);
     if(!proc)
     {
-        if(!Silent)
-            printf("%s not implemented in DLL %s\n", procName, strDll);
+        output_write(STRING_PROC_NOT_IMPLEMENTED, procName, strDll);
         FreeLibrary(*DllHandle);
-        exit(-1);
+        return NULL;
     }
     return proc;
 }
 
-static int RegisterDll(const char* strDll)
+static int RegisterDll(const WCHAR* strDll)
 {
     HRESULT hr;
     DLLREGISTER pfRegister;
     HMODULE DllHandle = NULL;
 
     pfRegister = LoadProc(strDll, "DllRegisterServer", &DllHandle);
+    if (!pfRegister)
+        return GETPROCADDRESS_FAILED;
 
     hr = pfRegister();
     if(FAILED(hr))
     {
-        if(!Silent)
-            printf("Failed to register DLL %s\n", strDll);
-
-        return -1;
+        output_write(STRING_REGISTER_FAILED, strDll);
+        return DLLSERVER_FAILED;
     }
-    if(!Silent)
-        printf("Successfully registered DLL %s\n", strDll);
+    output_write(STRING_REGISTER_SUCCESSFUL, strDll);
 
     if(DllHandle)
         FreeLibrary(DllHandle);
     return 0;
 }
 
-static int UnregisterDll(char* strDll)
+static int UnregisterDll(const WCHAR* strDll)
 {
     HRESULT hr;
     DLLUNREGISTER pfUnregister;
     HMODULE DllHandle = NULL;
 
     pfUnregister = LoadProc(strDll, "DllUnregisterServer", &DllHandle);
+    if (!pfUnregister)
+        return GETPROCADDRESS_FAILED;
+
     hr = pfUnregister();
     if(FAILED(hr))
     {
-        if(!Silent)
-            printf("Failed to unregister DLL %s\n", strDll);
-
-        return -1;
+        output_write(STRING_UNREGISTER_FAILED, strDll);
+        return DLLSERVER_FAILED;
     }
-    if(!Silent)
-        printf("Successfully unregistered DLL %s\n", strDll);
+    output_write(STRING_UNREGISTER_SUCCESSFUL, strDll);
 
     if(DllHandle)
         FreeLibrary(DllHandle);
     return 0;
 }
 
-static int InstallDll(BOOL install, char *strDll, WCHAR *command_line)
+static int InstallDll(BOOL install, const WCHAR *strDll, const WCHAR *command_line)
 {
     HRESULT hr;
     DLLINSTALL pfInstall;
     HMODULE DllHandle = NULL;
 
     pfInstall = LoadProc(strDll, "DllInstall", &DllHandle);
+    if (!pfInstall)
+        return GETPROCADDRESS_FAILED;
+
     hr = pfInstall(install, command_line);
     if(FAILED(hr))
     {
-        if(!Silent)
-            printf("Failed to %s DLL %s\n", install ? "install" : "uninstall",
-                   strDll);
-        return -1;
+        if (install)
+            output_write(STRING_INSTALL_FAILED, strDll);
+        else
+            output_write(STRING_UNINSTALL_FAILED, strDll);
+        return DLLSERVER_FAILED;
     }
-    if(!Silent)
-        printf("Successfully %s DLL %s\n",  install ? "installed" : "uninstalled",
-               strDll);
+    if (install)
+        output_write(STRING_INSTALL_SUCCESSFUL, strDll);
+    else
+        output_write(STRING_UNINSTALL_SUCCESSFUL, strDll);
 
     if(DllHandle)
         FreeLibrary(DllHandle);
     return 0;
 }
 
-int main(int argc, char* argv[])
+static WCHAR *parse_command_line(WCHAR *command_line)
 {
-    int             i;
+    if (command_line[0] == ':' && command_line[1])
+    {
+        int len = strlenW(command_line);
+
+        command_line++;
+        len--;
+        /* remove double quotes */
+        if (command_line[0] == '"')
+        {
+            command_line++;
+            len--;
+            if (command_line[0])
+            {
+                len--;
+                command_line[len] = 0;
+            }
+        }
+        if (command_line[0])
+            return command_line;
+    }
+    return NULL;
+}
+
+int wmain(int argc, WCHAR* argv[])
+{
+    int             i, res, ret = 0;
     BOOL            CallRegister = TRUE;
     BOOL            CallInstall = FALSE;
     BOOL            Unregister = FALSE;
@@ -182,71 +226,77 @@ int main(int argc, char* argv[])
     WCHAR*          wsCommandLine = NULL;
     WCHAR           EmptyLine[1] = {0};
 
+    OleInitialize(NULL);
 
-    /* Strictly, the Microsoft version processes all the flags before
-     * the files (e.g. regsvr32 file1 /s file2 is silent even for file1.
-     * For ease, we will not replicate that and will process the arguments
-     * in order.
+    /* We mirror the Microsoft version by processing all of the flags before
+     * the files (e.g. regsvr32 file1 /s file2 is silent even for file1).
+     *
+     * Note the complication that this version may be passed Unix format filenames
+     * which could be mistaken for flags. The Windows version conveniently
+     * requires each flag to be separate (e.g. no /su), so we will simply
+     * assume that anything longer than /. is a filename.
      */
     for(i = 1; i < argc; i++)
     {
-        if (!strcasecmp(argv[i], "/u"))
+        if (argv[i][0] == '/' || argv[i][0] == '-')
+        {
+            if (!argv[i][1])
+                return INVALID_ARG;
+
+            if (argv[i][2] && argv[i][2] != ':')
+                continue;
+
+            switch (tolowerW(argv[i][1]))
+            {
+            case 'u':
                 Unregister = TRUE;
-        else if (!strcasecmp(argv[i], "/s"))
-                Silent = 1;
-        else if (!strncasecmp(argv[i], "/i", strlen("/i")))
-        {
-            CHAR* command_line = argv[i] + strlen("/i");
-
-            CallInstall = TRUE;
-            if (command_line[0] == ':' && command_line[1])
-            {
-                int len = strlen(command_line);
-
-                command_line++;
-                len--;
-                /* remove double quotes */
-                if (command_line[0] == '"')
-                {
-                    command_line++;
-                    len--;
-                    if (command_line[0])
-                    {
-                        len--;
-                        command_line[len] = 0;
-                    }
-                }
-                if (command_line[0])
-                {
-                    len = MultiByteToWideChar(CP_ACP, 0, command_line, -1,
-                                              NULL, 0);
-                    wsCommandLine = HeapAlloc(GetProcessHeap(), 0,
-                                              len * sizeof(WCHAR));
-                    if (wsCommandLine)
-                        MultiByteToWideChar(CP_ACP, 0, command_line, -1,
-                                            wsCommandLine, len);
-                }
-                else
-                {
+                break;
+            case 's':
+                Silent = TRUE;
+                break;
+            case 'i':
+                CallInstall = TRUE;
+                wsCommandLine = parse_command_line(argv[i] + 2); /* argv[i] + strlen("/i") */
+                if (!wsCommandLine)
                     wsCommandLine = EmptyLine;
-                }
+                break;
+            case 'n':
+                CallRegister = FALSE;
+                break;
+            case 'c':
+                /* console output */;
+                break;
+            default:
+                output_write(STRING_UNRECOGNIZED_SWITCH, argv[i]);
+                output_write(STRING_USAGE);
+                return INVALID_ARG;
             }
-            else
-            {
-                wsCommandLine = EmptyLine;
-            }
+            argv[i] = NULL;
         }
-        else if(!strcasecmp(argv[i], "/n"))
-            CallRegister = FALSE;
-        else if (argv[i][0] == '/' && (!argv[i][2] || argv[i][2] == ':'))
-            printf("Unrecognized switch %s\n", argv[i]);
-        else
+    }
+
+    if (!CallInstall && !CallRegister) /* flags: /n or /u /n */
+        return INVALID_ARG;
+
+    for (i = 1; i < argc; i++)
+    {
+        if (argv[i])
         {
-            char *DllName = argv[i];
-            int res = 0;
+            WCHAR *DllName = argv[i];
+            res = 0;
 
             DllFound = TRUE;
-            if (!CallInstall || (CallInstall && CallRegister))
+            if (CallInstall && Unregister)
+                res = InstallDll(!Unregister, DllName, wsCommandLine);
+
+            /* The Windows version stops processing the current file on the first error. */
+            if (res)
+            {
+                ret = res;
+                continue;
+            }
+
+            if (!CallInstall || CallRegister)
             {
                 if(Unregister)
                     res = UnregisterDll(DllName);
@@ -255,26 +305,31 @@ int main(int argc, char* argv[])
             }
 
             if (res)
-                return res;
-	    /* Confirmed.  The windows version does stop on the first error.*/
-
-            if (CallInstall)
             {
-                res = InstallDll(!Unregister, DllName, wsCommandLine);
+                ret = res;
+                continue;
             }
 
+            if (CallInstall && !Unregister)
+                res = InstallDll(!Unregister, DllName, wsCommandLine);
+
             if (res)
-		return res;
+            {
+                ret = res;
+		continue;
+            }
         }
     }
 
     if (!DllFound)
     {
-        if(!Silent)
-            return Usage();
-        else
-            return -1;
+        output_write(STRING_HEADER);
+        output_write(STRING_USAGE);
+        return INVALID_ARG;
     }
 
-    return 0;
+    OleUninitialize();
+
+    /* return the most recent error code, even if later DLLs succeed */
+    return ret;
 }

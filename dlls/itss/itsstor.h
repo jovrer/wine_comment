@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_ITS_STORAGE_PRIVATE__
@@ -29,10 +29,16 @@ extern HRESULT ITSS_StgOpenStorage(
     DWORD grfMode,
     SNB snbExclude,
     DWORD reserved,
-    IStorage** ppstgOpen);
+    IStorage** ppstgOpen) DECLSPEC_HIDDEN;
 
 extern HRESULT ITS_IParseDisplayName_create(
     IUnknown *pUnkOuter,
-    LPVOID *ppObj);
+    LPVOID *ppObj) DECLSPEC_HIDDEN;
+
+extern HRESULT ITSProtocol_create(IUnknown *pUnkOuter, LPVOID *ppobj) DECLSPEC_HIDDEN;
+
+extern LONG dll_count DECLSPEC_HIDDEN;
+static inline void ITSS_LockModule(void) { InterlockedIncrement(&dll_count); }
+static inline void ITSS_UnlockModule(void) { InterlockedDecrement(&dll_count); }
 
 #endif /* __WINE_ITS_STORAGE_PRIVATE__ */

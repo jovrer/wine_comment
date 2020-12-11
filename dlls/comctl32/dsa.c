@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  *     These functions were involuntarily documented by Microsoft in 2002 as
@@ -100,7 +100,7 @@ HDSA WINAPI DSA_Create (INT nSize, INT nGrow)
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DSA_Destroy (const HDSA hdsa)
+BOOL WINAPI DSA_Destroy (HDSA hdsa)
 {
     TRACE("(%p)\n", hdsa);
 
@@ -128,7 +128,7 @@ BOOL WINAPI DSA_Destroy (const HDSA hdsa)
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DSA_GetItem (const HDSA hdsa, INT nIndex, LPVOID pDest)
+BOOL WINAPI DSA_GetItem (HDSA hdsa, INT nIndex, LPVOID pDest)
 {
     LPVOID pSrc;
 
@@ -159,7 +159,7 @@ BOOL WINAPI DSA_GetItem (const HDSA hdsa, INT nIndex, LPVOID pDest)
  *     Success: pointer to an item
  *     Failure: NULL
  */
-LPVOID WINAPI DSA_GetItemPtr (const HDSA hdsa, INT nIndex)
+LPVOID WINAPI DSA_GetItemPtr (HDSA hdsa, INT nIndex)
 {
     LPVOID pSrc;
 
@@ -192,7 +192,7 @@ LPVOID WINAPI DSA_GetItemPtr (const HDSA hdsa, INT nIndex)
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DSA_SetItem (const HDSA hdsa, INT nIndex, LPVOID pSrc)
+BOOL WINAPI DSA_SetItem (HDSA hdsa, INT nIndex, LPVOID pSrc)
 {
     INT  nSize, nNewItems;
     LPVOID pDest, lpTemp;
@@ -211,7 +211,7 @@ BOOL WINAPI DSA_SetItem (const HDSA hdsa, INT nIndex, LPVOID pSrc)
         else {
             /* resize the block of memory */
             nNewItems =
-                hdsa->nGrow * ((INT)(((nIndex + 1) - 1) / hdsa->nGrow) + 1);
+                hdsa->nGrow * ((((nIndex + 1) - 1) / hdsa->nGrow) + 1);
             nSize = hdsa->nItemSize * nNewItems;
 
             lpTemp = ReAlloc (hdsa->pData, nSize);
@@ -248,7 +248,7 @@ BOOL WINAPI DSA_SetItem (const HDSA hdsa, INT nIndex, LPVOID pSrc)
  *     Success: position of the new item
  *     Failure: -1
  */
-INT WINAPI DSA_InsertItem (const HDSA hdsa, INT nIndex, LPVOID pSrc)
+INT WINAPI DSA_InsertItem (HDSA hdsa, INT nIndex, LPVOID pSrc)
 {
     INT   nNewItems, nSize;
     LPVOID  lpTemp, lpDest;
@@ -266,6 +266,9 @@ INT WINAPI DSA_InsertItem (const HDSA hdsa, INT nIndex, LPVOID pSrc)
     if (hdsa->nItemCount >= hdsa->nMaxCount) {
         nNewItems = hdsa->nMaxCount + hdsa->nGrow;
         nSize = hdsa->nItemSize * nNewItems;
+
+        if (nSize / hdsa->nItemSize != nNewItems)
+            return -1;
 
         lpTemp = ReAlloc (hdsa->pData, nSize);
         if (!lpTemp)
@@ -309,7 +312,7 @@ INT WINAPI DSA_InsertItem (const HDSA hdsa, INT nIndex, LPVOID pSrc)
  *     Success: number of the deleted element
  *     Failure: -1
  */
-INT WINAPI DSA_DeleteItem (const HDSA hdsa, INT nIndex)
+INT WINAPI DSA_DeleteItem (HDSA hdsa, INT nIndex)
 {
     LPVOID lpDest,lpSrc;
     INT  nSize;
@@ -361,7 +364,7 @@ INT WINAPI DSA_DeleteItem (const HDSA hdsa, INT nIndex)
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DSA_DeleteAllItems (const HDSA hdsa)
+BOOL WINAPI DSA_DeleteAllItems (HDSA hdsa)
 {
     TRACE("(%p)\n", hdsa);
 
@@ -433,4 +436,60 @@ void WINAPI DSA_DestroyCallback (HDSA hdsa, PFNDSAENUMCALLBACK enumProc,
 
     DSA_EnumCallback (hdsa, enumProc, lParam);
     DSA_Destroy (hdsa);
+}
+
+/**************************************************************************
+ * DSA_Clone [COMCTL32.@]
+ *
+ * Creates a copy of a dsa
+ *
+ * PARAMS
+ *     hdsa [I] handle to the dynamic storage array
+ *
+ * RETURNS
+ *     Cloned dsa
+ */
+HDSA WINAPI DSA_Clone(HDSA hdsa)
+{
+    HDSA dest;
+    INT i;
+
+    TRACE("(%p)\n", hdsa);
+
+    if (!hdsa)
+        return NULL;
+
+    dest = DSA_Create (hdsa->nItemSize, hdsa->nGrow);
+    if (!dest)
+        return NULL;
+
+    for (i = 0; i < hdsa->nItemCount; i++) {
+        void *ptr = DSA_GetItemPtr (hdsa, i);
+        if (DSA_InsertItem (dest, DA_LAST, ptr) == -1) {
+            DSA_Destroy (dest);
+            return NULL;
+        }
+    }
+
+    return dest;
+}
+
+/**************************************************************************
+ * DSA_GetSize [COMCTL32.@]
+ *
+ * Returns allocated memory size for this array
+ *
+ * PARAMS
+ *     hdsa [I] handle to the dynamic storage array
+ *
+ * RETURNS
+ *     Size
+ */
+ULONGLONG WINAPI DSA_GetSize(HDSA hdsa)
+{
+    TRACE("(%p)\n", hdsa);
+
+    if (!hdsa) return 0;
+
+    return sizeof(*hdsa) + (ULONGLONG)hdsa->nMaxCount*hdsa->nItemSize;
 }

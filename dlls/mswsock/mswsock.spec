@@ -1,7 +1,7 @@
 @ stdcall AcceptEx(long long ptr long long long ptr ptr)
 @ stdcall EnumProtocolsA(ptr ptr ptr) ws2_32.WSAEnumProtocolsA
 @ stdcall EnumProtocolsW(ptr ptr ptr) ws2_32.WSAEnumProtocolsW
-@ stub GetAcceptExSockaddrs
+@ stdcall GetAcceptExSockaddrs(ptr long long long ptr ptr ptr ptr)
 @ stub GetAddressByNameA
 @ stub GetAddressByNameW
 @ stub GetNameByTypeA
@@ -20,7 +20,7 @@
 @ stub StopWsdpService
 @ stub SvchostPushServiceGlobals
 @ stdcall TransmitFile(long long long long ptr ptr long)
-@ stub WSARecvEx
+@ stdcall WSARecvEx(long ptr long ptr)
 @ stub WSPStartup
 @ stub dn_expand
 @ stub getnetbyname

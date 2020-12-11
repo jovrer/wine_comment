@@ -13,14 +13,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "winefile.h"
 
-
-#ifdef __WINE__
-#ifdef UNICODE
 
 void _wsplitpath(const WCHAR* path, WCHAR* drv, WCHAR* dir, WCHAR* name, WCHAR* ext)
 {
@@ -33,69 +30,12 @@ void _wsplitpath(const WCHAR* path, WCHAR* drv, WCHAR* dir, WCHAR* name, WCHAR* 
 		if (drv) {
 			*drv++ = *path++;
 			*drv++ = *path++;
-			*drv = L'\0';
-		}
-	} else if (drv)
-		*drv = L'\0';
-
-	/* search for end of string or stream separator */
-	for(end=path; *end && *end!=L':'; )
-		end++;
-
-	/* search for begin of file extension */
-	for(p=end; p>path && *--p!=L'\\' && *p!=L'/'; )
-		if (*p == L'.') {
-			end = p;
-			break;
-		}
-
-	if (ext)
-		for(s=end; (*ext=*s++); )
-			ext++;
-
-	/* search for end of directory name */
-	for(p=end; p>path; )
-		if (*--p=='\\' || *p=='/') {
-			p++;
-			break;
-		}
-
-	if (name) {
-		for(s=p; s<end; )
-			*name++ = *s++;
-
-		*name = L'\0';
-	}
-
-	if (dir) {
-		for(s=path; s<p; )
-			*dir++ = *s++;
-
-		*dir = L'\0';
-	}
-}
-
-#else /* UNICODE */
-
-void _splitpath(const CHAR* path, CHAR* drv, CHAR* dir, CHAR* name, CHAR* ext)
-{
-        const CHAR* end; /* end of processed string */
-	const CHAR* p;	 /* search pointer */
-	const CHAR* s;	 /* copy pointer */
-
-	/* extract drive name */
-	if (path[0] && path[1]==':') {
-		if (drv) {
-			*drv++ = *path++;
-			*drv++ = *path++;
 			*drv = '\0';
 		}
 	} else if (drv)
 		*drv = '\0';
 
-	/* search for end of string or stream separator */
-	for(end=path; *end && *end!=':'; )
-		end++;
+        end = path + lstrlenW(path);
 
 	/* search for begin of file extension */
 	for(p=end; p>path && *--p!='\\' && *p!='/'; )
@@ -130,26 +70,23 @@ void _splitpath(const CHAR* path, CHAR* drv, CHAR* dir, CHAR* name, CHAR* ext)
 	}
 }
 
-#endif /* UNICODE */
-#endif /* __WINE__ */
-
 
 /*
 void main()	// test splipath()
 {
-	TCHAR drv[_MAX_DRIVE+1], dir[_MAX_DIR], name[_MAX_FNAME], ext[_MAX_EXT];
+	WCHAR drv[_MAX_DRIVE+1], dir[_MAX_DIR], name[_MAX_FNAME], ext[_MAX_EXT];
 
-	_tsplitpath(L"x\\y", drv, dir, name, ext);
-	_tsplitpath(L"x\\", drv, dir, name, ext);
-	_tsplitpath(L"\\x", drv, dir, name, ext);
-	_tsplitpath(L"x", drv, dir, name, ext);
-	_tsplitpath(L"", drv, dir, name, ext);
-	_tsplitpath(L".x", drv, dir, name, ext);
-	_tsplitpath(L":x", drv, dir, name, ext);
-	_tsplitpath(L"a:x", drv, dir, name, ext);
-	_tsplitpath(L"a.b:x", drv, dir, name, ext);
-	_tsplitpath(L"W:\\/\\abc/Z:~", drv, dir, name, ext);
-	_tsplitpath(L"abc.EFGH:12345", drv, dir, name, ext);
-	_tsplitpath(L"C:/dos/command.com", drv, dir, name, ext);
+	_wsplitpath(L"x\\y", drv, dir, name, ext);
+	_wsplitpath(L"x\\", drv, dir, name, ext);
+	_wsplitpath(L"\\x", drv, dir, name, ext);
+	_wsplitpath(L"x", drv, dir, name, ext);
+	_wsplitpath(L"", drv, dir, name, ext);
+	_wsplitpath(L".x", drv, dir, name, ext);
+	_wsplitpath(L":x", drv, dir, name, ext);
+	_wsplitpath(L"a:x", drv, dir, name, ext);
+	_wsplitpath(L"a.b:x", drv, dir, name, ext);
+	_wsplitpath(L"W:\\/\\abc/Z:~", drv, dir, name, ext);
+	_wsplitpath(L"abc.EFGH:12345", drv, dir, name, ext);
+	_wsplitpath(L"C:/dos/command.com", drv, dir, name, ext);
 }
 */

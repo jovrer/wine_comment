@@ -1,13 +1,4 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = vtdapi.vxd
-IMPORTS   = kernel32
 
 C_SRCS = \
 	vtdapi.c
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

@@ -13,12 +13,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_D3D8TYPES_H
 #define __WINE_D3D8TYPES_H
 
+#ifdef __i386__
+#include <pshpack4.h>
+#endif
 
 /*****************************************************************************
  * Direct 3D v8 #defines
@@ -35,15 +38,10 @@
 #define D3DCLIPPLANE4 (1 << 4)
 #define D3DCLIPPLANE5 (1 << 5)
 
-#define D3DCOLOR_ARGB(a,r,g,b)        ((D3DCOLOR)((((a)&0xff)<<24)|(((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff)))
+#define D3DCOLOR_ARGB(a,r,g,b)        ((D3DCOLOR)((((a)&0xffu)<<24)|(((r)&0xffu)<<16)|(((g)&0xffu)<<8)|((b)&0xffu)))
 #define D3DCOLOR_COLORVALUE(r,g,b,a)  D3DCOLOR_RGBA((DWORD)((r)*255.f),(DWORD)((g)*255.f),(DWORD)((b)*255.f),(DWORD)((a)*255.f))
 #define D3DCOLOR_RGBA(r,g,b,a)        D3DCOLOR_ARGB(a,r,g,b)
 #define D3DCOLOR_XRGB(r,g,b)          D3DCOLOR_ARGB(0xff,r,g,b)
-
-#define D3DCOLORWRITEENABLED_RED     1
-#define D3DCOLORWRITEENABLED_GREEN   2
-#define D3DCOLORWRITEENABLED_BLUE    4
-#define D3DCOLORWRITEENABLED_ALPHA   8
 
 #define D3DCS_LEFT                 0x001
 #define D3DCS_RIGHT                0x002
@@ -147,17 +145,17 @@
 #define D3DTA_ALPHAREPLICATE    0x00000020
 #define D3DTA_TEMP              0x00000005
 
-#define D3DCOLORWRITEENABLE_RED   (1L<<0)   
-#define D3DCOLORWRITEENABLE_GREEN (1L<<1)
-#define D3DCOLORWRITEENABLE_BLUE  (1L<<2)
-#define D3DCOLORWRITEENABLE_ALPHA (1L<<3)
+#define D3DCOLORWRITEENABLE_RED   (__MSABI_LONG(1)<<0)
+#define D3DCOLORWRITEENABLE_GREEN (__MSABI_LONG(1)<<1)
+#define D3DCOLORWRITEENABLE_BLUE  (__MSABI_LONG(1)<<2)
+#define D3DCOLORWRITEENABLE_ALPHA (__MSABI_LONG(1)<<3)
 
 
-
+#ifndef MAKEFOURCC
 #define MAKEFOURCC(ch0, ch1, ch2, ch3)  \
     ((DWORD)(BYTE)(ch0) | ((DWORD)(BYTE)(ch1) << 8) |  \
     ((DWORD)(BYTE)(ch2) << 16) | ((DWORD)(BYTE)(ch3) << 24 ))
-
+#endif
 
 /**************************** 
  * Vertex Shaders Declaration
@@ -175,7 +173,7 @@ typedef enum _D3DVSD_TOKENTYPE {
   D3DVSD_FORCE_DWORD       = 0x7FFFFFFF
 } D3DVSD_TOKENTYPE;
 
-/** input registers for vertes shaders functions */
+/** input registers for vertex shaders functions */
 /*
 #define D3DVSDE_POSITION      0
 #define D3DVSDE_BLENDWEIGHT   1
@@ -265,11 +263,11 @@ typedef enum _D3DVSDT_TYPE {
 #define D3DVSD_CONSTCOUNTMASK    (0xF      << D3DVSD_CONSTCOUNTSHIFT)
 #define D3DVSD_DATALOADTYPEMASK  (0x1      << D3DVSD_DATALOADTYPESHIFT)
 #define D3DVSD_STREAMTESSMASK    (0x1      << D3DVSD_STREAMTESSSHIFT)
-#define D3DVSD_TOKENTYPEMASK     (0x7      << D3DVSD_TOKENTYPESHIFT)
+#define D3DVSD_TOKENTYPEMASK     (0x7u     << D3DVSD_TOKENTYPESHIFT)
 
 
 #define D3DVSD_MAKETOKENTYPE(TokenType) \
-  ((TokenType << D3DVSD_TOKENTYPESHIFT) & D3DVSD_TOKENTYPEMASK)
+  (((unsigned)TokenType << D3DVSD_TOKENTYPESHIFT) & D3DVSD_TOKENTYPEMASK)
 
 #define D3DVSD_CONST(ConstantAddress, Count) \
   (D3DVSD_MAKETOKENTYPE(D3DVSD_TOKEN_CONSTMEM) | ((Count) << D3DVSD_CONSTCOUNTSHIFT) | (ConstantAddress))
@@ -613,6 +611,8 @@ typedef enum _D3DFORMAT {
     D3DFMT_A8                   =  28,
     D3DFMT_A8R3G3B2             =  29,
     D3DFMT_X4R4G4B4             =  30,
+    D3DFMT_A2B10G10R10          =  31,
+    D3DFMT_G16R16               =  34,
 
     D3DFMT_A8P8                 =  40,
     D3DFMT_P8                   =  41,
@@ -627,6 +627,7 @@ typedef enum _D3DFORMAT {
     D3DFMT_Q8W8V8U8             =  63,
     D3DFMT_V16U16               =  64,
     D3DFMT_W11V11U10            =  65,
+    D3DFMT_A2W10V10U10          =  67,
 
     D3DFMT_UYVY                 =  MAKEFOURCC('U', 'Y', 'V', 'Y'),
     D3DFMT_YUY2                 =  MAKEFOURCC('Y', 'U', 'Y', '2'),
@@ -685,7 +686,7 @@ typedef enum _D3DMULTISAMPLE_TYPE {
     D3DMULTISAMPLE_15_SAMPLES      = 15,
     D3DMULTISAMPLE_16_SAMPLES      = 16,
 
-    D3DMULTISAMPLE_FORCE_DWORD     = 0xffffffff
+    D3DMULTISAMPLE_FORCE_DWORD     = 0x7fffffff
 } D3DMULTISAMPLE_TYPE;
 
 typedef enum _D3DORDERTYPE {
@@ -1055,11 +1056,14 @@ typedef struct _D3DINDEXBUFFER_DESC {
     UINT                Size;
 } D3DINDEXBUFFER_DESC;
 
+#ifndef D3DVECTOR_DEFINED
 typedef struct _D3DVECTOR {
     float x;
     float y;
     float z;
 } D3DVECTOR;
+#define D3DVECTOR_DEFINED
+#endif
 
 typedef struct _D3DLIGHT8 {
     D3DLIGHTTYPE    Type;
@@ -1132,6 +1136,8 @@ typedef struct _D3DPRESENT_PARAMETERS_ {
     UINT                    FullScreen_PresentationInterval;
 
 } D3DPRESENT_PARAMETERS;
+
+#define D3DPRESENTFLAG_LOCKABLE_BACKBUFFER  0x00000001
 
 typedef struct _D3DRANGE {
     UINT                Offset;
@@ -1206,5 +1212,9 @@ typedef struct _D3DVOLUME_DESC {
     UINT                Height;
     UINT                Depth;
 } D3DVOLUME_DESC;
+
+#ifdef __i386__
+#include <poppack.h>
+#endif
 
 #endif  /* __WINE_D3D8TYPES_H */

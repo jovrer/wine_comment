@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 /* At least since Windows 2000 it's possible to add FolderShortcut objects
@@ -25,7 +25,7 @@
  * configured. This is documented at http://www.virtualplastic.net/html/ui_shell.html
  * You can also google for a tool called "ShellObjectEditor" by "Tropical 
  * Technologies". This mechanism would be cool for wine, since we could 
- * map Gnome's virtual devices to FolderShortcuts and have them appear in the
+ * map GNOME's virtual devices to FolderShortcuts and have them appear in the
  * file dialogs. These unit tests are meant to document how this mechanism
  * works on windows.
  *
@@ -40,12 +40,12 @@
 #include "winbase.h"
 #include "winreg.h"
 
+#include "initguid.h"
 #include "shlobj.h"
 #include "shobjidl.h"
 #include "shlguid.h"
 #include "ole2.h"
 
-#include "wine/unicode.h"
 #include "wine/test.h"
 
 /* The following definitions and helper functions are meant to make the de-/registration
@@ -157,7 +157,7 @@ static void unregister_keys(HKEY hRootKey, const struct registry_key *keys, unsi
     }
 }
     
-static void test_ShortcutFolder() {
+static void test_ShortcutFolder(void) {
     LPSHELLFOLDER pDesktopFolder, pWineTestFolder;
     IPersistFolder3 *pWineTestPersistFolder;
     LPITEMIDLIST pidlWineTestFolder, pidlCurFolder;
@@ -174,17 +174,23 @@ static void test_ShortcutFolder() {
     register_keys(HKEY_CLASSES_ROOT, HKEY_CLASSES_ROOT_keys, 1);
 
     hr = SHGetDesktopFolder(&pDesktopFolder);
-    ok (SUCCEEDED(hr), "SHGetDesktopFolder failed! hr = %08lx\n", hr);
+    ok (SUCCEEDED(hr), "SHGetDesktopFolder failed! hr = %08x\n", hr);
     if (FAILED(hr)) goto cleanup;
 
     /* Convert the wszWineTestFolder string to an ITEMIDLIST. */
     hr = IShellFolder_ParseDisplayName(pDesktopFolder, NULL, NULL, wszWineTestFolder, NULL, 
                                        &pidlWineTestFolder, NULL);
-    ok (SUCCEEDED(hr), "IShellFolder::ParseDisplayName failed! hr = %08lx\n", hr);
+    todo_wine
+    {
+        ok (hr == HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER),
+            "Expected %08x, got %08x\n", HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER), hr);
+    }
     if (FAILED(hr)) {
         IShellFolder_Release(pDesktopFolder);
         goto cleanup;
     }
+
+    /* FIXME: these tests are never run */
 
     /* Bind to a WineTest folder object. There has to be some support for this in shdocvw.dll.
      * This isn't implemented in wine yet.*/
@@ -192,28 +198,29 @@ static void test_ShortcutFolder() {
                                    (LPVOID*)&pWineTestFolder);
     IShellFolder_Release(pDesktopFolder);
     ILFree(pidlWineTestFolder);
-    ok (SUCCEEDED(hr), "IShellFolder::BindToObject(WineTestFolder) failed! hr = %08lx\n", hr);
+    ok (SUCCEEDED(hr), "IShellFolder::BindToObject(WineTestFolder) failed! hr = %08x\n", hr);
     if (FAILED(hr)) goto cleanup;
 
     hr = IShellFolder_QueryInterface(pWineTestFolder, &IID_IPersistFolder3, (LPVOID*)&pWineTestPersistFolder);
-    ok (SUCCEEDED(hr), "IShellFolder::QueryInterface(IPersistFolder3) failed! hr = %08lx\n", hr);
+    ok (SUCCEEDED(hr), "IShellFolder::QueryInterface(IPersistFolder3) failed! hr = %08x\n", hr);
     IShellFolder_Release(pWineTestFolder);
     if (FAILED(hr)) goto cleanup;
 
-    /* The resulting folder object has the FolderShortcut CLSID, instead of it's own. */
+    /* The resulting folder object has the FolderShortcut CLSID, instead of its own. */
     hr = IPersistFolder3_GetClassID(pWineTestPersistFolder, &clsid);
-    ok (SUCCEEDED(hr), "IPersist::GetClassID failed! hr = %08lx\n", hr);
+    ok (SUCCEEDED(hr), "IPersist::GetClassID failed! hr = %08x\n", hr);
     ok (IsEqualCLSID(&CLSID_FolderShortcut, &clsid), "GetClassId returned wrong CLSID!\n"); 
   
     pidlCurFolder = (LPITEMIDLIST)0xdeadbeef;
     hr = IPersistFolder3_GetCurFolder(pWineTestPersistFolder, &pidlCurFolder);
-    ok (SUCCEEDED(hr), "IPersistFolder3::GetCurFolder failed! hr = %08lx\n", hr);
+    ok (SUCCEEDED(hr), "IPersistFolder3::GetCurFolder failed! hr = %08x\n", hr);
     ok (pidlCurFolder->mkid.cb == 20 && ((LPSHITEMID)((BYTE*)pidlCurFolder+20))->cb == 0 && 
         IsEqualCLSID(&CLSID_WineTest, (REFCLSID)((LPBYTE)pidlCurFolder+4)), 
         "GetCurFolder returned unexpected pidl!\n");
-    
+
+    ILFree(pidlCurFolder);
     IPersistFolder3_Release(pWineTestPersistFolder);
-    
+
 cleanup:
     unregister_keys(HKEY_CLASSES_ROOT, HKEY_CLASSES_ROOT_keys, 1);
 }    

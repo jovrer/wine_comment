@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "windef.h"
@@ -23,7 +23,7 @@
 #include "sspi.h"
 #include "wine/debug.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(secur32);
+WINE_DEFAULT_DEBUG_CHANNEL(ntlm);
 
 static const char b64[] =
 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -72,7 +72,7 @@ SECURITY_STATUS encodeBase64(PBYTE in_buf, int in_len, char* out_buf,
             out_buf[i + 1] = b64[ ((d[0] << 4) & 0x30) | (d[1] >> 4 & 0x0f)];
             /* third char is the last 4 bits of the second byte padded with
              * two zeroes */
-            out_buf[i + 2] = b64[ ((d[1] >> 4) & 0x3c) ];
+            out_buf[i + 2] = b64[ ((d[1] << 2) & 0x3c) ];
             /* fourth char is a = to indicate one byte of padding */
             out_buf[i + 3] = '=';
             out_buf[i + 4] = 0;

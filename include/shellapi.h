@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_SHELLAPI_H
@@ -23,7 +23,9 @@
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+#ifndef _WIN64
 #include <pshpack1.h>
+#endif
 
 DECLARE_HANDLE(HDROP);
 
@@ -56,14 +58,6 @@ UINT	WINAPI DragQueryFileW(HDROP hDrop, UINT lFile, LPWSTR lpszFile, UINT lLengt
 #define        DragQueryFile WINELIB_NAME_AW(DragQueryFile)
 void	WINAPI DragFinish(HDROP h);
 BOOL	WINAPI DragQueryPoint(HDROP hDrop, POINT *p);
-
-#define NIF_MESSAGE             0x00000001
-#define NIF_ICON                0x00000002
-#define NIF_TIP                 0x00000004
-
-#define NIM_ADD                 0x00000000
-#define NIM_MODIFY              0x00000001
-#define NIM_DELETE              0x00000002
 
 
 
@@ -103,7 +97,7 @@ typedef struct _AppBarData
 	LPARAM	lParam;
 } APPBARDATA, *PAPPBARDATA;
 
-UINT    WINAPI SHAppBarMessage(DWORD,PAPPBARDATA);
+UINT_PTR WINAPI SHAppBarMessage(DWORD,PAPPBARDATA);
 
 /******************************************
  * SHGetFileInfo
@@ -151,6 +145,19 @@ DWORD_PTR	WINAPI SHGetFileInfoW(LPCWSTR,DWORD,SHFILEINFOW*,UINT,UINT);
 #define  SHGetFileInfo WINELIB_NAME_AW(SHGetFileInfo)
 
 /******************************************
+ * SHGetImageList
+ */
+
+HRESULT WINAPI SHGetImageList(INT, REFIID, void **);
+
+#define SHIL_LARGE        0x0
+#define SHIL_SMALL        0x1
+#define SHIL_EXTRALARGE   0x2
+#define SHIL_SYSSMALL     0x3
+#define SHIL_JUMBO        0x4
+#define SHIL_LAST         SHIL_JUMBO
+
+/******************************************
  * SHSetFileInfo
  */
 
@@ -179,6 +186,7 @@ DWORD_PTR	WINAPI SHGetFileInfoW(LPCWSTR,DWORD,SHFILEINFOW*,UINT,UINT);
 #define FOF_WANTNUKEWARNING        0x4000  /* during delete operation, warn if delete instead
                                               of recycling (even if FOF_NOCONFIRMATION) */
 #define FOF_NORECURSEREPARSE       0x8000  /* don't do recursion into reparse points */
+#define FOF_NO_UI                  (FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR)
 
 typedef WORD FILEOP_FLAGS;
 
@@ -242,12 +250,6 @@ void WINAPI SHFreeNameMappings(HANDLE hNameMappings);
 /******************************************
  * ShellExecute
  */
-#define SE_ERR_SHARE            26
-#define SE_ERR_ASSOCINCOMPLETE  27
-#define SE_ERR_DDETIMEOUT       28
-#define SE_ERR_DDEFAIL          29
-#define SE_ERR_DDEBUSY          30
-#define SE_ERR_NOASSOC          31
 
 HINSTANCE	WINAPI ShellExecuteA(HWND,LPCSTR,LPCSTR,LPCSTR,LPCSTR,INT);
 HINSTANCE	WINAPI ShellExecuteW(HWND,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR,INT);
@@ -265,6 +267,7 @@ HINSTANCE	WINAPI ShellExecuteW(HWND,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR,INT);
 #define SE_ERR_DDEBUSY                  30
 #define SE_ERR_NOASSOC                  31
 
+#define SEE_MASK_DEFAULT          0x00000000
 #define SEE_MASK_CLASSNAME        0x00000001
 #define SEE_MASK_CLASSKEY         0x00000003
 #define SEE_MASK_IDLIST           0x00000004
@@ -273,7 +276,8 @@ HINSTANCE	WINAPI ShellExecuteW(HWND,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR,INT);
 #define SEE_MASK_HOTKEY           0x00000020
 #define SEE_MASK_NOCLOSEPROCESS   0x00000040
 #define SEE_MASK_CONNECTNETDRV    0x00000080
-#define SEE_MASK_FLAG_DDEWAIT     0x00000100
+#define SEE_MASK_NOASYNC          0x00000100
+#define SEE_MASK_FLAG_DDEWAIT     SEE_MASK_NOASYNC
 #define SEE_MASK_DOENVSUBST       0x00000200
 #define SEE_MASK_FLAG_NO_UI       0x00000400
 #define SEE_MASK_UNICODE          0x00004000
@@ -343,6 +347,51 @@ void WINAPI WinExecErrorW(HWND hwnd,INT error, LPCWSTR lpstrFileName, LPCWSTR lp
 /******************************************
  * Tray Notification
  */
+/* notifyicondata.uFlags values*/
+#define NIF_MESSAGE             0x00000001
+#define NIF_ICON                0x00000002
+#define NIF_TIP                 0x00000004
+#define NIF_STATE               0x00000008
+#define NIF_INFO                0x00000010
+#define NIF_GUID                0x00000020
+#define NIF_REALTIME            0x00000040
+#define NIF_SHOWTIP             0x00000080
+
+/* notifyicondata.dwState values */
+#define NIS_HIDDEN              0x00000001
+#define NIS_SHAREDICON          0x00000002
+
+/* notifyicondata.dwInfoFlags values */
+#define NIIF_NONE               0x00000000
+#define NIIF_INFO               0x00000001
+#define NIIF_WARNING            0x00000002
+#define NIIF_ERROR              0x00000003
+#define NIIF_USER               0x00000004
+#define NIIF_ICONMASK           0x0000000f
+#define NIIF_NOSOUND            0x00000010
+#define NIIF_LARGEICON          0x00000020
+
+/* dwMessage values */
+#define NIM_ADD                 0x00000000
+#define NIM_MODIFY              0x00000001
+#define NIM_DELETE              0x00000002
+#define NIM_SETFOCUS            0x00000003
+#define NIM_SETVERSION          0x00000004
+
+#define NOTIFY_VERSION   3     /* supported by Windows 2000 and later */
+#define NOTIFY_VERSION_4 4     /* supported by Windows Vista */
+
+/* callback message lParam values */
+#define NIN_SELECT              (WM_USER+0)
+#define NINF_KEY                1
+#define NIN_KEYSELECT           (NIN_SELECT|NINF_KEY)  /* WM_USER+1 */
+#define NIN_BALOONSHOW          (WM_USER+2)
+#define NIN_BALOONHIDE          (WM_USER+3)
+#define NIN_BALOONTIMEOUT       (WM_USER+4)
+#define NIN_BALOONCLICK         (WM_USER+5)
+#define NIN_POPUPOPEN           (WM_USER+6)
+#define NIN_POPUPCLOSE          (WM_USER+7)
+
 typedef struct _NOTIFYICONDATAA
 {	DWORD cbSize;
 	HWND hWnd;
@@ -360,6 +409,8 @@ typedef struct _NOTIFYICONDATAA
 	} DUMMYUNIONNAME;
 	CHAR szInfoTitle[64];
 	DWORD dwInfoFlags;
+	GUID guidItem;
+	HICON hBalloonIcon;
 } NOTIFYICONDATAA, *PNOTIFYICONDATAA;
 
 typedef struct _NOTIFYICONDATAW
@@ -379,7 +430,17 @@ typedef struct _NOTIFYICONDATAW
 	} DUMMYUNIONNAME;
 	WCHAR szInfoTitle[64];
 	DWORD dwInfoFlags;
+	GUID guidItem;
+	HICON hBalloonIcon;
 } NOTIFYICONDATAW, *PNOTIFYICONDATAW;
+
+typedef struct _NOTIFYICONIDENTIFIER
+{
+    DWORD cbSize;
+    HWND hWnd;
+    UINT uID;
+    GUID guidItem;
+} NOTIFYICONIDENTIFIER, *PNOTIFYICONIDENTIFIER;
 
 DECL_WINELIB_TYPE_AW(NOTIFYICONDATA)
 DECL_WINELIB_TYPE_AW(PNOTIFYICONDATA)
@@ -388,6 +449,21 @@ BOOL WINAPI Shell_NotifyIconA(DWORD dwMessage, PNOTIFYICONDATAA lpData);
 BOOL WINAPI Shell_NotifyIconW(DWORD dwMessage, PNOTIFYICONDATAW lpData);
 
 #define Shell_NotifyIcon WINELIB_NAME_AW(Shell_NotifyIcon)
+
+HRESULT WINAPI Shell_NotifyIconGetRect(const NOTIFYICONIDENTIFIER* identifier, RECT* iconLocation);
+
+/* pre IE 5.0 */
+#define NOTIFYICONDATAA_V1_SIZE FIELD_OFFSET(NOTIFYICONDATAA, szTip[64])
+#define NOTIFYICONDATAW_V1_SIZE FIELD_OFFSET(NOTIFYICONDATAW, szTip[64])
+
+/* pre Window XP */
+#define NOTIFYICONDATAA_V2_SIZE FIELD_OFFSET(NOTIFYICONDATAA, guidItem)
+#define NOTIFYICONDATAW_V2_SIZE FIELD_OFFSET(NOTIFYICONDATAW, guidItem)
+
+/* pre Window Vista */
+#define NOTIFYICONDATAA_V3_SIZE FIELD_OFFSET(NOTIFYICONDATAA, hBalloonIcon)
+#define NOTIFYICONDATAW_V3_SIZE FIELD_OFFSET(NOTIFYICONDATAW, hBalloonIcon)
+
 
 /******************************************
  * Links
@@ -424,6 +500,146 @@ HRESULT     WINAPI SHQueryRecycleBinW(LPCWSTR,LPSHQUERYRBINFO);
  * Misc
  */
 
+typedef enum
+{
+    QUNS_NOT_PRESENT             = 1,
+    QUNS_BUSY                    = 2,
+    QUNS_RUNNING_D3D_FULL_SCREEN = 3,
+    QUNS_PRESENTATION_MODE       = 4,
+    QUNS_ACCEPTS_NOTIFICATIONS   = 5,
+    QUNS_QUIET_TIME              = 6,
+    QUNS_APP                     = 7
+} QUERY_USER_NOTIFICATION_STATE;
+
+HRESULT     WINAPI SHQueryUserNotificationState(QUERY_USER_NOTIFICATION_STATE*);
+
+typedef enum SHSTOCKICONID
+{
+    SIID_INVALID=-1,
+    SIID_DOCNOASSOC,
+    SIID_DOCASSOC,
+    SIID_APPLICATION,
+    SIID_FOLDER,
+    SIID_FOLDEROPEN,
+    SIID_DRIVE525,
+    SIID_DRIVE35,
+    SIID_DRIVERREMOVE,
+    SIID_DRIVERFIXED,
+    SIID_DRIVERNET,
+    SIID_DRIVERNETDISABLE,
+    SIID_DRIVERCD,
+    SIID_DRIVERRAM,
+    SIID_WORLD,
+    /* Missing: 14 */
+    SIID_SERVER = 15,
+    SIID_PRINTER,
+    SIID_MYNETWORK,
+    /* Missing: 18 - 21 */
+    SIID_FIND = 22,
+    SIID_HELP,
+    /* Missing: 24 - 27 */
+    SIID_SHARE = 28,
+    SIID_LINK,
+    SIID_SLOWFILE,
+    SIID_RECYCLER,
+    SIID_RECYCLERFULL,
+    /* Missing: 33 - 39 */
+    SIID_MEDIACDAUDIO = 40,
+    /* Missing: 41 - 46 */
+    SIID_LOCK = 47,
+    /* Missing: 48 */
+    SIID_AUTOLIST = 49,
+    SIID_PRINTERNET,
+    SIID_SERVERSHARE,
+    SIID_PRINTERFAX,
+    SIID_PRINTERFAXNET,
+    SIID_PRINTERFILE,
+    SIID_STACK,
+    SIID_MEDIASVCD,
+    SIID_STUFFEDFOLDER,
+    SIID_DRIVEUNKNOWN,
+    SIID_DRIVEDVD,
+    SIID_MEDIADVD,
+    SIID_MEDIADVDRAM,
+    SIID_MEDIADVDRW,
+    SIID_MEDIADVDR,
+    SIID_MEDIADVDROM,
+    SIID_MEDIACDAUDIOPLUS,
+    SIID_MEDIACDRW,
+    SIID_MEDIACDR,
+    SIID_MEDIACDBURN,
+    SIID_MEDIABLANKCD,
+    SIID_MEDIACDROM,
+    SIID_AUDIOFILES,
+    SIID_IMAGEFILES,
+    SIID_VIDEOFILES,
+    SIID_MIXEDFILES,
+    SIID_FOLDERBACK,
+    SIID_FOLDERFRONT,
+    SIID_SHIELD,
+    SIID_WARNING,
+    SIID_INFO,
+    SIID_ERROR,
+    SIID_KEY,
+    SIID_SOFTWARE,
+    SIID_RENAME,
+    SIID_DELETE,
+    SIID_MEDIAAUDIODVD,
+    SIID_MEDIAMOVIEDVD,
+    SIID_MEDIAENHANCEDCD,
+    SIID_MEDIAENHANCEDDVD,
+    SIID_MEDIAHDDVD,
+    SIID_MEDIABLUERAY,
+    SIID_MEDIAVCD,
+    SIID_MEDIADVDPLUSR,
+    SIID_MEDIADVDPLUSRW,
+    SIID_DESKTOPPC,
+    SIID_MOBILEPC,
+    SIID_USERS,
+    SIID_MEDIASMARTMEDIA,
+    SIID_MEDIACOMPACTFLASH,
+    SIID_DEVICECELLPHONE,
+    SIID_DEVICECAMERA,
+    SIID_DEVICEVIDEOCAMERA,
+    SIID_DEVICEAUDIOPLAYER,
+    SIID_NETWORKCONNECT,
+    SIID_INTERNET,
+    SIID_ZIPFILE,
+    SIID_SETTINGS,
+    /* Missing: 107 - 131 */
+    SIID_DRIVEHDDVD = 132,
+    SIID_DRIVEBD,
+    SIID_MEDIAHDDVDROM,
+    SIID_MEDIAHDDVDR,
+    SIID_MEDIAHDDVDRAM,
+    SIID_MEDIABDROM,
+    SIID_MEDIABDR,
+    SIID_MEDIABDRE,
+    SIID_CLUSTEREDDRIVE,
+    /* Missing: 141 - 180 */
+    SIID_MAX_ICONS = 181
+}SHSTOCKICONID;
+
+typedef struct _SHSTOCKICONINFO
+{
+    DWORD   cbSize;
+    HICON   hIcon;
+    INT     iSysImageIndex;
+    INT     iIcon;
+    WCHAR   szPath[MAX_PATH];
+} SHSTOCKICONINFO;
+
+/* flags for SHGetStockIconInfo */
+#define SHGSI_ICONLOCATION  0
+#define SHGSI_ICON          SHGFI_ICON
+#define SHGSI_SYSICONINDEX  SHGFI_SYSICONINDEX
+#define SHGSI_LINKOVERLAY   SHGFI_LINKOVERLAY
+#define SHGSI_SELECTED      SHGFI_SELECTED
+#define SHGSI_LARGEICON     SHGFI_LARGEICON
+#define SHGSI_SMALLICON     SHGFI_SMALLICON
+#define SHGSI_SHELLICONSIZE SHGFI_SHELLICONSIZE
+
+HRESULT     WINAPI SHGetStockIconInfo(SHSTOCKICONID, UINT, SHSTOCKICONINFO*);
 LPWSTR*     WINAPI CommandLineToArgvW(LPCWSTR,int*);
 HICON       WINAPI ExtractIconA(HINSTANCE,LPCSTR,UINT);
 HICON       WINAPI ExtractIconW(HINSTANCE,LPCWSTR,UINT);
@@ -450,11 +666,18 @@ DWORD       WINAPI DoEnvironmentSubstA(LPSTR, UINT);
 DWORD       WINAPI DoEnvironmentSubstW(LPWSTR, UINT);
 #define     DoEnvironmentSubst WINELIB_NAME_AW(DoEnvironmentSubst)
 
+HRESULT     WINAPI SHEnumerateUnreadMailAccountsA(HKEY,DWORD,LPSTR,INT);
+HRESULT     WINAPI SHEnumerateUnreadMailAccountsW(HKEY,DWORD,LPWSTR,INT);
+#define     SHEnumerateUnreadMailAccounts WINELIB_NAME_AW(SHEnumerateUnreadMailAccounts)
+
+HRESULT     WINAPI SHGetPropertyStoreForWindow(HWND,REFIID,void **);
 
 #ifdef __cplusplus
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
 
+#ifndef _WIN64
 #include <poppack.h>
+#endif
 
 #endif /* __WINE_SHELLAPI_H */

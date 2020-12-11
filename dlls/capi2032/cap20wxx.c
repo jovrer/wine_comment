@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
@@ -43,24 +43,20 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(capi);
 
-#ifdef HAVE_CAPI4LINUX
-
-#ifndef SONAME_LIBCAPI20
-#define SONAME_LIBCAPI20 "libcapi20.so"
-#endif
+#ifdef SONAME_LIBCAPI20
 
 static unsigned (*pcapi20_register)(unsigned, unsigned, unsigned, unsigned *) = NULL;
 static unsigned (*pcapi20_release)(unsigned) = NULL;
 static unsigned (*pcapi20_put_message)(unsigned, unsigned char *) = NULL;
 static unsigned (*pcapi20_get_message)(unsigned, unsigned char **) = NULL;
 static unsigned (*pcapi20_waitformessage)(unsigned, struct timeval *) = NULL;
-static unsigned (*pcapi20_isinstalled)() = NULL;
+static unsigned (*pcapi20_isinstalled)(void) = NULL;
 static unsigned (*pcapi20_get_profile)(unsigned, unsigned char *) = NULL;
 static unsigned char *(*pcapi20_get_manufacturer)(unsigned, unsigned char *) = NULL;
 static unsigned char *(*pcapi20_get_serial_number)(unsigned, unsigned char *) = NULL;
 static unsigned char *(*pcapi20_get_version)(unsigned, unsigned char *) = NULL;
 
-static void load_functions() {
+static void load_functions(void) {
     void *capi_handle = NULL;
 
     if (pcapi20_register) /* loaded already */
@@ -90,7 +86,7 @@ LOAD_FUNCPTR(capi20_get_version);
 \*===========================================================================*/
 
 DWORD WINAPI wrapCAPI_REGISTER (DWORD MessageBufferSize, DWORD maxLogicalConnection, DWORD maxBDataBlocks, DWORD maxBDataLen, DWORD *pApplID) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     unsigned aid = 0;
     DWORD fret;
 
@@ -99,7 +95,7 @@ DWORD WINAPI wrapCAPI_REGISTER (DWORD MessageBufferSize, DWORD maxLogicalConnect
         return 0x1009;
     fret = pcapi20_register (maxLogicalConnection, maxBDataBlocks, maxBDataLen, &aid);
     *pApplID   = aid;
-    TRACE ( "(%lx) -> %lx\n", *pApplID, fret);
+    TRACE ( "(%x) -> %x\n", *pApplID, fret);
     return fret;
 #else
     FIXME ( "(), no CAPI4LINUX support compiled into WINE.\n" );
@@ -110,14 +106,14 @@ DWORD WINAPI wrapCAPI_REGISTER (DWORD MessageBufferSize, DWORD maxLogicalConnect
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_RELEASE (DWORD ApplID) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     DWORD fret;
 
     load_functions();
     if (!pcapi20_release)
         return 0x1109;
     fret = pcapi20_release (ApplID);
-    TRACE ("(%lx) -> %lx\n", ApplID, fret);
+    TRACE ("(%x) -> %x\n", ApplID, fret);
     return fret;
 #else
     return 0x1109;
@@ -127,14 +123,14 @@ DWORD WINAPI wrapCAPI_RELEASE (DWORD ApplID) {
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_PUT_MESSAGE (DWORD ApplID, PVOID pCAPIMessage) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     DWORD fret;
 
     load_functions();
     if (!pcapi20_put_message)
         return 0x1109;
     fret = pcapi20_put_message (ApplID, pCAPIMessage);
-    TRACE ("(%lx) -> %lx\n", ApplID, fret);
+    TRACE ("(%x) -> %x\n", ApplID, fret);
     return fret;
 #else
     return 0x1109;
@@ -144,14 +140,14 @@ DWORD WINAPI wrapCAPI_PUT_MESSAGE (DWORD ApplID, PVOID pCAPIMessage) {
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_GET_MESSAGE (DWORD ApplID, PVOID *ppCAPIMessage) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     DWORD fret;
 
     load_functions();
     if (!pcapi20_get_message)
         return 0x1109;
     fret = pcapi20_get_message (ApplID, (unsigned char **)ppCAPIMessage);
-    TRACE ("(%lx) -> %lx\n", ApplID, fret);
+    TRACE ("(%x) -> %x\n", ApplID, fret);
     return fret;
 #else
     return 0x1109;
@@ -161,8 +157,8 @@ DWORD WINAPI wrapCAPI_GET_MESSAGE (DWORD ApplID, PVOID *ppCAPIMessage) {
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_WAIT_FOR_SIGNAL (DWORD ApplID) {
-#ifdef HAVE_CAPI4LINUX
-    TRACE ("(%lx)\n", ApplID);
+#ifdef SONAME_LIBCAPI20
+    TRACE ("(%x)\n", ApplID);
 
     load_functions();
     if (!pcapi20_waitformessage)
@@ -177,7 +173,7 @@ DWORD WINAPI wrapCAPI_WAIT_FOR_SIGNAL (DWORD ApplID) {
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_GET_MANUFACTURER (char *SzBuffer) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     DWORD fret;
 
     load_functions();
@@ -188,7 +184,7 @@ DWORD WINAPI wrapCAPI_GET_MANUFACTURER (char *SzBuffer) {
     if (!strncmp (SzBuffer, "AVM", 3)) {
         strcpy (SzBuffer, "AVM-GmbH");
     }
-    TRACE ("(%s) -> %lx\n", SzBuffer, fret);
+    TRACE ("(%s) -> %x\n", SzBuffer, fret);
     return fret;
 #else
     return 0x1109;
@@ -198,7 +194,7 @@ DWORD WINAPI wrapCAPI_GET_MANUFACTURER (char *SzBuffer) {
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_GET_VERSION (DWORD *pCAPIMajor, DWORD *pCAPIMinor, DWORD *pManufacturerMajor, DWORD *pManufacturerMinor) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     unsigned char version[4 * sizeof (unsigned)];
     DWORD fret;
 
@@ -210,7 +206,7 @@ DWORD WINAPI wrapCAPI_GET_VERSION (DWORD *pCAPIMajor, DWORD *pCAPIMinor, DWORD *
     *pCAPIMinor         = *(unsigned *)(version + 1 * sizeof (unsigned));
     *pManufacturerMajor = *(unsigned *)(version + 2 * sizeof (unsigned));
     *pManufacturerMinor = *(unsigned *)(version + 3 * sizeof (unsigned));
-    TRACE ("(%lx.%lx,%lx.%lx) -> %lx\n", *pCAPIMajor, *pCAPIMinor, *pManufacturerMajor,
+    TRACE ("(%x.%x,%x.%x) -> %x\n", *pCAPIMajor, *pCAPIMinor, *pManufacturerMajor,
              *pManufacturerMinor, fret);
     return fret;
 #else
@@ -221,14 +217,14 @@ DWORD WINAPI wrapCAPI_GET_VERSION (DWORD *pCAPIMajor, DWORD *pCAPIMinor, DWORD *
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_GET_SERIAL_NUMBER (char *SzBuffer) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     DWORD fret;
 
     load_functions();
     if (!pcapi20_get_serial_number)
         return 0x1109;
     fret = (pcapi20_get_serial_number (0, (unsigned char*) SzBuffer) != 0) ? 0 : 0x1108;
-    TRACE ("(%s) -> %lx\n", SzBuffer, fret);
+    TRACE ("(%s) -> %x\n", SzBuffer, fret);
     return fret;
 #else
     return 0x1109;
@@ -238,7 +234,7 @@ DWORD WINAPI wrapCAPI_GET_SERIAL_NUMBER (char *SzBuffer) {
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_GET_PROFILE (PVOID SzBuffer, DWORD CtlrNr) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     DWORD fret;
 
     load_functions();
@@ -246,7 +242,7 @@ DWORD WINAPI wrapCAPI_GET_PROFILE (PVOID SzBuffer, DWORD CtlrNr) {
         return 0x1109;
 
     fret = pcapi20_get_profile (CtlrNr, SzBuffer);
-    TRACE ("(%lx,%x) -> %lx\n", CtlrNr, *(unsigned short *)SzBuffer, fret);
+    TRACE ("(%x,%x) -> %x\n", CtlrNr, *(unsigned short *)SzBuffer, fret);
     return fret;
 #else
     return 0x1109;
@@ -256,14 +252,14 @@ DWORD WINAPI wrapCAPI_GET_PROFILE (PVOID SzBuffer, DWORD CtlrNr) {
 /*---------------------------------------------------------------------------*\
 \*---------------------------------------------------------------------------*/
 DWORD WINAPI wrapCAPI_INSTALLED (void) {
-#ifdef HAVE_CAPI4LINUX
+#ifdef SONAME_LIBCAPI20
     DWORD fret;
 
     load_functions();
     if (!pcapi20_isinstalled)
         return 0x1109;
     fret = pcapi20_isinstalled();
-    TRACE ("() -> %lx\n", fret);
+    TRACE ("() -> %x\n", fret);
     return fret;
 #else
     return 0x1109;

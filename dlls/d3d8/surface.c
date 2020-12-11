@@ -1,9 +1,7 @@
 /*
  * IDirect3DSurface8 implementation
  *
- * Copyright 2002-2004 Jason Edmeades
- * Copyright 2002-2003 Raphael Junqueira
- * Copyright 2004 Christian Costa
+ * Copyright 2005 Oliver Stieber
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,749 +15,397 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
-#include "wine/port.h"
-
-#include <stdarg.h>
-#include <stdio.h>
-
-#define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
-
-#include "windef.h"
-#include "winbase.h"
-#include "winuser.h"
-#include "wingdi.h"
-#include "wine/debug.h"
-
 #include "d3d8_private.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(d3d_surface);
+WINE_DEFAULT_DEBUG_CHANNEL(d3d8);
 
-/* IDirect3DVolume IUnknown parts follow: */
-HRESULT WINAPI IDirect3DSurface8Impl_QueryInterface(LPDIRECT3DSURFACE8 iface,REFIID riid,LPVOID *ppobj)
+static inline struct d3d8_surface *impl_from_IDirect3DSurface8(IDirect3DSurface8 *iface)
 {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
+    return CONTAINING_RECORD(iface, struct d3d8_surface, IDirect3DSurface8_iface);
+}
 
-    if (IsEqualGUID(riid, &IID_IUnknown)
-        || IsEqualGUID(riid, &IID_IDirect3DSurface8)) {
-        IDirect3DSurface8Impl_AddRef(iface);
-        *ppobj = This;
-        return D3D_OK;
+static HRESULT WINAPI d3d8_surface_QueryInterface(IDirect3DSurface8 *iface, REFIID riid, void **out)
+{
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
+
+    if (IsEqualGUID(riid, &IID_IDirect3DSurface8)
+            || IsEqualGUID(riid, &IID_IDirect3DResource8)
+            || IsEqualGUID(riid, &IID_IUnknown))
+    {
+        IDirect3DSurface8_AddRef(iface);
+        *out = iface;
+        return S_OK;
     }
 
-    WARN("(%p)->(%s,%p),not found\n",This,debugstr_guid(riid),ppobj);
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(riid));
+
+    *out = NULL;
     return E_NOINTERFACE;
 }
 
-ULONG WINAPI IDirect3DSurface8Impl_AddRef(LPDIRECT3DSURFACE8 iface) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-    ULONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) : AddRef from %ld\n", This, ref - 1);
-
-    return ref;
-}
-
-ULONG WINAPI IDirect3DSurface8Impl_Release(LPDIRECT3DSURFACE8 iface) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-    ULONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) : ReleaseRef to %ld\n", This, ref);
-
-    if (ref == 0) {
-      HeapFree(GetProcessHeap(), 0, This->allocatedMemory);
-      HeapFree(GetProcessHeap(), 0, This);
-    }
-    return ref;
-}
-
-/* IDirect3DSurface8: */
-HRESULT WINAPI IDirect3DSurface8Impl_GetDevice(LPDIRECT3DSURFACE8 iface, IDirect3DDevice8** ppDevice) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-    TRACE("(%p) : returning %p\n", This, This->Device);
-    *ppDevice = (LPDIRECT3DDEVICE8) This->Device;
-    /**
-     * Note  Calling this method will increase the internal reference count 
-     * on the IDirect3DDevice8 interface. 
-     */
-    IDirect3DDevice8Impl_AddRef(*ppDevice);
-    return D3D_OK;
-}
-
-HRESULT WINAPI IDirect3DSurface8Impl_SetPrivateData(LPDIRECT3DSURFACE8 iface, REFGUID refguid, CONST void* pData, DWORD SizeOfData, DWORD Flags) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-    FIXME("(%p) : stub\n", This);    
-    return D3D_OK;
-}
-
-HRESULT WINAPI IDirect3DSurface8Impl_GetPrivateData(LPDIRECT3DSURFACE8 iface, REFGUID refguid, void* pData, DWORD* pSizeOfData) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-    FIXME("(%p) : stub\n", This);    
-    return D3D_OK;
-}
-
-HRESULT WINAPI IDirect3DSurface8Impl_FreePrivateData(LPDIRECT3DSURFACE8 iface, REFGUID refguid) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-    FIXME("(%p) : stub\n", This);    
-    return D3D_OK;
-}
-
-HRESULT WINAPI IDirect3DSurface8Impl_GetContainer(LPDIRECT3DSURFACE8 iface, REFIID riid, void** ppContainer) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-    HRESULT res;
-    res = IUnknown_QueryInterface(This->Container, riid, ppContainer);
-    if (E_NOINTERFACE == res) { 
-      /**
-       * If the surface is created using CreateImageSurface, CreateRenderTarget, 
-       * or CreateDepthStencilSurface, the surface is considered stand alone. In this case, 
-       * GetContainer will return the Direct3D device used to create the surface. 
-       */
-      res = IUnknown_QueryInterface(This->Container, &IID_IDirect3DDevice8, ppContainer);
-    }
-    TRACE("(%p) : returning %p\n", This, *ppContainer);
-    return res;
-}
-
-HRESULT WINAPI IDirect3DSurface8Impl_GetDesc(LPDIRECT3DSURFACE8 iface, D3DSURFACE_DESC *pDesc) {
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-
-    TRACE("(%p) : copying into %p\n", This, pDesc);
-    memcpy(pDesc, &This->myDesc, sizeof(D3DSURFACE_DESC));
-    return D3D_OK;
-}
-
-HRESULT WINAPI IDirect3DSurface8Impl_LockRect(LPDIRECT3DSURFACE8 iface, D3DLOCKED_RECT* pLockedRect, CONST RECT* pRect, DWORD Flags) {
-    HRESULT hr;
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-  
-    /* fixme: should we really lock as such? */
-    if (This->inTexture && This->inPBuffer) {
-	FIXME("Warning: Surface is in texture memory or pbuffer\n");
-	This->inTexture = 0;
-	This->inPBuffer = 0;
-    }
-    
-    if (FALSE == This->lockable) {
-      /* Note: UpdateTextures calls CopyRects which calls this routine to populate the 
-            texture regions, and since the destination is an unlockable region we need
-            to tolerate this                                                           */
-      TRACE("Warning: trying to lock unlockable surf@%p\n", This);  
-      /*return D3DERR_INVALIDCALL; */
-    }
-
-    if (This == This->Device->backBuffer || This == This->Device->renderTarget || This == This->Device->frontBuffer || This->Device->depthStencilBuffer) {
-      if (This == This->Device->backBuffer) {
-	TRACE("(%p, backBuffer) : rect@%p flags(%08lx), output lockedRect@%p, memory@%p\n", This, pRect, Flags, pLockedRect, This->allocatedMemory);
-      } else if (This == This->Device->frontBuffer) {
-	TRACE("(%p, frontBuffer) : rect@%p flags(%08lx), output lockedRect@%p, memory@%p\n", This, pRect, Flags, pLockedRect, This->allocatedMemory);
-      } else if (This == This->Device->renderTarget) {
-	TRACE("(%p, renderTarget) : rect@%p flags(%08lx), output lockedRect@%p, memory@%p\n", This, pRect, Flags, pLockedRect, This->allocatedMemory);
-      } else if (This == This->Device->depthStencilBuffer) {
-	TRACE("(%p, stencilBuffer) : rect@%p flags(%08lx), output lockedRect@%p, memory@%p\n", This, pRect, Flags, pLockedRect, This->allocatedMemory);
-      }
-    } else {
-      TRACE("(%p) : rect@%p flags(%08lx), output lockedRect@%p, memory@%p\n", This, pRect, Flags, pLockedRect, This->allocatedMemory);
-    }
-
-    /* DXTn formats don't have exact pitches as they are to the new row of blocks,
-         where each block is 4x4 pixels, 8 bytes (dxt1) and 16 bytes (dxt2/3/4/5)      
-          ie pitch = (width/4) * bytes per block                                  */
-    if (This->myDesc.Format == D3DFMT_DXT1) /* DXT1 is 8 bytes per block */
-        pLockedRect->Pitch = (This->myDesc.Width/4) * 8;
-    else if (This->myDesc.Format == D3DFMT_DXT2 || This->myDesc.Format == D3DFMT_DXT3 ||
-             This->myDesc.Format == D3DFMT_DXT4 || This->myDesc.Format == D3DFMT_DXT5) /* DXT2/3/4/5 is 16 bytes per block */
-        pLockedRect->Pitch = (This->myDesc.Width/4) * 16;
-    else
-        pLockedRect->Pitch = This->bytesPerPixel * This->myDesc.Width;  /* Bytes / row */    
-
-    if (NULL == pRect) {
-      pLockedRect->pBits = This->allocatedMemory;
-      This->lockedRect.left   = 0;
-      This->lockedRect.top    = 0;
-      This->lockedRect.right  = This->myDesc.Width;
-      This->lockedRect.bottom = This->myDesc.Height;
-      TRACE("Locked Rect (%p) = l %ld, t %ld, r %ld, b %ld\n", &This->lockedRect, This->lockedRect.left, This->lockedRect.top, This->lockedRect.right, This->lockedRect.bottom);
-    } else {
-      TRACE("Lock Rect (%p) = l %ld, t %ld, r %ld, b %ld\n", pRect, pRect->left, pRect->top, pRect->right, pRect->bottom);
-
-      if (This->myDesc.Format == D3DFMT_DXT1) { /* DXT1 is half byte per pixel */
-          pLockedRect->pBits = This->allocatedMemory + (pLockedRect->Pitch * pRect->top) + ((pRect->left * This->bytesPerPixel/2));
-      } else {
-          pLockedRect->pBits = This->allocatedMemory + (pLockedRect->Pitch * pRect->top) + (pRect->left * This->bytesPerPixel);
-      }
-      This->lockedRect.left   = pRect->left;
-      This->lockedRect.top    = pRect->top;
-      This->lockedRect.right  = pRect->right;
-      This->lockedRect.bottom = pRect->bottom;
-    }
-
-
-    if (0 == This->myDesc.Usage) { /* classic surface */
-
-      /* Nothing to do ;) */
-
-    } else if (D3DUSAGE_RENDERTARGET & This->myDesc.Usage && !(Flags&D3DLOCK_DISCARD)) { /* render surfaces */
-      
-      if (This == This->Device->backBuffer || This == This->Device->renderTarget || This == This->Device->frontBuffer) {
-	GLint  prev_store;
-	GLint  prev_read;
-	
-	ENTER_GL();
-
-	/**
-	 * for render->surface copy begin to begin of allocatedMemory
-	 * unlock can be more easy
-	 */
-	pLockedRect->pBits = This->allocatedMemory;
-	
-	glFlush();
-	vcheckGLcall("glFlush");
-	glGetIntegerv(GL_READ_BUFFER, &prev_read);
-	vcheckGLcall("glIntegerv");
-	glGetIntegerv(GL_PACK_SWAP_BYTES, &prev_store);
-	vcheckGLcall("glIntegerv");
-
-	if (This == This->Device->backBuffer) {
-	  glReadBuffer(GL_BACK);
-	} else if (This == This->Device->frontBuffer || This == This->Device->renderTarget) {
-	  glReadBuffer(GL_FRONT);
-	} else if (This == This->Device->depthStencilBuffer) {
-	  ERR("Stencil Buffer lock unsupported for now\n");
-	}
-	vcheckGLcall("glReadBuffer");
-
-	{
-	  long j;
-          GLenum format = D3DFmt2GLFmt(This->Device, This->myDesc.Format);
-          GLenum type   = D3DFmt2GLType(This->Device, This->myDesc.Format);
-	  for (j = This->lockedRect.top; j < This->lockedRect.bottom - This->lockedRect.top; ++j) {
-	    glReadPixels(This->lockedRect.left, 
-			 This->lockedRect.bottom - j - 1, 
-			 This->lockedRect.right - This->lockedRect.left, 
-			 1,
-			 format, 
-                         type, 
-                         (char *)pLockedRect->pBits + (pLockedRect->Pitch * (j-This->lockedRect.top)));
-	    vcheckGLcall("glReadPixels");
-	  }
-	}
-
-	glReadBuffer(prev_read);
-	vcheckGLcall("glReadBuffer");
-
-	LEAVE_GL();
-
-      } else {
-	FIXME("unsupported locking to Rendering surface surf@%p usage(%lu)\n", This, This->myDesc.Usage);
-      }
-
-    } else if (D3DUSAGE_DEPTHSTENCIL & This->myDesc.Usage) { /* stencil surfaces */
-
-      FIXME("TODO stencil depth surface locking surf@%p usage(%lu)\n", This, This->myDesc.Usage);
-
-    } else {
-      FIXME("unsupported locking to surface surf@%p usage(%lu)\n", This, This->myDesc.Usage);
-    }
-
-    if (Flags & (D3DLOCK_NO_DIRTY_UPDATE | D3DLOCK_READONLY)) {
-      /* Don't dirtify */
-    } else {
-      /**
-       * Dirtify on lock
-       * as seen in msdn docs
-       */
-      IDirect3DSurface8Impl_AddDirtyRect(iface, &This->lockedRect);
-
-      /** Dirtify Container if needed */
-      if (NULL != This->Container) {
-	IDirect3DBaseTexture8* cont = NULL;
-	hr = IUnknown_QueryInterface(This->Container, &IID_IDirect3DBaseTexture8, (void**) &cont);
-	
-	if (SUCCEEDED(hr) && NULL != cont) {
-	  IDirect3DBaseTexture8Impl_SetDirty(cont, TRUE);
-	  IDirect3DBaseTexture8_Release(cont);
-	  cont = NULL;
-	}
-      }
-    }
-
-    TRACE("returning memory@%p, pitch(%d) dirtyfied(%d)\n", pLockedRect->pBits, pLockedRect->Pitch, This->Dirty);
-
-    This->locked = TRUE;
-    return D3D_OK;
-}
-
-HRESULT WINAPI IDirect3DSurface8Impl_UnlockRect(LPDIRECT3DSURFACE8 iface) {
-    GLint skipBytes = 0;
-    IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-
-    if (FALSE == This->locked) {
-      ERR("trying to Unlock an unlocked surf@%p\n", This);  
-      return D3DERR_INVALIDCALL;
-    }
-
-    if (This == This->Device->backBuffer || This == This->Device->frontBuffer || This->Device->depthStencilBuffer || This == This->Device->renderTarget) {
-      if (This == This->Device->backBuffer) {
-	TRACE("(%p, backBuffer) : dirtyfied(%d)\n", This, This->Dirty);
-      } else if (This == This->Device->frontBuffer) {
-	TRACE("(%p, frontBuffer) : dirtyfied(%d)\n", This, This->Dirty);
-      } else if (This == This->Device->depthStencilBuffer) {
-	TRACE("(%p, stencilBuffer) : dirtyfied(%d)\n", This, This->Dirty);
-      } else if (This == This->Device->renderTarget) {
-	TRACE("(%p, renderTarget) : dirtyfied(%d)\n", This, This->Dirty);
-      }
-    } else {
-      TRACE("(%p) : dirtyfied(%d)\n", This, This->Dirty);
-    }
-
-    if (FALSE == This->Dirty) {
-      TRACE("(%p) : Not Dirtified so nothing to do, return now\n", This);
-      goto unlock_end;
-    }
-
-    if (0 == This->myDesc.Usage) { /* classic surface */
-      /**
-       * nothing to do
-       * waiting to reload the surface via IDirect3DDevice8::UpdateTexture
-       */
-    } else if (D3DUSAGE_RENDERTARGET & This->myDesc.Usage) { /* render surfaces */
-
-      if (This == This->Device->backBuffer || This == This->Device->frontBuffer || This == This->Device->renderTarget) {
-	GLint  prev_store;
-	GLint  prev_draw;
-	GLint  prev_rasterpos[4];
-
-	ENTER_GL();
-	
-	glFlush();
-	vcheckGLcall("glFlush");
-	glGetIntegerv(GL_DRAW_BUFFER, &prev_draw);
-	vcheckGLcall("glIntegerv");
-	glGetIntegerv(GL_PACK_SWAP_BYTES, &prev_store);
-	vcheckGLcall("glIntegerv");
-	glGetIntegerv(GL_CURRENT_RASTER_POSITION, &prev_rasterpos[0]);
-	vcheckGLcall("glIntegerv");
-        glPixelZoom(1.0, -1.0);
-        vcheckGLcall("glPixelZoom");
-
-        /* glDrawPixels transforms the raster position as though it was a vertex -
-           we want to draw at screen position 0,0 - Set up ortho (rhw) mode as   
-           per drawprim (and leave set - it will sort itself out due to last_was_rhw */
-        if (!This->Device->last_was_rhw) {
-
-            double X, Y, height, width, minZ, maxZ;
-            This->Device->last_was_rhw = TRUE;
-
-            /* Transformed already into viewport coordinates, so we do not need transform
-               matrices. Reset all matrices to identity and leave the default matrix in world 
-               mode.                                                                         */
-            glMatrixMode(GL_MODELVIEW);
-            checkGLcall("glMatrixMode");
-            glLoadIdentity();
-            checkGLcall("glLoadIdentity");
-
-            glMatrixMode(GL_PROJECTION);
-            checkGLcall("glMatrixMode");
-            glLoadIdentity();
-            checkGLcall("glLoadIdentity");
-
-            /* Set up the viewport to be full viewport */
-            X      = This->Device->StateBlock->viewport.X;
-            Y      = This->Device->StateBlock->viewport.Y;
-            height = This->Device->StateBlock->viewport.Height;
-            width  = This->Device->StateBlock->viewport.Width;
-            minZ   = This->Device->StateBlock->viewport.MinZ;
-            maxZ   = This->Device->StateBlock->viewport.MaxZ;
-            TRACE("Calling glOrtho with %f, %f, %f, %f\n", width, height, -minZ, -maxZ);
-            glOrtho(X, X + width, Y + height, Y, -minZ, -maxZ);
-            checkGLcall("glOrtho");
-
-            /* Window Coord 0 is the middle of the first pixel, so translate by half
-               a pixel (See comment above glTranslate below)                         */
-            glTranslatef(0.5, 0.5, 0);
-            checkGLcall("glTranslatef(0.5, 0.5, 0)");
-        }
-
-	if (This == This->Device->backBuffer) {
-	  glDrawBuffer(GL_BACK);
-	} else if (This == This->Device->frontBuffer || This == This->Device->renderTarget) {
-	  glDrawBuffer(GL_FRONT);
-	}
-	vcheckGLcall("glDrawBuffer");
-
-    /* If not fullscreen, we need to skip a number of bytes to find the next row of data */
-    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &skipBytes);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, This->myDesc.Width);
-
-    /* And back buffers are not blended */
-    glDisable(GL_BLEND);
-
-	glRasterPos3i(This->lockedRect.left, This->lockedRect.top, 1);
-	vcheckGLcall("glRasterPos2f");
-	switch (This->myDesc.Format) {
-	case D3DFMT_R5G6B5:
-	  {
-	    glDrawPixels(This->lockedRect.right - This->lockedRect.left, (This->lockedRect.bottom - This->lockedRect.top)-1,
-			 GL_RGB, GL_UNSIGNED_SHORT_5_6_5, This->allocatedMemory);
-	    vcheckGLcall("glDrawPixels");
-	  }
-	  break;
-	case D3DFMT_R8G8B8:
-	  {
-	    glDrawPixels(This->lockedRect.right - This->lockedRect.left, (This->lockedRect.bottom - This->lockedRect.top)-1,
-			 GL_RGB, GL_UNSIGNED_BYTE, This->allocatedMemory);
-	    vcheckGLcall("glDrawPixels");
-	  }
-	  break;
-	case D3DFMT_A8R8G8B8:
-	  {
-	    glPixelStorei(GL_PACK_SWAP_BYTES, TRUE);
-	    vcheckGLcall("glPixelStorei");
-	    glDrawPixels(This->lockedRect.right - This->lockedRect.left, (This->lockedRect.bottom - This->lockedRect.top)-1,
-			 GL_BGRA, GL_UNSIGNED_BYTE, This->allocatedMemory);
-	    vcheckGLcall("glDrawPixels");
-	    glPixelStorei(GL_PACK_SWAP_BYTES, prev_store);
-	    vcheckGLcall("glPixelStorei");
-	  }
-	  break;
-	default:
-	  FIXME("Unsupported Format %u in locking func\n", This->myDesc.Format);
-	}
-
-        glPixelZoom(1.0,1.0);
-        vcheckGLcall("glPixelZoom");
-	glDrawBuffer(prev_draw);
-	vcheckGLcall("glDrawBuffer");
-	glRasterPos3iv(&prev_rasterpos[0]);
-	vcheckGLcall("glRasterPos3iv");
-
-    /* Reset to previous pack row length / blending state */
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, skipBytes);
-    if (This->Device->StateBlock->renderstate[D3DRS_ALPHABLENDENABLE]) glEnable(GL_BLEND);
-
-	LEAVE_GL();
-
-	/** restore clean dirty state */
-	IDirect3DSurface8Impl_CleanDirtyRect(iface);
-
-      } else {
-	FIXME("unsupported unlocking to Rendering surface surf@%p usage(%lu)\n", This, This->myDesc.Usage);
-      }
-
-    } else if (D3DUSAGE_DEPTHSTENCIL & This->myDesc.Usage) { /* stencil surfaces */
-    
-      if (This == This->Device->depthStencilBuffer) {
-	FIXME("TODO stencil depth surface unlocking surf@%p usage(%lu)\n", This, This->myDesc.Usage);
-      } else {
-	FIXME("unsupported unlocking to StencilDepth surface surf@%p usage(%lu)\n", This, This->myDesc.Usage);
-      }
-
-    } else {
-      FIXME("unsupported unlocking to surface surf@%p usage(%lu)\n", This, This->myDesc.Usage);
-    }
-
-unlock_end:
-    This->locked = FALSE;
-    memset(&This->lockedRect, 0, sizeof(RECT));
-    return D3D_OK;
-}
-
-
-const IDirect3DSurface8Vtbl Direct3DSurface8_Vtbl =
+static ULONG WINAPI d3d8_surface_AddRef(IDirect3DSurface8 *iface)
 {
-    IDirect3DSurface8Impl_QueryInterface,
-    IDirect3DSurface8Impl_AddRef,
-    IDirect3DSurface8Impl_Release,
-    IDirect3DSurface8Impl_GetDevice,
-    IDirect3DSurface8Impl_SetPrivateData,
-    IDirect3DSurface8Impl_GetPrivateData,
-    IDirect3DSurface8Impl_FreePrivateData,
-    IDirect3DSurface8Impl_GetContainer,
-    IDirect3DSurface8Impl_GetDesc,
-    IDirect3DSurface8Impl_LockRect,
-    IDirect3DSurface8Impl_UnlockRect,
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    ULONG refcount;
+
+    TRACE("iface %p.\n", iface);
+
+    if (surface->texture)
+    {
+        TRACE("Forwarding to %p.\n", surface->texture);
+        return IDirect3DBaseTexture8_AddRef(&surface->texture->IDirect3DBaseTexture8_iface);
+    }
+
+    refcount = InterlockedIncrement(&surface->resource.refcount);
+    TRACE("%p increasing refcount to %u.\n", iface, refcount);
+
+    if (refcount == 1)
+    {
+        if (surface->parent_device)
+            IDirect3DDevice8_AddRef(surface->parent_device);
+        wined3d_mutex_lock();
+        if (surface->wined3d_rtv)
+            wined3d_rendertarget_view_incref(surface->wined3d_rtv);
+        wined3d_texture_incref(surface->wined3d_texture);
+        wined3d_mutex_unlock();
+    }
+
+    return refcount;
+}
+
+static ULONG WINAPI d3d8_surface_Release(IDirect3DSurface8 *iface)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    ULONG refcount;
+
+    TRACE("iface %p.\n", iface);
+
+    if (surface->texture)
+    {
+        TRACE("Forwarding to %p.\n", surface->texture);
+        return IDirect3DBaseTexture8_Release(&surface->texture->IDirect3DBaseTexture8_iface);
+    }
+
+    if (!surface->resource.refcount)
+    {
+        WARN("Surface does not have any references.\n");
+        return 0;
+    }
+
+    refcount = InterlockedDecrement(&surface->resource.refcount);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
+
+    if (!refcount)
+    {
+        IDirect3DDevice8 *parent_device = surface->parent_device;
+
+        wined3d_mutex_lock();
+        if (surface->wined3d_rtv)
+            wined3d_rendertarget_view_decref(surface->wined3d_rtv);
+        wined3d_texture_decref(surface->wined3d_texture);
+        wined3d_mutex_unlock();
+
+        if (parent_device)
+            IDirect3DDevice8_Release(parent_device);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI d3d8_surface_GetDevice(IDirect3DSurface8 *iface, IDirect3DDevice8 **device)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+
+    TRACE("iface %p, device %p.\n", iface, device);
+
+    if (surface->texture)
+        return IDirect3DBaseTexture8_GetDevice(&surface->texture->IDirect3DBaseTexture8_iface, device);
+
+    *device = surface->parent_device;
+    IDirect3DDevice8_AddRef(*device);
+
+    TRACE("Returning device %p.\n", *device);
+
+    return D3D_OK;
+}
+
+static HRESULT WINAPI d3d8_surface_SetPrivateData(IDirect3DSurface8 *iface, REFGUID guid,
+        const void *data, DWORD data_size, DWORD flags)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    TRACE("iface %p, guid %s, data %p, data_size %u, flags %#x.\n",
+            iface, debugstr_guid(guid), data, data_size, flags);
+
+    return d3d8_resource_set_private_data(&surface->resource, guid, data, data_size, flags);
+}
+
+static HRESULT WINAPI d3d8_surface_GetPrivateData(IDirect3DSurface8 *iface, REFGUID guid,
+        void *data, DWORD *data_size)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    TRACE("iface %p, guid %s, data %p, data_size %p.\n",
+            iface, debugstr_guid(guid), data, data_size);
+
+    return d3d8_resource_get_private_data(&surface->resource, guid, data, data_size);
+}
+
+static HRESULT WINAPI d3d8_surface_FreePrivateData(IDirect3DSurface8 *iface, REFGUID guid)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    TRACE("iface %p, guid %s.\n", iface, debugstr_guid(guid));
+
+    return d3d8_resource_free_private_data(&surface->resource, guid);
+}
+
+static HRESULT WINAPI d3d8_surface_GetContainer(IDirect3DSurface8 *iface, REFIID riid, void **container)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    HRESULT hr;
+
+    TRACE("iface %p, riid %s, container %p.\n", iface, debugstr_guid(riid), container);
+
+    if (!surface->container)
+        return E_NOINTERFACE;
+
+    hr = IUnknown_QueryInterface(surface->container, riid, container);
+
+    TRACE("Returning %p.\n", *container);
+
+    return hr;
+}
+
+static HRESULT WINAPI d3d8_surface_GetDesc(IDirect3DSurface8 *iface, D3DSURFACE_DESC *desc)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    struct wined3d_sub_resource_desc wined3d_desc;
+
+    TRACE("iface %p, desc %p.\n", iface, desc);
+
+    wined3d_mutex_lock();
+    wined3d_texture_get_sub_resource_desc(surface->wined3d_texture, surface->sub_resource_idx, &wined3d_desc);
+    wined3d_mutex_unlock();
+
+    desc->Format = d3dformat_from_wined3dformat(wined3d_desc.format);
+    desc->Type = D3DRTYPE_SURFACE;
+    desc->Usage = d3dusage_from_wined3dusage(wined3d_desc.usage, wined3d_desc.bind_flags);
+    desc->Pool = d3dpool_from_wined3daccess(wined3d_desc.access, wined3d_desc.usage);
+    desc->Size = wined3d_desc.size;
+    desc->MultiSampleType = wined3d_desc.multisample_type;
+    desc->Width = wined3d_desc.width;
+    desc->Height = wined3d_desc.height;
+
+    return D3D_OK;
+}
+
+static HRESULT WINAPI d3d8_surface_LockRect(IDirect3DSurface8 *iface,
+        D3DLOCKED_RECT *locked_rect, const RECT *rect, DWORD flags)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    struct wined3d_box box;
+    struct wined3d_map_desc map_desc;
+    HRESULT hr;
+    D3DRESOURCETYPE type;
+
+    TRACE("iface %p, locked_rect %p, rect %s, flags %#x.\n",
+            iface, locked_rect, wine_dbgstr_rect(rect), flags);
+
+    wined3d_mutex_lock();
+
+    if (surface->texture)
+        type = IDirect3DBaseTexture8_GetType(&surface->texture->IDirect3DBaseTexture8_iface);
+    else
+        type = D3DRTYPE_SURFACE;
+
+    if (rect)
+    {
+        D3DSURFACE_DESC desc;
+        IDirect3DSurface8_GetDesc(iface, &desc);
+
+        if (type != D3DRTYPE_TEXTURE
+                && ((rect->left < 0)
+                || (rect->top < 0)
+                || (rect->left >= rect->right)
+                || (rect->top >= rect->bottom)
+                || (rect->right > desc.Width)
+                || (rect->bottom > desc.Height)))
+        {
+            WARN("Trying to lock an invalid rectangle, returning D3DERR_INVALIDCALL\n");
+            wined3d_mutex_unlock();
+
+            locked_rect->Pitch = 0;
+            locked_rect->pBits = NULL;
+            return D3DERR_INVALIDCALL;
+        }
+        wined3d_box_set(&box, rect->left, rect->top, rect->right, rect->bottom, 0, 1);
+    }
+
+    hr = wined3d_resource_map(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx,
+            &map_desc, rect ? &box : NULL, wined3dmapflags_from_d3dmapflags(flags));
+    wined3d_mutex_unlock();
+
+    if (SUCCEEDED(hr))
+    {
+        locked_rect->Pitch = map_desc.row_pitch;
+        locked_rect->pBits = map_desc.data;
+    }
+    else if (type != D3DRTYPE_TEXTURE)
+    {
+        locked_rect->Pitch = 0;
+        locked_rect->pBits = NULL;
+    }
+
+    if (hr == E_INVALIDARG)
+        return D3DERR_INVALIDCALL;
+    return hr;
+}
+
+static HRESULT WINAPI d3d8_surface_UnlockRect(IDirect3DSurface8 *iface)
+{
+    struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
+    HRESULT hr;
+
+    TRACE("iface %p.\n", iface);
+
+    wined3d_mutex_lock();
+    hr = wined3d_resource_unmap(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx);
+    wined3d_mutex_unlock();
+
+    if (hr == WINEDDERR_NOTLOCKED)
+    {
+        D3DRESOURCETYPE type;
+        if (surface->texture)
+            type = IDirect3DBaseTexture8_GetType(&surface->texture->IDirect3DBaseTexture8_iface);
+        else
+            type = D3DRTYPE_SURFACE;
+        hr = type == D3DRTYPE_TEXTURE ? D3D_OK : D3DERR_INVALIDCALL;
+    }
+    return hr;
+}
+
+static const IDirect3DSurface8Vtbl d3d8_surface_vtbl =
+{
+    /* IUnknown */
+    d3d8_surface_QueryInterface,
+    d3d8_surface_AddRef,
+    d3d8_surface_Release,
+    /* IDirect3DResource8 */
+    d3d8_surface_GetDevice,
+    d3d8_surface_SetPrivateData,
+    d3d8_surface_GetPrivateData,
+    d3d8_surface_FreePrivateData,
+    /* IDirect3DSurface8 */
+    d3d8_surface_GetContainer,
+    d3d8_surface_GetDesc,
+    d3d8_surface_LockRect,
+    d3d8_surface_UnlockRect,
 };
 
-
-HRESULT WINAPI IDirect3DSurface8Impl_LoadTexture(LPDIRECT3DSURFACE8 iface, UINT gl_target, UINT gl_level) {
-  IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-
-  if (This->inTexture)
-    return D3D_OK;
-  if (This->inPBuffer) {
-    ENTER_GL();
-    if (gl_level != 0)
-      FIXME("Surface in texture is only supported for level 0\n");
-    else if (This->myDesc.Format == D3DFMT_P8 || This->myDesc.Format == D3DFMT_A8P8 ||
-        This->myDesc.Format == D3DFMT_DXT1 || This->myDesc.Format == D3DFMT_DXT2 ||
-        This->myDesc.Format == D3DFMT_DXT3 || This->myDesc.Format == D3DFMT_DXT4 ||
-        This->myDesc.Format == D3DFMT_DXT5)
-      FIXME("Format %d not supported\n", This->myDesc.Format);
-    else {
-	glCopyTexImage2D(gl_target,
-			 0,
-			 D3DFmt2GLIntFmt(This->Device,
-		         This->myDesc.Format),
-			 0,
-			 0,/*This->surfaces[j][i]->myDesc.Height-1,*/
-			 This->myDesc.Width,
-			 This->myDesc.Height,
-			 0);
-	TRACE("Updating target %d\n", gl_target);
-	This->inTexture = TRUE;
-    }
-    LEAVE_GL();
-    return D3D_OK;
-  }
-  
-  if ((This->myDesc.Format == D3DFMT_P8 || This->myDesc.Format == D3DFMT_A8P8) && 
-      !GL_SUPPORT_DEV(EXT_PALETTED_TEXTURE, This->Device)) {
-    /**
-     * wanted a paletted texture and not really support it in HW 
-     * so software emulation code begin
-     */
-    UINT i;
-    PALETTEENTRY* pal = This->Device->palettes[This->Device->currentPalette];
-    VOID* surface = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, This->myDesc.Width * This->myDesc.Height * sizeof(DWORD));
-    BYTE* dst = surface;
-    BYTE* src = (BYTE*) This->allocatedMemory;
-          
-    for (i = 0; i < This->myDesc.Width * This->myDesc.Height; i++) {
-      BYTE color = *src++;
-      *dst++ = pal[color].peRed;
-      *dst++ = pal[color].peGreen;
-      *dst++ = pal[color].peBlue;
-      if (This->myDesc.Format == D3DFMT_A8P8)
-	*dst++ = pal[color].peFlags; 
-      else
-	*dst++ = 0xFF; 
-    }
-
-    ENTER_GL();
-    
-    TRACE("Calling glTexImage2D %x i=%d, intfmt=%x, w=%d, h=%d,0=%d, glFmt=%x, glType=%x, Mem=%p\n",
-	  gl_target,
-	  gl_level, 
-	  GL_RGBA,
-	  This->myDesc.Width, 
-	  This->myDesc.Height, 
-	  0, 
-	  GL_RGBA,
-	  GL_UNSIGNED_BYTE,
-	  surface);
-    glTexImage2D(gl_target,
-		 gl_level, 
-		 GL_RGBA,
-		 This->myDesc.Width,
-		 This->myDesc.Height,
-		 0,
-		 GL_RGBA,
-		 GL_UNSIGNED_BYTE,
-		 surface);
-    checkGLcall("glTexImage2D");
-    HeapFree(GetProcessHeap(), 0, surface);
-
-    LEAVE_GL();
-
-    return D3D_OK;    
-  }
-
-  if (This->myDesc.Format == D3DFMT_DXT1 || 
-      This->myDesc.Format == D3DFMT_DXT2 || 
-      This->myDesc.Format == D3DFMT_DXT3 || 
-      This->myDesc.Format == D3DFMT_DXT4 || 
-      This->myDesc.Format == D3DFMT_DXT5) {
-    if (GL_SUPPORT_DEV(EXT_TEXTURE_COMPRESSION_S3TC, This->Device)) {
-      TRACE("Calling glCompressedTexImage2D %x i=%d, intfmt=%x, w=%d, h=%d,0=%d, sz=%d, Mem=%p\n",
-	    gl_target, 
-	    gl_level, 
-	    D3DFmt2GLIntFmt(This->Device, This->myDesc.Format), 
-	    This->myDesc.Width, 
-	    This->myDesc.Height, 
-	    0, 
-	    This->myDesc.Size,
-	    This->allocatedMemory);
-      
-      ENTER_GL();
-
-      GL_EXTCALL_DEV(glCompressedTexImage2DARB, This->Device)(gl_target, 
-							      gl_level, 
-							      D3DFmt2GLIntFmt(This->Device, This->myDesc.Format),
-							      This->myDesc.Width,
-							      This->myDesc.Height,
-							      0,
-							      This->myDesc.Size,
-							      This->allocatedMemory);
-      checkGLcall("glCommpressedTexTexImage2D");
-
-      LEAVE_GL();
-    } else {
-      FIXME("Using DXT1/3/5 without advertized support\n");
-    }
-  } else {
-
-    TRACE("Calling glTexImage2D %x i=%d, d3dfmt=%s, intfmt=%x, w=%d, h=%d,0=%d, glFmt=%x, glType=%x, Mem=%p\n",
-	  gl_target, 
-	  gl_level, 
-	  debug_d3dformat(This->myDesc.Format),
-	  D3DFmt2GLIntFmt(This->Device, This->myDesc.Format), 
-	  This->myDesc.Width, 
-	  This->myDesc.Height, 
-	  0, 
-	  D3DFmt2GLFmt(This->Device, This->myDesc.Format), 
-	  D3DFmt2GLType(This->Device, This->myDesc.Format),
-	  This->allocatedMemory);
-
-    ENTER_GL();
-
-    glTexImage2D(gl_target, 
-		 gl_level,
-		 D3DFmt2GLIntFmt(This->Device, This->myDesc.Format),
-		 This->myDesc.Width,
-		 This->myDesc.Height,
-		 0,
-		 D3DFmt2GLFmt(This->Device, This->myDesc.Format),
-		 D3DFmt2GLType(This->Device, This->myDesc.Format),
-		 This->allocatedMemory);
-    checkGLcall("glTexImage2D");
-
-    LEAVE_GL();
-
-#if 0
-    {
-      static unsigned int gen = 0;
-      char buffer[4096];
-      ++gen;
-      if ((gen % 10) == 0) {
-	snprintf(buffer, sizeof(buffer), "/tmp/surface%p_type%u_level%u_%u.ppm", This, gl_target, gl_level, gen);
-	IDirect3DSurface8Impl_SaveSnapshot((LPDIRECT3DSURFACE8) This, buffer);
-      }
-      /*
-       * debugging crash code
-      if (gen == 250) {
-	void** test = NULL;
-	*test = 0;
-      }
-      */
-    }
-#endif
-  }
-
-  return D3D_OK;
+static void STDMETHODCALLTYPE surface_wined3d_object_destroyed(void *parent)
+{
+    struct d3d8_surface *surface = parent;
+    d3d8_resource_cleanup(&surface->resource);
+    heap_free(surface);
 }
 
-#include <errno.h>
-HRESULT WINAPI IDirect3DSurface8Impl_SaveSnapshot(LPDIRECT3DSURFACE8 iface, const char* filename) {
-  FILE* f = NULL;
-  ULONG i;
-  IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
+static const struct wined3d_parent_ops d3d8_surface_wined3d_parent_ops =
+{
+    surface_wined3d_object_destroyed,
+};
 
-  f = fopen(filename, "w+");
-  if (NULL == f) {
-    ERR("opening of %s failed with: %s\n", filename, strerror(errno));
-    return D3DERR_INVALIDCALL;
-  }
+void surface_init(struct d3d8_surface *surface, struct wined3d_texture *wined3d_texture, unsigned int sub_resource_idx,
+        const struct wined3d_parent_ops **parent_ops)
+{
+    IDirect3DBaseTexture8 *texture;
 
-  TRACE("opened %s with format %s\n", filename, debug_d3dformat(This->myDesc.Format));
+    surface->IDirect3DSurface8_iface.lpVtbl = &d3d8_surface_vtbl;
+    d3d8_resource_init(&surface->resource);
+    surface->resource.refcount = 0;
+    list_init(&surface->rtv_entry);
+    surface->container = wined3d_texture_get_parent(wined3d_texture);
+    surface->wined3d_texture = wined3d_texture;
+    surface->sub_resource_idx = sub_resource_idx;
 
-  fprintf(f, "P6\n%u %u\n255\n", This->myDesc.Width, This->myDesc.Height);
-  switch (This->myDesc.Format) {
-  case D3DFMT_X8R8G8B8:
-  case D3DFMT_A8R8G8B8:
+    if (surface->container && SUCCEEDED(IUnknown_QueryInterface(surface->container,
+            &IID_IDirect3DBaseTexture8, (void **)&texture)))
     {
-      DWORD color;
-      for (i = 0; i < This->myDesc.Width * This->myDesc.Height; i++) {
-	color = ((DWORD*) This->allocatedMemory)[i];
-	fputc((color >> 16) & 0xFF, f);
-	fputc((color >>  8) & 0xFF, f);
-	fputc((color >>  0) & 0xFF, f);
-      }
+        surface->texture = unsafe_impl_from_IDirect3DBaseTexture8(texture);
+        IDirect3DBaseTexture8_Release(texture);
     }
-    break;
-  case D3DFMT_R8G8B8:
-    {
-      BYTE* color;
-      for (i = 0; i < This->myDesc.Width * This->myDesc.Height; i++) {
-	color = ((BYTE*) This->allocatedMemory) + (3 * i);
-	fputc((color[0]) & 0xFF, f);
-	fputc((color[1]) & 0xFF, f);
-	fputc((color[2]) & 0xFF, f);
-      }
-    }
-    break;
-  case D3DFMT_A1R5G5B5: 
-    {
-      WORD color;
-      for (i = 0; i < This->myDesc.Width * This->myDesc.Height; i++) {
-	color = ((WORD*) This->allocatedMemory)[i];
-	fputc(((color >> 10) & 0x1F) * 255 / 31, f);
-	fputc(((color >>  5) & 0x1F) * 255 / 31, f);
-	fputc(((color >>  0) & 0x1F) * 255 / 31, f);
-      }
-    }
-    break;
-  case D3DFMT_A4R4G4B4:
-    {
-      WORD color;
-      for (i = 0; i < This->myDesc.Width * This->myDesc.Height; i++) {
-	color = ((WORD*) This->allocatedMemory)[i];
-	fputc(((color >>  8) & 0x0F) * 255 / 15, f);
-	fputc(((color >>  4) & 0x0F) * 255 / 15, f);
-	fputc(((color >>  0) & 0x0F) * 255 / 15, f);
-      }
-    }
-    break;
 
-  case D3DFMT_R5G6B5: 
-    {
-      WORD color;
-      for (i = 0; i < This->myDesc.Width * This->myDesc.Height; i++) {
-	color = ((WORD*) This->allocatedMemory)[i];
-	fputc(((color >> 11) & 0x1F) * 255 / 31, f);
-	fputc(((color >>  5) & 0x3F) * 255 / 63, f);
-	fputc(((color >>  0) & 0x1F) * 255 / 31, f);
-      }
-    }
-    break;
-  default: 
-    FIXME("Unimplemented dump mode format(%u,%s)\n", This->myDesc.Format, debug_d3dformat(This->myDesc.Format));
-  }
-  fclose(f);
-  return D3D_OK;
+    *parent_ops = &d3d8_surface_wined3d_parent_ops;
 }
 
-HRESULT WINAPI IDirect3DSurface8Impl_CleanDirtyRect(LPDIRECT3DSURFACE8 iface) {
-  IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-  This->Dirty = FALSE;
-  This->dirtyRect.left   = This->myDesc.Width;
-  This->dirtyRect.top    = This->myDesc.Height;
-  This->dirtyRect.right  = 0;
-  This->dirtyRect.bottom = 0;
-  return D3D_OK;
+static void STDMETHODCALLTYPE view_wined3d_object_destroyed(void *parent)
+{
+    struct d3d8_surface *surface = parent;
+
+    /* If the surface reference count drops to zero, we release our reference
+     * to the view, but don't clear the pointer yet, in case e.g. a
+     * GetRenderTarget() call brings the surface back before the view is
+     * actually destroyed. When the view is destroyed, we need to clear the
+     * pointer, or a subsequent surface AddRef() would reference it again.
+     *
+     * This is safe because as long as the view still has a reference to the
+     * texture, the surface is also still alive, and we're called before the
+     * view releases that reference. */
+    surface->wined3d_rtv = NULL;
+    list_remove(&surface->rtv_entry);
 }
 
-/**
- * Raphael:
- *   very stupid way to handle multiple dirty rects but it works :)
- */
-extern HRESULT WINAPI IDirect3DSurface8Impl_AddDirtyRect(LPDIRECT3DSURFACE8 iface, CONST RECT* pDirtyRect) {
-  IDirect3DSurface8Impl *This = (IDirect3DSurface8Impl *)iface;
-  This->Dirty = TRUE;
-  if (NULL != pDirtyRect) {
-    This->dirtyRect.left   = min(This->dirtyRect.left,   pDirtyRect->left);
-    This->dirtyRect.top    = min(This->dirtyRect.top,    pDirtyRect->top);
-    This->dirtyRect.right  = max(This->dirtyRect.right,  pDirtyRect->right);
-    This->dirtyRect.bottom = max(This->dirtyRect.bottom, pDirtyRect->bottom);
-  } else {
-    This->dirtyRect.left   = 0;
-    This->dirtyRect.top    = 0;
-    This->dirtyRect.right  = This->myDesc.Width;
-    This->dirtyRect.bottom = This->myDesc.Height;
-  }
-  return D3D_OK;
+static const struct wined3d_parent_ops d3d8_view_wined3d_parent_ops =
+{
+    view_wined3d_object_destroyed,
+};
+
+struct d3d8_device *d3d8_surface_get_device(const struct d3d8_surface *surface)
+{
+    IDirect3DDevice8 *device;
+    device = surface->texture ? surface->texture->parent_device : surface->parent_device;
+    return impl_from_IDirect3DDevice8(device);
+}
+
+struct wined3d_rendertarget_view *d3d8_surface_acquire_rendertarget_view(struct d3d8_surface *surface)
+{
+    HRESULT hr;
+
+    /* The surface reference count can be equal to 0 when this function is
+     * called. In order to properly manage the render target view reference
+     * count, we temporarily increment the surface reference count. */
+    d3d8_surface_AddRef(&surface->IDirect3DSurface8_iface);
+
+    if (surface->wined3d_rtv)
+        return surface->wined3d_rtv;
+
+    if (FAILED(hr = wined3d_rendertarget_view_create_from_sub_resource(surface->wined3d_texture,
+            surface->sub_resource_idx, surface, &d3d8_view_wined3d_parent_ops, &surface->wined3d_rtv)))
+    {
+        ERR("Failed to create rendertarget view, hr %#x.\n", hr);
+        d3d8_surface_Release(&surface->IDirect3DSurface8_iface);
+        return NULL;
+    }
+
+    if (surface->texture)
+        list_add_head(&surface->texture->rtv_list, &surface->rtv_entry);
+
+    return surface->wined3d_rtv;
+}
+
+void d3d8_surface_release_rendertarget_view(struct d3d8_surface *surface,
+        struct wined3d_rendertarget_view *rtv)
+{
+    if (rtv)
+        d3d8_surface_Release(&surface->IDirect3DSurface8_iface);
+}
+
+struct d3d8_surface *unsafe_impl_from_IDirect3DSurface8(IDirect3DSurface8 *iface)
+{
+    if (!iface)
+        return NULL;
+    assert(iface->lpVtbl == &d3d8_surface_vtbl);
+
+    return impl_from_IDirect3DSurface8(iface);
 }

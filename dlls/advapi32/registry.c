@@ -2,14 +2,12 @@
  * Registry management
  *
  * Copyright (C) 1999 Alexandre Julliard
+ * Copyright (C) 2017 Dmitry Timoshkov
  *
  * Based on misc/registry.c code
  * Copyright (C) 1996 Marcus Meissner
  * Copyright (C) 1998 Matthew Becker
  * Copyright (C) 1999 Sylvain St-Germain
- *
- * This file is concerned about handle management and interaction with the Wine server.
- * Registry file I/O is in misc/registry.c.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -23,122 +21,340 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include "config.h"
 
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winreg.h"
 #include "winerror.h"
-#include "ntstatus.h"
 #include "winternl.h"
+#include "winperf.h"
+#include "winuser.h"
+#include "sddl.h"
+#include "advapi32_misc.h"
 
 #include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(reg);
 
-/* allowed bits for access mask */
-#define KEY_ACCESS_MASK (KEY_ALL_ACCESS | MAXIMUM_ALLOWED)
-
 #define HKEY_SPECIAL_ROOT_FIRST   HKEY_CLASSES_ROOT
 #define HKEY_SPECIAL_ROOT_LAST    HKEY_DYN_DATA
-#define NB_SPECIAL_ROOT_KEYS      ((UINT)HKEY_SPECIAL_ROOT_LAST - (UINT)HKEY_SPECIAL_ROOT_FIRST + 1)
-
-static HKEY special_root_keys[NB_SPECIAL_ROOT_KEYS];
 
 static const WCHAR name_CLASSES_ROOT[] =
-    {'M','a','c','h','i','n','e','\\',
+    {'\\','R','e','g','i','s','t','r','y','\\',
+     'M','a','c','h','i','n','e','\\',
      'S','o','f','t','w','a','r','e','\\',
      'C','l','a','s','s','e','s',0};
 static const WCHAR name_LOCAL_MACHINE[] =
-    {'M','a','c','h','i','n','e',0};
+    {'\\','R','e','g','i','s','t','r','y','\\',
+     'M','a','c','h','i','n','e',0};
 static const WCHAR name_USERS[] =
-    {'U','s','e','r',0};
+    {'\\','R','e','g','i','s','t','r','y','\\',
+     'U','s','e','r',0};
 static const WCHAR name_PERFORMANCE_DATA[] =
-    {'P','e','r','f','D','a','t','a',0};
+    {'\\','R','e','g','i','s','t','r','y','\\',
+     'P','e','r','f','D','a','t','a',0};
 static const WCHAR name_CURRENT_CONFIG[] =
-    {'M','a','c','h','i','n','e','\\',
+    {'\\','R','e','g','i','s','t','r','y','\\',
+     'M','a','c','h','i','n','e','\\',
      'S','y','s','t','e','m','\\',
      'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
      'H','a','r','d','w','a','r','e',' ','P','r','o','f','i','l','e','s','\\',
      'C','u','r','r','e','n','t',0};
 static const WCHAR name_DYN_DATA[] =
-    {'D','y','n','D','a','t','a',0};
+    {'\\','R','e','g','i','s','t','r','y','\\',
+     'D','y','n','D','a','t','a',0};
 
-#define DECL_STR(key) { sizeof(name_##key)-sizeof(WCHAR), sizeof(name_##key), (LPWSTR)name_##key }
-static UNICODE_STRING root_key_names[NB_SPECIAL_ROOT_KEYS] =
+static const WCHAR * const root_key_names[] =
 {
-    DECL_STR(CLASSES_ROOT),
-    { 0, 0, NULL },         /* HKEY_CURRENT_USER is determined dynamically */
-    DECL_STR(LOCAL_MACHINE),
-    DECL_STR(USERS),
-    DECL_STR(PERFORMANCE_DATA),
-    DECL_STR(CURRENT_CONFIG),
-    DECL_STR(DYN_DATA)
+    name_CLASSES_ROOT,
+    NULL,         /* HKEY_CURRENT_USER is determined dynamically */
+    name_LOCAL_MACHINE,
+    name_USERS,
+    name_PERFORMANCE_DATA,
+    name_CURRENT_CONFIG,
+    name_DYN_DATA
 };
-#undef DECL_STR
 
+static HKEY special_root_keys[ARRAY_SIZE(root_key_names)];
+static BOOL hkcu_cache_disabled;
+
+static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
 
 /* check if value type needs string conversion (Ansi<->Unicode) */
-inline static int is_string( DWORD type )
+static inline BOOL is_string( DWORD type )
 {
     return (type == REG_SZ) || (type == REG_EXPAND_SZ) || (type == REG_MULTI_SZ);
 }
 
 /* check if current version is NT or Win95 */
-inline static int is_version_nt(void)
+static inline BOOL is_version_nt(void)
 {
     return !(GetVersion() & 0x80000000);
 }
 
+static BOOL is_wow6432node( const UNICODE_STRING *name )
+{
+    static const WCHAR wow6432nodeW[] = {'W','o','w','6','4','3','2','N','o','d','e'};
+
+    return (name->Length == sizeof(wow6432nodeW) &&
+            !memicmpW( name->Buffer, wow6432nodeW, ARRAY_SIZE( wow6432nodeW )));
+}
+
+/* open the Wow6432Node subkey of the specified key */
+static HANDLE open_wow6432node( HANDLE key )
+{
+    static const WCHAR wow6432nodeW[] = {'W','o','w','6','4','3','2','N','o','d','e',0};
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING nameW;
+    HANDLE ret;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = key;
+    attr.ObjectName = &nameW;
+    attr.Attributes = 0;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+    RtlInitUnicodeString( &nameW, wow6432nodeW );
+    if (NtOpenKeyEx( &ret, MAXIMUM_ALLOWED, &attr, 0 )) ret = 0;
+    return ret;
+}
+
+/* wrapper for NtCreateKey that creates the key recursively if necessary */
+static NTSTATUS create_key( HKEY *retkey, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,
+                            const UNICODE_STRING *class, ULONG options, PULONG dispos )
+{
+    BOOL force_wow32 = is_win64 && (access & KEY_WOW64_32KEY);
+    NTSTATUS status = STATUS_OBJECT_NAME_NOT_FOUND;
+    HANDLE subkey, root = attr->RootDirectory;
+
+    if (!force_wow32) status = NtCreateKey( &subkey, access, attr, 0, class, options, dispos );
+
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND)
+    {
+        static const WCHAR registry_root[] = {'\\','R','e','g','i','s','t','r','y','\\'};
+        WCHAR *buffer = attr->ObjectName->Buffer;
+        DWORD attrs, pos = 0, i = 0, len = attr->ObjectName->Length / sizeof(WCHAR);
+        UNICODE_STRING str;
+
+        /* don't try to create registry root */
+        if (!attr->RootDirectory && len > ARRAY_SIZE( registry_root ) &&
+            !memicmpW( buffer, registry_root, ARRAY_SIZE( registry_root )))
+            i += ARRAY_SIZE( registry_root );
+
+        while (i < len && buffer[i] != '\\') i++;
+        if (i == len && !force_wow32) return status;
+
+        attrs = attr->Attributes;
+        attr->ObjectName = &str;
+
+        for (;;)
+        {
+            str.Buffer = buffer + pos;
+            str.Length = (i - pos) * sizeof(WCHAR);
+            if (force_wow32 && pos)
+            {
+                if (is_wow6432node( &str )) force_wow32 = FALSE;
+                else if ((subkey = open_wow6432node( attr->RootDirectory )))
+                {
+                    if (attr->RootDirectory != root) NtClose( attr->RootDirectory );
+                    attr->RootDirectory = subkey;
+                    force_wow32 = FALSE;
+                }
+            }
+            if (i == len)
+            {
+                attr->Attributes = attrs;
+                status = NtCreateKey( &subkey, access, attr, 0, class, options, dispos );
+            }
+            else
+            {
+                attr->Attributes = attrs & ~OBJ_OPENLINK;
+                status = NtCreateKey( &subkey, access, attr, 0, class,
+                                      options & ~REG_OPTION_CREATE_LINK, dispos );
+            }
+            if (attr->RootDirectory != root) NtClose( attr->RootDirectory );
+            if (status) return status;
+            if (i == len) break;
+            attr->RootDirectory = subkey;
+            while (i < len && buffer[i] == '\\') i++;
+            pos = i;
+            while (i < len && buffer[i] != '\\') i++;
+        }
+    }
+    attr->RootDirectory = subkey;
+    if (force_wow32 && (subkey = open_wow6432node( attr->RootDirectory )))
+    {
+        if (attr->RootDirectory != root) NtClose( attr->RootDirectory );
+        attr->RootDirectory = subkey;
+    }
+    *retkey = attr->RootDirectory;
+    return status;
+}
+
+/* wrapper for NtOpenKeyEx to handle Wow6432 nodes */
+static NTSTATUS open_key( HKEY *retkey, DWORD options, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr )
+{
+    NTSTATUS status;
+    BOOL force_wow32 = is_win64 && (access & KEY_WOW64_32KEY);
+    HANDLE subkey, root = attr->RootDirectory;
+    WCHAR *buffer = attr->ObjectName->Buffer;
+    DWORD pos = 0, i = 0, len = attr->ObjectName->Length / sizeof(WCHAR);
+    UNICODE_STRING str;
+
+    *retkey = NULL;
+
+    if (!force_wow32)
+    {
+        if (options & REG_OPTION_OPEN_LINK) attr->Attributes |= OBJ_OPENLINK;
+        return NtOpenKeyEx( (HANDLE *)retkey, access, attr, options );
+    }
+
+    if (len && buffer[0] == '\\') return STATUS_OBJECT_PATH_INVALID;
+    while (i < len && buffer[i] != '\\') i++;
+    attr->ObjectName = &str;
+
+    for (;;)
+    {
+        str.Buffer = buffer + pos;
+        str.Length = (i - pos) * sizeof(WCHAR);
+        if (force_wow32 && pos)
+        {
+            if (is_wow6432node( &str )) force_wow32 = FALSE;
+            else if ((subkey = open_wow6432node( attr->RootDirectory )))
+            {
+                if (attr->RootDirectory != root) NtClose( attr->RootDirectory );
+                attr->RootDirectory = subkey;
+                force_wow32 = FALSE;
+            }
+        }
+        if (i == len)
+        {
+            if (options & REG_OPTION_OPEN_LINK) attr->Attributes |= OBJ_OPENLINK;
+            status = NtOpenKeyEx( &subkey, access, attr, options );
+        }
+        else
+        {
+            if (!(options & REG_OPTION_OPEN_LINK)) attr->Attributes &= ~OBJ_OPENLINK;
+            status = NtOpenKeyEx( &subkey, access, attr, options & ~REG_OPTION_OPEN_LINK );
+        }
+        if (attr->RootDirectory != root) NtClose( attr->RootDirectory );
+        if (status) return status;
+        attr->RootDirectory = subkey;
+        if (i == len) break;
+        while (i < len && buffer[i] == '\\') i++;
+        pos = i;
+        while (i < len && buffer[i] != '\\') i++;
+    }
+    if (force_wow32 && (subkey = open_wow6432node( attr->RootDirectory )))
+    {
+        if (attr->RootDirectory != root) NtClose( attr->RootDirectory );
+        attr->RootDirectory = subkey;
+    }
+    *retkey = attr->RootDirectory;
+    return status;
+}
+
 /* create one of the HKEY_* special root keys */
-static HKEY create_special_root_hkey( HANDLE hkey, DWORD access )
+static HKEY create_special_root_hkey( HKEY hkey, DWORD access )
 {
     HKEY ret = 0;
-    int idx = (UINT_PTR)hkey - (UINT_PTR)HKEY_SPECIAL_ROOT_FIRST;
+    int idx = HandleToUlong(hkey) - HandleToUlong(HKEY_SPECIAL_ROOT_FIRST);
 
-    if (hkey == HKEY_CURRENT_USER)
+    if (HandleToUlong(hkey) == HandleToUlong(HKEY_CURRENT_USER))
     {
-        if (RtlOpenCurrentUser( access, &hkey )) return 0;
+        if (RtlOpenCurrentUser( access, (HANDLE *)&hkey )) return 0;
         TRACE( "HKEY_CURRENT_USER -> %p\n", hkey );
+
+        /* don't cache the key in the table if caching is disabled */
+        if (hkcu_cache_disabled)
+            return hkey;
     }
     else
     {
         OBJECT_ATTRIBUTES attr;
+        UNICODE_STRING name;
 
         attr.Length = sizeof(attr);
         attr.RootDirectory = 0;
-        attr.ObjectName = &root_key_names[idx];
+        attr.ObjectName = &name;
         attr.Attributes = 0;
         attr.SecurityDescriptor = NULL;
         attr.SecurityQualityOfService = NULL;
-        if (NtCreateKey( &hkey, access, &attr, 0, NULL, 0, NULL )) return 0;
+        RtlInitUnicodeString( &name, root_key_names[idx] );
+        if (create_key( &hkey, access, &attr, NULL, 0, NULL )) return 0;
         TRACE( "%s -> %p\n", debugstr_w(attr.ObjectName->Buffer), hkey );
     }
 
-    if (!(ret = InterlockedCompareExchangePointer( (void **)&special_root_keys[idx], hkey, 0 )))
-        ret = hkey;
+    if (!(access & (KEY_WOW64_64KEY | KEY_WOW64_32KEY)))
+    {
+        if (!(ret = InterlockedCompareExchangePointer( (void **)&special_root_keys[idx], hkey, 0 )))
+            ret = hkey;
+        else
+            NtClose( hkey );  /* somebody beat us to it */
+    }
     else
-        NtClose( hkey );  /* somebody beat us to it */
+        ret = hkey;
     return ret;
 }
 
 /* map the hkey from special root to normal key if necessary */
-inline static HKEY get_special_root_hkey( HKEY hkey )
+static inline HKEY get_special_root_hkey( HKEY hkey, REGSAM access )
 {
     HKEY ret = hkey;
 
-    if ((hkey >= HKEY_SPECIAL_ROOT_FIRST) && (hkey <= HKEY_SPECIAL_ROOT_LAST))
+    if ((HandleToUlong(hkey) >= HandleToUlong(HKEY_SPECIAL_ROOT_FIRST))
+            && (HandleToUlong(hkey) <= HandleToUlong(HKEY_SPECIAL_ROOT_LAST)))
     {
-        if (!(ret = special_root_keys[(UINT_PTR)hkey - (UINT_PTR)HKEY_SPECIAL_ROOT_FIRST]))
-            ret = create_special_root_hkey( hkey, KEY_ALL_ACCESS );
+        REGSAM mask = 0;
+
+        if (HandleToUlong(hkey) == HandleToUlong(HKEY_CLASSES_ROOT))
+            mask = KEY_WOW64_32KEY | KEY_WOW64_64KEY;
+
+        if ((access & mask) ||
+                !(ret = special_root_keys[HandleToUlong(hkey) - HandleToUlong(HKEY_SPECIAL_ROOT_FIRST)]))
+            ret = create_special_root_hkey( hkey, MAXIMUM_ALLOWED | (access & mask) );
     }
     return ret;
+}
+
+
+/******************************************************************************
+ * RegOverridePredefKey   [ADVAPI32.@]
+ */
+LSTATUS WINAPI RegOverridePredefKey( HKEY hkey, HKEY override )
+{
+    HKEY old_key;
+    int idx;
+
+    TRACE("(%p %p)\n", hkey, override);
+
+    if ((HandleToUlong(hkey) < HandleToUlong(HKEY_SPECIAL_ROOT_FIRST))
+            || (HandleToUlong(hkey) > HandleToUlong(HKEY_SPECIAL_ROOT_LAST)))
+        return ERROR_INVALID_PARAMETER;
+    idx = HandleToUlong(hkey) - HandleToUlong(HKEY_SPECIAL_ROOT_FIRST);
+
+    if (override)
+    {
+        NTSTATUS status = NtDuplicateObject( GetCurrentProcess(), override,
+                                             GetCurrentProcess(), (HANDLE *)&override,
+                                             0, 0, DUPLICATE_SAME_ACCESS );
+        if (status) return RtlNtStatusToDosError( status );
+    }
+
+    old_key = InterlockedExchangePointer( (void **)&special_root_keys[idx], override );
+    if (old_key) NtClose( old_key );
+    return ERROR_SUCCESS;
 }
 
 
@@ -147,16 +363,15 @@ inline static HKEY get_special_root_hkey( HKEY hkey )
  *
  * See RegCreateKeyExA.
  */
-DWORD WINAPI RegCreateKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, LPWSTR class,
-                              DWORD options, REGSAM access, SECURITY_ATTRIBUTES *sa,
-                              PHKEY retkey, LPDWORD dispos )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegCreateKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, LPWSTR class,
+                             DWORD options, REGSAM access, SECURITY_ATTRIBUTES *sa,
+                             PHKEY retkey, LPDWORD dispos )
 {
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW, classW;
 
     if (reserved) return ERROR_INVALID_PARAMETER;
-    if (!(access & KEY_ACCESS_MASK) || (access & ~KEY_ACCESS_MASK)) return ERROR_ACCESS_DENIED;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, access ))) return ERROR_INVALID_HANDLE;
 
     attr.Length = sizeof(attr);
     attr.RootDirectory = hkey;
@@ -164,11 +379,11 @@ DWORD WINAPI RegCreateKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, LPWSTR cl
     attr.Attributes = 0;
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
+    if (options & REG_OPTION_OPEN_LINK) attr.Attributes |= OBJ_OPENLINK;
     RtlInitUnicodeString( &nameW, name );
     RtlInitUnicodeString( &classW, class );
 
-    return RtlNtStatusToDosError( NtCreateKey( (PHANDLE)retkey, access, &attr, 0,
-                                               &classW, options, dispos ) );
+    return RtlNtStatusToDosError( create_key( retkey, access, &attr, &classW, options, dispos ) );
 }
 
 
@@ -195,9 +410,9 @@ DWORD WINAPI RegCreateKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, LPWSTR cl
  * FIXME
  *  MAXIMUM_ALLOWED in access mask not supported by server
  */
-DWORD WINAPI RegCreateKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, LPSTR class,
-                              DWORD options, REGSAM access, SECURITY_ATTRIBUTES *sa,
-                              PHKEY retkey, LPDWORD dispos )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegCreateKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, LPSTR class,
+                             DWORD options, REGSAM access, SECURITY_ATTRIBUTES *sa,
+                             PHKEY retkey, LPDWORD dispos )
 {
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING classW;
@@ -205,9 +420,12 @@ DWORD WINAPI RegCreateKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, LPSTR clas
     NTSTATUS status;
 
     if (reserved) return ERROR_INVALID_PARAMETER;
-    if (!is_version_nt()) access = KEY_ALL_ACCESS;  /* Win95 ignores the access mask */
-    else if (!(access & KEY_ACCESS_MASK) || (access & ~KEY_ACCESS_MASK)) return ERROR_ACCESS_DENIED;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!is_version_nt())
+    {
+        access = MAXIMUM_ALLOWED;  /* Win95 ignores the access mask */
+        if (name && *name == '\\') name++; /* win9x,ME ignores one (and only one) beginning backslash */
+    }
+    if (!(hkey = get_special_root_hkey( hkey, access ))) return ERROR_INVALID_HANDLE;
 
     attr.Length = sizeof(attr);
     attr.RootDirectory = hkey;
@@ -215,6 +433,7 @@ DWORD WINAPI RegCreateKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, LPSTR clas
     attr.Attributes = 0;
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
+    if (options & REG_OPTION_OPEN_LINK) attr.Attributes |= OBJ_OPENLINK;
     RtlInitAnsiString( &nameA, name );
     RtlInitAnsiString( &classA, class );
 
@@ -223,7 +442,7 @@ DWORD WINAPI RegCreateKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, LPSTR clas
     {
         if (!(status = RtlAnsiStringToUnicodeString( &classW, &classA, TRUE )))
         {
-            status = NtCreateKey( (PHANDLE)retkey, access, &attr, 0, &classW, options, dispos );
+            status = create_key( retkey, access, &attr, &classW, options, dispos );
             RtlFreeUnicodeString( &classW );
         }
     }
@@ -245,12 +464,12 @@ DWORD WINAPI RegCreateKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, LPSTR clas
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code defined in Winerror.h
  */
-DWORD WINAPI RegCreateKeyW( HKEY hkey, LPCWSTR lpSubKey, PHKEY phkResult )
+LSTATUS WINAPI RegCreateKeyW( HKEY hkey, LPCWSTR lpSubKey, PHKEY phkResult )
 {
     /* FIXME: previous implementation converted ERROR_INVALID_HANDLE to ERROR_BADKEY, */
     /* but at least my version of NT (4.0 SP5) doesn't do this.  -- AJ */
     return RegCreateKeyExW( hkey, lpSubKey, 0, NULL, REG_OPTION_NON_VOLATILE,
-                            KEY_ALL_ACCESS, NULL, phkResult, NULL );
+                            MAXIMUM_ALLOWED, NULL, phkResult, NULL );
 }
 
 
@@ -259,12 +478,37 @@ DWORD WINAPI RegCreateKeyW( HKEY hkey, LPCWSTR lpSubKey, PHKEY phkResult )
  *
  * See RegCreateKeyW.
  */
-DWORD WINAPI RegCreateKeyA( HKEY hkey, LPCSTR lpSubKey, PHKEY phkResult )
+LSTATUS WINAPI RegCreateKeyA( HKEY hkey, LPCSTR lpSubKey, PHKEY phkResult )
 {
     return RegCreateKeyExA( hkey, lpSubKey, 0, NULL, REG_OPTION_NON_VOLATILE,
-                            KEY_ALL_ACCESS, NULL, phkResult, NULL );
+                            MAXIMUM_ALLOWED, NULL, phkResult, NULL );
 }
 
+
+/******************************************************************************
+ * RegCreateKeyTransactedW   [ADVAPI32.@]
+ */
+LSTATUS WINAPI RegCreateKeyTransactedW( HKEY hkey, LPCWSTR name, DWORD reserved, LPWSTR class,
+                                        DWORD options, REGSAM access, SECURITY_ATTRIBUTES *sa,
+                                        PHKEY retkey, LPDWORD dispos, HANDLE transaction, PVOID reserved2 )
+{
+    FIXME( "(%p,%s,%u,%s,%u,%u,%p,%p,%p,%p,%p): stub\n", hkey, debugstr_w(name), reserved,
+           debugstr_w(class), options, access, sa, retkey, dispos, transaction, reserved2 );
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+
+/******************************************************************************
+ * RegCreateKeyTransactedA   [ADVAPI32.@]
+ */
+LSTATUS WINAPI RegCreateKeyTransactedA( HKEY hkey, LPCSTR name, DWORD reserved, LPSTR class,
+                                        DWORD options, REGSAM access, SECURITY_ATTRIBUTES *sa,
+                                        PHKEY retkey, LPDWORD dispos, HANDLE transaction, PVOID reserved2 )
+{
+    FIXME( "(%p,%s,%u,%s,%u,%u,%p,%p,%p,%p,%p): stub\n", hkey, debugstr_a(name), reserved,
+           debugstr_a(class), options, access, sa, retkey, dispos, transaction, reserved2 );
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
 
 
 /******************************************************************************
@@ -272,12 +516,24 @@ DWORD WINAPI RegCreateKeyA( HKEY hkey, LPCSTR lpSubKey, PHKEY phkResult )
  * 
  * See RegOpenKeyExA.
  */
-DWORD WINAPI RegOpenKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, REGSAM access, PHKEY retkey )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegOpenKeyExW( HKEY hkey, LPCWSTR name, DWORD options, REGSAM access, PHKEY retkey )
 {
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW;
 
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (retkey && (!name || !name[0]) &&
+        (HandleToUlong(hkey) >= HandleToUlong(HKEY_SPECIAL_ROOT_FIRST)) &&
+        (HandleToUlong(hkey) <= HandleToUlong(HKEY_SPECIAL_ROOT_LAST)))
+    {
+        *retkey = hkey;
+        return ERROR_SUCCESS;
+    }
+
+    /* NT+ allows beginning backslash for HKEY_CLASSES_ROOT */
+    if (HandleToUlong(hkey) == HandleToUlong(HKEY_CLASSES_ROOT) && name && *name == '\\') name++;
+
+    if (!retkey) return ERROR_INVALID_PARAMETER;
+    if (!(hkey = get_special_root_hkey( hkey, access ))) return ERROR_INVALID_HANDLE;
 
     attr.Length = sizeof(attr);
     attr.RootDirectory = hkey;
@@ -286,7 +542,7 @@ DWORD WINAPI RegOpenKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, REGSAM acce
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
     RtlInitUnicodeString( &nameW, name );
-    return RtlNtStatusToDosError( NtOpenKey( (PHANDLE)retkey, access, &attr ) );
+    return RtlNtStatusToDosError( open_key( retkey, options, access, &attr ) );
 }
 
 
@@ -298,7 +554,7 @@ DWORD WINAPI RegOpenKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, REGSAM acce
  * PARAMS
  *  hkey       [I] Handle of open key
  *  name       [I] Name of subkey to open
- *  reserved   [I] Reserved - must be zero
+ *  options    [I] Open options (can be set to REG_OPTION_OPEN_LINK)
  *  access     [I] Security access mask
  *  retkey     [O] Handle to open key
  *
@@ -310,15 +566,28 @@ DWORD WINAPI RegOpenKeyExW( HKEY hkey, LPCWSTR name, DWORD reserved, REGSAM acce
  *  Unlike RegCreateKeyExA(), this function will not create the key if it
  *  does not exist.
  */
-DWORD WINAPI RegOpenKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, REGSAM access, PHKEY retkey )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegOpenKeyExA( HKEY hkey, LPCSTR name, DWORD options, REGSAM access, PHKEY retkey )
 {
     OBJECT_ATTRIBUTES attr;
     STRING nameA;
     NTSTATUS status;
 
-    if (!is_version_nt()) access = KEY_ALL_ACCESS;  /* Win95 ignores the access mask */
+    if (retkey && (!name || !name[0]) &&
+        (HandleToUlong(hkey) >= HandleToUlong(HKEY_SPECIAL_ROOT_FIRST)) &&
+        (HandleToUlong(hkey) <= HandleToUlong(HKEY_SPECIAL_ROOT_LAST)))
+    {
+        *retkey = hkey;
+        return ERROR_SUCCESS;
+    }
 
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!is_version_nt()) access = MAXIMUM_ALLOWED;  /* Win95 ignores the access mask */
+    else
+    {
+        /* NT+ allows beginning backslash for HKEY_CLASSES_ROOT */
+        if (HandleToUlong(hkey) == HandleToUlong(HKEY_CLASSES_ROOT) && name && *name == '\\') name++;
+    }
+
+    if (!(hkey = get_special_root_hkey( hkey, access ))) return ERROR_INVALID_HANDLE;
 
     attr.Length = sizeof(attr);
     attr.RootDirectory = hkey;
@@ -331,7 +600,7 @@ DWORD WINAPI RegOpenKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, REGSAM acces
     if (!(status = RtlAnsiStringToUnicodeString( &NtCurrentTeb()->StaticUnicodeString,
                                                  &nameA, FALSE )))
     {
-        status = NtOpenKey( (PHANDLE)retkey, access, &attr );
+        status = open_key( retkey, options, access, &attr );
     }
     return RtlNtStatusToDosError( status );
 }
@@ -342,14 +611,17 @@ DWORD WINAPI RegOpenKeyExA( HKEY hkey, LPCSTR name, DWORD reserved, REGSAM acces
  *
  * See RegOpenKeyA.
  */
-DWORD WINAPI RegOpenKeyW( HKEY hkey, LPCWSTR name, PHKEY retkey )
+LSTATUS WINAPI RegOpenKeyW( HKEY hkey, LPCWSTR name, PHKEY retkey )
 {
+    if (!retkey)
+        return ERROR_INVALID_PARAMETER;
+
     if (!name || !*name)
     {
         *retkey = hkey;
         return ERROR_SUCCESS;
     }
-    return RegOpenKeyExW( hkey, name, 0, KEY_ALL_ACCESS, retkey );
+    return RegOpenKeyExW( hkey, name, 0, MAXIMUM_ALLOWED, retkey );
 }
 
 
@@ -365,36 +637,98 @@ DWORD WINAPI RegOpenKeyW( HKEY hkey, LPCWSTR name, PHKEY retkey )
  *
  * RETURNS
  *  Success: ERROR_SUCCESS
- *  Failure: A standard Win32 error code. retkey is set to 0.
+ *  Failure: A standard Win32 error code. When retkey is valid, *retkey is set to 0.
  */
-DWORD WINAPI RegOpenKeyA( HKEY hkey, LPCSTR name, PHKEY retkey )
+LSTATUS WINAPI RegOpenKeyA( HKEY hkey, LPCSTR name, PHKEY retkey )
 {
+    if (!retkey)
+        return ERROR_INVALID_PARAMETER;
+
     if (!name || !*name)
     {
         *retkey = hkey;
         return ERROR_SUCCESS;
     }
-    return RegOpenKeyExA( hkey, name, 0, KEY_ALL_ACCESS, retkey );
+    return RegOpenKeyExA( hkey, name, 0, MAXIMUM_ALLOWED, retkey );
 }
 
+static WCHAR *get_thread_token_user_sid(HANDLE token)
+{
+    WCHAR *sidstring = NULL;
+    TOKEN_USER *info;
+    DWORD len = 0;
+
+    GetTokenInformation(token, TokenUser, NULL, 0, &len);
+
+    info = heap_alloc(len);
+    if (GetTokenInformation(token, TokenUser, info, len, &len))
+        ConvertSidToStringSidW(info->User.Sid, &sidstring);
+    heap_free(info);
+
+    return sidstring;
+}
 
 /******************************************************************************
  * RegOpenCurrentUser   [ADVAPI32.@]
- * 
- * FIXME: This function is supposed to retrieve a handle to the
- * HKEY_CURRENT_USER for the user the current thread is impersonating.
- * Since Wine does not currently allow threads to impersonate other users,
- * this stub should work fine.
+ *
+ * Get a handle to the HKEY_CURRENT_USER key for the user 
+ * the current thread is impersonating.
+ *
+ * PARAMS
+ *  access [I] Desired access rights to the key
+ *  retkey [O] Handle to the opened key
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: nonzero error code from Winerror.h
+ *
+ * FIXME
+ *  This function is supposed to retrieve a handle to the
+ *  HKEY_CURRENT_USER for the user the current thread is impersonating.
+ *  Since Wine does not currently allow threads to impersonate other users,
+ *  this stub should work fine.
  */
-DWORD WINAPI RegOpenCurrentUser( REGSAM access, PHKEY retkey )
+LSTATUS WINAPI RegOpenCurrentUser( REGSAM access, PHKEY retkey )
 {
-    return RegOpenKeyExA( HKEY_CURRENT_USER, "", 0, access, retkey );
+    WCHAR *sidstring = NULL;
+    HANDLE threadtoken;
+    LSTATUS ret;
+
+    /* get current user SID */
+    if (OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &threadtoken))
+    {
+       sidstring = get_thread_token_user_sid(threadtoken);
+       CloseHandle(threadtoken);
+    }
+
+    if (!sidstring)
+    {
+        ImpersonateSelf(SecurityIdentification);
+        if (OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &threadtoken))
+        {
+            sidstring = get_thread_token_user_sid(threadtoken);
+            CloseHandle(threadtoken);
+        }
+        RevertToSelf();
+    }
+
+    if (sidstring)
+    {
+        ret = RegOpenKeyExW( HKEY_USERS, sidstring, 0, access, retkey );
+        LocalFree(sidstring);
+    }
+    else
+        ret = RegOpenKeyExA( HKEY_CURRENT_USER, "", 0, access, retkey );
+
+    return ret;
 }
 
 
 
 /******************************************************************************
  * RegEnumKeyExW   [ADVAPI32.@]
+ *
+ * Enumerate subkeys of the specified open registry key.
  *
  * PARAMS
  *  hkey         [I] Handle to key to enumerate
@@ -411,19 +745,19 @@ DWORD WINAPI RegOpenCurrentUser( REGSAM access, PHKEY retkey )
  *  Failure: System error code. If there are no more subkeys available, the
  *           function returns ERROR_NO_MORE_ITEMS.
  */
-DWORD WINAPI RegEnumKeyExW( HKEY hkey, DWORD index, LPWSTR name, LPDWORD name_len,
-                            LPDWORD reserved, LPWSTR class, LPDWORD class_len, FILETIME *ft )
+LSTATUS WINAPI RegEnumKeyExW( HKEY hkey, DWORD index, LPWSTR name, LPDWORD name_len,
+                           LPDWORD reserved, LPWSTR class, LPDWORD class_len, FILETIME *ft )
 {
     NTSTATUS status;
     char buffer[256], *buf_ptr = buffer;
     KEY_NODE_INFORMATION *info = (KEY_NODE_INFORMATION *)buffer;
     DWORD total_size;
 
-    TRACE( "(%p,%ld,%p,%p(%ld),%p,%p,%p,%p)\n", hkey, index, name, name_len,
-           name_len ? *name_len : -1, reserved, class, class_len, ft );
+    TRACE( "(%p,%d,%p,%p(%u),%p,%p,%p,%p)\n", hkey, index, name, name_len,
+           name_len ? *name_len : 0, reserved, class, class_len, ft );
 
     if (reserved) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     status = NtEnumerateKey( hkey, index, KeyNodeInformation,
                              buffer, sizeof(buffer), &total_size );
@@ -431,8 +765,8 @@ DWORD WINAPI RegEnumKeyExW( HKEY hkey, DWORD index, LPWSTR name, LPDWORD name_le
     while (status == STATUS_BUFFER_OVERFLOW)
     {
         /* retry with a dynamically allocated buffer */
-        if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-        if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
+        if (buf_ptr != buffer) heap_free( buf_ptr );
+        if (!(buf_ptr = heap_alloc( total_size )))
             return ERROR_NOT_ENOUGH_MEMORY;
         info = (KEY_NODE_INFORMATION *)buf_ptr;
         status = NtEnumerateKey( hkey, index, KeyNodeInformation,
@@ -465,7 +799,7 @@ DWORD WINAPI RegEnumKeyExW( HKEY hkey, DWORD index, LPWSTR name, LPDWORD name_le
         }
     }
 
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
     return RtlNtStatusToDosError( status );
 }
 
@@ -475,19 +809,19 @@ DWORD WINAPI RegEnumKeyExW( HKEY hkey, DWORD index, LPWSTR name, LPDWORD name_le
  *
  * See RegEnumKeyExW.
  */
-DWORD WINAPI RegEnumKeyExA( HKEY hkey, DWORD index, LPSTR name, LPDWORD name_len,
-                            LPDWORD reserved, LPSTR class, LPDWORD class_len, FILETIME *ft )
+LSTATUS WINAPI RegEnumKeyExA( HKEY hkey, DWORD index, LPSTR name, LPDWORD name_len,
+                           LPDWORD reserved, LPSTR class, LPDWORD class_len, FILETIME *ft )
 {
     NTSTATUS status;
     char buffer[256], *buf_ptr = buffer;
     KEY_NODE_INFORMATION *info = (KEY_NODE_INFORMATION *)buffer;
     DWORD total_size;
 
-    TRACE( "(%p,%ld,%p,%p(%ld),%p,%p,%p,%p)\n", hkey, index, name, name_len,
-           name_len ? *name_len : -1, reserved, class, class_len, ft );
+    TRACE( "(%p,%d,%p,%p(%u),%p,%p,%p,%p)\n", hkey, index, name, name_len,
+           name_len ? *name_len : 0, reserved, class, class_len, ft );
 
     if (reserved) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     status = NtEnumerateKey( hkey, index, KeyNodeInformation,
                              buffer, sizeof(buffer), &total_size );
@@ -495,8 +829,8 @@ DWORD WINAPI RegEnumKeyExA( HKEY hkey, DWORD index, LPSTR name, LPDWORD name_len
     while (status == STATUS_BUFFER_OVERFLOW)
     {
         /* retry with a dynamically allocated buffer */
-        if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-        if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
+        if (buf_ptr != buffer) heap_free( buf_ptr );
+        if (!(buf_ptr = heap_alloc( total_size )))
             return ERROR_NOT_ENOUGH_MEMORY;
         info = (KEY_NODE_INFORMATION *)buf_ptr;
         status = NtEnumerateKey( hkey, index, KeyNodeInformation,
@@ -533,7 +867,7 @@ DWORD WINAPI RegEnumKeyExA( HKEY hkey, DWORD index, LPSTR name, LPDWORD name_len
         }
     }
 
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
     return RtlNtStatusToDosError( status );
 }
 
@@ -541,7 +875,7 @@ DWORD WINAPI RegEnumKeyExA( HKEY hkey, DWORD index, LPSTR name, LPDWORD name_len
 /******************************************************************************
  * RegEnumKeyW   [ADVAPI32.@]
  *
- * Enumerates subkyes of the specified open reg key.
+ * Enumerates subkeys of the specified open reg key.
  *
  * PARAMS
  *  hKey    [I] Handle to an open key.
@@ -554,7 +888,7 @@ DWORD WINAPI RegEnumKeyExA( HKEY hkey, DWORD index, LPSTR name, LPDWORD name_len
  *  Failure: system error code. If there are no more subkeys available, the
  *           function returns ERROR_NO_MORE_ITEMS.
  */
-DWORD WINAPI RegEnumKeyW( HKEY hkey, DWORD index, LPWSTR name, DWORD name_len )
+LSTATUS WINAPI RegEnumKeyW( HKEY hkey, DWORD index, LPWSTR name, DWORD name_len )
 {
     return RegEnumKeyExW( hkey, index, name, &name_len, NULL, NULL, NULL, NULL );
 }
@@ -565,7 +899,7 @@ DWORD WINAPI RegEnumKeyW( HKEY hkey, DWORD index, LPWSTR name, DWORD name_len )
  *
  * See RegEnumKeyW.
  */
-DWORD WINAPI RegEnumKeyA( HKEY hkey, DWORD index, LPSTR name, DWORD name_len )
+LSTATUS WINAPI RegEnumKeyA( HKEY hkey, DWORD index, LPSTR name, DWORD name_len )
 {
     return RegEnumKeyExA( hkey, index, name, &name_len, NULL, NULL, NULL, NULL );
 }
@@ -600,32 +934,32 @@ DWORD WINAPI RegEnumKeyA( HKEY hkey, DWORD index, LPSTR name, DWORD name_len )
  *  - both allow class to be NULL and class_len to be NULL
  *    (it's hard to test validity, so test !NULL instead)
  */
-DWORD WINAPI RegQueryInfoKeyW( HKEY hkey, LPWSTR class, LPDWORD class_len, LPDWORD reserved,
-                               LPDWORD subkeys, LPDWORD max_subkey, LPDWORD max_class,
-                               LPDWORD values, LPDWORD max_value, LPDWORD max_data,
-                               LPDWORD security, FILETIME *modif )
+LSTATUS WINAPI RegQueryInfoKeyW( HKEY hkey, LPWSTR class, LPDWORD class_len, LPDWORD reserved,
+                              LPDWORD subkeys, LPDWORD max_subkey, LPDWORD max_class,
+                              LPDWORD values, LPDWORD max_value, LPDWORD max_data,
+                              LPDWORD security, FILETIME *modif )
 {
     NTSTATUS status;
     char buffer[256], *buf_ptr = buffer;
     KEY_FULL_INFORMATION *info = (KEY_FULL_INFORMATION *)buffer;
     DWORD total_size;
 
-    TRACE( "(%p,%p,%ld,%p,%p,%p,%p,%p,%p,%p,%p)\n", hkey, class, class_len ? *class_len : 0,
+    TRACE( "(%p,%p,%d,%p,%p,%p,%p,%p,%p,%p,%p)\n", hkey, class, class_len ? *class_len : 0,
            reserved, subkeys, max_subkey, values, max_value, max_data, security, modif );
 
     if (class && !class_len && is_version_nt()) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     status = NtQueryKey( hkey, KeyFullInformation, buffer, sizeof(buffer), &total_size );
     if (status && status != STATUS_BUFFER_OVERFLOW) goto done;
 
-    if (class)
+    if (class && class_len && *class_len)
     {
         /* retry with a dynamically allocated buffer */
         while (status == STATUS_BUFFER_OVERFLOW)
         {
-            if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-            if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
+            if (buf_ptr != buffer) heap_free( buf_ptr );
+            if (!(buf_ptr = heap_alloc( total_size )))
                 return ERROR_NOT_ENOUGH_MEMORY;
             info = (KEY_FULL_INFORMATION *)buf_ptr;
             status = NtQueryKey( hkey, KeyFullInformation, buf_ptr, total_size, &total_size );
@@ -635,7 +969,7 @@ DWORD WINAPI RegQueryInfoKeyW( HKEY hkey, LPWSTR class, LPDWORD class_len, LPDWO
 
         if (class_len && (info->ClassLength/sizeof(WCHAR) + 1 > *class_len))
         {
-            status = STATUS_BUFFER_OVERFLOW;
+            status = STATUS_BUFFER_TOO_SMALL;
         }
         else
         {
@@ -647,15 +981,21 @@ DWORD WINAPI RegQueryInfoKeyW( HKEY hkey, LPWSTR class, LPDWORD class_len, LPDWO
 
     if (class_len) *class_len = info->ClassLength / sizeof(WCHAR);
     if (subkeys) *subkeys = info->SubKeys;
-    if (max_subkey) *max_subkey = info->MaxNameLen;
-    if (max_class) *max_class = info->MaxClassLen;
+    if (max_subkey) *max_subkey = info->MaxNameLen / sizeof(WCHAR);
+    if (max_class) *max_class = info->MaxClassLen / sizeof(WCHAR);
     if (values) *values = info->Values;
-    if (max_value) *max_value = info->MaxValueNameLen;
+    if (max_value) *max_value = info->MaxValueNameLen / sizeof(WCHAR);
     if (max_data) *max_data = info->MaxValueDataLen;
     if (modif) *modif = *(FILETIME *)&info->LastWriteTime;
 
+    if (security)
+    {
+        FIXME( "security argument not supported.\n");
+        *security = 0;
+    }
+
  done:
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
     return RtlNtStatusToDosError( status );
 }
 
@@ -677,16 +1017,16 @@ DWORD WINAPI RegQueryInfoKeyW( HKEY hkey, LPWSTR class, LPDWORD class_len, LPDWO
  *  Failure: nonzero error code from Winerror.h ldwTotsize contains num needed
  *           bytes.
  */
-DWORD WINAPI RegQueryMultipleValuesA(HKEY hkey, PVALENTA val_list, DWORD num_vals,
-                                     LPSTR lpValueBuf, LPDWORD ldwTotsize)
+LSTATUS WINAPI RegQueryMultipleValuesA( HKEY hkey, PVALENTA val_list, DWORD num_vals,
+                                     LPSTR lpValueBuf, LPDWORD ldwTotsize )
 {
     unsigned int i;
     DWORD maxBytes = *ldwTotsize;
-    HRESULT status;
+    LSTATUS status;
     LPSTR bufptr = lpValueBuf;
     *ldwTotsize = 0;
 
-    TRACE("(%p,%p,%ld,%p,%p=%ld)\n", hkey, val_list, num_vals, lpValueBuf, ldwTotsize, *ldwTotsize);
+    TRACE("(%p,%p,%d,%p,%p=%d)\n", hkey, val_list, num_vals, lpValueBuf, ldwTotsize, *ldwTotsize);
 
     for(i=0; i < num_vals; ++i)
     {
@@ -723,16 +1063,16 @@ DWORD WINAPI RegQueryMultipleValuesA(HKEY hkey, PVALENTA val_list, DWORD num_val
  *
  * See RegQueryMultipleValuesA.
  */
-DWORD WINAPI RegQueryMultipleValuesW(HKEY hkey, PVALENTW val_list, DWORD num_vals,
-                                     LPWSTR lpValueBuf, LPDWORD ldwTotsize)
+LSTATUS WINAPI RegQueryMultipleValuesW( HKEY hkey, PVALENTW val_list, DWORD num_vals,
+                                     LPWSTR lpValueBuf, LPDWORD ldwTotsize )
 {
     unsigned int i;
     DWORD maxBytes = *ldwTotsize;
-    HRESULT status;
+    LSTATUS status;
     LPSTR bufptr = (LPSTR)lpValueBuf;
     *ldwTotsize = 0;
 
-    TRACE("(%p,%p,%ld,%p,%p=%ld)\n", hkey, val_list, num_vals, lpValueBuf, ldwTotsize, *ldwTotsize);
+    TRACE("(%p,%p,%d,%p,%p=%d)\n", hkey, val_list, num_vals, lpValueBuf, ldwTotsize, *ldwTotsize);
 
     for(i=0; i < num_vals; ++i)
     {
@@ -780,27 +1120,27 @@ DWORD WINAPI RegQueryMultipleValuesW(HKEY hkey, PVALENTW val_list, DWORD num_val
  *  lpcMaxValueNameLen     [O] Size of the key's longest value name in TCHARS.
  *  lpcMaxValueLen         [O] Longest data component among the key's values
  *  lpcbSecurityDescriptor [O] Size of the key's security descriptor.
- *  lpftLastWriteTime      [O] FILETIME strucutre that is the last write time.
+ *  lpftLastWriteTime      [O] FILETIME structure that is the last write time.
  *
  *  RETURNS
  *   Success: ERROR_SUCCESS
  *   Failure: nonzero error code from Winerror.h
  */
-DWORD WINAPI RegQueryInfoKeyA( HKEY hkey, LPSTR class, LPDWORD class_len, LPDWORD reserved,
-                               LPDWORD subkeys, LPDWORD max_subkey, LPDWORD max_class,
-                               LPDWORD values, LPDWORD max_value, LPDWORD max_data,
-                               LPDWORD security, FILETIME *modif )
+LSTATUS WINAPI RegQueryInfoKeyA( HKEY hkey, LPSTR class, LPDWORD class_len, LPDWORD reserved,
+                              LPDWORD subkeys, LPDWORD max_subkey, LPDWORD max_class,
+                              LPDWORD values, LPDWORD max_value, LPDWORD max_data,
+                              LPDWORD security, FILETIME *modif )
 {
     NTSTATUS status;
     char buffer[256], *buf_ptr = buffer;
     KEY_FULL_INFORMATION *info = (KEY_FULL_INFORMATION *)buffer;
     DWORD total_size, len;
 
-    TRACE( "(%p,%p,%ld,%p,%p,%p,%p,%p,%p,%p,%p)\n", hkey, class, class_len ? *class_len : 0,
+    TRACE( "(%p,%p,%d,%p,%p,%p,%p,%p,%p,%p,%p)\n", hkey, class, class_len ? *class_len : 0,
            reserved, subkeys, max_subkey, values, max_value, max_data, security, modif );
 
     if (class && !class_len && is_version_nt()) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     status = NtQueryKey( hkey, KeyFullInformation, buffer, sizeof(buffer), &total_size );
     if (status && status != STATUS_BUFFER_OVERFLOW) goto done;
@@ -810,8 +1150,8 @@ DWORD WINAPI RegQueryInfoKeyA( HKEY hkey, LPSTR class, LPDWORD class_len, LPDWOR
         /* retry with a dynamically allocated buffer */
         while (status == STATUS_BUFFER_OVERFLOW)
         {
-            if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-            if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
+            if (buf_ptr != buffer) heap_free( buf_ptr );
+            if (!(buf_ptr = heap_alloc( total_size )))
                 return ERROR_NOT_ENOUGH_MEMORY;
             info = (KEY_FULL_INFORMATION *)buf_ptr;
             status = NtQueryKey( hkey, KeyFullInformation, buf_ptr, total_size, &total_size );
@@ -819,34 +1159,50 @@ DWORD WINAPI RegQueryInfoKeyA( HKEY hkey, LPSTR class, LPDWORD class_len, LPDWOR
 
         if (status) goto done;
 
-        RtlUnicodeToMultiByteSize( &len, (WCHAR *)(buf_ptr + info->ClassOffset), info->ClassLength);
-        if (class_len)
+        len = 0;
+        if (class && class_len) len = *class_len;
+        RtlUnicodeToMultiByteN( class, len, class_len,
+                                (WCHAR *)(buf_ptr + info->ClassOffset), info->ClassLength );
+        if (len)
         {
-            if (len + 1 > *class_len) status = STATUS_BUFFER_OVERFLOW;
-            *class_len = len;
-        }
-        if (class && !status)
-        {
-            RtlUnicodeToMultiByteN( class, len, NULL, (WCHAR *)(buf_ptr + info->ClassOffset),
-                                    info->ClassLength );
-            class[len] = 0;
+            if (*class_len + 1 > len)
+            {
+                status = STATUS_BUFFER_OVERFLOW;
+                *class_len -= 1;
+            }
+            class[*class_len] = 0;
         }
     }
     else status = STATUS_SUCCESS;
 
     if (subkeys) *subkeys = info->SubKeys;
-    if (max_subkey) *max_subkey = info->MaxNameLen;
-    if (max_class) *max_class = info->MaxClassLen;
+    if (max_subkey) *max_subkey = info->MaxNameLen / sizeof(WCHAR);
+    if (max_class) *max_class = info->MaxClassLen / sizeof(WCHAR);
     if (values) *values = info->Values;
-    if (max_value) *max_value = info->MaxValueNameLen;
+    if (max_value) *max_value = info->MaxValueNameLen / sizeof(WCHAR);
     if (max_data) *max_data = info->MaxValueDataLen;
     if (modif) *modif = *(FILETIME *)&info->LastWriteTime;
 
+    if (security)
+    {
+        FIXME( "security argument not supported.\n");
+        *security = 0;
+    }
+
  done:
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
     return RtlNtStatusToDosError( status );
 }
 
+/******************************************************************************
+ * RegQueryReflectionKey   [ADVAPI32.@]
+ */
+LONG WINAPI RegQueryReflectionKey( HKEY hkey, BOOL *is_reflection_disabled )
+{
+    FIXME( "%p, %p stub\n", hkey, is_reflection_disabled );
+    *is_reflection_disabled = TRUE;
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
 
 /******************************************************************************
  * RegCloseKey   [ADVAPI32.@]
@@ -860,7 +1216,7 @@ DWORD WINAPI RegQueryInfoKeyA( HKEY hkey, LPSTR class, LPDWORD class_len, LPDWOR
  *  Success: ERROR_SUCCESS
  *  Failure: Error code
  */
-DWORD WINAPI RegCloseKey( HKEY hkey )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegCloseKey( HKEY hkey )
 {
     if (!hkey) return ERROR_INVALID_HANDLE;
     if (hkey >= (HKEY)0x80000000) return ERROR_SUCCESS;
@@ -869,25 +1225,68 @@ DWORD WINAPI RegCloseKey( HKEY hkey )
 
 
 /******************************************************************************
- * RegDeleteKeyW   [ADVAPI32.@]
- *
- * See RegDeleteKeyA.
+ * RegDeleteKeyExW   [ADVAPI32.@]
  */
-DWORD WINAPI RegDeleteKeyW( HKEY hkey, LPCWSTR name )
+LSTATUS WINAPI RegDeleteKeyExW( HKEY hkey, LPCWSTR name, REGSAM access, DWORD reserved )
 {
     DWORD ret;
     HKEY tmp;
 
     if (!name) return ERROR_INVALID_PARAMETER;
 
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, access ))) return ERROR_INVALID_HANDLE;
 
-    if (!(ret = RegOpenKeyExW( hkey, name, 0, DELETE, &tmp )))
+    access &= KEY_WOW64_64KEY | KEY_WOW64_32KEY;
+    if (!(ret = RegOpenKeyExW( hkey, name, 0, access | DELETE, &tmp )))
     {
         ret = RtlNtStatusToDosError( NtDeleteKey( tmp ) );
         RegCloseKey( tmp );
     }
-    TRACE("%s ret=%08lx\n", debugstr_w(name), ret);
+    TRACE("%s ret=%08x\n", debugstr_w(name), ret);
+    return ret;
+}
+
+
+/******************************************************************************
+ * RegDeleteKeyW   [ADVAPI32.@]
+ *
+ * See RegDeleteKeyA.
+ */
+LSTATUS WINAPI RegDeleteKeyW( HKEY hkey, LPCWSTR name )
+{
+    return RegDeleteKeyExW( hkey, name, 0, 0 );
+}
+
+
+/******************************************************************************
+ * RegDeleteKeyExA   [ADVAPI32.@]
+ */
+LSTATUS WINAPI RegDeleteKeyExA( HKEY hkey, LPCSTR name, REGSAM access, DWORD reserved )
+{
+    DWORD ret;
+    HKEY tmp;
+
+    if (!name) return ERROR_INVALID_PARAMETER;
+
+    if (!(hkey = get_special_root_hkey( hkey, access ))) return ERROR_INVALID_HANDLE;
+
+    access &= KEY_WOW64_64KEY | KEY_WOW64_32KEY;
+    if (!(ret = RegOpenKeyExA( hkey, name, 0, access | DELETE, &tmp )))
+    {
+        if (!is_version_nt()) /* win95 does recursive key deletes */
+        {
+            CHAR sub[MAX_PATH];
+
+            while(!RegEnumKeyA(tmp, 0, sub, sizeof(sub)))
+            {
+                if(RegDeleteKeyExA(tmp, sub, access, reserved))  /* recurse */
+                    break;
+            }
+        }
+        ret = RtlNtStatusToDosError( NtDeleteKey( tmp ) );
+        RegCloseKey( tmp );
+    }
+    TRACE("%s ret=%08x\n", debugstr_a(name), ret);
     return ret;
 }
 
@@ -910,32 +1309,9 @@ DWORD WINAPI RegDeleteKeyW( HKEY hkey, LPCWSTR name )
  *  Success: ERROR_SUCCESS
  *  Failure: Error code
  */
-DWORD WINAPI RegDeleteKeyA( HKEY hkey, LPCSTR name )
+LSTATUS WINAPI RegDeleteKeyA( HKEY hkey, LPCSTR name )
 {
-    DWORD ret;
-    HKEY tmp;
-
-    if (!name) return ERROR_INVALID_PARAMETER;
-
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
-
-    if (!(ret = RegOpenKeyExA( hkey, name, 0, DELETE, &tmp )))
-    {
-        if (!is_version_nt()) /* win95 does recursive key deletes */
-        {
-            CHAR name[MAX_PATH];
-
-            while(!RegEnumKeyA(tmp, 0, name, sizeof(name)))
-            {
-                if(RegDeleteKeyA(tmp, name))  /* recurse */
-                    break;
-            }
-        }
-        ret = RtlNtStatusToDosError( NtDeleteKey( tmp ) );
-        RegCloseKey( tmp );
-    }
-    TRACE("%s ret=%08lx\n", debugstr_a(name), ret);
-    return ret;
+    return RegDeleteKeyExA( hkey, name, 0, 0 );
 }
 
 
@@ -957,12 +1333,15 @@ DWORD WINAPI RegDeleteKeyA( HKEY hkey, LPCSTR name )
  *  Success: ERROR_SUCCESS
  *  Failure: Error code
  */
-DWORD WINAPI RegSetValueExW( HKEY hkey, LPCWSTR name, DWORD reserved,
-                             DWORD type, CONST BYTE *data, DWORD count )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegSetValueExW( HKEY hkey, LPCWSTR name, DWORD reserved,
+                            DWORD type, const BYTE *data, DWORD count )
 {
     UNICODE_STRING nameW;
 
     /* no need for version check, not implemented on win9x anyway */
+
+    if ((data && ((ULONG_PTR)data >> 16) == 0) || (!data && count)) return ERROR_NOACCESS;
+
     if (count && is_string(type))
     {
         LPCWSTR str = (LPCWSTR)data;
@@ -970,7 +1349,7 @@ DWORD WINAPI RegSetValueExW( HKEY hkey, LPCWSTR name, DWORD reserved,
         if (str[count / sizeof(WCHAR) - 1] && !str[count / sizeof(WCHAR)])
             count += sizeof(WCHAR);
     }
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     RtlInitUnicodeString( &nameW, name );
     return RtlNtStatusToDosError( NtSetValueKey( hkey, &nameW, 0, type, data, count ) );
@@ -986,10 +1365,11 @@ DWORD WINAPI RegSetValueExW( HKEY hkey, LPCWSTR name, DWORD reserved,
  *  win95 does not care about count for REG_SZ and finds out the len by itself (js)
  *  NT does definitely care (aj)
  */
-DWORD WINAPI RegSetValueExA( HKEY hkey, LPCSTR name, DWORD reserved, DWORD type,
-                             CONST BYTE *data, DWORD count )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegSetValueExA( HKEY hkey, LPCSTR name, DWORD reserved, DWORD type,
+                            const BYTE *data, DWORD count )
 {
     ANSI_STRING nameA;
+    UNICODE_STRING nameW;
     WCHAR *dataW = NULL;
     NTSTATUS status;
 
@@ -1007,25 +1387,25 @@ DWORD WINAPI RegSetValueExA( HKEY hkey, LPCSTR name, DWORD reserved, DWORD type,
         if (data[count-1] && !data[count]) count++;
     }
 
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     if (is_string( type )) /* need to convert to Unicode */
     {
         DWORD lenW;
         RtlMultiByteToUnicodeSize( &lenW, (const char *)data, count );
-        if (!(dataW = HeapAlloc( GetProcessHeap(), 0, lenW ))) return ERROR_OUTOFMEMORY;
+        if (!(dataW = heap_alloc( lenW ))) return ERROR_OUTOFMEMORY;
         RtlMultiByteToUnicodeN( dataW, lenW, NULL, (const char *)data, count );
         count = lenW;
         data = (BYTE *)dataW;
     }
 
     RtlInitAnsiString( &nameA, name );
-    if (!(status = RtlAnsiStringToUnicodeString( &NtCurrentTeb()->StaticUnicodeString,
-                                                 &nameA, FALSE )))
+    if (!(status = RtlAnsiStringToUnicodeString( &nameW, &nameA, TRUE )))
     {
-        status = NtSetValueKey( hkey, &NtCurrentTeb()->StaticUnicodeString, 0, type, data, count );
+        status = NtSetValueKey( hkey, &nameW, 0, type, data, count );
+        RtlFreeUnicodeString( &nameW );
     }
-    HeapFree( GetProcessHeap(), 0, dataW );
+    heap_free( dataW );
     return RtlNtStatusToDosError( status );
 }
 
@@ -1036,69 +1416,351 @@ DWORD WINAPI RegSetValueExA( HKEY hkey, LPCSTR name, DWORD reserved, DWORD type,
  * Sets the data for the default or unnamed value of a reg key.
  *
  * PARAMS
- *  hKey     [I] Handle to an open key.
- *  lpSubKey [I] Name of a subkey of hKey.
- *  dwType   [I] Type of information to store.
- *  lpData   [I] String that contains the data to set for the default value.
- *  cbData   [I] Size of lpData.
+ *  hkey     [I] Handle to an open key.
+ *  subkey   [I] Name of a subkey of hKey.
+ *  type     [I] Type of information to store.
+ *  data     [I] String that contains the data to set for the default value.
+ *  count    [I] Ignored.
  *
  * RETURNS
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-DWORD WINAPI RegSetValueW( HKEY hkey, LPCWSTR name, DWORD type, LPCWSTR data, DWORD count )
+LSTATUS WINAPI RegSetValueW( HKEY hkey, LPCWSTR subkey, DWORD type, LPCWSTR data, DWORD count )
 {
-    HKEY subkey = hkey;
-    DWORD ret;
+    TRACE("(%p,%s,%d,%s,%d)\n", hkey, debugstr_w(subkey), type, debugstr_w(data), count );
 
-    TRACE("(%p,%s,%ld,%s,%ld)\n", hkey, debugstr_w(name), type, debugstr_w(data), count );
+    if (type != REG_SZ || !data) return ERROR_INVALID_PARAMETER;
 
-    if (type != REG_SZ) return ERROR_INVALID_PARAMETER;
-
-    if (name && name[0])  /* need to create the subkey */
-    {
-        if ((ret = RegCreateKeyW( hkey, name, &subkey )) != ERROR_SUCCESS) return ret;
-    }
-
-    ret = RegSetValueExW( subkey, NULL, 0, REG_SZ, (const BYTE*)data,
-                          (strlenW( data ) + 1) * sizeof(WCHAR) );
-    if (subkey != hkey) RegCloseKey( subkey );
-    return ret;
+    return RegSetKeyValueW( hkey, subkey, NULL, type, data, (strlenW(data) + 1)*sizeof(WCHAR) );
 }
-
 
 /******************************************************************************
  * RegSetValueA   [ADVAPI32.@]
  *
  * See RegSetValueW.
  */
-DWORD WINAPI RegSetValueA( HKEY hkey, LPCSTR name, DWORD type, LPCSTR data, DWORD count )
+LSTATUS WINAPI RegSetValueA( HKEY hkey, LPCSTR subkey, DWORD type, LPCSTR data, DWORD count )
 {
-    HKEY subkey = hkey;
+    TRACE("(%p,%s,%d,%s,%d)\n", hkey, debugstr_a(subkey), type, debugstr_a(data), count );
+
+    if (type != REG_SZ || !data) return ERROR_INVALID_PARAMETER;
+
+    return RegSetKeyValueA( hkey, subkey, NULL, type, data, strlen(data) + 1 );
+}
+
+/******************************************************************************
+ * RegSetKeyValueW   [ADVAPI32.@]
+ */
+LONG WINAPI RegSetKeyValueW( HKEY hkey, LPCWSTR subkey, LPCWSTR name, DWORD type, const void *data, DWORD len )
+{
+    HKEY hsubkey = NULL;
     DWORD ret;
 
-    TRACE("(%p,%s,%ld,%s,%ld)\n", hkey, debugstr_a(name), type, debugstr_a(data), count );
+    TRACE("(%p,%s,%s,%d,%p,%d)\n", hkey, debugstr_w(subkey), debugstr_w(name), type, data, len );
 
-    if (type != REG_SZ) return ERROR_INVALID_PARAMETER;
-
-    if (name && name[0])  /* need to create the subkey */
+    if (subkey && subkey[0])  /* need to create the subkey */
     {
-        if ((ret = RegCreateKeyA( hkey, name, &subkey )) != ERROR_SUCCESS) return ret;
+        if ((ret = RegCreateKeyW( hkey, subkey, &hsubkey )) != ERROR_SUCCESS) return ret;
+        hkey = hsubkey;
     }
-    ret = RegSetValueExA( subkey, NULL, 0, REG_SZ, (const BYTE*)data, strlen(data)+1 );
-    if (subkey != hkey) RegCloseKey( subkey );
+
+    ret = RegSetValueExW( hkey, name, 0, type, (const BYTE*)data, len );
+    if (hsubkey) RegCloseKey( hsubkey );
     return ret;
 }
 
+/******************************************************************************
+ * RegSetKeyValueA   [ADVAPI32.@]
+ */
+LONG WINAPI RegSetKeyValueA( HKEY hkey, LPCSTR subkey, LPCSTR name, DWORD type, const void *data, DWORD len )
+{
+    HKEY hsubkey = NULL;
+    DWORD ret;
 
+    TRACE("(%p,%s,%s,%d,%p,%d)\n", hkey, debugstr_a(subkey), debugstr_a(name), type, data, len );
+
+    if (subkey && subkey[0])  /* need to create the subkey */
+    {
+        if ((ret = RegCreateKeyA( hkey, subkey, &hsubkey )) != ERROR_SUCCESS) return ret;
+        hkey = hsubkey;
+    }
+
+    ret = RegSetValueExA( hkey, name, 0, type, (const BYTE*)data, len );
+    if (hsubkey) RegCloseKey( hsubkey );
+    return ret;
+}
+
+struct perf_provider
+{
+    HMODULE perflib;
+    WCHAR linkage[MAX_PATH];
+    WCHAR objects[MAX_PATH];
+    PM_OPEN_PROC *pOpen;
+    PM_CLOSE_PROC *pClose;
+    PM_COLLECT_PROC *pCollect;
+};
+
+static void *get_provider_entry(HKEY perf, HMODULE perflib, const char *name)
+{
+    char buf[MAX_PATH];
+    DWORD err, type, len;
+
+    len = sizeof(buf) - 1;
+    err = RegQueryValueExA(perf, name, NULL, &type, (BYTE *)buf, &len);
+    if (err != ERROR_SUCCESS || type != REG_SZ)
+        return NULL;
+
+    buf[len] = 0;
+    TRACE("Loading function pointer for %s: %s\n", name, debugstr_a(buf));
+
+    return GetProcAddress(perflib, buf);
+}
+
+static BOOL load_provider(HKEY root, const WCHAR *name, struct perf_provider *provider)
+{
+    static const WCHAR object_listW[] = { 'O','b','j','e','c','t',' ','L','i','s','t',0 };
+    static const WCHAR performanceW[] = { 'P','e','r','f','o','r','m','a','n','c','e',0 };
+    static const WCHAR libraryW[] = { 'L','i','b','r','a','r','y',0 };
+    static const WCHAR linkageW[] = { 'L','i','n','k','a','g','e',0 };
+    static const WCHAR exportW[] = { 'E','x','p','o','r','t',0 };
+    WCHAR buf[MAX_PATH], buf2[MAX_PATH];
+    DWORD err, type, len;
+    HKEY service, perf;
+
+    err = RegOpenKeyExW(root, name, 0, KEY_READ, &service);
+    if (err != ERROR_SUCCESS)
+        return FALSE;
+
+    provider->linkage[0] = 0;
+    err = RegOpenKeyExW(service, linkageW, 0, KEY_READ, &perf);
+    if (err == ERROR_SUCCESS)
+    {
+        len = sizeof(buf) - sizeof(WCHAR);
+        err = RegQueryValueExW(perf, exportW, NULL, &type, (BYTE *)buf, &len);
+        if (err == ERROR_SUCCESS && (type == REG_SZ || type == REG_MULTI_SZ))
+        {
+            memcpy(provider->linkage, buf, len);
+            provider->linkage[len / sizeof(WCHAR)] = 0;
+            TRACE("Export: %s\n", debugstr_w(provider->linkage));
+        }
+        RegCloseKey(perf);
+    }
+
+    err = RegOpenKeyExW(service, performanceW, 0, KEY_READ, &perf);
+    RegCloseKey(service);
+    if (err != ERROR_SUCCESS)
+        return FALSE;
+
+    provider->objects[0] = 0;
+    len = sizeof(buf) - sizeof(WCHAR);
+    err = RegQueryValueExW(perf, object_listW, NULL, &type, (BYTE *)buf, &len);
+    if (err == ERROR_SUCCESS && (type == REG_SZ || type == REG_MULTI_SZ))
+    {
+        memcpy(provider->objects, buf, len);
+        provider->objects[len / sizeof(WCHAR)] = 0;
+        TRACE("Object List: %s\n", debugstr_w(provider->objects));
+    }
+
+    len = sizeof(buf) - sizeof(WCHAR);
+    err = RegQueryValueExW(perf, libraryW, NULL, &type, (BYTE *)buf, &len);
+    if (err != ERROR_SUCCESS || !(type == REG_SZ || type == REG_EXPAND_SZ))
+        goto error;
+
+    buf[len / sizeof(WCHAR)] = 0;
+    if (type == REG_EXPAND_SZ)
+    {
+        len = ExpandEnvironmentStringsW(buf, buf2, MAX_PATH);
+        if (!len || len > MAX_PATH) goto error;
+        strcpyW(buf, buf2);
+    }
+
+    if (!(provider->perflib = LoadLibraryW(buf)))
+    {
+        WARN("Failed to load %s\n", debugstr_w(buf));
+        goto error;
+    }
+
+    GetModuleFileNameW(provider->perflib, buf, MAX_PATH);
+    TRACE("Loaded provider %s\n", wine_dbgstr_w(buf));
+
+    provider->pOpen = get_provider_entry(perf, provider->perflib, "Open");
+    provider->pClose = get_provider_entry(perf, provider->perflib, "Close");
+    provider->pCollect = get_provider_entry(perf, provider->perflib, "Collect");
+    if (provider->pOpen && provider->pClose && provider->pCollect)
+    {
+        RegCloseKey(perf);
+        return TRUE;
+    }
+
+    TRACE("Provider is missing required exports\n");
+    FreeLibrary(provider->perflib);
+
+error:
+    RegCloseKey(perf);
+    return FALSE;
+}
+
+static DWORD collect_data(struct perf_provider *provider, const WCHAR *query, void **data, DWORD *size, DWORD *obj_count)
+{
+    static const WCHAR globalW[] = { 'G','l','o','b','a','l',0 };
+    WCHAR *linkage = provider->linkage[0] ? provider->linkage : NULL;
+    DWORD err;
+
+    if (!query || !query[0])
+        query = globalW;
+
+    err = provider->pOpen(linkage);
+    if (err != ERROR_SUCCESS)
+    {
+        TRACE("Open(%s) error %u (%#x)\n", debugstr_w(linkage), err, err);
+        return err;
+    }
+
+    *obj_count = 0;
+    err = provider->pCollect((WCHAR *)query, data, size, obj_count);
+    if (err != ERROR_SUCCESS)
+    {
+        TRACE("Collect error %u (%#x)\n", err, err);
+        *obj_count = 0;
+    }
+
+    provider->pClose();
+    return err;
+}
+
+#define MAX_SERVICE_NAME 260
+
+static DWORD query_perf_data(const WCHAR *query, DWORD *type, void *data, DWORD *ret_size)
+{
+    static const WCHAR SZ_SERVICES_KEY[] = { 'S','y','s','t','e','m','\\',
+        'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
+        'S','e','r','v','i','c','e','s',0 };
+    DWORD err, i, data_size;
+    HKEY root;
+    PERF_DATA_BLOCK *pdb;
+
+    if (!ret_size)
+        return ERROR_INVALID_PARAMETER;
+
+    data_size = *ret_size;
+    *ret_size = 0;
+
+    if (type)
+        *type = REG_BINARY;
+
+    if (!data || data_size < sizeof(*pdb))
+        return ERROR_MORE_DATA;
+
+    pdb = data;
+
+    pdb->Signature[0] = 'P';
+    pdb->Signature[1] = 'E';
+    pdb->Signature[2] = 'R';
+    pdb->Signature[3] = 'F';
+#ifdef WORDS_BIGENDIAN
+    pdb->LittleEndian = FALSE;
+#else
+    pdb->LittleEndian = TRUE;
+#endif
+    pdb->Version = PERF_DATA_VERSION;
+    pdb->Revision = PERF_DATA_REVISION;
+    pdb->TotalByteLength = 0;
+    pdb->HeaderLength = sizeof(*pdb);
+    pdb->NumObjectTypes = 0;
+    pdb->DefaultObject = 0;
+    QueryPerformanceCounter(&pdb->PerfTime);
+    QueryPerformanceFrequency(&pdb->PerfFreq);
+
+    data = pdb + 1;
+    pdb->SystemNameOffset = sizeof(*pdb);
+    pdb->SystemNameLength = (data_size - sizeof(*pdb)) / sizeof(WCHAR);
+    if (!GetComputerNameW(data, &pdb->SystemNameLength))
+        return ERROR_MORE_DATA;
+
+    pdb->SystemNameLength++;
+    pdb->SystemNameLength *= sizeof(WCHAR);
+
+    pdb->HeaderLength += pdb->SystemNameLength;
+
+    /* align to 8 bytes */
+    if (pdb->SystemNameLength & 7)
+        pdb->HeaderLength += 8 - (pdb->SystemNameLength & 7);
+
+    if (data_size < pdb->HeaderLength)
+        return ERROR_MORE_DATA;
+
+    pdb->TotalByteLength = pdb->HeaderLength;
+
+    data_size -= pdb->HeaderLength;
+    data = (char *)data + pdb->HeaderLength;
+
+    err = RegOpenKeyExW(HKEY_LOCAL_MACHINE, SZ_SERVICES_KEY, 0, KEY_READ, &root);
+    if (err != ERROR_SUCCESS)
+        return err;
+
+    i = 0;
+    for (;;)
+    {
+        DWORD collected_size = data_size, obj_count = 0;
+        struct perf_provider provider;
+        WCHAR name[MAX_SERVICE_NAME];
+        void *collected_data = data;
+
+        err = RegEnumKeyW(root, i++, name, MAX_SERVICE_NAME);
+        if (err == ERROR_NO_MORE_ITEMS)
+        {
+            err = ERROR_SUCCESS;
+            break;
+        }
+
+        if (err != ERROR_SUCCESS)
+            continue;
+
+        if (!load_provider(root, name, &provider))
+            continue;
+
+        err = collect_data(&provider, query, &collected_data, &collected_size, &obj_count);
+        FreeLibrary(provider.perflib);
+
+        if (err == ERROR_MORE_DATA)
+            break;
+
+        if (err == ERROR_SUCCESS)
+        {
+            PERF_OBJECT_TYPE *obj = (PERF_OBJECT_TYPE *)data;
+
+            TRACE("Collect: obj->TotalByteLength %u, collected_size %u\n",
+                obj->TotalByteLength, collected_size);
+
+            data_size -= collected_size;
+            data = collected_data;
+
+            pdb->TotalByteLength += collected_size;
+            pdb->NumObjectTypes += obj_count;
+        }
+    }
+
+    RegCloseKey(root);
+
+    if (err == ERROR_SUCCESS)
+    {
+        *ret_size = pdb->TotalByteLength;
+
+        GetSystemTime(&pdb->SystemTime);
+        GetSystemTimeAsFileTime((FILETIME *)&pdb->PerfTime100nSec);
+    }
+
+    return err;
+}
 
 /******************************************************************************
  * RegQueryValueExW   [ADVAPI32.@]
  *
  * See RegQueryValueExA.
  */
-DWORD WINAPI RegQueryValueExW( HKEY hkey, LPCWSTR name, LPDWORD reserved, LPDWORD type,
-                               LPBYTE data, LPDWORD count )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegQueryValueExW( HKEY hkey, LPCWSTR name, LPDWORD reserved, LPDWORD type,
+                              LPBYTE data, LPDWORD count )
 {
     NTSTATUS status;
     UNICODE_STRING name_str;
@@ -1107,17 +1769,25 @@ DWORD WINAPI RegQueryValueExW( HKEY hkey, LPCWSTR name, LPDWORD reserved, LPDWOR
     KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
     static const int info_size = offsetof( KEY_VALUE_PARTIAL_INFORMATION, Data );
 
-    TRACE("(%p,%s,%p,%p,%p,%p=%ld)\n",
+    TRACE("(%p,%s,%p,%p,%p,%p=%d)\n",
           hkey, debugstr_w(name), reserved, type, data, count,
           (count && data) ? *count : 0 );
 
     if ((data && !count) || reserved) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+
+    if (hkey == HKEY_PERFORMANCE_DATA)
+        return query_perf_data(name, type, data, count);
+
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     RtlInitUnicodeString( &name_str, name );
 
     if (data) total_size = min( sizeof(buffer), *count + info_size );
-    else total_size = info_size;
+    else
+    {
+        total_size = info_size;
+        if (count) *count = 0;
+    }
 
     status = NtQueryValueKey( hkey, &name_str, KeyValuePartialInformation,
                               buffer, total_size, &total_size );
@@ -1128,8 +1798,8 @@ DWORD WINAPI RegQueryValueExW( HKEY hkey, LPCWSTR name, LPDWORD reserved, LPDWOR
         /* retry with a dynamically allocated buffer */
         while (status == STATUS_BUFFER_OVERFLOW && total_size - info_size <= *count)
         {
-            if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-            if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
+            if (buf_ptr != buffer) heap_free( buf_ptr );
+            if (!(buf_ptr = heap_alloc( total_size )))
                 return ERROR_NOT_ENOUGH_MEMORY;
             info = (KEY_VALUE_PARTIAL_INFORMATION *)buf_ptr;
             status = NtQueryValueKey( hkey, &name_str, KeyValuePartialInformation,
@@ -1155,7 +1825,7 @@ DWORD WINAPI RegQueryValueExW( HKEY hkey, LPCWSTR name, LPDWORD reserved, LPDWOR
     if (count) *count = total_size - info_size;
 
  done:
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
     return RtlNtStatusToDosError(status);
 }
 
@@ -1183,29 +1853,43 @@ DWORD WINAPI RegQueryValueExW( HKEY hkey, LPCWSTR name, LPDWORD reserved, LPDWOR
  *   MSDN states that if data is too small it is partially filled. In reality 
  *   it remains untouched.
  */
-DWORD WINAPI RegQueryValueExA( HKEY hkey, LPCSTR name, LPDWORD reserved, LPDWORD type,
-                               LPBYTE data, LPDWORD count )
+LSTATUS WINAPI DECLSPEC_HOTPATCH RegQueryValueExA( HKEY hkey, LPCSTR name, LPDWORD reserved,
+                                                   LPDWORD type, LPBYTE data, LPDWORD count )
 {
     NTSTATUS status;
     ANSI_STRING nameA;
-    DWORD total_size;
+    UNICODE_STRING nameW;
+    DWORD total_size, datalen = 0;
     char buffer[256], *buf_ptr = buffer;
     KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
     static const int info_size = offsetof( KEY_VALUE_PARTIAL_INFORMATION, Data );
 
-    TRACE("(%p,%s,%p,%p,%p,%p=%ld)\n",
+    TRACE("(%p,%s,%p,%p,%p,%p=%d)\n",
           hkey, debugstr_a(name), reserved, type, data, count, count ? *count : 0 );
 
     if ((data && !count) || reserved) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (hkey != HKEY_PERFORMANCE_DATA && !(hkey = get_special_root_hkey( hkey, 0 )))
+        return ERROR_INVALID_HANDLE;
+
+    if (count) datalen = *count;
+    if (!data && count) *count = 0;
+
+    /* this matches Win9x behaviour - NT sets *type to a random value */
+    if (type) *type = REG_NONE;
 
     RtlInitAnsiString( &nameA, name );
-    if ((status = RtlAnsiStringToUnicodeString( &NtCurrentTeb()->StaticUnicodeString,
-                                                &nameA, FALSE )))
+    if ((status = RtlAnsiStringToUnicodeString( &nameW, &nameA, TRUE )))
         return RtlNtStatusToDosError(status);
 
-    status = NtQueryValueKey( hkey, &NtCurrentTeb()->StaticUnicodeString,
-                              KeyValuePartialInformation, buffer, sizeof(buffer), &total_size );
+    if (hkey == HKEY_PERFORMANCE_DATA)
+    {
+        DWORD ret = query_perf_data( nameW.Buffer, type, data, count );
+        RtlFreeUnicodeString( &nameW );
+        return ret;
+    }
+
+    status = NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation,
+                              buffer, sizeof(buffer), &total_size );
     if (status && status != STATUS_BUFFER_OVERFLOW) goto done;
 
     /* we need to fetch the contents for a string type even if not requested,
@@ -1215,15 +1899,15 @@ DWORD WINAPI RegQueryValueExA( HKEY hkey, LPCSTR name, LPDWORD reserved, LPDWORD
         /* retry with a dynamically allocated buffer */
         while (status == STATUS_BUFFER_OVERFLOW)
         {
-            if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-            if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
+            if (buf_ptr != buffer) heap_free( buf_ptr );
+            if (!(buf_ptr = heap_alloc( total_size )))
             {
                 status = STATUS_NO_MEMORY;
                 goto done;
             }
             info = (KEY_VALUE_PARTIAL_INFORMATION *)buf_ptr;
-            status = NtQueryValueKey( hkey, &NtCurrentTeb()->StaticUnicodeString,
-                                    KeyValuePartialInformation, buf_ptr, total_size, &total_size );
+            status = NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation,
+                                      buf_ptr, total_size, &total_size );
         }
 
         if (status) goto done;
@@ -1236,21 +1920,21 @@ DWORD WINAPI RegQueryValueExA( HKEY hkey, LPCSTR name, LPDWORD reserved, LPDWORD
                                        total_size - info_size );
             if (data && len)
             {
-                if (len > *count) status = STATUS_BUFFER_OVERFLOW;
+                if (len > datalen) status = STATUS_BUFFER_OVERFLOW;
                 else
                 {
                     RtlUnicodeToMultiByteN( (char*)data, len, NULL, (WCHAR *)(buf_ptr + info_size),
                                             total_size - info_size );
                     /* if the type is REG_SZ and data is not 0-terminated
                      * and there is enough space in the buffer NT appends a \0 */
-                    if (len < *count && data[len-1]) data[len] = 0;
+                    if (len < datalen && data[len-1]) data[len] = 0;
                 }
             }
             total_size = len + info_size;
         }
         else if (data)
         {
-            if (total_size - info_size > *count) status = STATUS_BUFFER_OVERFLOW;
+            if (total_size - info_size > datalen) status = STATUS_BUFFER_OVERFLOW;
             else memcpy( data, buf_ptr + info_size, total_size - info_size );
         }
     }
@@ -1260,7 +1944,8 @@ DWORD WINAPI RegQueryValueExA( HKEY hkey, LPCSTR name, LPDWORD reserved, LPDWORD
     if (count) *count = total_size - info_size;
 
  done:
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
+    RtlFreeUnicodeString( &nameW );
     return RtlNtStatusToDosError(status);
 }
 
@@ -1281,12 +1966,12 @@ DWORD WINAPI RegQueryValueExA( HKEY hkey, LPCSTR name, LPDWORD reserved, LPDWORD
  *   Success: ERROR_SUCCESS
  *   Failure: nonzero error code from Winerror.h
  */
-DWORD WINAPI RegQueryValueW( HKEY hkey, LPCWSTR name, LPWSTR data, LPLONG count )
+LSTATUS WINAPI RegQueryValueW( HKEY hkey, LPCWSTR name, LPWSTR data, LPLONG count )
 {
     DWORD ret;
     HKEY subkey = hkey;
 
-    TRACE("(%p,%s,%p,%ld)\n", hkey, debugstr_w(name), data, count ? *count : 0 );
+    TRACE("(%p,%s,%p,%d)\n", hkey, debugstr_w(name), data, count ? *count : 0 );
 
     if (name && name[0])
     {
@@ -1310,12 +1995,12 @@ DWORD WINAPI RegQueryValueW( HKEY hkey, LPCWSTR name, LPWSTR data, LPLONG count 
  *
  * See RegQueryValueW.
  */
-DWORD WINAPI RegQueryValueA( HKEY hkey, LPCSTR name, LPSTR data, LPLONG count )
+LSTATUS WINAPI RegQueryValueA( HKEY hkey, LPCSTR name, LPSTR data, LPLONG count )
 {
     DWORD ret;
     HKEY subkey = hkey;
 
-    TRACE("(%p,%s,%p,%ld)\n", hkey, debugstr_a(name), data, count ? *count : 0 );
+    TRACE("(%p,%s,%p,%d)\n", hkey, debugstr_a(name), data, count ? *count : 0 );
 
     if (name && name[0])
     {
@@ -1339,8 +2024,8 @@ DWORD WINAPI RegQueryValueA( HKEY hkey, LPCSTR name, LPSTR data, LPLONG count )
  *
  * Helper function for RegGetValueA/W.
  */
-VOID ADVAPI_ApplyRestrictions( DWORD dwFlags, DWORD dwType, DWORD cbData,
-                               PLONG ret )
+static VOID ADVAPI_ApplyRestrictions( DWORD dwFlags, DWORD dwType,
+                                      DWORD cbData, PLONG ret )
 {
     /* Check if the type is restricted by the passed flags */
     if (*ret == ERROR_SUCCESS || *ret == ERROR_MORE_DATA)
@@ -1365,9 +2050,9 @@ VOID ADVAPI_ApplyRestrictions( DWORD dwFlags, DWORD dwType, DWORD cbData,
             {
                 DWORD cbExpect = 0;
 
-                if ((dwFlags & RRF_RT_DWORD) == RRF_RT_DWORD)
+                if ((dwFlags & RRF_RT_ANY) == RRF_RT_DWORD)
                     cbExpect = 4;
-                else if ((dwFlags & RRF_RT_DWORD) == RRF_RT_QWORD)
+                else if ((dwFlags & RRF_RT_ANY) == RRF_RT_QWORD)
                     cbExpect = 8;
 
                 if (cbExpect && cbData != cbExpect)
@@ -1382,8 +2067,8 @@ VOID ADVAPI_ApplyRestrictions( DWORD dwFlags, DWORD dwType, DWORD cbData,
 /******************************************************************************
  * RegGetValueW   [ADVAPI32.@]
  *
- * Retrieves the type and data for a value name associated with a key 
- * optionally expanding it's content and restricting it's type.
+ * Retrieves the type and data for a value name associated with a key,
+ * optionally expanding its content and restricting its type.
  *
  * PARAMS
  *  hKey      [I] Handle to an open key.
@@ -1392,20 +2077,23 @@ VOID ADVAPI_ApplyRestrictions( DWORD dwFlags, DWORD dwType, DWORD cbData,
  *  dwFlags   [I] Flags restricting the value type to retrieve.
  *  pdwType   [O] Destination for the values type, may be NULL.
  *  pvData    [O] Destination for the values content, may be NULL.
- *  pcbData   [I/O] Size of pvData, updated with the size required to 
- *                  retrieve the whole content.
+ *  pcbData   [I/O] Size of pvData, updated with the size in bytes required to
+ *                  retrieve the whole content, including the trailing '\0'
+ *                  for strings.
  *
  * RETURNS
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  *
  * NOTES
- *  - Unless RRF_NOEXPAND is specified REG_EXPAND_SZ is automatically expanded
- *    and REG_SZ is retrieved instead.
+ *  - Unless RRF_NOEXPAND is specified, REG_EXPAND_SZ values are automatically
+ *    expanded and pdwType is set to REG_SZ instead.
  *  - Restrictions are applied after expanding, using RRF_RT_REG_EXPAND_SZ 
  *    without RRF_NOEXPAND is thus not allowed.
+ *    An exception is the case where RRF_RT_ANY is specified, because then
+ *    RRF_NOEXPAND is allowed.
  */
-LONG WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue, 
+LSTATUS WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
                           DWORD dwFlags, LPDWORD pdwType, PVOID pvData,
                           LPDWORD pcbData )
 {
@@ -1413,11 +2101,14 @@ LONG WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
     PVOID pvBuf = NULL;
     LONG ret;
 
-    TRACE("(%p,%s,%s,%ld,%p,%p,%p=%ld)\n", 
+    TRACE("(%p,%s,%s,%d,%p,%p,%p=%d)\n", 
           hKey, debugstr_w(pszSubKey), debugstr_w(pszValue), dwFlags, pdwType,
           pvData, pcbData, cbData);
 
-    if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && !(dwFlags & RRF_NOEXPAND))
+    if (pvData && !pcbData)
+        return ERROR_INVALID_PARAMETER;
+    if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && !(dwFlags & RRF_NOEXPAND) &&
+            ((dwFlags & RRF_RT_ANY) != RRF_RT_ANY))
         return ERROR_INVALID_PARAMETER;
 
     if (pszSubKey && pszSubKey[0])
@@ -1432,19 +2123,19 @@ LONG WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
      * if the passed buffer was too small as the expanded string might be
      * smaller than the unexpanded one and could fit into cbData bytes. */
     if ((ret == ERROR_SUCCESS || ret == ERROR_MORE_DATA) &&
-        (dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND)))
+        dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND))
     {
         do {
-            if (pvBuf) HeapFree(GetProcessHeap(), 0, pvBuf);
+            heap_free(pvBuf);
             
-            pvBuf = HeapAlloc(GetProcessHeap(), 0, cbData);
+            pvBuf = heap_alloc(cbData);
             if (!pvBuf)
             {
                 ret = ERROR_NOT_ENOUGH_MEMORY;
                 break;
             }
 
-            if (ret == ERROR_MORE_DATA)
+            if (ret == ERROR_MORE_DATA || !pvData)
                 ret = RegQueryValueExW(hKey, pszValue, NULL, 
                                        &dwType, pvBuf, &cbData);
             else
@@ -1462,19 +2153,20 @@ LONG WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
 
         if (ret == ERROR_SUCCESS)
         {
+            /* Recheck dwType in case it changed since the first call */
             if (dwType == REG_EXPAND_SZ)
             {
                 cbData = ExpandEnvironmentStringsW(pvBuf, pvData,
-                                                   pcbData ? *pcbData : 0);
+                                                   pcbData ? *pcbData : 0) * sizeof(WCHAR);
                 dwType = REG_SZ;
-                if(pcbData && cbData > *pcbData)
+                if(pvData && pcbData && cbData > *pcbData)
                     ret = ERROR_MORE_DATA;
             }
-            else if (pcbData)
+            else if (pvData)
                 CopyMemory(pvData, pvBuf, *pcbData);
         }
 
-        if (pvBuf) HeapFree(GetProcessHeap(), 0, pvBuf);
+        heap_free(pvBuf);
     }
 
     if (pszSubKey && pszSubKey[0])
@@ -1482,7 +2174,7 @@ LONG WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
 
     ADVAPI_ApplyRestrictions(dwFlags, dwType, cbData, &ret);
 
-    if (pcbData && ret != ERROR_SUCCESS && (dwFlags & RRF_ZEROONFAILURE))
+    if (pvData && ret != ERROR_SUCCESS && (dwFlags & RRF_ZEROONFAILURE))
         ZeroMemory(pvData, *pcbData);
 
     if (pdwType) *pdwType = dwType;
@@ -1497,7 +2189,7 @@ LONG WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
  *
  * See RegGetValueW.
  */
-LONG WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue, 
+LSTATUS WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
                           DWORD dwFlags, LPDWORD pdwType, PVOID pvData, 
                           LPDWORD pcbData )
 {
@@ -1505,11 +2197,14 @@ LONG WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
     PVOID pvBuf = NULL;
     LONG ret;
 
-    TRACE("(%p,%s,%s,%ld,%p,%p,%p=%ld)\n", 
-          hKey, pszSubKey, pszValue, dwFlags, pdwType, pvData, pcbData,
-          cbData);
+    TRACE("(%p,%s,%s,%d,%p,%p,%p=%d)\n", 
+          hKey, debugstr_a(pszSubKey), debugstr_a(pszValue), dwFlags,
+          pdwType, pvData, pcbData, cbData);
 
-    if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && !(dwFlags & RRF_NOEXPAND))
+    if (pvData && !pcbData)
+        return ERROR_INVALID_PARAMETER;
+    if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && !(dwFlags & RRF_NOEXPAND) &&
+            ((dwFlags & RRF_RT_ANY) != RRF_RT_ANY))
         return ERROR_INVALID_PARAMETER;
 
     if (pszSubKey && pszSubKey[0])
@@ -1524,19 +2219,19 @@ LONG WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
      * if the passed buffer was too small as the expanded string might be
      * smaller than the unexpanded one and could fit into cbData bytes. */
     if ((ret == ERROR_SUCCESS || ret == ERROR_MORE_DATA) &&
-        (dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND)))
+        dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND))
     {
         do {
-            if (pvBuf) HeapFree(GetProcessHeap(), 0, pvBuf);
+            heap_free(pvBuf);
 
-            pvBuf = HeapAlloc(GetProcessHeap(), 0, cbData);
+            pvBuf = heap_alloc(cbData);
             if (!pvBuf)
             {
                 ret = ERROR_NOT_ENOUGH_MEMORY;
                 break;
             }
 
-            if (ret == ERROR_MORE_DATA)
+            if (ret == ERROR_MORE_DATA || !pvData)
                 ret = RegQueryValueExA(hKey, pszValue, NULL, 
                                        &dwType, pvBuf, &cbData);
             else
@@ -1554,19 +2249,20 @@ LONG WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
 
         if (ret == ERROR_SUCCESS)
         {
+            /* Recheck dwType in case it changed since the first call */
             if (dwType == REG_EXPAND_SZ)
             {
                 cbData = ExpandEnvironmentStringsA(pvBuf, pvData,
                                                    pcbData ? *pcbData : 0);
                 dwType = REG_SZ;
-                if(pcbData && cbData > *pcbData)
+                if(pvData && pcbData && cbData > *pcbData)
                     ret = ERROR_MORE_DATA;
             }
-            else if (pcbData)
+            else if (pvData)
                 CopyMemory(pvData, pvBuf, *pcbData);
         }
 
-        if (pvBuf) HeapFree(GetProcessHeap(), 0, pvBuf);
+        heap_free(pvBuf);
     }
 
     if (pszSubKey && pszSubKey[0])
@@ -1574,7 +2270,7 @@ LONG WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
 
     ADVAPI_ApplyRestrictions(dwFlags, dwType, cbData, &ret);
 
-    if (pcbData && ret != ERROR_SUCCESS && (dwFlags & RRF_ZEROONFAILURE))
+    if (pvData && ret != ERROR_SUCCESS && (dwFlags & RRF_ZEROONFAILURE))
         ZeroMemory(pvData, *pcbData);
 
     if (pdwType) *pdwType = dwType;
@@ -1604,8 +2300,8 @@ LONG WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
  *  Failure: nonzero error code from Winerror.h
  */
 
-DWORD WINAPI RegEnumValueW( HKEY hkey, DWORD index, LPWSTR value, LPDWORD val_count,
-                            LPDWORD reserved, LPDWORD type, LPBYTE data, LPDWORD count )
+LSTATUS WINAPI RegEnumValueW( HKEY hkey, DWORD index, LPWSTR value, LPDWORD val_count,
+                           LPDWORD reserved, LPDWORD type, LPBYTE data, LPDWORD count )
 {
     NTSTATUS status;
     DWORD total_size;
@@ -1613,12 +2309,12 @@ DWORD WINAPI RegEnumValueW( HKEY hkey, DWORD index, LPWSTR value, LPDWORD val_co
     KEY_VALUE_FULL_INFORMATION *info = (KEY_VALUE_FULL_INFORMATION *)buffer;
     static const int info_size = offsetof( KEY_VALUE_FULL_INFORMATION, Name );
 
-    TRACE("(%p,%ld,%p,%p,%p,%p,%p,%p)\n",
+    TRACE("(%p,%d,%p,%p,%p,%p,%p,%p)\n",
           hkey, index, value, val_count, reserved, type, data, count );
 
-    /* NT only checks count, not val_count */
-    if ((data && !count) || reserved) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if ((data && !count) || reserved || !value || !val_count)
+        return ERROR_INVALID_PARAMETER;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     total_size = info_size + (MAX_PATH + 1) * sizeof(WCHAR);
     if (data) total_size += *count;
@@ -1626,60 +2322,52 @@ DWORD WINAPI RegEnumValueW( HKEY hkey, DWORD index, LPWSTR value, LPDWORD val_co
 
     status = NtEnumerateValueKey( hkey, index, KeyValueFullInformation,
                                   buffer, total_size, &total_size );
-    if (status && status != STATUS_BUFFER_OVERFLOW) goto done;
 
-    if (value || data)
+    /* retry with a dynamically allocated buffer */
+    while (status == STATUS_BUFFER_OVERFLOW)
     {
-        /* retry with a dynamically allocated buffer */
-        while (status == STATUS_BUFFER_OVERFLOW)
+        if (buf_ptr != buffer) heap_free( buf_ptr );
+        if (!(buf_ptr = heap_alloc( total_size )))
+            return ERROR_NOT_ENOUGH_MEMORY;
+        info = (KEY_VALUE_FULL_INFORMATION *)buf_ptr;
+        status = NtEnumerateValueKey( hkey, index, KeyValueFullInformation,
+                                      buf_ptr, total_size, &total_size );
+    }
+
+    if (status) goto done;
+
+    if (info->NameLength/sizeof(WCHAR) >= *val_count)
+    {
+        status = STATUS_BUFFER_OVERFLOW;
+        goto overflow;
+    }
+    memcpy( value, info->Name, info->NameLength );
+    *val_count = info->NameLength / sizeof(WCHAR);
+    value[*val_count] = 0;
+
+    if (data)
+    {
+        if (total_size - info->DataOffset > *count)
         {
-            if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-            if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
-                return ERROR_NOT_ENOUGH_MEMORY;
-            info = (KEY_VALUE_FULL_INFORMATION *)buf_ptr;
-            status = NtEnumerateValueKey( hkey, index, KeyValueFullInformation,
-                                          buf_ptr, total_size, &total_size );
+            status = STATUS_BUFFER_OVERFLOW;
+            goto overflow;
         }
-
-        if (status) goto done;
-
-        if (value)
+        memcpy( data, buf_ptr + info->DataOffset, total_size - info->DataOffset );
+        if (total_size - info->DataOffset <= *count-sizeof(WCHAR) && is_string(info->Type))
         {
-            if (info->NameLength/sizeof(WCHAR) >= *val_count)
-            {
-                status = STATUS_BUFFER_OVERFLOW;
-                goto overflow;
-            }
-            memcpy( value, info->Name, info->NameLength );
-            *val_count = info->NameLength / sizeof(WCHAR);
-            value[*val_count] = 0;
-        }
-
-        if (data)
-        {
-            if (total_size - info->DataOffset > *count)
-            {
-                status = STATUS_BUFFER_OVERFLOW;
-                goto overflow;
-            }
-            memcpy( data, buf_ptr + info->DataOffset, total_size - info->DataOffset );
-            if (total_size - info->DataOffset <= *count-sizeof(WCHAR) && is_string(info->Type))
-            {
-                /* if the type is REG_SZ and data is not 0-terminated
-                 * and there is enough space in the buffer NT appends a \0 */
-                WCHAR *ptr = (WCHAR *)(data + total_size - info->DataOffset);
-                if (ptr > (WCHAR *)data && ptr[-1]) *ptr = 0;
-            }
+            /* if the type is REG_SZ and data is not 0-terminated
+             * and there is enough space in the buffer NT appends a \0 */
+            WCHAR *ptr = (WCHAR *)(data + total_size - info->DataOffset);
+            if (ptr > (WCHAR *)data && ptr[-1]) *ptr = 0;
         }
     }
-    else status = STATUS_SUCCESS;
 
  overflow:
     if (type) *type = info->Type;
     if (count) *count = info->DataLength;
 
  done:
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
     return RtlNtStatusToDosError(status);
 }
 
@@ -1689,8 +2377,8 @@ DWORD WINAPI RegEnumValueW( HKEY hkey, DWORD index, LPWSTR value, LPDWORD val_co
  *
  * See RegEnumValueW.
  */
-DWORD WINAPI RegEnumValueA( HKEY hkey, DWORD index, LPSTR value, LPDWORD val_count,
-                            LPDWORD reserved, LPDWORD type, LPBYTE data, LPDWORD count )
+LSTATUS WINAPI RegEnumValueA( HKEY hkey, DWORD index, LPSTR value, LPDWORD val_count,
+                           LPDWORD reserved, LPDWORD type, LPBYTE data, LPDWORD count )
 {
     NTSTATUS status;
     DWORD total_size;
@@ -1698,12 +2386,12 @@ DWORD WINAPI RegEnumValueA( HKEY hkey, DWORD index, LPSTR value, LPDWORD val_cou
     KEY_VALUE_FULL_INFORMATION *info = (KEY_VALUE_FULL_INFORMATION *)buffer;
     static const int info_size = offsetof( KEY_VALUE_FULL_INFORMATION, Name );
 
-    TRACE("(%p,%ld,%p,%p,%p,%p,%p,%p)\n",
+    TRACE("(%p,%d,%p,%p,%p,%p,%p,%p)\n",
           hkey, index, value, val_count, reserved, type, data, count );
 
-    /* NT only checks count, not val_count */
-    if ((data && !count) || reserved) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if ((data && !count) || reserved || !value || !val_count)
+        return ERROR_INVALID_PARAMETER;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     total_size = info_size + (MAX_PATH + 1) * sizeof(WCHAR);
     if (data) total_size += *count;
@@ -1711,100 +2399,88 @@ DWORD WINAPI RegEnumValueA( HKEY hkey, DWORD index, LPSTR value, LPDWORD val_cou
 
     status = NtEnumerateValueKey( hkey, index, KeyValueFullInformation,
                                   buffer, total_size, &total_size );
-    if (status && status != STATUS_BUFFER_OVERFLOW) goto done;
 
     /* we need to fetch the contents for a string type even if not requested,
      * because we need to compute the length of the ASCII string. */
-    if (value || data || is_string(info->Type))
+
+    /* retry with a dynamically allocated buffer */
+    while (status == STATUS_BUFFER_OVERFLOW)
     {
-        /* retry with a dynamically allocated buffer */
-        while (status == STATUS_BUFFER_OVERFLOW)
-        {
-            if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
-            if (!(buf_ptr = HeapAlloc( GetProcessHeap(), 0, total_size )))
-                return ERROR_NOT_ENOUGH_MEMORY;
-            info = (KEY_VALUE_FULL_INFORMATION *)buf_ptr;
-            status = NtEnumerateValueKey( hkey, index, KeyValueFullInformation,
-                                          buf_ptr, total_size, &total_size );
-        }
+        if (buf_ptr != buffer) heap_free( buf_ptr );
+        if (!(buf_ptr = heap_alloc( total_size )))
+            return ERROR_NOT_ENOUGH_MEMORY;
+        info = (KEY_VALUE_FULL_INFORMATION *)buf_ptr;
+        status = NtEnumerateValueKey( hkey, index, KeyValueFullInformation,
+                                      buf_ptr, total_size, &total_size );
+    }
 
-        if (status) goto done;
+    if (status) goto done;
 
-        if (is_string(info->Type))
+    if (is_string(info->Type))
+    {
+        DWORD len;
+        RtlUnicodeToMultiByteSize( &len, (WCHAR *)(buf_ptr + info->DataOffset),
+                                   total_size - info->DataOffset );
+        if (data && len)
         {
-            DWORD len;
-            RtlUnicodeToMultiByteSize( &len, (WCHAR *)(buf_ptr + info->DataOffset),
-                                       total_size - info->DataOffset );
-            if (data && len)
-            {
-                if (len > *count) status = STATUS_BUFFER_OVERFLOW;
-                else
-                {
-                    RtlUnicodeToMultiByteN( (char*)data, len, NULL, (WCHAR *)(buf_ptr + info->DataOffset),
-                                            total_size - info->DataOffset );
-                    /* if the type is REG_SZ and data is not 0-terminated
-                     * and there is enough space in the buffer NT appends a \0 */
-                    if (len < *count && data[len-1]) data[len] = 0;
-                }
-            }
-            info->DataLength = len;
-        }
-        else if (data)
-        {
-            if (total_size - info->DataOffset > *count) status = STATUS_BUFFER_OVERFLOW;
-            else memcpy( data, buf_ptr + info->DataOffset, total_size - info->DataOffset );
-        }
-
-        if (value && !status)
-        {
-            DWORD len;
-
-            RtlUnicodeToMultiByteSize( &len, info->Name, info->NameLength );
-            if (len >= *val_count)
-            {
-                status = STATUS_BUFFER_OVERFLOW;
-                if (*val_count)
-                {
-                    len = *val_count - 1;
-                    RtlUnicodeToMultiByteN( value, len, NULL, info->Name, info->NameLength );
-                    value[len] = 0;
-                }
-            }
+            if (len > *count) status = STATUS_BUFFER_OVERFLOW;
             else
             {
-                RtlUnicodeToMultiByteN( value, len, NULL, info->Name, info->NameLength );
-                value[len] = 0;
-                *val_count = len;
+                RtlUnicodeToMultiByteN( (char*)data, len, NULL, (WCHAR *)(buf_ptr + info->DataOffset),
+                                        total_size - info->DataOffset );
+                /* if the type is REG_SZ and data is not 0-terminated
+                 * and there is enough space in the buffer NT appends a \0 */
+                if (len < *count && data[len-1]) data[len] = 0;
             }
         }
+        info->DataLength = len;
     }
-    else status = STATUS_SUCCESS;
+    else if (data)
+    {
+        if (total_size - info->DataOffset > *count) status = STATUS_BUFFER_OVERFLOW;
+        else memcpy( data, buf_ptr + info->DataOffset, total_size - info->DataOffset );
+    }
+
+    if (!status)
+    {
+        DWORD len;
+
+        RtlUnicodeToMultiByteSize( &len, info->Name, info->NameLength );
+        if (len >= *val_count)
+        {
+            status = STATUS_BUFFER_OVERFLOW;
+            if (*val_count)
+            {
+                len = *val_count - 1;
+                RtlUnicodeToMultiByteN( value, len, NULL, info->Name, info->NameLength );
+                value[len] = 0;
+            }
+        }
+        else
+        {
+            RtlUnicodeToMultiByteN( value, len, NULL, info->Name, info->NameLength );
+            value[len] = 0;
+            *val_count = len;
+        }
+    }
 
     if (type) *type = info->Type;
     if (count) *count = info->DataLength;
 
  done:
-    if (buf_ptr != buffer) HeapFree( GetProcessHeap(), 0, buf_ptr );
+    if (buf_ptr != buffer) heap_free( buf_ptr );
     return RtlNtStatusToDosError(status);
 }
-
-
 
 /******************************************************************************
  * RegDeleteValueW   [ADVAPI32.@]
  *
  * See RegDeleteValueA.
  */
-DWORD WINAPI RegDeleteValueW( HKEY hkey, LPCWSTR name )
+LSTATUS WINAPI RegDeleteValueW( HKEY hkey, LPCWSTR name )
 {
-    UNICODE_STRING nameW;
-
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
-
-    RtlInitUnicodeString( &nameW, name );
-    return RtlNtStatusToDosError( NtDeleteValueKey( hkey, &nameW ) );
+    return RegDeleteKeyValueW( hkey, NULL, name );
 }
-
 
 /******************************************************************************
  * RegDeleteValueA   [ADVAPI32.@]
@@ -1819,23 +2495,71 @@ DWORD WINAPI RegDeleteValueW( HKEY hkey, LPCWSTR name )
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-DWORD WINAPI RegDeleteValueA( HKEY hkey, LPCSTR name )
+LSTATUS WINAPI RegDeleteValueA( HKEY hkey, LPCSTR name )
 {
-    STRING nameA;
+    return RegDeleteKeyValueA( hkey, NULL, name );
+}
+
+/******************************************************************************
+ * RegDeleteKeyValueW   [ADVAPI32.@]
+ */
+LONG WINAPI RegDeleteKeyValueW( HKEY hkey, LPCWSTR subkey, LPCWSTR name )
+{
+    UNICODE_STRING nameW;
+    HKEY hsubkey = 0;
+    LONG ret;
+
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
+
+    if (subkey)
+    {
+        if ((ret = RegOpenKeyExW( hkey, subkey, 0, KEY_SET_VALUE, &hsubkey )))
+            return ret;
+        hkey = hsubkey;
+    }
+
+    RtlInitUnicodeString( &nameW, name );
+    ret = RtlNtStatusToDosError( NtDeleteValueKey( hkey, &nameW ) );
+    if (hsubkey) RegCloseKey( hsubkey );
+    return ret;
+}
+
+/******************************************************************************
+ * RegDeleteKeyValueA   [ADVAPI32.@]
+ */
+LONG WINAPI RegDeleteKeyValueA( HKEY hkey, LPCSTR subkey, LPCSTR name )
+{
+    UNICODE_STRING nameW;
+    HKEY hsubkey = 0;
+    ANSI_STRING nameA;
     NTSTATUS status;
 
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
+
+    if (subkey)
+    {
+        LONG ret = RegOpenKeyExA( hkey, subkey, 0, KEY_SET_VALUE, &hsubkey );
+        if (ret)
+            return ret;
+        hkey = hsubkey;
+    }
 
     RtlInitAnsiString( &nameA, name );
-    if (!(status = RtlAnsiStringToUnicodeString( &NtCurrentTeb()->StaticUnicodeString,
-                                                 &nameA, FALSE )))
-        status = NtDeleteValueKey( hkey, &NtCurrentTeb()->StaticUnicodeString );
+    if (!(status = RtlAnsiStringToUnicodeString( &nameW, &nameA, TRUE )))
+    {
+        status = NtDeleteValueKey( hkey, &nameW );
+        RtlFreeUnicodeString( &nameW );
+    }
+
+    if (hsubkey) RegCloseKey( hsubkey );
     return RtlNtStatusToDosError( status );
 }
 
-
 /******************************************************************************
  * RegLoadKeyW   [ADVAPI32.@]
+ *
+ * Create a subkey under HKEY_USERS or HKEY_LOCAL_MACHINE and store
+ * registration information from a specified file into that subkey.
  *
  * PARAMS
  *  hkey      [I] Handle of open key
@@ -1843,15 +2567,16 @@ DWORD WINAPI RegDeleteValueA( HKEY hkey, LPCSTR name )
  *  filename  [I] Address of filename for registry information
  *
  * RETURNS
- *  Success: ERROR_SUCCES
+ *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegLoadKeyW( HKEY hkey, LPCWSTR subkey, LPCWSTR filename )
+LSTATUS WINAPI RegLoadKeyW( HKEY hkey, LPCWSTR subkey, LPCWSTR filename )
 {
     OBJECT_ATTRIBUTES destkey, file;
     UNICODE_STRING subkeyW, filenameW;
+    NTSTATUS status;
 
-    if (!(hkey = get_special_root_hkey(hkey))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey(hkey, 0))) return ERROR_INVALID_HANDLE;
 
     destkey.Length = sizeof(destkey);
     destkey.RootDirectory = hkey;               /* root key: HKLM or HKU */
@@ -1869,7 +2594,9 @@ LONG WINAPI RegLoadKeyW( HKEY hkey, LPCWSTR subkey, LPCWSTR filename )
     file.SecurityQualityOfService = NULL;
     RtlDosPathNameToNtPathName_U(filename, &filenameW, NULL, NULL);
 
-    return RtlNtStatusToDosError( NtLoadKey(&destkey, &file) );
+    status = NtLoadKey(&destkey, &file);
+    RtlFreeUnicodeString(&filenameW);
+    return RtlNtStatusToDosError( status );
 }
 
 
@@ -1878,27 +2605,34 @@ LONG WINAPI RegLoadKeyW( HKEY hkey, LPCWSTR subkey, LPCWSTR filename )
  *
  * See RegLoadKeyW.
  */
-LONG WINAPI RegLoadKeyA( HKEY hkey, LPCSTR subkey, LPCSTR filename )
+LSTATUS WINAPI RegLoadKeyA( HKEY hkey, LPCSTR subkey, LPCSTR filename )
 {
     UNICODE_STRING subkeyW, filenameW;
     STRING subkeyA, filenameA;
     NTSTATUS status;
+    LONG ret;
 
     RtlInitAnsiString(&subkeyA, subkey);
     RtlInitAnsiString(&filenameA, filename);
 
-    if ((status = RtlAnsiStringToUnicodeString(&subkeyW, &subkeyA, TRUE)))
-        return RtlNtStatusToDosError(status);
-
-    if ((status = RtlAnsiStringToUnicodeString(&filenameW, &filenameA, TRUE)))
-        return RtlNtStatusToDosError(status);
-
-    return RegLoadKeyW(hkey, subkeyW.Buffer, filenameW.Buffer);
+    RtlInitUnicodeString(&subkeyW, NULL);
+    RtlInitUnicodeString(&filenameW, NULL);
+    if (!(status = RtlAnsiStringToUnicodeString(&subkeyW, &subkeyA, TRUE)) &&
+        !(status = RtlAnsiStringToUnicodeString(&filenameW, &filenameA, TRUE)))
+    {
+        ret = RegLoadKeyW(hkey, subkeyW.Buffer, filenameW.Buffer);
+    }
+    else ret = RtlNtStatusToDosError(status);
+    RtlFreeUnicodeString(&subkeyW);
+    RtlFreeUnicodeString(&filenameW);
+    return ret;
 }
 
 
 /******************************************************************************
  * RegSaveKeyW   [ADVAPI32.@]
+ *
+ * Save a key and all of its subkeys and values to a new file in the standard format.
  *
  * PARAMS
  *  hkey   [I] Handle of key where save begins
@@ -1909,7 +2643,7 @@ LONG WINAPI RegLoadKeyA( HKEY hkey, LPCSTR subkey, LPCSTR filename )
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegSaveKeyW( HKEY hkey, LPCWSTR file, LPSECURITY_ATTRIBUTES sa )
+LSTATUS WINAPI RegSaveKeyW( HKEY hkey, LPCWSTR file, LPSECURITY_ATTRIBUTES sa )
 {
     static const WCHAR format[] =
         {'r','e','g','%','0','4','x','.','t','m','p',0};
@@ -1922,10 +2656,10 @@ LONG WINAPI RegSaveKeyW( HKEY hkey, LPCWSTR file, LPSECURITY_ATTRIBUTES sa )
     TRACE( "(%p,%s,%p)\n", hkey, debugstr_w(file), sa );
 
     if (!file || !*file) return ERROR_INVALID_PARAMETER;
-    if (!(hkey = get_special_root_hkey( hkey ))) return ERROR_INVALID_HANDLE;
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     err = GetLastError();
-    GetFullPathNameW( file, sizeof(buffer)/sizeof(WCHAR), buffer, &nameW );
+    GetFullPathNameW( file, ARRAY_SIZE( buffer ), buffer, &nameW );
 
     for (;;)
     {
@@ -1933,7 +2667,7 @@ LONG WINAPI RegSaveKeyW( HKEY hkey, LPCWSTR file, LPSECURITY_ATTRIBUTES sa )
         handle = CreateFileW( buffer, GENERIC_WRITE, 0, NULL,
                             CREATE_NEW, FILE_ATTRIBUTE_NORMAL, 0 );
         if (handle != INVALID_HANDLE_VALUE) break;
-        if ((ret = GetLastError()) != ERROR_ALREADY_EXISTS) goto done;
+        if ((ret = GetLastError()) != ERROR_FILE_EXISTS) goto done;
 
         /* Something gone haywire ? Please report if this happens abnormally */
         if (count >= 100)
@@ -1965,7 +2699,7 @@ done:
  *
  * See RegSaveKeyW.
  */
-LONG WINAPI RegSaveKeyA( HKEY hkey, LPCSTR file, LPSECURITY_ATTRIBUTES sa )
+LSTATUS WINAPI RegSaveKeyA( HKEY hkey, LPCSTR file, LPSECURITY_ATTRIBUTES sa )
 {
     UNICODE_STRING *fileW = &NtCurrentTeb()->StaticUnicodeString;
     NTSTATUS status;
@@ -1977,9 +2711,30 @@ LONG WINAPI RegSaveKeyA( HKEY hkey, LPCSTR file, LPSECURITY_ATTRIBUTES sa )
     return RegSaveKeyW(hkey, fileW->Buffer, sa);
 }
 
+/******************************************************************************
+ * RegSaveKeyExA  [ADVAPI32.@]
+ *
+ */
+LSTATUS WINAPI RegSaveKeyExA( HKEY hkey, LPCSTR file, SECURITY_ATTRIBUTES *sa, DWORD flags )
+{
+    FIXME( "(%p,%s,%p,%d) flags not handled\n", hkey, debugstr_a(file), sa, flags );
+    return RegSaveKeyA(hkey, file, sa);
+}
+
+/******************************************************************************
+ * RegSaveKeyExW  [ADVAPI32.@]
+ *
+ */
+LSTATUS WINAPI RegSaveKeyExW( HKEY hkey, LPCWSTR file, SECURITY_ATTRIBUTES *sa, DWORD flags )
+{
+    FIXME( "(%p,%s,%p,%d) flags not handled\n", hkey, debugstr_w(file), sa, flags );
+    return RegSaveKeyW(hkey, file, sa);
+}
 
 /******************************************************************************
  * RegRestoreKeyW [ADVAPI32.@]
+ *
+ * Read the registry information from a file and copy it over a key.
  *
  * PARAMS
  *  hkey    [I] Handle of key where restore begins
@@ -1990,15 +2745,15 @@ LONG WINAPI RegSaveKeyA( HKEY hkey, LPCSTR file, LPSECURITY_ATTRIBUTES sa )
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegRestoreKeyW( HKEY hkey, LPCWSTR lpFile, DWORD dwFlags )
+LSTATUS WINAPI RegRestoreKeyW( HKEY hkey, LPCWSTR lpFile, DWORD dwFlags )
 {
-    TRACE("(%p,%s,%ld)\n",hkey,debugstr_w(lpFile),dwFlags);
+    TRACE("(%p,%s,%d)\n",hkey,debugstr_w(lpFile),dwFlags);
 
     /* It seems to do this check before the hkey check */
     if (!lpFile || !*lpFile)
         return ERROR_INVALID_PARAMETER;
 
-    FIXME("(%p,%s,%ld): stub\n",hkey,debugstr_w(lpFile),dwFlags);
+    FIXME("(%p,%s,%d): stub\n",hkey,debugstr_w(lpFile),dwFlags);
 
     /* Check for file existence */
 
@@ -2011,7 +2766,7 @@ LONG WINAPI RegRestoreKeyW( HKEY hkey, LPCWSTR lpFile, DWORD dwFlags )
  *
  * See RegRestoreKeyW.
  */
-LONG WINAPI RegRestoreKeyA( HKEY hkey, LPCSTR lpFile, DWORD dwFlags )
+LSTATUS WINAPI RegRestoreKeyA( HKEY hkey, LPCSTR lpFile, DWORD dwFlags )
 {
     UNICODE_STRING lpFileW;
     LONG ret;
@@ -2026,6 +2781,8 @@ LONG WINAPI RegRestoreKeyA( HKEY hkey, LPCSTR lpFile, DWORD dwFlags )
 /******************************************************************************
  * RegUnLoadKeyW [ADVAPI32.@]
  *
+ * Unload a registry key and its subkeys from the registry.
+ *
  * PARAMS
  *  hkey     [I] Handle of open key
  *  lpSubKey [I] Address of name of subkey to unload
@@ -2034,10 +2791,12 @@ LONG WINAPI RegRestoreKeyA( HKEY hkey, LPCSTR lpFile, DWORD dwFlags )
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegUnLoadKeyW( HKEY hkey, LPCWSTR lpSubKey )
+LSTATUS WINAPI RegUnLoadKeyW( HKEY hkey, LPCWSTR lpSubKey )
 {
     DWORD ret;
     HKEY shkey;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING subkey;
 
     TRACE("(%p,%s)\n",hkey, debugstr_w(lpSubKey));
 
@@ -2045,7 +2804,9 @@ LONG WINAPI RegUnLoadKeyW( HKEY hkey, LPCWSTR lpSubKey )
     if( ret )
         return ERROR_INVALID_PARAMETER;
 
-    ret = RtlNtStatusToDosError(NtUnloadKey(shkey));
+    RtlInitUnicodeString(&subkey, lpSubKey);
+    InitializeObjectAttributes(&attr, &subkey, OBJ_CASE_INSENSITIVE, shkey, NULL);
+    ret = RtlNtStatusToDosError(NtUnloadKey(&attr));
 
     RegCloseKey(shkey);
 
@@ -2058,7 +2819,7 @@ LONG WINAPI RegUnLoadKeyW( HKEY hkey, LPCWSTR lpSubKey )
  *
  * See RegUnLoadKeyW.
  */
-LONG WINAPI RegUnLoadKeyA( HKEY hkey, LPCSTR lpSubKey )
+LSTATUS WINAPI RegUnLoadKeyA( HKEY hkey, LPCSTR lpSubKey )
 {
     UNICODE_STRING lpSubKeyW;
     LONG ret;
@@ -2073,6 +2834,8 @@ LONG WINAPI RegUnLoadKeyA( HKEY hkey, LPCSTR lpSubKey )
 /******************************************************************************
  * RegReplaceKeyW [ADVAPI32.@]
  *
+ * Replace the file backing a registry key and all its subkeys with another file.
+ *
  * PARAMS
  *  hkey      [I] Handle of open key
  *  lpSubKey  [I] Address of name of subkey
@@ -2083,7 +2846,7 @@ LONG WINAPI RegUnLoadKeyA( HKEY hkey, LPCSTR lpSubKey )
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegReplaceKeyW( HKEY hkey, LPCWSTR lpSubKey, LPCWSTR lpNewFile,
+LSTATUS WINAPI RegReplaceKeyW( HKEY hkey, LPCWSTR lpSubKey, LPCWSTR lpNewFile,
                               LPCWSTR lpOldFile )
 {
     FIXME("(%p,%s,%s,%s): stub\n", hkey, debugstr_w(lpSubKey),
@@ -2097,7 +2860,7 @@ LONG WINAPI RegReplaceKeyW( HKEY hkey, LPCWSTR lpSubKey, LPCWSTR lpNewFile,
  *
  * See RegReplaceKeyW.
  */
-LONG WINAPI RegReplaceKeyA( HKEY hkey, LPCSTR lpSubKey, LPCSTR lpNewFile,
+LSTATUS WINAPI RegReplaceKeyA( HKEY hkey, LPCSTR lpSubKey, LPCSTR lpNewFile,
                               LPCSTR lpOldFile )
 {
     UNICODE_STRING lpSubKeyW;
@@ -2119,6 +2882,8 @@ LONG WINAPI RegReplaceKeyA( HKEY hkey, LPCSTR lpSubKey, LPCSTR lpNewFile,
 /******************************************************************************
  * RegSetKeySecurity [ADVAPI32.@]
  *
+ * Set the security of an open registry key.
+ *
  * PARAMS
  *  hkey          [I] Open handle of key to set
  *  SecurityInfo  [I] Descriptor contents
@@ -2128,10 +2893,10 @@ LONG WINAPI RegReplaceKeyA( HKEY hkey, LPCSTR lpSubKey, LPCSTR lpNewFile,
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegSetKeySecurity( HKEY hkey, SECURITY_INFORMATION SecurityInfo,
+LSTATUS WINAPI RegSetKeySecurity( HKEY hkey, SECURITY_INFORMATION SecurityInfo,
                                PSECURITY_DESCRIPTOR pSecurityDesc )
 {
-    TRACE("(%p,%ld,%p)\n",hkey,SecurityInfo,pSecurityDesc);
+    TRACE("(%p,%d,%p)\n",hkey,SecurityInfo,pSecurityDesc);
 
     /* It seems to perform this check before the hkey check */
     if ((SecurityInfo & OWNER_SECURITY_INFORMATION) ||
@@ -2145,9 +2910,9 @@ LONG WINAPI RegSetKeySecurity( HKEY hkey, SECURITY_INFORMATION SecurityInfo,
     if (!pSecurityDesc)
         return ERROR_INVALID_PARAMETER;
 
-    FIXME(":(%p,%ld,%p): stub\n",hkey,SecurityInfo,pSecurityDesc);
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
-    return ERROR_SUCCESS;
+    return RtlNtStatusToDosError( NtSetSecurityObject( hkey, SecurityInfo, pSecurityDesc ) );
 }
 
 
@@ -2166,25 +2931,18 @@ LONG WINAPI RegSetKeySecurity( HKEY hkey, SECURITY_INFORMATION SecurityInfo,
  *  Success: ERROR_SUCCESS
  *  Failure: Error code
  */
-LONG WINAPI RegGetKeySecurity( HKEY hkey, SECURITY_INFORMATION SecurityInformation,
+LSTATUS WINAPI RegGetKeySecurity( HKEY hkey, SECURITY_INFORMATION SecurityInformation,
                                PSECURITY_DESCRIPTOR pSecurityDescriptor,
                                LPDWORD lpcbSecurityDescriptor )
 {
-    TRACE("(%p,%ld,%p,%ld)\n",hkey,SecurityInformation,pSecurityDescriptor,
-          lpcbSecurityDescriptor?*lpcbSecurityDescriptor:0);
+    TRACE("(%p,%d,%p,%d)\n",hkey,SecurityInformation,pSecurityDescriptor,
+          *lpcbSecurityDescriptor);
 
-    /* FIXME: Check for valid SecurityInformation values */
+    if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
-    if (*lpcbSecurityDescriptor < sizeof(SECURITY_DESCRIPTOR))
-        return ERROR_INSUFFICIENT_BUFFER;
-
-    FIXME("(%p,%ld,%p,%ld): stub\n",hkey,SecurityInformation,
-          pSecurityDescriptor,lpcbSecurityDescriptor?*lpcbSecurityDescriptor:0);
-
-    /* Do not leave security descriptor filled with garbage */
-    RtlCreateSecurityDescriptor(pSecurityDescriptor, SECURITY_DESCRIPTOR_REVISION);
-
-    return ERROR_SUCCESS;
+    return RtlNtStatusToDosError( NtQuerySecurityObject( hkey,
+                SecurityInformation, pSecurityDescriptor,
+                *lpcbSecurityDescriptor, lpcbSecurityDescriptor ) );
 }
 
 
@@ -2200,9 +2958,9 @@ LONG WINAPI RegGetKeySecurity( HKEY hkey, SECURITY_INFORMATION SecurityInformati
  *  Success: ERROR_SUCCESS
  *  Failure: Error code
  */
-DWORD WINAPI RegFlushKey( HKEY hkey )
+LSTATUS WINAPI RegFlushKey( HKEY hkey )
 {
-    hkey = get_special_root_hkey( hkey );
+    hkey = get_special_root_hkey( hkey, 0 );
     if (!hkey) return ERROR_INVALID_HANDLE;
 
     return RtlNtStatusToDosError( NtFlushKey( hkey ) );
@@ -2211,6 +2969,8 @@ DWORD WINAPI RegFlushKey( HKEY hkey )
 
 /******************************************************************************
  * RegConnectRegistryW [ADVAPI32.@]
+ *
+ * Establish a connection to a predefined registry key on another computer.
  *
  * PARAMS
  *  lpMachineName [I] Address of name of remote computer
@@ -2221,12 +2981,12 @@ DWORD WINAPI RegFlushKey( HKEY hkey )
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegConnectRegistryW( LPCWSTR lpMachineName, HKEY hKey,
+LSTATUS WINAPI RegConnectRegistryW( LPCWSTR lpMachineName, HKEY hKey,
                                    PHKEY phkResult )
 {
     LONG ret;
 
-    TRACE("(%s,%p,%p): stub\n",debugstr_w(lpMachineName),hKey,phkResult);
+    TRACE("(%s,%p,%p)\n",debugstr_w(lpMachineName), hKey, phkResult);
 
     if (!lpMachineName || !*lpMachineName) {
         /* Use the local machine name */
@@ -2234,7 +2994,7 @@ LONG WINAPI RegConnectRegistryW( LPCWSTR lpMachineName, HKEY hKey,
     }
     else {
         WCHAR compName[MAX_COMPUTERNAME_LENGTH + 1];
-        DWORD len = sizeof(compName) / sizeof(WCHAR);
+        DWORD len = ARRAY_SIZE( compName );
 
         /* MSDN says lpMachineName must start with \\ : not so */
         if( lpMachineName[0] == '\\' &&  lpMachineName[1] == '\\')
@@ -2261,7 +3021,7 @@ LONG WINAPI RegConnectRegistryW( LPCWSTR lpMachineName, HKEY hKey,
  *
  * See RegConnectRegistryW.
  */
-LONG WINAPI RegConnectRegistryA( LPCSTR machine, HKEY hkey, PHKEY reskey )
+LSTATUS WINAPI RegConnectRegistryA( LPCSTR machine, HKEY hkey, PHKEY reskey )
 {
     UNICODE_STRING machineW;
     LONG ret;
@@ -2276,6 +3036,8 @@ LONG WINAPI RegConnectRegistryA( LPCSTR machine, HKEY hkey, PHKEY reskey )
 /******************************************************************************
  * RegNotifyChangeKeyValue [ADVAPI32.@]
  *
+ * Notify the caller about changes to the attributes or contents of a registry key.
+ *
  * PARAMS
  *  hkey            [I] Handle of key to watch
  *  fWatchSubTree   [I] Flag for subkey notification
@@ -2287,24 +3049,24 @@ LONG WINAPI RegConnectRegistryA( LPCSTR machine, HKEY hkey, PHKEY reskey )
  *  Success: ERROR_SUCCESS
  *  Failure: nonzero error code from Winerror.h
  */
-LONG WINAPI RegNotifyChangeKeyValue( HKEY hkey, BOOL fWatchSubTree,
+LSTATUS WINAPI RegNotifyChangeKeyValue( HKEY hkey, BOOL fWatchSubTree,
                                      DWORD fdwNotifyFilter, HANDLE hEvent,
                                      BOOL fAsync )
 {
     NTSTATUS status;
     IO_STATUS_BLOCK iosb;
 
-    hkey = get_special_root_hkey( hkey );
+    hkey = get_special_root_hkey( hkey, 0 );
     if (!hkey) return ERROR_INVALID_HANDLE;
 
-    TRACE("(%p,%i,%ld,%p,%i)\n", hkey, fWatchSubTree, fdwNotifyFilter,
+    TRACE("(%p,%i,%d,%p,%i)\n", hkey, fWatchSubTree, fdwNotifyFilter,
           hEvent, fAsync);
 
     status = NtNotifyChangeKey( hkey, hEvent, NULL, NULL, &iosb,
                                 fdwNotifyFilter, fWatchSubTree, NULL, 0,
-                                fAsync );
+                                fAsync);
 
-    if (status && status != STATUS_TIMEOUT)
+    if (status && status != STATUS_PENDING)
         return RtlNtStatusToDosError( status );
 
     return ERROR_SUCCESS;
@@ -2317,7 +3079,7 @@ LONG WINAPI RegNotifyChangeKeyValue( HKEY hkey, BOOL fWatchSubTree,
  *
  * PARAMS
  *  hToken     [I] Handle of token representing the user
- *  dwOptions  [I] Reserved, nust be 0
+ *  dwOptions  [I] Reserved, must be 0
  *  samDesired [I] Desired access rights
  *  phkResult  [O] Destination for the resulting key handle
  *
@@ -2330,15 +3092,425 @@ LONG WINAPI RegNotifyChangeKeyValue( HKEY hkey, BOOL fWatchSubTree,
  *  "HKEY_LOCAL_MACHINE\Software\Classes" and the
  *  "HKEY_CURRENT_USER\Software\Classes" keys merged together.
  */
-LONG WINAPI RegOpenUserClassesRoot(
+LSTATUS WINAPI RegOpenUserClassesRoot(
     HANDLE hToken,
     DWORD dwOptions,
     REGSAM samDesired,
     PHKEY phkResult
 )
 {
-    FIXME("(%p, 0x%lx, 0x%lx, %p) semi-stub\n", hToken, dwOptions, samDesired, phkResult);
+    FIXME("(%p, 0x%x, 0x%x, %p) semi-stub\n", hToken, dwOptions, samDesired, phkResult);
 
     *phkResult = HKEY_CLASSES_ROOT;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * load_string [Internal]
+ *
+ * This is basically a copy of user32/resource.c's LoadStringW. Necessary to
+ * avoid importing user32, which is higher level than advapi32. Helper for
+ * RegLoadMUIString.
+ */
+static int load_string(HINSTANCE hModule, UINT resId, LPWSTR pwszBuffer, INT cMaxChars)
+{
+    HGLOBAL hMemory;
+    HRSRC hResource;
+    WCHAR *pString;
+    int idxString;
+
+    /* Negative values have to be inverted. */
+    if (HIWORD(resId) == 0xffff)
+        resId = (UINT)(-((INT)resId));
+
+    /* Load the resource into memory and get a pointer to it. */
+    hResource = FindResourceW(hModule, MAKEINTRESOURCEW(LOWORD(resId >> 4) + 1), (LPWSTR)RT_STRING);
+    if (!hResource) return 0;
+    hMemory = LoadResource(hModule, hResource);
+    if (!hMemory) return 0;
+    pString = LockResource(hMemory);
+
+    /* Strings are length-prefixed. Lowest nibble of resId is an index. */
+    idxString = resId & 0xf;
+    while (idxString--) pString += *pString + 1;
+
+    /* If no buffer is given, return length of the string. */
+    if (!pwszBuffer) return *pString;
+
+    /* Else copy over the string, respecting the buffer size. */
+    cMaxChars = (*pString < cMaxChars) ? *pString : (cMaxChars - 1);
+    if (cMaxChars >= 0) {
+        memcpy(pwszBuffer, pString+1, cMaxChars * sizeof(WCHAR));
+        pwszBuffer[cMaxChars] = '\0';
+    }
+
+    return cMaxChars;
+}
+
+/******************************************************************************
+ * RegLoadMUIStringW [ADVAPI32.@]
+ *
+ * Load the localized version of a string resource from some PE, respective 
+ * id and path of which are given in the registry value in the format 
+ * @[path]\dllname,-resourceId
+ *
+ * PARAMS
+ *  hKey       [I] Key, of which to load the string value from.
+ *  pszValue   [I] The value to be loaded (Has to be of REG_EXPAND_SZ or REG_SZ type).
+ *  pszBuffer  [O] Buffer to store the localized string in. 
+ *  cbBuffer   [I] Size of the destination buffer in bytes.
+ *  pcbData    [O] Number of bytes written to pszBuffer (optional, may be NULL).
+ *  dwFlags    [I] None supported yet.
+ *  pszBaseDir [I] Not supported yet.
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS,
+ *  Failure: nonzero error code from winerror.h
+ *
+ * NOTES
+ *  This is an API of Windows Vista, which wasn't available at the time this code
+ *  was written. We have to check for the correct behaviour once it's available. 
+ */
+LSTATUS WINAPI RegLoadMUIStringW(HKEY hKey, LPCWSTR pwszValue, LPWSTR pwszBuffer, DWORD cbBuffer,
+    LPDWORD pcbData, DWORD dwFlags, LPCWSTR pwszBaseDir)
+{
+    DWORD dwValueType, cbData;
+    LPWSTR pwszTempBuffer = NULL, pwszExpandedBuffer = NULL;
+    LONG result;
+        
+    TRACE("(hKey = %p, pwszValue = %s, pwszBuffer = %p, cbBuffer = %d, pcbData = %p, "
+          "dwFlags = %d, pwszBaseDir = %s)\n", hKey, debugstr_w(pwszValue), pwszBuffer,
+          cbBuffer, pcbData, dwFlags, debugstr_w(pwszBaseDir));
+
+    /* Parameter sanity checks. */
+    if (!hKey || !pwszBuffer)
+        return ERROR_INVALID_PARAMETER;
+
+    if (pwszBaseDir && *pwszBaseDir) {
+        FIXME("BaseDir parameter not yet supported!\n");
+        return ERROR_INVALID_PARAMETER;
+    }
+
+    /* Check for value existence and correctness of its type, allocate a buffer and load it. */
+    result = RegQueryValueExW(hKey, pwszValue, NULL, &dwValueType, NULL, &cbData);
+    if (result != ERROR_SUCCESS) goto cleanup;
+    if (!(dwValueType == REG_SZ || dwValueType == REG_EXPAND_SZ) || !cbData) {
+        result = ERROR_FILE_NOT_FOUND;
+        goto cleanup;
+    }
+    pwszTempBuffer = heap_alloc(cbData);
+    if (!pwszTempBuffer) {
+        result = ERROR_NOT_ENOUGH_MEMORY;
+        goto cleanup;
+    }
+    result = RegQueryValueExW(hKey, pwszValue, NULL, &dwValueType, (LPBYTE)pwszTempBuffer, &cbData);
+    if (result != ERROR_SUCCESS) goto cleanup;
+
+    /* Expand environment variables, if appropriate, or copy the original string over. */
+    if (dwValueType == REG_EXPAND_SZ) {
+        cbData = ExpandEnvironmentStringsW(pwszTempBuffer, NULL, 0) * sizeof(WCHAR);
+        if (!cbData) goto cleanup;
+        pwszExpandedBuffer = heap_alloc(cbData);
+        if (!pwszExpandedBuffer) {
+            result = ERROR_NOT_ENOUGH_MEMORY;
+            goto cleanup;
+        }
+        ExpandEnvironmentStringsW(pwszTempBuffer, pwszExpandedBuffer, cbData);
+    } else {
+        pwszExpandedBuffer = heap_alloc(cbData);
+        memcpy(pwszExpandedBuffer, pwszTempBuffer, cbData);
+    }
+
+    /* If the value references a resource based string, parse the value and load the string.
+     * Else just copy over the original value. */
+    result = ERROR_SUCCESS;
+    if (*pwszExpandedBuffer != '@') { /* '@' is the prefix for resource based string entries. */
+        lstrcpynW(pwszBuffer, pwszExpandedBuffer, cbBuffer / sizeof(WCHAR));
+    } else {
+        WCHAR *pComma = strrchrW(pwszExpandedBuffer, ',');
+        UINT uiStringId;
+        HMODULE hModule;
+
+        /* Format of the expanded value is 'path_to_dll,-resId' */
+        if (!pComma || pComma[1] != '-') {
+            result = ERROR_BADKEY;
+            goto cleanup;
+        }
+ 
+        uiStringId = atoiW(pComma+2);
+        *pComma = '\0';
+
+        hModule = LoadLibraryExW(pwszExpandedBuffer + 1, NULL,
+                                 LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+        if (!hModule || !load_string(hModule, uiStringId, pwszBuffer, cbBuffer/sizeof(WCHAR)))
+            result = ERROR_BADKEY;
+        FreeLibrary(hModule);
+    }
+ 
+cleanup:
+    heap_free(pwszTempBuffer);
+    heap_free(pwszExpandedBuffer);
+    return result;
+}
+
+/******************************************************************************
+ * RegLoadMUIStringA [ADVAPI32.@]
+ *
+ * See RegLoadMUIStringW
+ */
+LSTATUS WINAPI RegLoadMUIStringA(HKEY hKey, LPCSTR pszValue, LPSTR pszBuffer, DWORD cbBuffer,
+    LPDWORD pcbData, DWORD dwFlags, LPCSTR pszBaseDir)
+{
+    UNICODE_STRING valueW, baseDirW;
+    WCHAR *pwszBuffer;
+    DWORD cbData = cbBuffer * sizeof(WCHAR);
+    LONG result;
+
+    valueW.Buffer = baseDirW.Buffer = pwszBuffer = NULL;
+    if (!RtlCreateUnicodeStringFromAsciiz(&valueW, pszValue) ||
+        !RtlCreateUnicodeStringFromAsciiz(&baseDirW, pszBaseDir) ||
+        !(pwszBuffer = heap_alloc(cbData)))
+    {
+        result = ERROR_NOT_ENOUGH_MEMORY;
+        goto cleanup;
+    }
+
+    result = RegLoadMUIStringW(hKey, valueW.Buffer, pwszBuffer, cbData, NULL, dwFlags, 
+                               baseDirW.Buffer);
+ 
+    if (result == ERROR_SUCCESS) {
+        cbData = WideCharToMultiByte(CP_ACP, 0, pwszBuffer, -1, pszBuffer, cbBuffer, NULL, NULL);
+        if (pcbData)
+            *pcbData = cbData;
+    }
+
+cleanup:
+    heap_free(pwszBuffer);
+    RtlFreeUnicodeString(&baseDirW);
+    RtlFreeUnicodeString(&valueW);
+ 
+    return result;
+}
+
+/******************************************************************************
+ * RegDisablePredefinedCache [ADVAPI32.@]
+ *
+ * Disables the caching of the HKEY_CLASSES_ROOT key for the process.
+ *
+ * PARAMS
+ *  None.
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: nonzero error code from Winerror.h
+ * 
+ * NOTES
+ *  This is useful for services that use impersonation.
+ */
+LSTATUS WINAPI RegDisablePredefinedCache(void)
+{
+    HKEY hkey_current_user;
+    int idx = HandleToUlong(HKEY_CURRENT_USER) - HandleToUlong(HKEY_SPECIAL_ROOT_FIRST);
+
+    /* prevent caching of future requests */
+    hkcu_cache_disabled = TRUE;
+
+    hkey_current_user = InterlockedExchangePointer( (void **)&special_root_keys[idx], NULL );
+
+    if (hkey_current_user)
+        NtClose( hkey_current_user );
+
+    return ERROR_SUCCESS;
+}
+
+
+/******************************************************************************
+ * RegDeleteTreeW [ADVAPI32.@]
+ *
+ */
+LSTATUS WINAPI RegDeleteTreeW( HKEY hkey, const WCHAR *subkey )
+{
+    static const WCHAR emptyW[] = {0};
+    DWORD name_size, max_name, max_subkey;
+    WCHAR *name_buf = NULL;
+    LONG ret;
+
+    TRACE( "(%p, %s)\n", hkey, debugstr_w(subkey) );
+
+    if (subkey && *subkey)
+    {
+        ret = RegOpenKeyExW( hkey, subkey, 0, KEY_READ, &hkey );
+        if (ret) return ret;
+    }
+
+    ret = RegQueryInfoKeyW( hkey, NULL, NULL, NULL, NULL, &max_subkey,
+                            NULL, NULL, &max_name, NULL, NULL, NULL );
+    if (ret)
+        goto cleanup;
+
+    max_name = max( max_subkey, max_name ) + 1;
+    if (!(name_buf = heap_alloc( max_name * sizeof(WCHAR) )))
+    {
+        ret = ERROR_NOT_ENOUGH_MEMORY;
+        goto cleanup;
+    }
+
+    /* Recursively delete subkeys */
+    for (;;)
+    {
+        name_size = max_name;
+        ret = RegEnumKeyExW( hkey, 0, name_buf, &name_size, NULL, NULL, NULL, NULL );
+        if (ret == ERROR_NO_MORE_ITEMS) break;
+        if (ret) goto cleanup;
+        ret = RegDeleteTreeW( hkey, name_buf );
+        if (ret) goto cleanup;
+    }
+
+    /* Delete the key itself */
+    if (subkey && *subkey)
+    {
+        ret = RegDeleteKeyW( hkey, emptyW );
+        goto cleanup;
+    }
+
+    /* Delete values */
+    for (;;)
+    {
+        name_size = max_name;
+        ret = RegEnumValueW( hkey, 0, name_buf, &name_size, NULL, NULL, NULL, NULL );
+        if (ret == ERROR_NO_MORE_ITEMS) break;
+        if (ret) goto cleanup;
+        ret = RegDeleteValueW( hkey, name_buf );
+        if (ret) goto cleanup;
+    }
+
+    ret = ERROR_SUCCESS;
+
+cleanup:
+    heap_free( name_buf );
+    if (subkey && *subkey)
+        RegCloseKey( hkey );
+    return ret;
+}
+
+
+/******************************************************************************
+ * RegDeleteTreeA [ADVAPI32.@]
+ *
+ */
+LSTATUS WINAPI RegDeleteTreeA( HKEY hkey, const char *subkey )
+{
+    UNICODE_STRING subkeyW;
+    LONG ret;
+
+    if (subkey) RtlCreateUnicodeStringFromAsciiz( &subkeyW, subkey );
+    else subkeyW.Buffer = NULL;
+    ret = RegDeleteTreeW( hkey, subkeyW.Buffer );
+    RtlFreeUnicodeString( &subkeyW );
+    return ret;
+}
+
+
+/******************************************************************************
+ * RegCopyTreeW [ADVAPI32.@]
+ *
+ */
+LONG WINAPI RegCopyTreeW( HKEY hsrc, const WCHAR *subkey, HKEY hdst )
+{
+    DWORD name_size, max_name;
+    DWORD value_size, max_value;
+    DWORD max_subkey, i, type;
+    WCHAR *name_buf = NULL;
+    BYTE *value_buf = NULL;
+    HKEY hkey;
+    LONG ret;
+
+    TRACE( "(%p, %s, %p)\n", hsrc, debugstr_w(subkey), hdst );
+
+    if (subkey)
+    {
+        ret = RegOpenKeyExW( hsrc, subkey, 0, KEY_READ, &hsrc );
+        if (ret) return ret;
+    }
+
+    ret = RegQueryInfoKeyW( hsrc, NULL, NULL, NULL, NULL, &max_subkey,
+                            NULL, NULL, &max_name, &max_value, NULL, NULL );
+    if (ret)
+        goto cleanup;
+
+    max_name = max( max_subkey, max_name ) + 1;
+    if (!(name_buf = heap_alloc( max_name * sizeof(WCHAR) )))
+    {
+        ret = ERROR_NOT_ENOUGH_MEMORY;
+        goto cleanup;
+    }
+
+    if (!(value_buf = heap_alloc( max_value )))
+    {
+        ret = ERROR_NOT_ENOUGH_MEMORY;
+        goto cleanup;
+    }
+
+    /* Copy values */
+    for (i = 0;; i++)
+    {
+        name_size = max_name;
+        value_size = max_value;
+        ret = RegEnumValueW( hsrc, i, name_buf, &name_size, NULL, &type, value_buf, &value_size );
+        if (ret == ERROR_NO_MORE_ITEMS) break;
+        if (ret) goto cleanup;
+        ret = RegSetValueExW( hdst, name_buf, 0, type, value_buf, value_size );
+        if (ret) goto cleanup;
+    }
+
+    /* Recursively copy subkeys */
+    for (i = 0;; i++)
+    {
+        name_size = max_name;
+        ret = RegEnumKeyExW( hsrc, i, name_buf, &name_size, NULL, NULL, NULL, NULL );
+        if (ret == ERROR_NO_MORE_ITEMS) break;
+        if (ret) goto cleanup;
+        ret = RegCreateKeyExW( hdst, name_buf, 0, NULL, 0, KEY_WRITE, NULL, &hkey, NULL );
+        if (ret) goto cleanup;
+        ret = RegCopyTreeW( hsrc, name_buf, hkey );
+        RegCloseKey( hkey );
+        if (ret) goto cleanup;
+    }
+
+    ret = ERROR_SUCCESS;
+
+cleanup:
+    heap_free( name_buf );
+    heap_free( value_buf );
+    if (subkey)
+        RegCloseKey( hsrc );
+    return ret;
+}
+
+
+/******************************************************************************
+ * RegCopyTreeA [ADVAPI32.@]
+ *
+ */
+LONG WINAPI RegCopyTreeA( HKEY hsrc, const char *subkey, HKEY hdst )
+{
+    UNICODE_STRING subkeyW;
+    LONG ret;
+
+    if (subkey) RtlCreateUnicodeStringFromAsciiz( &subkeyW, subkey );
+    else subkeyW.Buffer = NULL;
+    ret = RegCopyTreeW( hsrc, subkeyW.Buffer, hdst );
+    RtlFreeUnicodeString( &subkeyW );
+    return ret;
+}
+
+
+/******************************************************************************
+ * RegDisableReflectionKey [ADVAPI32.@]
+ *
+ */
+LONG WINAPI RegDisableReflectionKey(HKEY base)
+{
+    FIXME("%p: stub\n", base);
     return ERROR_SUCCESS;
 }

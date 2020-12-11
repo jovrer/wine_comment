@@ -13,19 +13,27 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DBT_H
 #define __WINE_DBT_H
 
-/* dbt.h doesn't use the normal convention, it adds an underscore before A/W */
-#ifdef __WINESRC__
-# define DECL_WINELIB_DBT_TYPE_AW(type)  /* nothing */
-#else   /* __WINESRC__ */
-# define DECL_WINELIB_DBT_TYPE_AW(type)  typedef WINELIB_NAME_AW(type##_) type;
-#endif  /* __WINESRC__ */
+#ifndef GUID_DEFINED
+# include <guiddef.h>
+#endif
 
+/* dbt.h doesn't use the normal convention, it adds an underscore before A/W */
+#ifdef WINE_NO_UNICODE_MACROS
+# define DECL_WINELIB_DBT_TYPE_AW(type)  /* nothing */
+#else
+# define DECL_WINELIB_DBT_TYPE_AW(type)  typedef WINELIB_NAME_AW(type##_) type;
+#endif
+
+#define DBT_DEVNODES_CHANGED            0x0007
+#define DBT_QUERYCHANGECONFIG           0x0017
+#define DBT_CONFIGCHANGED               0x0018
+#define DBT_CONFIGCHANGECANCELED        0x0019
 #define DBT_NO_DISK_SPACE               0x0047
 #define DBT_LOW_DISK_SPACE              0x0048
 #define DBT_CONFIGMGPRIVATE             0x7FFF
@@ -77,6 +85,9 @@ typedef struct _DEV_BROADCAST_VOLUME
     DWORD       dbcv_unitmask;
     WORD        dbcv_flags;
 } DEV_BROADCAST_VOLUME, *PDEV_BROADCAST_VOLUME;
+
+#define DBTF_MEDIA 0x0001
+#define DBTF_NET   0x0002
 
 typedef struct _DEV_BROADCAST_PORT_A
 {
@@ -138,5 +149,7 @@ typedef struct _DEV_BROADCAST_HANDLE
     LONG        dbch_nameoffset;
     BYTE        dbch_data[1];
 } DEV_BROADCAST_HANDLE, *PDEV_BROADCAST_HANDLE;
+
+#undef DECL_WINELIB_DBT_TYPE_AW
 
 #endif /* __WINE_DBT_H */

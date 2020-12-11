@@ -1,57 +1,36 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = winedbg.exe
 APPMODE   = -mconsole
-IMPORTS   = dbghelp advapi32 kernel32 ntdll
-DELAYIMPORTS = user32
+IMPORTS   = dbghelp advapi32
+DELAYIMPORTS = comdlg32 shell32 comctl32 user32 gdi32
+EXTRALIBS = $(POLL_LIBS)
 
 C_SRCS = \
-	be_alpha.c \
+	be_arm.c \
+	be_arm64.c \
 	be_i386.c \
 	be_ppc.c \
+	be_x86_64.c \
 	break.c \
+	crashdlg.c \
 	db_disasm.c \
+	db_disasm64.c \
 	display.c \
 	expr.c \
 	gdbproxy.c \
 	info.c \
 	memory.c \
 	source.c \
-	symbol.c \
 	stack.c \
+	symbol.c \
 	tgt_active.c \
 	tgt_minidump.c \
+	tgt_module.c \
 	types.c \
 	winedbg.c
 
-EXTRA_SRCS = dbg.y debug.l
-EXTRA_OBJS = dbg.tab.o @LEX_OUTPUT_ROOT@.o
+RC_SRCS = winedbg.rc
 
-MANPAGES = winedbg.man
+LEX_SRCS   = debug.l
+BISON_SRCS = dbg.y
 
-@MAKE_PROG_RULES@
-
-all: $(MANPAGES)
-
-dbg.tab.c dbg.tab.h: dbg.y
-	$(BISON) -d -t $(SRCDIR)/dbg.y -o dbg.tab.c
-
-# hack to allow parallel make
-dbg.tab.h: dbg.tab.c
-dbg.tab.o: dbg.tab.h
-
-@LEX_OUTPUT_ROOT@.c: debug.l
-	$(LEX) -8 -I $(SRCDIR)/debug.l
-
-@LEX_OUTPUT_ROOT@.o: dbg.tab.h
-
-install:: $(MANPAGES)
-	$(MKINSTALLDIRS) $(mandir)/man$(prog_manext)
-	$(INSTALL_DATA) winedbg.man $(mandir)/man$(prog_manext)/winedbg.$(prog_manext)
-
-uninstall::
-	$(RM) $(mandir)/man$(prog_manext)/winedbg.$(prog_manext)
-
-### Dependencies:
+MANPAGES = winedbg.man.in

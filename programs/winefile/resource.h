@@ -13,9 +13,11 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <windef.h>
+#include <winuser.h>
 
 /* images */
 
@@ -25,7 +27,7 @@
 #define IDI_WINEFILE                    100
 
 
-/* accellerators and menus */
+/* accelerators and menus */
 
 #define IDA_WINEFILE                    101
 #define IDM_WINEFILE                    102
@@ -33,7 +35,6 @@
 
 /* dialogs */
 
-#define IDD_EXECUTE                     103
 #define IDD_SELECT_DESTINATION          104
 #define IDD_DIALOG_VIEW_TYPE            105
 #define IDD_DIALOG_PROPERTIES           106
@@ -42,17 +43,17 @@
 /* control ids */
 
 #define ID_ACTIVATE                     101
-#define ID_EXECUTE                      105
+#define ID_RUN                          105
 #define ID_FILE_MOVE                    106
 #define ID_FILE_COPY                    107
 #define ID_FILE_DELETE                  108
+#define ID_RENAME                       109
+#define ID_MKDIR                        111
 #define ID_FILE_EXIT                    115
-#define ID_FORMAT_DISK                  203
 #define ID_CONNECT_NETWORK_DRIVE        252
 #define ID_DISCONNECT_NETWORK_DRIVE     253
 #define ID_VIEW_NAME                    401
 #define ID_VIEW_ALL_ATTRIBUTES          402
-#define ID_VIEW_SELECTED_ATTRIBUTES     403
 #define ID_VIEW_SORT_NAME               404
 #define ID_VIEW_SORT_TYPE               405
 #define ID_VIEW_SORT_SIZE               406
@@ -63,6 +64,7 @@
 #define ID_VIEW_TOOL_BAR                508
 #define ID_VIEW_DRIVE_BAR               507
 #define ID_VIEW_STATUSBAR               503
+#define ID_VIEW_SAVESETTINGS            511
 
 #define ID_ABOUT                        1803
 #define ID_REFRESH                      1704
@@ -73,7 +75,6 @@
 #define ID_WINDOW_TILE_HORZ             0xE133
 #define ID_WINDOW_TILE_VERT             0xE134
 #define ID_WINDOW_SPLIT                 0xE135
-#define ID_HELP_USING                   0xE144
 #define ID_HELP                         0xE146
 
 #define IDC_VIEW_PATTERN                1000
@@ -100,10 +101,6 @@
 
 /* winefile extensions */
 
-#define ID_ABOUT_WINE                   0x8000
-#define ID_LICENSE                      0x8001
-#define ID_NO_WARRANTY                  0x8002
-#define ID_WINDOW_AUTOSORT              0x8003
 #define ID_VIEW_FULLSCREEN              0x8004
 #define ID_PREFERRED_SIZES              0x8005
 
@@ -119,10 +116,7 @@
 #define IDS_UNIXFS                      1203
 #define IDS_DESKTOP                     1204
 #define IDS_SHELL                       1205
-#define IDS_TITLEFMT                    1206
 #define IDS_NO_IMPL                     1207
-#define IDS_WINE                        1208
-#define IDS_WINE_FILE                   1209
 
 #define IDS_COL_NAME                    1210
 #define IDS_COL_SIZE                    1211
@@ -134,7 +128,6 @@
 #define IDS_COL_ATTR                    1217
 #define IDS_COL_SEC                     1218
 #define IDS_FREE_SPACE_FMT              1219
-
 
 /* range for drive bar command ids: 0x9000..0x90FF */
 

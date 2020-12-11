@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_CRYPT_H
@@ -45,18 +45,20 @@ typedef struct tagPROVFUNCS
 	BOOL (WINAPI *pCPGetKeyParam)(HCRYPTPROV hProv, HCRYPTKEY hKey, DWORD dwParam, BYTE *pbData, DWORD *pdwDataLen, DWORD dwFlags);
 	BOOL (WINAPI *pCPGetProvParam)(HCRYPTPROV hProv, DWORD dwParam, BYTE *pbData, DWORD *pdwDataLen, DWORD dwFlags);
 	BOOL (WINAPI *pCPGetUserKey)(HCRYPTPROV hProv, DWORD dwKeySpec, HCRYPTKEY *phUserKey);
-	BOOL (WINAPI *pCPHashData)(HCRYPTPROV hProv, HCRYPTHASH hHash, CONST BYTE *pbData, DWORD dwDataLen, DWORD dwFlags);
+	BOOL (WINAPI *pCPHashData)(HCRYPTPROV hProv, HCRYPTHASH hHash, const BYTE *pbData, DWORD dwDataLen, DWORD dwFlags);
 	BOOL (WINAPI *pCPHashSessionKey)(HCRYPTPROV hProv, HCRYPTHASH hHash, HCRYPTKEY hKey, DWORD dwFlags);
-	BOOL (WINAPI *pCPImportKey)(HCRYPTPROV hProv, CONST BYTE *pbData, DWORD dwDataLen, HCRYPTKEY hPubKey, DWORD dwFlags, HCRYPTKEY *phKey);
+	BOOL (WINAPI *pCPImportKey)(HCRYPTPROV hProv, const BYTE *pbData, DWORD dwDataLen, HCRYPTKEY hPubKey, DWORD dwFlags, HCRYPTKEY *phKey);
 	BOOL (WINAPI *pCPReleaseContext)(HCRYPTPROV hProv, DWORD dwFlags);
-	BOOL (WINAPI *pCPSetHashParam)(HCRYPTPROV hProv, HCRYPTHASH hHash, DWORD dwParam, BYTE *pbData, DWORD dwFlags);
-	BOOL (WINAPI *pCPSetKeyParam)(HCRYPTPROV hProv, HCRYPTKEY hKey, DWORD dwParam, BYTE *pbData, DWORD dwFlags);
-	BOOL (WINAPI *pCPSetProvParam)(HCRYPTPROV hProv, DWORD dwParam, BYTE *pbData, DWORD dwFlags);
+	BOOL (WINAPI *pCPSetHashParam)(HCRYPTPROV hProv, HCRYPTHASH hHash, DWORD dwParam, const BYTE *pbData, DWORD dwFlags);
+	BOOL (WINAPI *pCPSetKeyParam)(HCRYPTPROV hProv, HCRYPTKEY hKey, DWORD dwParam, const BYTE *pbData, DWORD dwFlags);
+	BOOL (WINAPI *pCPSetProvParam)(HCRYPTPROV hProv, DWORD dwParam, const BYTE *pbData, DWORD dwFlags);
 	BOOL (WINAPI *pCPSignHash)(HCRYPTPROV hProv, HCRYPTHASH hHash, DWORD dwKeySpec, LPCWSTR sDescription, DWORD dwFlags, BYTE *pbSignature, DWORD *pdwSigLen);
-	BOOL (WINAPI *pCPVerifySignature)(HCRYPTPROV hProv, HCRYPTHASH hHash, CONST BYTE *pbSignature, DWORD dwSigLen, HCRYPTKEY hPubKey, LPCWSTR sDescription, DWORD dwFlags);
+	BOOL (WINAPI *pCPVerifySignature)(HCRYPTPROV hProv, HCRYPTHASH hHash, const BYTE *pbSignature, DWORD dwSigLen, HCRYPTKEY hPubKey, LPCWSTR sDescription, DWORD dwFlags);
 } PROVFUNCS, *PPROVFUNCS;
 
 #define MAGIC_CRYPTPROV 0xA39E741F
+#define MAGIC_CRYPTKEY  0xA39E741E
+#define MAGIC_CRYPTHASH 0xA39E741D
 
 typedef struct tagCRYPTPROV
 {
@@ -70,20 +72,31 @@ typedef struct tagCRYPTPROV
 
 typedef struct tagCRYPTKEY
 {
+	DWORD dwMagic;
 	PCRYPTPROV pProvider;
         HCRYPTKEY hPrivate;    /*CSP's handle - Should not be given to application under any circumstances!*/
 } CRYPTKEY, *PCRYPTKEY;
 
 typedef struct tagCRYPTHASH
 {
+	DWORD dwMagic;
 	PCRYPTPROV pProvider;
         HCRYPTHASH hPrivate;    /*CSP's handle - Should not be given to application under any circumstances!*/
 } CRYPTHASH, *PCRYPTHASH;
 
 #define MAXPROVTYPES 999
 
-extern unsigned char *CRYPT_DESkey8to7( unsigned char *dst, const unsigned char *key );
 extern unsigned char *CRYPT_DEShash( unsigned char *dst, const unsigned char *key,
-                                     const unsigned char *src );
+                                     const unsigned char *src ) DECLSPEC_HIDDEN;
+extern unsigned char *CRYPT_DESunhash( unsigned char *dst, const unsigned char *key,
+                                       const unsigned char *src ) DECLSPEC_HIDDEN;
+
+struct ustring {
+    DWORD Length;
+    DWORD MaximumLength;
+    unsigned char *Buffer;
+};
+
+NTSTATUS WINAPI SystemFunction032(struct ustring *data, const struct ustring *key);
 
 #endif /* __WINE_CRYPT_H_ */

@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef WINE_IPHLPAPI_H__
 #define WINE_IPHLPAPI_H__
@@ -25,6 +25,12 @@ extern "C" {
 #include <iprtrmib.h>
 #include <ipexport.h>
 #include <iptypes.h>
+
+DWORD WINAPI GetExtendedTcpTable(PVOID pTcpTable, PDWORD pdwSize, BOOL bOrder,
+ ULONG ulAf, TCP_TABLE_CLASS TableClass, ULONG Reserved);
+
+DWORD WINAPI GetExtendedUdpTable(PVOID pUdpTable, PDWORD pdwSize, BOOL bOrder,
+ ULONG ulAf, UDP_TABLE_CLASS TableClass, ULONG Reserved);
 
 DWORD WINAPI GetNumberOfInterfaces(PDWORD pdwNumIf);
 
@@ -44,6 +50,8 @@ DWORD WINAPI GetIpForwardTable(PMIB_IPFORWARDTABLE pIpForwardTable,
 DWORD WINAPI GetTcpTable(PMIB_TCPTABLE pTcpTable, PDWORD pdwSize, BOOL bOrder);
 
 DWORD WINAPI GetUdpTable(PMIB_UDPTABLE pUdpTable, PDWORD pdwSize, BOOL bOrder);
+
+DWORD WINAPI GetUdp6Table(PMIB_UDP6TABLE pUdpTable, PDWORD pdwSize, BOOL bOrder);
 
 DWORD WINAPI GetIpStatistics(PMIB_IPSTATS pStats);
 
@@ -94,12 +102,24 @@ DWORD WINAPI GetUniDirectionalAdapterInfo(
 
 DWORD WINAPI GetBestInterface(IPAddr dwDestAddr, PDWORD pdwBestIfIndex);
 
+#ifdef __WINE_WINSOCKAPI_STDLIB_H
+DWORD WINAPI GetBestInterfaceEx(
+#ifdef USE_WS_PREFIX
+    struct WS_sockaddr *pDestAddr,
+#else
+    struct sockaddr *pDestAddr,
+#endif
+    PDWORD pdwBestIfIndex);
+#endif
+
 DWORD WINAPI GetBestRoute(DWORD dwDestAddr, DWORD dwSourceAddr,
  PMIB_IPFORWARDROW   pBestRoute);
 
 DWORD WINAPI NotifyAddrChange(PHANDLE Handle, LPOVERLAPPED overlapped);
 
 DWORD WINAPI NotifyRouteChange(PHANDLE Handle, LPOVERLAPPED overlapped);
+
+BOOL WINAPI CancelIPChangeNotify(LPOVERLAPPED overlapped);
 
 DWORD WINAPI GetAdapterIndex(IN LPWSTR AdapterName, OUT PULONG IfIndex);
 
@@ -130,6 +150,16 @@ DWORD WINAPI GetFriendlyIfIndex(DWORD IfIndex);
 DWORD WINAPI EnableRouter(HANDLE* pHandle, OVERLAPPED* pOverlapped);
 
 DWORD WINAPI UnenableRouter(OVERLAPPED* pOverlapped, LPDWORD lpdwEnableCount);
+
+#ifdef _WINSOCK2API_
+ULONG WINAPI GetAdaptersAddresses(ULONG family, ULONG flags, PVOID reserved,
+                                  PIP_ADAPTER_ADDRESSES aa, PULONG buflen);
+#endif
+
+DWORD WINAPI AllocateAndGetUdpTableFromStack(PMIB_UDPTABLE *ppUdpTable, BOOL bOrder, HANDLE heap, DWORD flags);
+DWORD WINAPI AllocateAndGetTcpTableFromStack(PMIB_TCPTABLE *ppTcpTable, BOOL bOrder, HANDLE heap, DWORD flags);
+DWORD WINAPI AllocateAndGetIpNetTableFromStack(PMIB_IPNETTABLE *ppIpNetTable, BOOL bOrder, HANDLE heap, DWORD flags);
+DWORD WINAPI AllocateAndGetIpForwardTableFromStack(PMIB_IPFORWARDTABLE *ppIpForwardTable, BOOL bOrder, HANDLE heap, DWORD flags);
 
 #ifdef __cplusplus
 }

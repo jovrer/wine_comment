@@ -15,78 +15,17 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  * 
  * WINE RPC TODO's (and a few TODONT's)
- *
- * - Ove's decreasingly incomplete widl is an IDL compiler for wine.  For widl
- *   to be wine's only IDL compiler, a fair bit of work remains to be done.
- *   until then we have used some midl-generated stuff.  (What?)
- *   widl currently doesn't generate stub/proxy files required by wine's (O)RPC
- *   capabilities -- nor does it make those lovely format strings :(
- *   The MS MIDL compiler does some really esoteric stuff.  Of course Ove has
- *   started with the less esoteric stuff.  There are also lots of nice
- *   comments in there if you want to flex your bison and help build this monster.
- *
- * - RPC has a quite featureful error handling mechanism; basically none of this is
- *   implemented right now.  We also have deficiencies on the compiler side, where
- *   wine's __TRY / __EXCEPT / __FINALLY macros are not even used for RpcTryExcept & co,
- *   due to syntactic differences! (we can fix it with widl by using __TRY)
- *
- * - There are several different memory allocation schemes for MSRPC.
- *   I don't even understand what they all are yet, much less have them
- *   properly implemented.  Surely we are supposed to be doing something with
- *   the user-provided allocation/deallocation functions, but so far,
- *   I don't think we are doing this...
- *
- * - MSRPC provides impersonation capabilities which currently are not possible
- *   to implement in wine.  At the very least we should implement the authorization
- *   API's & gracefully ignore the irrelevant stuff (to an extent we already do).
- *
- * - Some transports are not yet implemented.  The existing transport implementations
- *   are incomplete and may be bug-infested.
- * 
- * - The various transports that we do support ought to be supported in a more
- *   object-oriented manner, as in DCE's RPC implementation, instead of cluttering
- *   up the code with conditionals like we do now.
- * 
- * - Data marshalling: So far, only the beginnings of a full implementation
- *   exist in wine.  NDR protocol itself is documented, but the MS API's to
- *   convert data-types in memory into NDR are not.  This is challenging work,
- *   and has supposedly been "at the top of Greg's queue" for several months now.
- *
- * - ORPC is RPC for OLE; once we have a working RPC framework, we can
- *   use it to implement out-of-process OLE client/server communications.
- *   ATM there is maybe a disconnect between the marshalling in the OLE DLLs
- *   and the marshalling going on here [TODO: well, is there or not?]
- * 
- * - In-source API Documentation, at least for those functions which we have
- *   implemented, but preferably for everything we can document, would be nice,
- *   since some of this stuff is quite obscure.
- *
- * - Name services... [TODO: what about them]
- *
- * - Protocol Towers: Totally unimplemented.... I think.
- *
- * - Context Handle Rundown: whatever that is.
- *
- * - Nested RPC's: Totally unimplemented.
  *
  * - Statistics: we are supposed to be keeping various counters.  we aren't.
  *
  * - Async RPC: Unimplemented.
  *
- * - XML/http RPC: Somewhere there's an XML fiend that wants to do this! Betcha
- *   we could use these as a transport for RPC's across computers without a
- *   permissions and/or licensing crisis.
- *
  * - The NT "ports" API, aka LPC.  Greg claims this is on his radar.  Might (or
  *   might not) enable users to get some kind of meaningful result out of
  *   NT-based native rpcrt4's.  Commonly-used transport for self-to-self RPC's.
- *
- * - ...?  More stuff I haven't thought of.  If you think of more RPC todo's
- *   drop me an e-mail <gmturner007@ameritech.net> or send a patch to the
- *   wine-patches mailing list.
  */
 
 #include "config.h"
@@ -96,10 +35,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winerror.h"
 #include "winbase.h"
 #include "winuser.h"
+#include "winnt.h"
+#include "winternl.h"
+#include "ntsecapi.h"
 #include "iptypes.h"
 #include "iphlpapi.h"
 #include "wine/unicode.h"
@@ -110,19 +54,13 @@
 #include "rpcproxy.h"
 
 #include "rpc_binding.h"
-#include "rpcss_np_client.h"
+#include "rpc_server.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(rpc);
 
 static UUID uuid_nil;
-static HANDLE master_mutex;
-
-HANDLE RPCRT4_GetMasterMutex(void)
-{
-    return master_mutex;
-}
 
 static CRITICAL_SECTION uuid_cs;
 static CRITICAL_SECTION_DEBUG critsect_debug =
@@ -132,6 +70,33 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": uuid_cs") }
 };
 static CRITICAL_SECTION uuid_cs = { &critsect_debug, -1, 0, 0, 0, 0 };
+
+static CRITICAL_SECTION threaddata_cs;
+static CRITICAL_SECTION_DEBUG threaddata_cs_debug =
+{
+    0, 0, &threaddata_cs,
+    { &threaddata_cs_debug.ProcessLocksList, &threaddata_cs_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": threaddata_cs") }
+};
+static CRITICAL_SECTION threaddata_cs = { &threaddata_cs_debug, -1, 0, 0, 0, 0 };
+
+static struct list threaddata_list = LIST_INIT(threaddata_list);
+
+struct context_handle_list
+{
+    struct context_handle_list *next;
+    NDR_SCONTEXT context_handle;
+};
+
+struct threaddata
+{
+    struct list entry;
+    CRITICAL_SECTION cs;
+    DWORD thread_id;
+    RpcConnection *connection;
+    RpcBinding *server_binding;
+    struct context_handle_list *context_handle_list;
+};
 
 /***********************************************************************
  * DllMain
@@ -148,17 +113,36 @@ static CRITICAL_SECTION uuid_cs = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
+    struct threaddata *tdata;
+
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
-        DisableThreadLibraryCalls(hinstDLL);
-        master_mutex = CreateMutexA( NULL, FALSE, RPCSS_MASTER_MUTEX_NAME);
-        if (!master_mutex)
-          ERR("Failed to create master mutex\n");
+        break;
+
+    case DLL_THREAD_DETACH:
+        tdata = NtCurrentTeb()->ReservedForNtRpc;
+        if (tdata)
+        {
+            EnterCriticalSection(&threaddata_cs);
+            list_remove(&tdata->entry);
+            LeaveCriticalSection(&threaddata_cs);
+
+            tdata->cs.DebugInfo->Spare[0] = 0;
+            DeleteCriticalSection(&tdata->cs);
+            if (tdata->connection)
+                ERR("tdata->connection should be NULL but is still set to %p\n", tdata->connection);
+            if (tdata->server_binding)
+                ERR("tdata->server_binding should be NULL but is still set to %p\n", tdata->server_binding);
+            HeapFree(GetProcessHeap(), 0, tdata);
+        }
         break;
 
     case DLL_PROCESS_DETACH:
-        CloseHandle(master_mutex);
-        master_mutex = NULL;
+        if (lpvReserved) break; /* do nothing if process is shutting down */
+        RPCRT4_destroy_all_protseqs();
+        RPCRT4_ServerFreeAllRegisteredAuthInfo();
+        DeleteCriticalSection(&uuid_cs);
+        DeleteCriticalSection(&threaddata_cs);
         break;
     }
 
@@ -174,7 +158,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
  *
  *  S_OK if successful.
  */
-RPC_STATUS WINAPI RpcStringFreeA(unsigned char** String)
+RPC_STATUS WINAPI RpcStringFreeA(RPC_CSTR* String)
 {
   HeapFree( GetProcessHeap(), 0, *String);
 
@@ -190,7 +174,7 @@ RPC_STATUS WINAPI RpcStringFreeA(unsigned char** String)
  *
  *  S_OK if successful.
  */
-RPC_STATUS WINAPI RpcStringFreeW(unsigned short** String)
+RPC_STATUS WINAPI RpcStringFreeW(RPC_WSTR* String)
 {
   HeapFree( GetProcessHeap(), 0, *String);
 
@@ -202,10 +186,12 @@ RPC_STATUS WINAPI RpcStringFreeW(unsigned short** String)
  *
  * Raises an exception.
  */
-void WINAPI RpcRaiseException(RPC_STATUS exception)
+void DECLSPEC_NORETURN WINAPI RpcRaiseException(RPC_STATUS exception)
 {
-  /* FIXME: translate exception? */
+  /* shouldn't return */
   RaiseException(exception, 0, 0, NULL);
+  ERR("handler continued execution\n");
+  ExitProcess(1);
 }
 
 /*************************************************************************
@@ -275,7 +261,7 @@ int WINAPI UuidEqual(UUID *Uuid1, UUID *Uuid2, RPC_STATUS *Status)
  *
  * PARAMS
  *     UUID *Uuid         [I] Uuid to compare
- *     RPC_STATUS *Status [O] retuns RPC_S_OK
+ *     RPC_STATUS *Status [O] returns RPC_S_OK
  *
  * RETURNS
  *     TRUE/FALSE
@@ -302,6 +288,38 @@ RPC_STATUS WINAPI UuidCreateNil(UUID *Uuid)
   return RPC_S_OK;
 }
 
+/*************************************************************************
+ *           UuidCreate   [RPCRT4.@]
+ *
+ * Creates a 128bit UUID.
+ *
+ * RETURNS
+ *
+ *  RPC_S_OK if successful.
+ *  RPC_S_UUID_LOCAL_ONLY if UUID is only locally unique.
+ *
+ * NOTES
+ *
+ *  Follows RFC 4122, section 4.4 (Algorithms for Creating a UUID from
+ *  Truly Random or Pseudo-Random Numbers)
+ */
+RPC_STATUS WINAPI UuidCreate(UUID *Uuid)
+{
+    RtlGenRandom(Uuid, sizeof(*Uuid));
+    /* Clear the version bits and set the version (4) */
+    Uuid->Data3 &= 0x0fff;
+    Uuid->Data3 |= (4 << 12);
+    /* Set the topmost bits of Data4 (clock_seq_hi_and_reserved) as
+     * specified in RFC 4122, section 4.4.
+     */
+    Uuid->Data4[0] &= 0x3f;
+    Uuid->Data4[0] |= 0x80;
+
+    TRACE("%s\n", debugstr_guid(Uuid));
+
+    return RPC_S_OK;
+}
+
 /* Number of 100ns ticks per clock tick. To be safe, assume that the clock
    resolution is at least 1000 * 100 * (1/1000000) = 1/10 of a second */
 #define TICKS_PER_CLOCK_TICK 1000
@@ -321,7 +339,7 @@ static void RPC_UuidGetSystemTime(ULONGLONG *time)
     *time += TICKS_15_OCT_1582_TO_1601;
 }
 
-/* Assume that a hardware address is at least 6 bytes long */ 
+/* Assume that a hardware address is at least 6 bytes long */
 #define ADDRESS_BYTES_NEEDED 6
 
 static RPC_STATUS RPC_UuidGetNodeAddress(BYTE *address)
@@ -345,10 +363,7 @@ static RPC_STATUS RPC_UuidGetNodeAddress(BYTE *address)
     /* We can't get a hardware address, just use random numbers.
        Set the multicast bit to prevent conflicts with real cards. */
     else {
-        for (i = 0; i < ADDRESS_BYTES_NEEDED; i++) {
-            address[i] = rand() & 0xff;
-        }
-
+        RtlGenRandom(address, ADDRESS_BYTES_NEEDED);
         address[0] |= 0x01;
         status = RPC_S_UUID_LOCAL_ONLY;
     }
@@ -358,7 +373,7 @@ static RPC_STATUS RPC_UuidGetNodeAddress(BYTE *address)
 }
 
 /*************************************************************************
- *           UuidCreate   [RPCRT4.@]
+ *           UuidCreateSequential   [RPCRT4.@]
  *
  * Creates a 128bit UUID.
  *
@@ -368,14 +383,15 @@ static RPC_STATUS RPC_UuidGetNodeAddress(BYTE *address)
  *  RPC_S_UUID_LOCAL_ONLY if UUID is only locally unique.
  *
  *  FIXME: No compensation for changes across reloading
- *         this dll or across reboots (e.g. clock going 
+ *         this dll or across reboots (e.g. clock going
  *         backwards and swapped network cards). The RFC
- *         suggests using NVRAM for storing persistent 
+ *         suggests using NVRAM for storing persistent
  *         values.
  */
-RPC_STATUS WINAPI UuidCreate(UUID *Uuid)
+RPC_STATUS WINAPI UuidCreateSequential(UUID *Uuid)
 {
-    static int initialised, count;
+    static BOOL initialised;
+    static int count;
 
     ULONGLONG time;
     static ULONGLONG timelast;
@@ -394,7 +410,7 @@ RPC_STATUS WINAPI UuidCreate(UUID *Uuid)
         sequence &= 0x1fff;
 
         status = RPC_UuidGetNodeAddress(address);
-        initialised = 1;
+        initialised = TRUE;
     }
 
     /* Generate time element of the UUID. Account for going faster
@@ -421,7 +437,7 @@ RPC_STATUS WINAPI UuidCreate(UUID *Uuid)
 
     /* Pack the information into the UUID structure. */
 
-    Uuid->Data1  = (unsigned long)(time & 0xffffffff);
+    Uuid->Data1  = (ULONG)(time & 0xffffffff);
     Uuid->Data2  = (unsigned short)((time >> 32) & 0xffff);
     Uuid->Data3  = (unsigned short)((time >> 48) & 0x0fff);
 
@@ -431,13 +447,7 @@ RPC_STATUS WINAPI UuidCreate(UUID *Uuid)
     Uuid->Data4[0]  = sequence & 0xff;
     Uuid->Data4[1]  = (sequence & 0x3f00) >> 8;
     Uuid->Data4[1] |= 0x80;
-
-    Uuid->Data4[2] = address[0];
-    Uuid->Data4[3] = address[1];
-    Uuid->Data4[4] = address[2];
-    Uuid->Data4[5] = address[3];
-    Uuid->Data4[6] = address[4];
-    Uuid->Data4[7] = address[5];
+    memcpy(&Uuid->Data4[2], address, ADDRESS_BYTES_NEEDED);
 
     LeaveCriticalSection(&uuid_cs);
 
@@ -447,21 +457,14 @@ RPC_STATUS WINAPI UuidCreate(UUID *Uuid)
 }
 
 /*************************************************************************
- *           UuidCreateSequential   [RPCRT4.@]
+ *           I_UuidCreate   [RPCRT4.@]
  *
- * Creates a 128bit UUID.
- *
- * RETURNS
- *
- *  RPC_S_OK if successful.
- *  RPC_S_UUID_LOCAL_ONLY if UUID is only locally unique.
- *
+ * See UuidCreateSequential()
  */
-RPC_STATUS WINAPI UuidCreateSequential(UUID *Uuid)
+RPC_STATUS WINAPI I_UuidCreate(UUID *Uuid)
 {
-   return UuidCreate(Uuid);
+    return UuidCreateSequential(Uuid);
 }
-
 
 /*************************************************************************
  *           UuidHash   [RPCRT4.@]
@@ -507,9 +510,9 @@ unsigned short WINAPI UuidHash(UUID *uuid, RPC_STATUS *Status)
  * RETURNS
  *
  *  S_OK if successful.
- *  S_OUT_OF_MEMORY if unsucessful.
+ *  S_OUT_OF_MEMORY if unsuccessful.
  */
-RPC_STATUS WINAPI UuidToStringA(UUID *Uuid, unsigned char** StringUuid)
+RPC_STATUS WINAPI UuidToStringA(UUID *Uuid, RPC_CSTR* StringUuid)
 {
   *StringUuid = HeapAlloc( GetProcessHeap(), 0, sizeof(char) * 37);
 
@@ -518,7 +521,7 @@ RPC_STATUS WINAPI UuidToStringA(UUID *Uuid, unsigned char** StringUuid)
 
   if (!Uuid) Uuid = &uuid_nil;
 
-  sprintf( (char*)*StringUuid, "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+  sprintf( (char*)*StringUuid, "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
                  Uuid->Data1, Uuid->Data2, Uuid->Data3,
                  Uuid->Data4[0], Uuid->Data4[1], Uuid->Data4[2],
                  Uuid->Data4[3], Uuid->Data4[4], Uuid->Data4[5],
@@ -533,15 +536,15 @@ RPC_STATUS WINAPI UuidToStringA(UUID *Uuid, unsigned char** StringUuid)
  * Converts a UUID to a string.
  *
  *  S_OK if successful.
- *  S_OUT_OF_MEMORY if unsucessful.
+ *  S_OUT_OF_MEMORY if unsuccessful.
  */
-RPC_STATUS WINAPI UuidToStringW(UUID *Uuid, unsigned short** StringUuid)
+RPC_STATUS WINAPI UuidToStringW(UUID *Uuid, RPC_WSTR* StringUuid)
 {
   char buf[37];
 
   if (!Uuid) Uuid = &uuid_nil;
 
-  sprintf(buf, "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+  sprintf(buf, "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
                Uuid->Data1, Uuid->Data2, Uuid->Data3,
                Uuid->Data4[0], Uuid->Data4[1], Uuid->Data4[2],
                Uuid->Data4[3], Uuid->Data4[4], Uuid->Data4[5],
@@ -569,7 +572,7 @@ static const BYTE hex2bin[] =
 /***********************************************************************
  *		UuidFromStringA (RPCRT4.@)
  */
-RPC_STATUS WINAPI UuidFromStringA(unsigned char* s, UUID *uuid)
+RPC_STATUS WINAPI UuidFromStringA(RPC_CSTR s, UUID *uuid)
 {
     int i;
 
@@ -609,7 +612,7 @@ RPC_STATUS WINAPI UuidFromStringA(unsigned char* s, UUID *uuid)
 /***********************************************************************
  *		UuidFromStringW (RPCRT4.@)
  */
-RPC_STATUS WINAPI UuidFromStringW(unsigned short* s, UUID *uuid)
+RPC_STATUS WINAPI UuidFromStringW(RPC_WSTR s, UUID *uuid)
 {
     int i;
 
@@ -655,99 +658,6 @@ HRESULT WINAPI DllRegisterServer( void )
     return S_OK;
 }
 
-BOOL RPCRT4_StartRPCSS(void)
-{ 
-    PROCESS_INFORMATION pi;
-    STARTUPINFOA si;
-    static char cmd[6];
-    BOOL rslt;
-
-    ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
-    ZeroMemory(&si, sizeof(STARTUPINFOA));
-    si.cb = sizeof(STARTUPINFOA);
-
-    /* apparently it's not OK to use a constant string below */
-    CopyMemory(cmd, "rpcss", 6);
-
-    /* FIXME: will this do the right thing when run as a test? */
-    rslt = CreateProcessA(
-        NULL,           /* executable */
-        cmd,            /* command line */
-        NULL,           /* process security attributes */
-        NULL,           /* primary thread security attributes */
-        FALSE,          /* inherit handles */
-        0,              /* creation flags */
-        NULL,           /* use parent's environment */
-        NULL,           /* use parent's current directory */
-        &si,            /* STARTUPINFO pointer */
-        &pi             /* PROCESS_INFORMATION */
-    );
-
-    if (rslt) {
-      CloseHandle(pi.hProcess);
-      CloseHandle(pi.hThread);
-    }
-
-    return rslt;
-}
-
-/***********************************************************************
- *           RPCRT4_RPCSSOnDemandCall (internal)
- * 
- * Attempts to send a message to the RPCSS process
- * on the local machine, invoking it if necessary.
- * For remote RPCSS calls, use.... your imagination.
- * 
- * PARAMS
- *     msg             [I] pointer to the RPCSS message
- *     vardata_payload [I] pointer vardata portion of the RPCSS message
- *     reply           [O] pointer to reply structure
- *
- * RETURNS
- *     TRUE if successful
- *     FALSE otherwise
- */
-BOOL RPCRT4_RPCSSOnDemandCall(PRPCSS_NP_MESSAGE msg, char *vardata_payload, PRPCSS_NP_REPLY reply)
-{
-    HANDLE client_handle;
-    int i, j = 0;
-
-    TRACE("(msg == %p, vardata_payload == %p, reply == %p)\n", msg, vardata_payload, reply);
-
-    client_handle = RPCRT4_RpcssNPConnect();
-
-    while (!client_handle) {
-        /* start the RPCSS process */
-	if (!RPCRT4_StartRPCSS()) {
-	    ERR("Unable to start RPCSS process.\n");
-	    return FALSE;
-	}
-	/* wait for a connection (w/ periodic polling) */
-        for (i = 0; i < 60; i++) {
-            Sleep(200);
-            client_handle = RPCRT4_RpcssNPConnect();
-            if (client_handle) break;
-        } 
-        /* we are only willing to try twice */
-	if (j++ >= 1) break;
-    }
-
-    if (!client_handle) {
-        /* no dice! */
-        ERR("Unable to connect to RPCSS process!\n");
-	SetLastError(RPC_E_SERVER_DIED_DNE);
-	return FALSE;
-    }
-
-    /* great, we're connected.  now send the message */
-    if (!RPCRT4_SendReceiveNPMsg(client_handle, msg, vardata_payload, reply)) {
-        ERR("Something is amiss: RPC_SendReceive failed.\n");
-	return FALSE;
-    }
-
-    return TRUE;
-}
-
 #define MAX_RPC_ERROR_TEXT 256
 
 /******************************************************************************
@@ -762,7 +672,7 @@ BOOL RPCRT4_RPCSSOnDemandCall(PRPCSS_NP_MESSAGE msg, char *vardata_payload, PRPC
  * 4. The MSDN documentation currently declares that the second argument is
  *    unsigned char *, even for the W version.  I don't believe it.
  */
-RPC_STATUS RPC_ENTRY DceErrorInqTextW (RPC_STATUS e, unsigned short *buffer)
+RPC_STATUS RPC_ENTRY DceErrorInqTextW (RPC_STATUS e, RPC_WSTR buffer)
 {
     DWORD count;
     count = FormatMessageW (FORMAT_MESSAGE_FROM_SYSTEM |
@@ -775,7 +685,7 @@ RPC_STATUS RPC_ENTRY DceErrorInqTextW (RPC_STATUS e, unsigned short *buffer)
                 NULL, RPC_S_NOT_RPC_ERROR, 0, buffer, MAX_RPC_ERROR_TEXT, NULL);
         if (!count)
         {
-            ERR ("Failed to translate error");
+            ERR ("Failed to translate error\n");
             return RPC_S_INVALID_ARG;
         }
     }
@@ -785,7 +695,7 @@ RPC_STATUS RPC_ENTRY DceErrorInqTextW (RPC_STATUS e, unsigned short *buffer)
 /******************************************************************************
  * DceErrorInqTextA   (rpcrt4.@)
  */
-RPC_STATUS RPC_ENTRY DceErrorInqTextA (RPC_STATUS e, unsigned char *buffer)
+RPC_STATUS RPC_ENTRY DceErrorInqTextA (RPC_STATUS e, RPC_CSTR buffer)
 {
     RPC_STATUS status;
     WCHAR bufferW [MAX_RPC_ERROR_TEXT];
@@ -794,9 +704,378 @@ RPC_STATUS RPC_ENTRY DceErrorInqTextA (RPC_STATUS e, unsigned char *buffer)
         if (!WideCharToMultiByte(CP_ACP, 0, bufferW, -1, (LPSTR)buffer, MAX_RPC_ERROR_TEXT,
                 NULL, NULL))
         {
-            ERR ("Failed to translate error");
+            ERR ("Failed to translate error\n");
             status = RPC_S_INVALID_ARG;
         }
     }
     return status;
+}
+
+/******************************************************************************
+ * I_RpcAllocate   (rpcrt4.@)
+ */
+void * WINAPI I_RpcAllocate(unsigned int Size)
+{
+    return HeapAlloc(GetProcessHeap(), 0, Size);
+}
+
+/******************************************************************************
+ * I_RpcFree   (rpcrt4.@)
+ */
+void WINAPI I_RpcFree(void *Object)
+{
+    HeapFree(GetProcessHeap(), 0, Object);
+}
+
+/******************************************************************************
+ * I_RpcMapWin32Status   (rpcrt4.@)
+ *
+ * Maps Win32 RPC error codes to NT statuses.
+ *
+ * PARAMS
+ *  status [I] Win32 RPC error code.
+ *
+ * RETURNS
+ *  Appropriate translation into an NT status code.
+ */
+LONG WINAPI I_RpcMapWin32Status(RPC_STATUS status)
+{
+    TRACE("(%d)\n", status);
+    switch (status)
+    {
+    case ERROR_ACCESS_DENIED: return STATUS_ACCESS_DENIED;
+    case ERROR_INVALID_HANDLE: return RPC_NT_SS_CONTEXT_MISMATCH;
+    case ERROR_OUTOFMEMORY: return STATUS_NO_MEMORY;
+    case ERROR_INVALID_PARAMETER: return STATUS_INVALID_PARAMETER;
+    case ERROR_INSUFFICIENT_BUFFER: return STATUS_BUFFER_TOO_SMALL;
+    case ERROR_MAX_THRDS_REACHED: return STATUS_NO_MEMORY;
+    case ERROR_NOACCESS: return STATUS_ACCESS_VIOLATION;
+    case ERROR_NOT_ENOUGH_SERVER_MEMORY: return STATUS_INSUFF_SERVER_RESOURCES;
+    case ERROR_WRONG_PASSWORD: return STATUS_WRONG_PASSWORD;
+    case ERROR_INVALID_LOGON_HOURS: return STATUS_INVALID_LOGON_HOURS;
+    case ERROR_PASSWORD_EXPIRED: return STATUS_PASSWORD_EXPIRED;
+    case ERROR_ACCOUNT_DISABLED: return STATUS_ACCOUNT_DISABLED;
+    case ERROR_INVALID_SECURITY_DESCR: return STATUS_INVALID_SECURITY_DESCR;
+    case RPC_S_INVALID_STRING_BINDING: return RPC_NT_INVALID_STRING_BINDING;
+    case RPC_S_WRONG_KIND_OF_BINDING: return RPC_NT_WRONG_KIND_OF_BINDING;
+    case RPC_S_INVALID_BINDING: return RPC_NT_INVALID_BINDING;
+    case RPC_S_PROTSEQ_NOT_SUPPORTED: return RPC_NT_PROTSEQ_NOT_SUPPORTED;
+    case RPC_S_INVALID_RPC_PROTSEQ: return RPC_NT_INVALID_RPC_PROTSEQ;
+    case RPC_S_INVALID_STRING_UUID: return RPC_NT_INVALID_STRING_UUID;
+    case RPC_S_INVALID_ENDPOINT_FORMAT: return RPC_NT_INVALID_ENDPOINT_FORMAT;
+    case RPC_S_INVALID_NET_ADDR: return RPC_NT_INVALID_NET_ADDR;
+    case RPC_S_NO_ENDPOINT_FOUND: return RPC_NT_NO_ENDPOINT_FOUND;
+    case RPC_S_INVALID_TIMEOUT: return RPC_NT_INVALID_TIMEOUT;
+    case RPC_S_OBJECT_NOT_FOUND: return RPC_NT_OBJECT_NOT_FOUND;
+    case RPC_S_ALREADY_REGISTERED: return RPC_NT_ALREADY_REGISTERED;
+    case RPC_S_TYPE_ALREADY_REGISTERED: return RPC_NT_TYPE_ALREADY_REGISTERED;
+    case RPC_S_ALREADY_LISTENING: return RPC_NT_ALREADY_LISTENING;
+    case RPC_S_NO_PROTSEQS_REGISTERED: return RPC_NT_NO_PROTSEQS_REGISTERED;
+    case RPC_S_NOT_LISTENING: return RPC_NT_NOT_LISTENING;
+    case RPC_S_UNKNOWN_MGR_TYPE: return RPC_NT_UNKNOWN_MGR_TYPE;
+    case RPC_S_UNKNOWN_IF: return RPC_NT_UNKNOWN_IF;
+    case RPC_S_NO_BINDINGS: return RPC_NT_NO_BINDINGS;
+    case RPC_S_NO_PROTSEQS: return RPC_NT_NO_PROTSEQS;
+    case RPC_S_CANT_CREATE_ENDPOINT: return RPC_NT_CANT_CREATE_ENDPOINT;
+    case RPC_S_OUT_OF_RESOURCES: return RPC_NT_OUT_OF_RESOURCES;
+    case RPC_S_SERVER_UNAVAILABLE: return RPC_NT_SERVER_UNAVAILABLE;
+    case RPC_S_SERVER_TOO_BUSY: return RPC_NT_SERVER_TOO_BUSY;
+    case RPC_S_INVALID_NETWORK_OPTIONS: return RPC_NT_INVALID_NETWORK_OPTIONS;
+    case RPC_S_NO_CALL_ACTIVE: return RPC_NT_NO_CALL_ACTIVE;
+    case RPC_S_CALL_FAILED: return RPC_NT_CALL_FAILED;
+    case RPC_S_CALL_FAILED_DNE: return RPC_NT_CALL_FAILED_DNE;
+    case RPC_S_PROTOCOL_ERROR: return RPC_NT_PROTOCOL_ERROR;
+    case RPC_S_UNSUPPORTED_TRANS_SYN: return RPC_NT_UNSUPPORTED_TRANS_SYN;
+    case RPC_S_UNSUPPORTED_TYPE: return RPC_NT_UNSUPPORTED_TYPE;
+    case RPC_S_INVALID_TAG: return RPC_NT_INVALID_TAG;
+    case RPC_S_INVALID_BOUND: return RPC_NT_INVALID_BOUND;
+    case RPC_S_NO_ENTRY_NAME: return RPC_NT_NO_ENTRY_NAME;
+    case RPC_S_INVALID_NAME_SYNTAX: return RPC_NT_INVALID_NAME_SYNTAX;
+    case RPC_S_UNSUPPORTED_NAME_SYNTAX: return RPC_NT_UNSUPPORTED_NAME_SYNTAX;
+    case RPC_S_UUID_NO_ADDRESS: return RPC_NT_UUID_NO_ADDRESS;
+    case RPC_S_DUPLICATE_ENDPOINT: return RPC_NT_DUPLICATE_ENDPOINT;
+    case RPC_S_UNKNOWN_AUTHN_TYPE: return RPC_NT_UNKNOWN_AUTHN_TYPE;
+    case RPC_S_MAX_CALLS_TOO_SMALL: return RPC_NT_MAX_CALLS_TOO_SMALL;
+    case RPC_S_STRING_TOO_LONG: return RPC_NT_STRING_TOO_LONG;
+    case RPC_S_PROTSEQ_NOT_FOUND: return RPC_NT_PROTSEQ_NOT_FOUND;
+    case RPC_S_PROCNUM_OUT_OF_RANGE: return RPC_NT_PROCNUM_OUT_OF_RANGE;
+    case RPC_S_BINDING_HAS_NO_AUTH: return RPC_NT_BINDING_HAS_NO_AUTH;
+    case RPC_S_UNKNOWN_AUTHN_SERVICE: return RPC_NT_UNKNOWN_AUTHN_SERVICE;
+    case RPC_S_UNKNOWN_AUTHN_LEVEL: return RPC_NT_UNKNOWN_AUTHN_LEVEL;
+    case RPC_S_INVALID_AUTH_IDENTITY: return RPC_NT_INVALID_AUTH_IDENTITY;
+    case RPC_S_UNKNOWN_AUTHZ_SERVICE: return RPC_NT_UNKNOWN_AUTHZ_SERVICE;
+    case EPT_S_INVALID_ENTRY: return EPT_NT_INVALID_ENTRY;
+    case EPT_S_CANT_PERFORM_OP: return EPT_NT_CANT_PERFORM_OP;
+    case EPT_S_NOT_REGISTERED: return EPT_NT_NOT_REGISTERED;
+    case EPT_S_CANT_CREATE: return EPT_NT_CANT_CREATE;
+    case RPC_S_NOTHING_TO_EXPORT: return RPC_NT_NOTHING_TO_EXPORT;
+    case RPC_S_INCOMPLETE_NAME: return RPC_NT_INCOMPLETE_NAME;
+    case RPC_S_INVALID_VERS_OPTION: return RPC_NT_INVALID_VERS_OPTION;
+    case RPC_S_NO_MORE_MEMBERS: return RPC_NT_NO_MORE_MEMBERS;
+    case RPC_S_NOT_ALL_OBJS_UNEXPORTED: return RPC_NT_NOT_ALL_OBJS_UNEXPORTED;
+    case RPC_S_INTERFACE_NOT_FOUND: return RPC_NT_INTERFACE_NOT_FOUND;
+    case RPC_S_ENTRY_ALREADY_EXISTS: return RPC_NT_ENTRY_ALREADY_EXISTS;
+    case RPC_S_ENTRY_NOT_FOUND: return RPC_NT_ENTRY_NOT_FOUND;
+    case RPC_S_NAME_SERVICE_UNAVAILABLE: return RPC_NT_NAME_SERVICE_UNAVAILABLE;
+    case RPC_S_INVALID_NAF_ID: return RPC_NT_INVALID_NAF_ID;
+    case RPC_S_CANNOT_SUPPORT: return RPC_NT_CANNOT_SUPPORT;
+    case RPC_S_NO_CONTEXT_AVAILABLE: return RPC_NT_NO_CONTEXT_AVAILABLE;
+    case RPC_S_INTERNAL_ERROR: return RPC_NT_INTERNAL_ERROR;
+    case RPC_S_ZERO_DIVIDE: return RPC_NT_ZERO_DIVIDE;
+    case RPC_S_ADDRESS_ERROR: return RPC_NT_ADDRESS_ERROR;
+    case RPC_S_FP_DIV_ZERO: return RPC_NT_FP_DIV_ZERO;
+    case RPC_S_FP_UNDERFLOW: return RPC_NT_FP_UNDERFLOW;
+    case RPC_S_FP_OVERFLOW: return RPC_NT_FP_OVERFLOW;
+    case RPC_S_CALL_IN_PROGRESS: return RPC_NT_CALL_IN_PROGRESS;
+    case RPC_S_NO_MORE_BINDINGS: return RPC_NT_NO_MORE_BINDINGS;
+    case RPC_S_CALL_CANCELLED: return RPC_NT_CALL_CANCELLED;
+    case RPC_S_INVALID_OBJECT: return RPC_NT_INVALID_OBJECT;
+    case RPC_S_INVALID_ASYNC_HANDLE: return RPC_NT_INVALID_ASYNC_HANDLE;
+    case RPC_S_INVALID_ASYNC_CALL: return RPC_NT_INVALID_ASYNC_CALL;
+    case RPC_S_GROUP_MEMBER_NOT_FOUND: return RPC_NT_GROUP_MEMBER_NOT_FOUND;
+    case RPC_X_NO_MORE_ENTRIES: return RPC_NT_NO_MORE_ENTRIES;
+    case RPC_X_SS_CHAR_TRANS_OPEN_FAIL: return RPC_NT_SS_CHAR_TRANS_OPEN_FAIL;
+    case RPC_X_SS_CHAR_TRANS_SHORT_FILE: return RPC_NT_SS_CHAR_TRANS_SHORT_FILE;
+    case RPC_X_SS_IN_NULL_CONTEXT: return RPC_NT_SS_IN_NULL_CONTEXT;
+    case RPC_X_SS_CONTEXT_DAMAGED: return RPC_NT_SS_CONTEXT_DAMAGED;
+    case RPC_X_SS_HANDLES_MISMATCH: return RPC_NT_SS_HANDLES_MISMATCH;
+    case RPC_X_SS_CANNOT_GET_CALL_HANDLE: return RPC_NT_SS_CANNOT_GET_CALL_HANDLE;
+    case RPC_X_NULL_REF_POINTER: return RPC_NT_NULL_REF_POINTER;
+    case RPC_X_ENUM_VALUE_OUT_OF_RANGE: return RPC_NT_ENUM_VALUE_OUT_OF_RANGE;
+    case RPC_X_BYTE_COUNT_TOO_SMALL: return RPC_NT_BYTE_COUNT_TOO_SMALL;
+    case RPC_X_BAD_STUB_DATA: return RPC_NT_BAD_STUB_DATA;
+    case RPC_X_PIPE_CLOSED: return RPC_NT_PIPE_CLOSED;
+    case RPC_X_PIPE_DISCIPLINE_ERROR: return RPC_NT_PIPE_DISCIPLINE_ERROR;
+    case RPC_X_PIPE_EMPTY: return RPC_NT_PIPE_EMPTY;
+    case ERROR_PASSWORD_MUST_CHANGE: return STATUS_PASSWORD_MUST_CHANGE;
+    case ERROR_ACCOUNT_LOCKED_OUT: return STATUS_ACCOUNT_LOCKED_OUT;
+    default: return status;
+    }
+}
+
+/******************************************************************************
+ * RpcExceptionFilter     (rpcrt4.@)
+ * I_RpcExceptionFilter   (rpcrt4.@)
+ */
+int WINAPI RpcExceptionFilter(ULONG ExceptionCode)
+{
+    TRACE("0x%x\n", ExceptionCode);
+    switch (ExceptionCode)
+    {
+    case STATUS_DATATYPE_MISALIGNMENT:
+    case STATUS_BREAKPOINT:
+    case STATUS_ACCESS_VIOLATION:
+    case STATUS_ILLEGAL_INSTRUCTION:
+    case STATUS_PRIVILEGED_INSTRUCTION:
+    case STATUS_INSTRUCTION_MISALIGNMENT:
+    case STATUS_STACK_OVERFLOW:
+    case STATUS_POSSIBLE_DEADLOCK:
+        return EXCEPTION_CONTINUE_SEARCH;
+    default:
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+}
+
+/******************************************************************************
+ * RpcErrorStartEnumeration   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorStartEnumeration(RPC_ERROR_ENUM_HANDLE* EnumHandle)
+{
+    FIXME("(%p): stub\n", EnumHandle);
+    return RPC_S_ENTRY_NOT_FOUND;
+}
+
+/******************************************************************************
+ * RpcErrorEndEnumeration   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorEndEnumeration(RPC_ERROR_ENUM_HANDLE* EnumHandle)
+{
+    FIXME("(%p): stub\n", EnumHandle);
+    return RPC_S_OK;
+}
+
+/******************************************************************************
+ * RpcErrorSaveErrorInfo   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorSaveErrorInfo(RPC_ERROR_ENUM_HANDLE *EnumHandle, void **ErrorBlob, SIZE_T *BlobSize)
+{
+    FIXME("(%p %p %p): stub\n", EnumHandle, ErrorBlob, BlobSize);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * RpcErrorLoadErrorInfo   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorLoadErrorInfo(void *ErrorBlob, SIZE_T BlobSize, RPC_ERROR_ENUM_HANDLE *EnumHandle)
+{
+    FIXME("(%p %lu %p): stub\n", ErrorBlob, BlobSize, EnumHandle);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * RpcErrorGetNextRecord   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorGetNextRecord(RPC_ERROR_ENUM_HANDLE *EnumHandle, BOOL CopyStrings, RPC_EXTENDED_ERROR_INFO *ErrorInfo)
+{
+    FIXME("(%p %x %p): stub\n", EnumHandle, CopyStrings, ErrorInfo);
+    return RPC_S_ENTRY_NOT_FOUND;
+}
+
+/******************************************************************************
+ * RpcMgmtSetCancelTimeout   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcMgmtSetCancelTimeout(LONG Timeout)
+{
+    FIXME("(%d): stub\n", Timeout);
+    return RPC_S_OK;
+}
+
+static struct threaddata *get_or_create_threaddata(void)
+{
+    struct threaddata *tdata = NtCurrentTeb()->ReservedForNtRpc;
+    if (!tdata)
+    {
+        tdata = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*tdata));
+        if (!tdata) return NULL;
+
+        InitializeCriticalSection(&tdata->cs);
+        tdata->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": threaddata.cs");
+        tdata->thread_id = GetCurrentThreadId();
+
+        EnterCriticalSection(&threaddata_cs);
+        list_add_tail(&threaddata_list, &tdata->entry);
+        LeaveCriticalSection(&threaddata_cs);
+
+        NtCurrentTeb()->ReservedForNtRpc = tdata;
+        return tdata;
+    }
+    return tdata;
+}
+
+void RPCRT4_SetThreadCurrentConnection(RpcConnection *Connection)
+{
+    struct threaddata *tdata = get_or_create_threaddata();
+    if (!tdata) return;
+
+    EnterCriticalSection(&tdata->cs);
+    tdata->connection = Connection;
+    LeaveCriticalSection(&tdata->cs);
+}
+
+void RPCRT4_SetThreadCurrentCallHandle(RpcBinding *Binding)
+{
+    struct threaddata *tdata = get_or_create_threaddata();
+    if (!tdata) return;
+
+    tdata->server_binding = Binding;
+}
+
+RpcBinding *RPCRT4_GetThreadCurrentCallHandle(void)
+{
+    struct threaddata *tdata = get_or_create_threaddata();
+    if (!tdata) return NULL;
+
+    return tdata->server_binding;
+}
+
+void RPCRT4_PushThreadContextHandle(NDR_SCONTEXT SContext)
+{
+    struct threaddata *tdata = get_or_create_threaddata();
+    struct context_handle_list *context_handle_list;
+
+    if (!tdata) return;
+
+    context_handle_list = HeapAlloc(GetProcessHeap(), 0, sizeof(*context_handle_list));
+    if (!context_handle_list) return;
+
+    context_handle_list->context_handle = SContext;
+    context_handle_list->next = tdata->context_handle_list;
+    tdata->context_handle_list = context_handle_list;
+}
+
+void RPCRT4_RemoveThreadContextHandle(NDR_SCONTEXT SContext)
+{
+    struct threaddata *tdata = get_or_create_threaddata();
+    struct context_handle_list *current, *prev;
+
+    if (!tdata) return;
+
+    for (current = tdata->context_handle_list, prev = NULL; current; prev = current, current = current->next)
+    {
+        if (current->context_handle == SContext)
+        {
+            if (prev)
+                prev->next = current->next;
+            else
+                tdata->context_handle_list = current->next;
+            HeapFree(GetProcessHeap(), 0, current);
+            return;
+        }
+    }
+}
+
+NDR_SCONTEXT RPCRT4_PopThreadContextHandle(void)
+{
+    struct threaddata *tdata = get_or_create_threaddata();
+    struct context_handle_list *context_handle_list;
+    NDR_SCONTEXT context_handle;
+
+    if (!tdata) return NULL;
+
+    context_handle_list = tdata->context_handle_list;
+    if (!context_handle_list) return NULL;
+    tdata->context_handle_list = context_handle_list->next;
+
+    context_handle = context_handle_list->context_handle;
+    HeapFree(GetProcessHeap(), 0, context_handle_list);
+    return context_handle;
+}
+
+static RPC_STATUS rpc_cancel_thread(DWORD target_tid)
+{
+    struct threaddata *tdata;
+
+    EnterCriticalSection(&threaddata_cs);
+    LIST_FOR_EACH_ENTRY(tdata, &threaddata_list, struct threaddata, entry)
+        if (tdata->thread_id == target_tid)
+        {
+            EnterCriticalSection(&tdata->cs);
+            if (tdata->connection) rpcrt4_conn_cancel_call(tdata->connection);
+            LeaveCriticalSection(&tdata->cs);
+            break;
+        }
+    LeaveCriticalSection(&threaddata_cs);
+
+    return RPC_S_OK;
+}
+
+/******************************************************************************
+ * RpcCancelThread   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcCancelThread(void* ThreadHandle)
+{
+    TRACE("(%p)\n", ThreadHandle);
+    return RpcCancelThreadEx(ThreadHandle, 0);
+}
+
+/******************************************************************************
+ * RpcCancelThreadEx   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcCancelThreadEx(void* ThreadHandle, LONG Timeout)
+{
+    DWORD target_tid;
+
+    FIXME("(%p, %d)\n", ThreadHandle, Timeout);
+
+    target_tid = GetThreadId(ThreadHandle);
+    if (!target_tid)
+        return RPC_S_INVALID_ARG;
+
+    if (Timeout)
+    {
+        FIXME("(%p, %d)\n", ThreadHandle, Timeout);
+        return RPC_S_OK;
+    }
+    else
+        return rpc_cancel_thread(target_tid);
 }

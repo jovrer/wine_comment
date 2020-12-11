@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __SECEXT_H__
@@ -34,7 +34,9 @@ typedef enum
     NameUserPrincipal = 8,
     NameCanonicalEx = 9,
     NameServicePrincipal = 10,
-    NameDnsDomain = 12
+    NameDnsDomain = 12,
+    NameGivenName = 13,
+    NameSurname = 14,
 } EXTENDED_NAME_FORMAT, *PEXTENDED_NAME_FORMAT;
 
 BOOLEAN WINAPI GetComputerObjectNameA( EXTENDED_NAME_FORMAT, LPSTR, PULONG );

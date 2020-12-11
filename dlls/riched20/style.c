@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "editor.h"
@@ -25,134 +25,136 @@ WINE_DECLARE_DEBUG_CHANNEL(richedit_style);
 
 static int all_refs = 0;
 
-CHARFORMAT2W *ME_ToCF2W(CHARFORMAT2W *to, CHARFORMAT2W *from)
+/* the following routines assume that:
+ * - char2[AW] extends char[AW] by adding fields at the end of the charA form)
+ * - szFaceName is the last field of char[AW] form, and wWeight the first of 2[AW]
+ * - the difference between A and W form is the szFaceName as Ansi vs Unicode string
+ * - because of alignment, offset of wWeight field in 2[AW] structure *IS NOT*
+ *   sizeof(char[AW])
+ */
+
+BOOL cfany_to_cf2w(CHARFORMAT2W *to, const CHARFORMAT2W *from)
 {
   if (from->cbSize == sizeof(CHARFORMATA))
   {
     CHARFORMATA *f = (CHARFORMATA *)from;
-    CopyMemory(to, f, sizeof(*f)-sizeof(f->szFaceName));
+    CopyMemory(to, f, FIELD_OFFSET(CHARFORMATA, szFaceName));
     to->cbSize = sizeof(CHARFORMAT2W);
     if (f->dwMask & CFM_FACE) {
-      MultiByteToWideChar(0, 0, f->szFaceName, -1, to->szFaceName, sizeof(to->szFaceName)/sizeof(WCHAR));
+      MultiByteToWideChar(CP_ACP, 0, f->szFaceName, -1, to->szFaceName, ARRAY_SIZE(to->szFaceName));
     }
-    return to;
+    return TRUE;
   }
   if (from->cbSize == sizeof(CHARFORMATW))
   {
     CHARFORMATW *f = (CHARFORMATW *)from;
     CopyMemory(to, f, sizeof(*f));
     /* theoretically, we don't need to zero the remaining memory */
-    ZeroMemory(((CHARFORMATW *)to)+1, sizeof(CHARFORMAT2W)-sizeof(CHARFORMATW));
+    ZeroMemory(&to->wWeight, sizeof(CHARFORMAT2W)-FIELD_OFFSET(CHARFORMAT2W, wWeight));
     to->cbSize = sizeof(CHARFORMAT2W);
-    return to;
+    return TRUE;
   }
   if (from->cbSize == sizeof(CHARFORMAT2A))
   {
-    CHARFORMATA *f = (CHARFORMATA *)from;
+    CHARFORMAT2A *f = (CHARFORMAT2A *)from;
     /* copy the A structure without face name */
-    CopyMemory(to, f, sizeof(CHARFORMATA)-sizeof(f->szFaceName));
+    CopyMemory(to, f, FIELD_OFFSET(CHARFORMATA, szFaceName));
     /* convert face name */
     if (f->dwMask & CFM_FACE)
-      MultiByteToWideChar(0, 0, f->szFaceName, -1, to->szFaceName, sizeof(to->szFaceName)/sizeof(WCHAR));
+      MultiByteToWideChar(CP_ACP, 0, f->szFaceName, -1, to->szFaceName, ARRAY_SIZE(to->szFaceName));
     /* copy the rest of the 2A structure to 2W */
-    CopyMemory(1+((CHARFORMATW *)to), f+1, sizeof(CHARFORMAT2A)-sizeof(CHARFORMATA));
+    CopyMemory(&to->wWeight, &f->wWeight, sizeof(CHARFORMAT2A)-FIELD_OFFSET(CHARFORMAT2A, wWeight));
     to->cbSize = sizeof(CHARFORMAT2W);
-    return to;
+    return TRUE;
+  }
+  if (from->cbSize == sizeof(CHARFORMAT2W))
+  {
+    CopyMemory(to, from, sizeof(CHARFORMAT2W));
+    return TRUE;
   }
 
-  assert(from->cbSize >= sizeof(CHARFORMAT2W));  
-  return from;
+  return FALSE;
 }
 
-void ME_CopyToCF2W(CHARFORMAT2W *to, CHARFORMAT2W *from)
-{
-  if (ME_ToCF2W(to, from) == from)
-    CopyMemory(to, from, sizeof(*from));
-}
-
-CHARFORMAT2W *ME_ToCFAny(CHARFORMAT2W *to, CHARFORMAT2W *from)
+BOOL cf2w_to_cfany(CHARFORMAT2W *to, const CHARFORMAT2W *from)
 {
   assert(from->cbSize == sizeof(CHARFORMAT2W));
   if (to->cbSize == sizeof(CHARFORMATA))
   {
     CHARFORMATA *t = (CHARFORMATA *)to;
-    CopyMemory(t, from, sizeof(*t)-sizeof(t->szFaceName));
-    WideCharToMultiByte(0, 0, from->szFaceName, -1, t->szFaceName, sizeof(t->szFaceName), 0, 0);
+    CopyMemory(t, from, FIELD_OFFSET(CHARFORMATA, szFaceName));
+    WideCharToMultiByte(CP_ACP, 0, from->szFaceName, -1, t->szFaceName, sizeof(t->szFaceName), NULL, NULL);
     t->cbSize = sizeof(*t); /* it was overwritten by CopyMemory */
-    return to;
+    return TRUE;
   }
   if (to->cbSize == sizeof(CHARFORMATW))
   {
     CHARFORMATW *t = (CHARFORMATW *)to;
     CopyMemory(t, from, sizeof(*t));
     t->cbSize = sizeof(*t); /* it was overwritten by CopyMemory */
-    return to;
+    return TRUE;
   }
   if (to->cbSize == sizeof(CHARFORMAT2A))
   {
     CHARFORMAT2A *t = (CHARFORMAT2A *)to;
     /* copy the A structure without face name */
-    CopyMemory(t, from, sizeof(CHARFORMATA)-sizeof(t->szFaceName));
+    CopyMemory(t, from, FIELD_OFFSET(CHARFORMATA, szFaceName));
     /* convert face name */
-    WideCharToMultiByte(0, 0, from->szFaceName, -1, t->szFaceName, sizeof(t->szFaceName), 0, 0);
+    WideCharToMultiByte(CP_ACP, 0, from->szFaceName, -1, t->szFaceName, sizeof(t->szFaceName), NULL, NULL);
     /* copy the rest of the 2A structure to 2W */
-    CopyMemory(&t->wWeight, &from->wWeight, sizeof(CHARFORMAT2A)-sizeof(CHARFORMATA));
+    CopyMemory(&t->wWeight, &from->wWeight, sizeof(CHARFORMAT2W)-FIELD_OFFSET(CHARFORMAT2W,wWeight));
     t->cbSize = sizeof(*t); /* it was overwritten by CopyMemory */
-    return to;
+    return TRUE;
   }
-  assert(to->cbSize >= sizeof(CHARFORMAT2W));  
-  return from;
+  if (to->cbSize == sizeof(CHARFORMAT2W))
+  {
+    CopyMemory(to, from, sizeof(CHARFORMAT2W));
+    return TRUE;
+  }
+  return FALSE;
 }
 
-void ME_CopyToCFAny(CHARFORMAT2W *to, CHARFORMAT2W *from)
+ME_Style *ME_MakeStyle(CHARFORMAT2W *style)
 {
-  if (ME_ToCFAny(to, from) == from)
-    CopyMemory(to, from, to->cbSize);
-}
+  ME_Style *s = heap_alloc(sizeof(*s));
 
-ME_Style *ME_MakeStyle(CHARFORMAT2W *style) {
-  CHARFORMAT2W styledata;
-  ME_Style *s = ALLOC_OBJ(ME_Style);
-  
-  style = ME_ToCF2W(&styledata, style);
-  memset(s, 0, sizeof(ME_Style));
-  if (style->cbSize <= sizeof(CHARFORMAT2W))
-    CopyMemory(&s->fmt, style, style->cbSize);
-  else
-    CopyMemory(&s->fmt, style, sizeof(CHARFORMAT2W));
-  s->fmt.cbSize = sizeof(CHARFORMAT2W);
-
-  s->nSequence = -2;
+  assert(style->cbSize == sizeof(CHARFORMAT2W));
+  s->fmt = *style;
   s->nRefs = 1;
-  s->hFont = NULL;
+  s->font_cache = NULL;
+  memset(&s->tm, 0, sizeof(s->tm));
   s->tm.tmAscent = -1;
+  s->script_cache = NULL;
+  list_init(&s->entry);
   all_refs++;
+  TRACE_(richedit_style)("ME_MakeStyle %p, total refs=%d\n", s, all_refs);
   return s;
 }
 
 #define COPY_STYLE_ITEM(mask, member) \
-  if (style->dwMask & mask) { \
-    s->fmt.dwMask |= mask;\
-    s->fmt.member = style->member;\
+  if (mod->dwMask & mask) { \
+    fmt.dwMask |= mask;\
+    fmt.member = mod->member;\
   }
 
 #define COPY_STYLE_ITEM_MEMCPY(mask, member) \
-  if (style->dwMask & mask) { \
-    s->fmt.dwMask |= mask;\
-    CopyMemory(s->fmt.member, style->member, sizeof(style->member));\
+  if (mod->dwMask & mask) { \
+    fmt.dwMask |= mask;\
+    CopyMemory(fmt.member, mod->member, sizeof(mod->member));\
   }
-  
+
 void ME_InitCharFormat2W(CHARFORMAT2W *pFmt)
 {
   ZeroMemory(pFmt, sizeof(CHARFORMAT2W));
   pFmt->cbSize = sizeof(CHARFORMAT2W);
 }
 
-ME_Style *ME_ApplyStyle(ME_Style *sSrc, CHARFORMAT2W *style)
+ME_Style *ME_ApplyStyle(ME_TextEditor *editor, ME_Style *sSrc, CHARFORMAT2W *mod)
 {
-  CHARFORMAT2W styledata;
-  ME_Style *s = ME_MakeStyle(&sSrc->fmt);
-  style = ME_ToCF2W(&styledata, style);
+  CHARFORMAT2W fmt = sSrc->fmt;
+  ME_Style *s;
+
+  assert(mod->cbSize == sizeof(CHARFORMAT2W));
   COPY_STYLE_ITEM(CFM_ANIMATION, bAnimation);
   COPY_STYLE_ITEM(CFM_BACKCOLOR, crBackColor);
   COPY_STYLE_ITEM(CFM_CHARSET, bCharSet);
@@ -162,34 +164,74 @@ ME_Style *ME_ApplyStyle(ME_Style *sSrc, CHARFORMAT2W *style)
   COPY_STYLE_ITEM(CFM_LCID, lcid);
   COPY_STYLE_ITEM(CFM_OFFSET, yOffset);
   COPY_STYLE_ITEM(CFM_REVAUTHOR, bRevAuthor);
-  COPY_STYLE_ITEM(CFM_SIZE, yHeight);
+  if (mod->dwMask & CFM_SIZE) {
+    fmt.dwMask |= CFM_SIZE;
+    fmt.yHeight = min(mod->yHeight, yHeightCharPtsMost * 20);
+  }
   COPY_STYLE_ITEM(CFM_SPACING, sSpacing);
   COPY_STYLE_ITEM(CFM_STYLE, sStyle);
-  COPY_STYLE_ITEM(CFM_UNDERLINETYPE, bUnderlineType);
   COPY_STYLE_ITEM(CFM_WEIGHT, wWeight);
-  
-  s->fmt.dwEffects &= ~(style->dwMask);
-  s->fmt.dwEffects |= style->dwEffects & style->dwMask;
-  s->fmt.dwMask |= style->dwMask;
-  if (style->dwMask & CFM_COLOR)
+  /* FIXME: this is not documented this way, but that's the more logical */
+  COPY_STYLE_ITEM(CFM_FACE, bPitchAndFamily);
+
+  fmt.dwEffects &= ~(mod->dwMask);
+  fmt.dwEffects |= mod->dwEffects & mod->dwMask;
+  fmt.dwMask |= mod->dwMask;
+  if (mod->dwMask & CFM_COLOR)
   {
-    if (style->dwEffects & CFE_AUTOCOLOR)
-      s->fmt.dwEffects |= CFE_AUTOCOLOR;
+    if (mod->dwEffects & CFE_AUTOCOLOR)
+      fmt.dwEffects |= CFE_AUTOCOLOR;
     else
-      s->fmt.dwEffects &= ~CFE_AUTOCOLOR;
+      fmt.dwEffects &= ~CFE_AUTOCOLOR;
   }
+
+  COPY_STYLE_ITEM(CFM_UNDERLINETYPE, bUnderlineType);
+  /* If the CFM_UNDERLINE effect is not specified, set it appropriately */
+  if ((mod->dwMask & CFM_UNDERLINETYPE) && !(mod->dwMask & CFM_UNDERLINE))
+  {
+      fmt.dwMask |= CFM_UNDERLINE;
+      if (mod->bUnderlineType == CFU_UNDERLINENONE)
+          fmt.dwEffects &= ~CFE_UNDERLINE;
+      else
+          fmt.dwEffects |= CFE_UNDERLINE;
+  }
+
+  if (mod->dwMask & CFM_BOLD && !(mod->dwMask & CFM_WEIGHT))
+  {
+      fmt.wWeight = (mod->dwEffects & CFE_BOLD) ? FW_BOLD : FW_NORMAL;
+  } else if (mod->dwMask & CFM_WEIGHT && !(mod->dwMask & CFM_BOLD)) {
+      if (mod->wWeight > FW_NORMAL)
+          fmt.dwEffects |= CFE_BOLD;
+      else
+          fmt.dwEffects &= ~CFE_BOLD;
+  }
+
+  LIST_FOR_EACH_ENTRY(s, &editor->style_list, ME_Style, entry)
+  {
+      if (!memcmp( &s->fmt, &fmt, sizeof(fmt) ))
+      {
+          TRACE_(richedit_style)("found existing style %p\n", s);
+          ME_AddRefStyle( s );
+          return s;
+      }
+  }
+
+  s = ME_MakeStyle( &fmt );
+  if (s)
+      list_add_head( &editor->style_list, &s->entry );
+  TRACE_(richedit_style)("created new style %p\n", s);
   return s;
 }
 
-void ME_CopyCharFormat(CHARFORMAT2W *pDest, CHARFORMAT2W *pSrc)
+void ME_CopyCharFormat(CHARFORMAT2W *pDest, const CHARFORMAT2W *pSrc)
 {
   /* using this with non-2W structs is forbidden */
   assert(pSrc->cbSize == sizeof(CHARFORMAT2W));
   assert(pDest->cbSize == sizeof(CHARFORMAT2W));
-  CopyMemory(pDest, pSrc, sizeof(CHARFORMAT2W));
+  *pDest = *pSrc;
 }
 
-static void ME_DumpStyleEffect(char **p, const char *name, CHARFORMAT2W *fmt, int mask)
+static void ME_DumpStyleEffect(char **p, const char *name, const CHARFORMAT2W *fmt, int mask)
 {
   *p += sprintf(*p, "%-22s%s\n", name, (fmt->dwMask & mask) ? ((fmt->dwEffects & mask) ? "YES" : "no") : "N/A");
 }
@@ -218,12 +260,12 @@ void ME_DumpStyleToBuf(CHARFORMAT2W *pFmt, char buf[2048])
     p += sprintf(p, "N/A");
 
   if (pFmt->dwMask & CFM_SIZE)
-    p += sprintf(p, "\nFont size:            %d\n", (int)pFmt->yHeight);
+    p += sprintf(p, "\nFont size:            %d\n", pFmt->yHeight);
   else
     p += sprintf(p, "\nFont size:            N/A\n");
-    
+
   if (pFmt->dwMask & CFM_OFFSET)
-    p += sprintf(p, "Char offset:          %d\n", (int)pFmt->yOffset);
+    p += sprintf(p, "Char offset:          %d\n", pFmt->yOffset);
   else
     p += sprintf(p, "Char offset:          N/A\n");
 
@@ -237,6 +279,7 @@ void ME_DumpStyleToBuf(CHARFORMAT2W *pFmt, char buf[2048])
   ME_DumpStyleEffect(&p, "Font italic:", pFmt, CFM_ITALIC);
   ME_DumpStyleEffect(&p, "Font underline:", pFmt, CFM_UNDERLINE);
   ME_DumpStyleEffect(&p, "Font strikeout:", pFmt, CFM_STRIKEOUT);
+  ME_DumpStyleEffect(&p, "Hidden text:", pFmt, CFM_HIDDEN);
   p += sprintf(p, "Text color:           ");
   if (pFmt->dwMask & CFM_COLOR)
   {
@@ -252,41 +295,56 @@ void ME_DumpStyleToBuf(CHARFORMAT2W *pFmt, char buf[2048])
 
 
 static void
-ME_LogFontFromStyle(HDC hDC, LOGFONTW *lf, ME_Style *s, int nZoomNumerator, int nZoomDenominator)
+ME_LogFontFromStyle(ME_Context* c, LOGFONTW *lf, const ME_Style *s)
 {
-  int rx, ry;
-  rx = GetDeviceCaps(hDC, LOGPIXELSX);
-  ry = GetDeviceCaps(hDC, LOGPIXELSY);
   ZeroMemory(lf, sizeof(LOGFONTW));
   lstrcpyW(lf->lfFaceName, s->fmt.szFaceName);
 
-  if (nZoomNumerator == 0)
-  {
-    nZoomNumerator = 1;
-    nZoomDenominator = 1;
-  }
-  lf->lfHeight = -s->fmt.yHeight*ry*nZoomNumerator/nZoomDenominator/1440;
+  lf->lfHeight = ME_twips2pointsY(c, -s->fmt.yHeight);
   
-  lf->lfWeight = 400;
+  lf->lfWeight = FW_NORMAL;
   if (s->fmt.dwEffects & s->fmt.dwMask & CFM_BOLD)
-    lf->lfWeight = 700;
-  if (s->fmt.dwEffects & s->fmt.dwMask & CFM_WEIGHT)
+    lf->lfWeight = FW_BOLD;
+  if (s->fmt.dwMask & CFM_WEIGHT)
     lf->lfWeight = s->fmt.wWeight;
   if (s->fmt.dwEffects & s->fmt.dwMask & CFM_ITALIC)
     lf->lfItalic = 1;
-  if (s->fmt.dwEffects & s->fmt.dwMask & CFM_UNDERLINE)
+  if ((s->fmt.dwEffects & s->fmt.dwMask & CFM_UNDERLINE) &&
+      !(s->fmt.dwEffects & CFE_LINK) &&
+      s->fmt.bUnderlineType == CFU_CF1UNDERLINE)
     lf->lfUnderline = 1;
   if (s->fmt.dwEffects & s->fmt.dwMask & CFM_STRIKEOUT)
     lf->lfStrikeOut = 1;
   if (s->fmt.dwEffects & s->fmt.dwMask & (CFM_SUBSCRIPT|CFM_SUPERSCRIPT))
     lf->lfHeight = (lf->lfHeight*2)/3;
 /*lf.lfQuality = PROOF_QUALITY; */
-  lf->lfPitchAndFamily = s->fmt.bPitchAndFamily;
-  lf->lfCharSet = s->fmt.bCharSet;
+  if (s->fmt.dwMask & CFM_FACE)
+    lf->lfPitchAndFamily = s->fmt.bPitchAndFamily;
+  if (s->fmt.dwMask & CFM_CHARSET)
+    lf->lfCharSet = s->fmt.bCharSet;
 }
 
+void ME_CharFormatFromLogFont(HDC hDC, const LOGFONTW *lf, CHARFORMAT2W *fmt)
+{
+  int ry;
 
-BOOL ME_IsFontEqual(LOGFONTW *p1, LOGFONTW *p2)
+  ME_InitCharFormat2W(fmt);
+  ry = GetDeviceCaps(hDC, LOGPIXELSY);
+  lstrcpyW(fmt->szFaceName, lf->lfFaceName);
+  fmt->dwEffects = 0;
+  fmt->dwMask = CFM_WEIGHT|CFM_BOLD|CFM_ITALIC|CFM_UNDERLINE|CFM_UNDERLINETYPE|CFM_STRIKEOUT|CFM_SIZE|CFM_FACE|CFM_CHARSET;
+  fmt->wWeight = lf->lfWeight;
+  fmt->yHeight = -lf->lfHeight*1440/ry;
+  if (lf->lfWeight > FW_NORMAL) fmt->dwEffects |= CFM_BOLD;
+  if (lf->lfItalic) fmt->dwEffects |= CFM_ITALIC;
+  if (lf->lfUnderline) fmt->dwEffects |= CFM_UNDERLINE;
+  fmt->bUnderlineType = CFU_UNDERLINE;
+  if (lf->lfStrikeOut) fmt->dwEffects |= CFM_STRIKEOUT;
+  fmt->bPitchAndFamily = lf->lfPitchAndFamily;
+  fmt->bCharSet = lf->lfCharSet;
+}
+
+static BOOL ME_IsFontEqual(const LOGFONTW *p1, const LOGFONTW *p2)
 {
   if (memcmp(p1, p2, sizeof(LOGFONTW)-sizeof(p1->lfFaceName)))
     return FALSE;
@@ -295,41 +353,38 @@ BOOL ME_IsFontEqual(LOGFONTW *p1, LOGFONTW *p2)
   return TRUE;
 }
 
-HFONT ME_SelectStyleFont(ME_TextEditor *editor, HDC hDC, ME_Style *s)
+HFONT ME_SelectStyleFont(ME_Context *c, ME_Style *s)
 {
   HFONT hOldFont;
   LOGFONTW lf;
   int i, nEmpty, nAge = 0x7FFFFFFF;
   ME_FontCacheItem *item;
-  assert(hDC);
   assert(s);
   
-  ME_LogFontFromStyle(hDC, &lf, s, editor->nZoomNumerator, editor->nZoomDenominator);
+  ME_LogFontFromStyle(c, &lf, s);
   
   for (i=0; i<HFONT_CACHE_SIZE; i++)
-    editor->pFontCache[i].nAge++;
+    c->editor->pFontCache[i].nAge++;
   for (i=0, nEmpty=-1, nAge=0; i<HFONT_CACHE_SIZE; i++)
   {
-    item = &editor->pFontCache[i];
+    item = &c->editor->pFontCache[i];
     if (!item->nRefs)
     {
       if (item->nAge > nAge)
         nEmpty = i, nAge = item->nAge;
     }
-    if (ME_IsFontEqual(&item->lfSpecs, &lf))
+    if (item->hFont && ME_IsFontEqual(&item->lfSpecs, &lf))
       break;
   }
   if (i < HFONT_CACHE_SIZE) /* found */
   {
-    item = &editor->pFontCache[i];
+    item = &c->editor->pFontCache[i];
     TRACE_(richedit_style)("font reused %d\n", i);
-
-    s->hFont = item->hFont;
     item->nRefs++;
   }
   else
   {
-    item = &editor->pFontCache[nEmpty]; /* this legal even when nEmpty == -1, as we don't dereference it */
+    item = &c->editor->pFontCache[nEmpty]; /* this legal even when nEmpty == -1, as we don't dereference it */
 
     assert(nEmpty != -1); /* otherwise we leak cache entries or get too many fonts at once*/
     if (item->hFont) {
@@ -337,47 +392,44 @@ HFONT ME_SelectStyleFont(ME_TextEditor *editor, HDC hDC, ME_Style *s)
       DeleteObject(item->hFont);
       item->hFont = NULL;
     }
-    s->hFont = CreateFontIndirectW(&lf);
-    assert(s->hFont);
+    item->hFont = CreateFontIndirectW(&lf);
     TRACE_(richedit_style)("font created %d\n", nEmpty);
-    item->hFont = s->hFont;
     item->nRefs = 1;
-    memcpy(&item->lfSpecs, &lf, sizeof(LOGFONTW));
+    item->lfSpecs = lf;
   }
-  hOldFont = SelectObject(hDC, s->hFont);
+  s->font_cache = item;
+  hOldFont = SelectObject(c->hDC, item->hFont);
   /* should be cached too, maybe ? */
-  GetTextMetricsW(hDC, &s->tm);
+  GetTextMetricsW(c->hDC, &s->tm);
   return hOldFont;
 }
 
-void ME_UnselectStyleFont(ME_TextEditor *editor, HDC hDC, ME_Style *s, HFONT hOldFont)
+static void release_font_cache(ME_FontCacheItem *item)
 {
-  int i;
-  
-  assert(hDC);
-  assert(s);
-  SelectObject(hDC, hOldFont);
-  for (i=0; i<HFONT_CACHE_SIZE; i++)
-  {
-    ME_FontCacheItem *pItem = &editor->pFontCache[i];
-    if (pItem->hFont == s->hFont && pItem->nRefs > 0)
+    if (item->nRefs > 0)
     {
-      pItem->nRefs--;
-      pItem->nAge = 0;
-      s->hFont = NULL;
-      return;
+        item->nRefs--;
+        item->nAge = 0;
     }
-  }
-  assert(0 == "UnselectStyleFont without SelectStyleFont");
 }
 
-void ME_DestroyStyle(ME_Style *s) {
-  if (s->hFont)
+void ME_UnselectStyleFont(ME_Context *c, ME_Style *s, HFONT hOldFont)
+{
+  SelectObject(c->hDC, hOldFont);
+  release_font_cache(s->font_cache);
+  s->font_cache = NULL;
+}
+
+void ME_DestroyStyle(ME_Style *s)
+{
+  list_remove( &s->entry );
+  if (s->font_cache)
   {
-    DeleteObject(s->hFont);
-    s->hFont = NULL;
+    release_font_cache( s->font_cache );
+    s->font_cache = NULL;
   }
-  FREE_OBJ(s);
+  ScriptFreeCache( &s->script_cache );
+  heap_free(s);
 }
 
 void ME_AddRefStyle(ME_Style *s)
@@ -385,6 +437,7 @@ void ME_AddRefStyle(ME_Style *s)
   assert(s->nRefs>0); /* style with 0 references isn't supposed to exist */
   s->nRefs++;
   all_refs++;
+  TRACE_(richedit_style)("ME_AddRefStyle %p, new refs=%d, total refs=%d\n", s, s->nRefs, all_refs);
 }
 
 void ME_ReleaseStyle(ME_Style *s)
@@ -401,16 +454,15 @@ void ME_ReleaseStyle(ME_Style *s)
     ME_DestroyStyle(s);
 }
 
-ME_Style *ME_GetInsertStyle(ME_TextEditor *editor, int nCursor) {
+ME_Style *ME_GetInsertStyle(ME_TextEditor *editor, int nCursor)
+{
   if (ME_IsSelection(editor))
   {
-    ME_Cursor c;
-    int from, to;
-    
+    ME_Cursor *from, *to;
+
     ME_GetSelection(editor, &from, &to);
-    ME_CursorFromCharOfs(editor, from, &c);
-    ME_AddRefStyle(c.pRun->member.run.style);
-    return c.pRun->member.run.style;
+    ME_AddRefStyle(from->pRun->member.run.style);
+    return from->pRun->member.run.style;
   }
   if (editor->pBuffer->pCharStyle) {
     ME_AddRefStyle(editor->pBuffer->pCharStyle);
@@ -440,12 +492,13 @@ ME_Style *ME_GetInsertStyle(ME_TextEditor *editor, int nCursor) {
   }
 }
 
-void ME_SaveTempStyle(ME_TextEditor *editor)
+void ME_SaveTempStyle(ME_TextEditor *editor, ME_Style *style)
 {
   ME_Style *old_style = editor->pBuffer->pCharStyle;
-  editor->pBuffer->pCharStyle = ME_GetInsertStyle(editor, 0);
-  if (old_style)
-    ME_ReleaseStyle(old_style);
+
+  if (style) ME_AddRefStyle( style );
+  editor->pBuffer->pCharStyle = style;
+  if (old_style) ME_ReleaseStyle( old_style );
 }
 
 void ME_ClearTempStyle(ME_TextEditor *editor)
@@ -453,4 +506,32 @@ void ME_ClearTempStyle(ME_TextEditor *editor)
   if (!editor->pBuffer->pCharStyle) return;
   ME_ReleaseStyle(editor->pBuffer->pCharStyle);
   editor->pBuffer->pCharStyle = NULL;
+}
+
+/******************************************************************************
+ * ME_SetDefaultCharFormat
+ *
+ * Applies a style change to the default character style.
+ *
+ * The default style is special in that it is mutable - runs
+ * in the document that have this style should change if the
+ * default style changes.  That means we need to fix up this
+ * style manually.
+ */
+void ME_SetDefaultCharFormat(ME_TextEditor *editor, CHARFORMAT2W *mod)
+{
+    ME_Style *style, *def = editor->pBuffer->pDefaultStyle;
+
+    assert(mod->cbSize == sizeof(CHARFORMAT2W));
+    style = ME_ApplyStyle(editor, def, mod);
+    def->fmt = style->fmt;
+    def->tm = style->tm;
+    if (def->font_cache)
+    {
+        release_font_cache( def->font_cache );
+        def->font_cache = NULL;
+    }
+    ScriptFreeCache( &def->script_cache );
+    ME_ReleaseStyle( style );
+    ME_MarkAllForWrapping( editor );
 }

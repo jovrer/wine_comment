@@ -15,28 +15,22 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include "winecon_user.h"
+#include "winnls.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wineconsole);
 WINE_DECLARE_DEBUG_CHANNEL(wc_font);
 
-/* mapping console colors to RGB values */
-COLORREF	WCUSER_ColorMap[16] =
-{
-    RGB(0x00, 0x00, 0x00), RGB(0x00, 0x00, 0x80), RGB(0x00, 0x80, 0x00), RGB(0x00, 0x80, 0x80),
-    RGB(0x80, 0x00, 0x00), RGB(0x80, 0x00, 0x80), RGB(0x80, 0x80, 0x00), RGB(0x80, 0x80, 0x80),
-    RGB(0xC0, 0xC0, 0xC0), RGB(0x00, 0x00, 0xFF), RGB(0x00, 0xFF, 0x00), RGB(0x00, 0xFF, 0xFF),
-    RGB(0xFF, 0x00, 0x00), RGB(0xFF, 0x00, 0xFF), RGB(0xFF, 0xFF, 0x00), RGB(0xFF, 0xFF, 0xFF),
-};
+UINT g_uiDefaultCharset;
 
-static BOOL WCUSER_SetFont(struct inner_data* data, const LOGFONT* font);
+static BOOL WCUSER_SetFont(struct inner_data* data, const LOGFONTW* font);
 
 /******************************************************************
  *		WCUSER_FillMemDC
@@ -52,6 +46,7 @@ static void WCUSER_FillMemDC(const struct inner_data* data, int upd_tp, int upd_
     WCHAR*		line;
     RECT                r;
     HBRUSH              hbr;
+    INT *dx;
 
     /* no font has been set up yet, don't worry about filling the bitmap,
      * we'll do it once a font is chosen
@@ -61,8 +56,8 @@ static void WCUSER_FillMemDC(const struct inner_data* data, int upd_tp, int upd_
     /* FIXME: could set up a mechanism to reuse the line between different
      * calls to this function
      */
-    if (!(line = HeapAlloc(GetProcessHeap(), 0, data->curcfg.sb_width * sizeof(WCHAR))))
-        WINECON_Fatal("OOM\n");
+    if (!(line = HeapAlloc(GetProcessHeap(), 0, data->curcfg.sb_width * sizeof(WCHAR)))) return;
+    dx = HeapAlloc( GetProcessHeap(), 0, data->curcfg.sb_width * sizeof(*dx) );
 
     hOldFont = SelectObject(PRIVATE(data)->hMemDC, PRIVATE(data)->hFont);
     for (j = upd_tp; j <= upd_bm; j++)
@@ -71,16 +66,17 @@ static void WCUSER_FillMemDC(const struct inner_data* data, int upd_tp, int upd_
 	for (i = 0; i < data->curcfg.sb_width; i++)
 	{
 	    attr = cell[i].Attributes;
-	    SetBkColor(PRIVATE(data)->hMemDC, WCUSER_ColorMap[(attr>>4)&0x0F]);
-	    SetTextColor(PRIVATE(data)->hMemDC, WCUSER_ColorMap[attr&0x0F]);
+	    SetBkColor(PRIVATE(data)->hMemDC, data->curcfg.color_map[(attr >> 4) & 0x0F]);
+	    SetTextColor(PRIVATE(data)->hMemDC, data->curcfg.color_map[attr & 0x0F]);
 	    for (k = i; k < data->curcfg.sb_width && cell[k].Attributes == attr; k++)
 	    {
 		line[k - i] = cell[k].Char.UnicodeChar;
+                dx[k - i] = data->curcfg.cell_width;
 	    }
-	    TextOut(PRIVATE(data)->hMemDC, i * data->curcfg.cell_width, j * data->curcfg.cell_height,
-		    line, k - i);
-            if (PRIVATE(data)->ext_leading && 
-                (hbr = CreateSolidBrush(WCUSER_ColorMap[(attr>>4)&0x0F])))
+            ExtTextOutW( PRIVATE(data)->hMemDC, i * data->curcfg.cell_width, j * data->curcfg.cell_height,
+                         0, NULL, line, k - i, dx );
+            if (PRIVATE(data)->ext_leading &&
+                (hbr = CreateSolidBrush(data->curcfg.color_map[(attr >> 4) & 0x0F])))
             {
                 r.left   = i * data->curcfg.cell_width;
                 r.top    = (j + 1) * data->curcfg.cell_height - PRIVATE(data)->ext_leading;
@@ -93,6 +89,7 @@ static void WCUSER_FillMemDC(const struct inner_data* data, int upd_tp, int upd_
 	}
     }
     SelectObject(PRIVATE(data)->hMemDC, hOldFont);
+    HeapFree(GetProcessHeap(), 0, dx);
     HeapFree(GetProcessHeap(), 0, line);
 }
 
@@ -108,12 +105,12 @@ static void WCUSER_NewBitmap(struct inner_data* data)
     HBITMAP	hnew, hold;
 
     if (!data->curcfg.sb_width || !data->curcfg.sb_height ||
-        !PRIVATE(data)->hFont || !(hDC = GetDC(PRIVATE(data)->hWnd)))
+        !PRIVATE(data)->hFont || !(hDC = GetDC(data->hWnd)))
         return;
     hnew = CreateCompatibleBitmap(hDC,
 				  data->curcfg.sb_width  * data->curcfg.cell_width,
 				  data->curcfg.sb_height * data->curcfg.cell_height);
-    ReleaseDC(PRIVATE(data)->hWnd, hDC);
+    ReleaseDC(data->hWnd, hDC);
     hold = SelectObject(PRIVATE(data)->hMemDC, hnew);
 
     if (PRIVATE(data)->hBitmap)
@@ -144,11 +141,11 @@ static void WCUSER_ResizeScreenBuffer(struct inner_data* data)
  */
 static void	WCUSER_PosCursor(const struct inner_data* data)
 {
-    if (PRIVATE(data)->hWnd != GetFocus() || !data->curcfg.cursor_visible) return;
+    if (data->hWnd != GetFocus() || !data->curcfg.cursor_visible) return;
 
     SetCaretPos((data->cursor.X - data->curcfg.win_pos.X) * data->curcfg.cell_width,
 		(data->cursor.Y - data->curcfg.win_pos.Y) * data->curcfg.cell_height);
-    ShowCaret(PRIVATE(data)->hWnd);
+    ShowCaret(data->hWnd);
 }
 
 /******************************************************************
@@ -160,7 +157,7 @@ static void	WCUSER_ShapeCursor(struct inner_data* data, int size, int vis, BOOL 
 {
     if (force || size != data->curcfg.cursor_size)
     {
-	if (data->curcfg.cursor_visible && PRIVATE(data)->hWnd == GetFocus()) DestroyCaret();
+	if (data->curcfg.cursor_visible && data->hWnd == GetFocus()) DestroyCaret();
 	if (PRIVATE(data)->cursor_bitmap) DeleteObject(PRIVATE(data)->cursor_bitmap);
 	PRIVATE(data)->cursor_bitmap = NULL;
 	if (size != 100)
@@ -171,7 +168,7 @@ static void	WCUSER_ShapeCursor(struct inner_data* data, int size, int vis, BOOL 
 
 	    w16b = ((data->curcfg.cell_width + 15) & ~15) / 8;
 	    ptr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, w16b * data->curcfg.cell_height);
-	    if (!ptr) WINECON_Fatal("OOM");
+	    if (!ptr) return;
 	    nbl = max((data->curcfg.cell_height * size) / 100, 1);
 	    for (j = data->curcfg.cell_height - nbl; j < data->curcfg.cell_height; j++)
 	    {
@@ -188,15 +185,15 @@ static void	WCUSER_ShapeCursor(struct inner_data* data, int size, int vis, BOOL 
 	data->curcfg.cursor_visible = -1;
     }
 
-    vis = (vis) ? TRUE : FALSE;
+    vis = vis != 0;
     if (force || vis != data->curcfg.cursor_visible)
     {
 	data->curcfg.cursor_visible = vis;
-	if (PRIVATE(data)->hWnd == GetFocus())
+	if (data->hWnd == GetFocus())
 	{
 	    if (vis)
 	    {
-		CreateCaret(PRIVATE(data)->hWnd, PRIVATE(data)->cursor_bitmap,
+		CreateCaret(data->hWnd, PRIVATE(data)->cursor_bitmap,
                             data->curcfg.cell_width, data->curcfg.cell_height);
 		WCUSER_PosCursor(data);
 	    }
@@ -226,36 +223,36 @@ static void	WCUSER_ComputePositions(struct inner_data* data)
 
     if (IsRectEmpty(&r)) return;
 
-    AdjustWindowRect(&r, GetWindowLong(PRIVATE(data)->hWnd, GWL_STYLE), FALSE);
+    AdjustWindowRect(&r, GetWindowLongW(data->hWnd, GWL_STYLE), FALSE);
 
     dx = dy = 0;
     if (data->curcfg.sb_width > data->curcfg.win_width)
     {
 	dy = GetSystemMetrics(SM_CYHSCROLL);
-	SetScrollRange(PRIVATE(data)->hWnd, SB_HORZ, 0,
+	SetScrollRange(data->hWnd, SB_HORZ, 0,
                        data->curcfg.sb_width - data->curcfg.win_width, FALSE);
-	SetScrollPos(PRIVATE(data)->hWnd, SB_HORZ, 0, FALSE); /* FIXME */
-	ShowScrollBar(PRIVATE(data)->hWnd, SB_HORZ, TRUE);
+	SetScrollPos(data->hWnd, SB_HORZ, 0, FALSE); /* FIXME */
+	ShowScrollBar(data->hWnd, SB_HORZ, TRUE);
     }
     else
     {
-	ShowScrollBar(PRIVATE(data)->hWnd, SB_HORZ, FALSE);
+	ShowScrollBar(data->hWnd, SB_HORZ, FALSE);
     }
 
     if (data->curcfg.sb_height > data->curcfg.win_height)
     {
 	dx = GetSystemMetrics(SM_CXVSCROLL);
-	SetScrollRange(PRIVATE(data)->hWnd, SB_VERT, 0,
+	SetScrollRange(data->hWnd, SB_VERT, 0,
                        data->curcfg.sb_height - data->curcfg.win_height, FALSE);
-	SetScrollPos(PRIVATE(data)->hWnd, SB_VERT, 0, FALSE); /* FIXME */
-	ShowScrollBar(PRIVATE(data)->hWnd, SB_VERT, TRUE);
+	SetScrollPos(data->hWnd, SB_VERT, 0, FALSE); /* FIXME */
+	ShowScrollBar(data->hWnd, SB_VERT, TRUE);
     }
     else
     {
-	ShowScrollBar(PRIVATE(data)->hWnd, SB_VERT, FALSE);
+	ShowScrollBar(data->hWnd, SB_VERT, FALSE);
     }
 
-    SetWindowPos(PRIVATE(data)->hWnd, 0, 0, 0, r.right - r.left + dx, r.bottom - r.top + dy,
+    SetWindowPos(data->hWnd, 0, 0, 0, r.right - r.left + dx, r.bottom - r.top + dy,
 		 SWP_NOMOVE|SWP_NOZORDER);
     WCUSER_ShapeCursor(data, data->curcfg.cursor_size, data->curcfg.cursor_visible, TRUE);
     WCUSER_PosCursor(data);
@@ -271,14 +268,14 @@ static void	WCUSER_SetTitle(const struct inner_data* data)
     WCHAR	buffer[256];
 
     if (WINECON_GetConsoleTitle(data->hConIn, buffer, sizeof(buffer)))
-	SetWindowText(PRIVATE(data)->hWnd, buffer);
+        SetWindowTextW(data->hWnd, buffer);
 }
 
-void WCUSER_DumpLogFont(const char* pfx, const LOGFONT* lf, DWORD ft)
+void WCUSER_DumpLogFont(const char* pfx, const LOGFONTW* lf, DWORD ft)
 {
     WINE_TRACE_(wc_font)("%s %s%s%s%s\n"
-                         "\tlf.lfHeight=%ld lf.lfWidth=%ld lf.lfEscapement=%ld lf.lfOrientation=%ld\n"
-                         "\tlf.lfWeight=%ld lf.lfItalic=%u lf.lfUnderline=%u lf.lfStrikeOut=%u\n"
+                         "\tlf.lfHeight=%d lf.lfWidth=%d lf.lfEscapement=%d lf.lfOrientation=%d\n"
+                         "\tlf.lfWeight=%d lf.lfItalic=%u lf.lfUnderline=%u lf.lfStrikeOut=%u\n"
                          "\tlf.lfCharSet=%u lf.lfOutPrecision=%u lf.lfClipPrecision=%u lf.lfQuality=%u\n"
                          "\tlf->lfPitchAndFamily=%u lf.lfFaceName=%s\n",
                          pfx,
@@ -292,12 +289,12 @@ void WCUSER_DumpLogFont(const char* pfx, const LOGFONT* lf, DWORD ft)
                          wine_dbgstr_w(lf->lfFaceName));
 }
 
-void WCUSER_DumpTextMetric(const TEXTMETRIC* tm, DWORD ft)
+void WCUSER_DumpTextMetric(const TEXTMETRICW* tm, DWORD ft)
 {
     WINE_TRACE_(wc_font)("%s%s%s%s\n"
-                         "\ttmHeight=%ld tmAscent=%ld tmDescent=%ld tmInternalLeading=%ld tmExternalLeading=%ld\n"
-                         "\ttmAveCharWidth=%ld tmMaxCharWidth=%ld tmWeight=%ld tmOverhang=%ld\n"
-                         "\ttmDigitizedAspectX=%ld tmDigitizedAspectY=%ld\n"
+                         "\ttmHeight=%d tmAscent=%d tmDescent=%d tmInternalLeading=%d tmExternalLeading=%d\n"
+                         "\ttmAveCharWidth=%d tmMaxCharWidth=%d tmWeight=%d tmOverhang=%d\n"
+                         "\ttmDigitizedAspectX=%d tmDigitizedAspectY=%d\n"
                          "\ttmFirstChar=%d tmLastChar=%d tmDefaultChar=%d tmBreakChar=%d\n"
                          "\ttmItalic=%u tmUnderlined=%u tmStruckOut=%u tmPitchAndFamily=%u tmCharSet=%u\n",
                          (ft & RASTER_FONTTYPE) ? "raster" : "",
@@ -315,18 +312,19 @@ void WCUSER_DumpTextMetric(const TEXTMETRIC* tm, DWORD ft)
  *
  *
  */
-BOOL WCUSER_AreFontsEqual(const struct config_data* config, const LOGFONT* lf)
+static BOOL WCUSER_AreFontsEqual(const struct config_data* config, const LOGFONTW* lf)
 {
     return lf->lfHeight == config->cell_height &&
         lf->lfWeight == config->font_weight &&
         !lf->lfItalic && !lf->lfUnderline && !lf->lfStrikeOut &&
-        !lstrcmp(lf->lfFaceName, config->face_name);
+        !lstrcmpW(lf->lfFaceName, config->face_name);
 }
 
 struct font_chooser
 {
     struct inner_data*	data;
-    int			done;
+    int                 pass;
+    BOOL                done;
 };
 
 /******************************************************************
@@ -334,15 +332,30 @@ struct font_chooser
  *
  * Returns true if the font described in tm is usable as a font for the renderer
  */
-BOOL	WCUSER_ValidateFontMetric(const struct inner_data* data, const TEXTMETRIC* tm, DWORD fontType)
+BOOL WCUSER_ValidateFontMetric(const struct inner_data* data, const TEXTMETRICW* tm,
+                               DWORD type, int pass)
 {
-    BOOL        ret = TRUE;
-
-    if (fontType & RASTER_FONTTYPE)
-        ret = (tm->tmMaxCharWidth * data->curcfg.win_width < GetSystemMetrics(SM_CXSCREEN) &&
-               tm->tmHeight * data->curcfg.win_height < GetSystemMetrics(SM_CYSCREEN));
-    return ret && !tm->tmItalic && !tm->tmUnderlined && !tm->tmStruckOut &&
-        (tm->tmCharSet == DEFAULT_CHARSET || tm->tmCharSet == ANSI_CHARSET);
+    switch (pass)  /* we get increasingly lenient in later passes */
+    {
+    case 0:
+        if (type & RASTER_FONTTYPE) return FALSE;
+        /* fall through */
+    case 1:
+        if (type & RASTER_FONTTYPE)
+        {
+            if (tm->tmMaxCharWidth * data->curcfg.win_width >= GetSystemMetrics(SM_CXSCREEN) ||
+                tm->tmHeight * data->curcfg.win_height >= GetSystemMetrics(SM_CYSCREEN))
+                return FALSE;
+        }
+        /* fall through */
+    case 2:
+        if (tm->tmCharSet != DEFAULT_CHARSET && tm->tmCharSet != g_uiDefaultCharset) return FALSE;
+        /* fall through */
+    case 3:
+        if (tm->tmItalic || tm->tmUnderlined || tm->tmStruckOut) return FALSE;
+        break;
+    }
+    return TRUE;
 }
 
 /******************************************************************
@@ -350,11 +363,23 @@ BOOL	WCUSER_ValidateFontMetric(const struct inner_data* data, const TEXTMETRIC* 
  *
  * Returns true if the font family described in lf is usable as a font for the renderer
  */
-BOOL	WCUSER_ValidateFont(const struct inner_data* data, const LOGFONT* lf)
+BOOL WCUSER_ValidateFont(const struct inner_data* data, const LOGFONTW* lf, int pass)
 {
-    return (lf->lfPitchAndFamily & 3) == FIXED_PITCH &&
-        /* (lf->lfPitchAndFamily & 0xF0) == FF_MODERN && */
-        (lf->lfCharSet == DEFAULT_CHARSET || lf->lfCharSet == ANSI_CHARSET);
+    switch (pass)  /* we get increasingly lenient in later passes */
+    {
+    case 0:
+    case 1:
+    case 2:
+        if (lf->lfCharSet != DEFAULT_CHARSET && lf->lfCharSet != g_uiDefaultCharset) return FALSE;
+        /* fall through */
+    case 3:
+        if ((lf->lfPitchAndFamily & 3) != FIXED_PITCH) return FALSE;
+        /* fall through */
+    case 4:
+        if (lf->lfFaceName[0] == '@') return FALSE;
+        break;
+    }
+    return TRUE;
 }
 
 /******************************************************************
@@ -363,21 +388,22 @@ BOOL	WCUSER_ValidateFont(const struct inner_data* data, const LOGFONT* lf)
  *
  * Helper functions to get a decent font for the renderer
  */
-static int CALLBACK get_first_font_enum_2(const LOGFONT* lf, const TEXTMETRIC* tm,
-					  DWORD FontType, LPARAM lParam)
+static int CALLBACK get_first_font_enum_2(const LOGFONTW* lf, const TEXTMETRICW* tm,
+                                          DWORD FontType, LPARAM lParam)
 {
     struct font_chooser*	fc = (struct font_chooser*)lParam;
 
     WCUSER_DumpTextMetric(tm, FontType);
-    if (WCUSER_ValidateFontMetric(fc->data, tm, FontType))
+    if (WCUSER_ValidateFontMetric(fc->data, tm, FontType, fc->pass))
     {
-        LOGFONT mlf = *lf;
+        LOGFONTW mlf = *lf;
 
         /* Use the default sizes for the font (this is needed, especially for
          * TrueType fonts, so that we get a decent size, not the max size)
          */
         mlf.lfWidth  = fc->data->curcfg.cell_width;
         mlf.lfHeight = fc->data->curcfg.cell_height;
+        if (!mlf.lfHeight) mlf.lfHeight = MulDiv( 16, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
         if (WCUSER_SetFont(fc->data, &mlf))
         {
             struct      config_data     defcfg;
@@ -401,16 +427,16 @@ static int CALLBACK get_first_font_enum_2(const LOGFONT* lf, const TEXTMETRIC* t
     return 1;
 }
 
-static int CALLBACK get_first_font_enum(const LOGFONT* lf, const TEXTMETRIC* tm,
-					DWORD FontType, LPARAM lParam)
+static int CALLBACK get_first_font_enum(const LOGFONTW* lf, const TEXTMETRICW* tm,
+                                        DWORD FontType, LPARAM lParam)
 {
     struct font_chooser*	fc = (struct font_chooser*)lParam;
 
     WCUSER_DumpLogFont("InitFamily: ", lf, FontType);
-    if (WCUSER_ValidateFont(fc->data, lf))
+    if (WCUSER_ValidateFont(fc->data, lf, fc->pass))
     {
-	EnumFontFamilies(PRIVATE(fc->data)->hMemDC, lf->lfFaceName,
-                         get_first_font_enum_2, lParam);
+        EnumFontFamiliesW(PRIVATE(fc->data)->hMemDC, lf->lfFaceName,
+                          get_first_font_enum_2, lParam);
 	return !fc->done; /* we just need the first matching one... */
     }
     return 1;
@@ -422,67 +448,35 @@ static int CALLBACK get_first_font_enum(const LOGFONT* lf, const TEXTMETRIC* tm,
  * get the relevant information from the font described in lf and store them
  * in config
  */
-HFONT WCUSER_CopyFont(struct config_data* config, HWND hWnd, const LOGFONT* lf, LONG* el)
+HFONT WCUSER_CopyFont(struct config_data* config, HWND hWnd, const LOGFONTW* lf, LONG* el)
 {
-    TEXTMETRIC  tm;
+    TEXTMETRICW tm;
     HDC         hDC;
     HFONT       hFont, hOldFont;
-    int         w, i, buf[256];
+    CPINFO cpinfo;
 
     if (!(hDC = GetDC(hWnd))) return NULL;
-    if (!(hFont = CreateFontIndirect(lf))) goto err1;
-
-    hOldFont = SelectObject(hDC, hFont);
-    GetTextMetrics(hDC, &tm);
-
-    /* FIXME:
-     * the current freetype engine (at least 2.0.x with x <= 8) and its implementation
-     * in Wine don't return adequate values for fixed fonts
-     * In Windows, those fonts are expected to return the same value for
-     *  - the average width
-     *  - the largest width
-     *  - the width of all characters in the font
-     * This isn't true in Wine. As a temporary workaround, we get as the width of the
-     * cell, the width of the first character in the font, after checking that all
-     * characters in the font have the same width (I hear paranoïa coming)
-     * when this gets fixed, the code should be using tm.tmAveCharWidth
-     * or tm.tmMaxCharWidth as the cell width.
-     */
-    GetCharWidth32(hDC, tm.tmFirstChar, tm.tmFirstChar, &w);
-    for (i = tm.tmFirstChar + 1; i <= tm.tmLastChar; i += sizeof(buf) / sizeof(buf[0]))
+    if (!(hFont = CreateFontIndirectW(lf)))
     {
-        int j, k;
-
-        k = min(tm.tmLastChar - i, sizeof(buf) / sizeof(buf[0]) - 1);
-        GetCharWidth32(hDC, i, i + k, buf);
-        for (j = 0; j <= k; j++)
-        {
-            if (buf[j] != w)
-            {
-                WINE_WARN("Non uniform cell width: [%d]=%d [%d]=%d\n"
-                          "This may be caused by old freetype libraries, >= 2.0.8 is recommended\n",
-                          i + j, buf[j], tm.tmFirstChar, w);
-                goto err;
-            }
-        }
+        ReleaseDC(hWnd, hDC);
+        return NULL;
     }
+    hOldFont = SelectObject(hDC, hFont);
+    GetTextMetricsW(hDC, &tm);
     SelectObject(hDC, hOldFont);
     ReleaseDC(hWnd, hDC);
 
-    config->cell_width  = w;
+    config->cell_width  = tm.tmAveCharWidth;
     config->cell_height = tm.tmHeight + tm.tmExternalLeading;
     config->font_weight = tm.tmWeight;
-    lstrcpy(config->face_name, lf->lfFaceName);
+    lstrcpyW(config->face_name, lf->lfFaceName);
     if (el) *el = tm.tmExternalLeading;
 
-    return hFont;
- err:
-    if (hDC && hOldFont) SelectObject(hDC, hOldFont);
-    if (hFont) DeleteObject(hFont);
- err1:
-    if (hDC) ReleaseDC(hWnd, hDC);
+    /* FIXME: use maximum width for DBCS codepages since some chars take two cells */
+    if (GetCPInfo( GetConsoleOutputCP(), &cpinfo ) && cpinfo.MaxCharSize > 1)
+        config->cell_width  = tm.tmMaxCharWidth;
 
-    return NULL;
+    return hFont;
 }
 
 /******************************************************************
@@ -490,7 +484,7 @@ HFONT WCUSER_CopyFont(struct config_data* config, HWND hWnd, const LOGFONT* lf, 
  *
  *
  */
-void    WCUSER_FillLogFont(LOGFONT* lf, const WCHAR* name, UINT height, UINT weight)
+void WCUSER_FillLogFont(LOGFONTW* lf, const WCHAR* name, UINT height, UINT weight)
 {
     lf->lfHeight        = height;
     lf->lfWidth         = 0;
@@ -505,7 +499,7 @@ void    WCUSER_FillLogFont(LOGFONT* lf, const WCHAR* name, UINT height, UINT wei
     lf->lfClipPrecision = CLIP_DEFAULT_PRECIS;
     lf->lfQuality       = DEFAULT_QUALITY;
     lf->lfPitchAndFamily = FIXED_PITCH | FF_DONTCARE;
-    lstrcpy(lf->lfFaceName, name);
+    lstrcpyW(lf->lfFaceName, name);
 }
 
 /******************************************************************
@@ -513,7 +507,7 @@ void    WCUSER_FillLogFont(LOGFONT* lf, const WCHAR* name, UINT height, UINT wei
  *
  * sets logfont as the new font for the console
  */
-BOOL	WCUSER_SetFont(struct inner_data* data, const LOGFONT* logfont)
+BOOL WCUSER_SetFont(struct inner_data* data, const LOGFONTW* logfont)
 {
     HFONT       hFont;
     LONG        el;
@@ -521,7 +515,7 @@ BOOL	WCUSER_SetFont(struct inner_data* data, const LOGFONT* logfont)
     if (PRIVATE(data)->hFont != 0 && WCUSER_AreFontsEqual(&data->curcfg, logfont))
         return TRUE;
 
-    hFont = WCUSER_CopyFont(&data->curcfg, PRIVATE(data)->hWnd, logfont, &el);
+    hFont = WCUSER_CopyFont(&data->curcfg, data->hWnd, logfont, &el);
     if (!hFont) {WINE_ERR("wrong font\n"); return FALSE;}
 
     if (PRIVATE(data)->hFont) DeleteObject(PRIVATE(data)->hFont);
@@ -530,8 +524,8 @@ BOOL	WCUSER_SetFont(struct inner_data* data, const LOGFONT* logfont)
 
     WCUSER_ComputePositions(data);
     WCUSER_NewBitmap(data);
-    InvalidateRect(PRIVATE(data)->hWnd, NULL, FALSE);
-    UpdateWindow(PRIVATE(data)->hWnd);
+    InvalidateRect(data->hWnd, NULL, FALSE);
+    UpdateWindow(data->hWnd);
 
     return TRUE;
 }
@@ -545,7 +539,7 @@ BOOL	WCUSER_SetFont(struct inner_data* data, const LOGFONT* logfont)
 static void     WCUSER_SetFontPmt(struct inner_data* data, const WCHAR* font,
                                   unsigned height, unsigned weight)
 {
-    LOGFONT             lf;
+    LOGFONTW            lf;
     struct font_chooser fc;
 
     WINE_TRACE_(wc_font)("=> %s h=%u w=%u\n",
@@ -564,9 +558,13 @@ static void     WCUSER_SetFontPmt(struct inner_data* data, const WCHAR* font,
     /* try to find an acceptable font */
     WINE_WARN("Couldn't match the font from registry... trying to find one\n");
     fc.data = data;
-    fc.done = 0;
-    EnumFontFamilies(PRIVATE(data)->hMemDC, NULL, get_first_font_enum, (LPARAM)&fc);
-    if (!fc.done) WINECON_Fatal("Couldn't find a decent font, aborting\n");
+    fc.done = FALSE;
+    for (fc.pass = 0; fc.pass <= 5; fc.pass++)
+    {
+        EnumFontFamiliesW(PRIVATE(data)->hMemDC, NULL, get_first_font_enum, (LPARAM)&fc);
+        if (fc.done) return;
+    }
+    WINECON_Fatal("Couldn't find a decent font, aborting");
 }
 
 /******************************************************************
@@ -609,16 +607,16 @@ static void	WCUSER_SetSelection(const struct inner_data* data, HDC hRefDC)
     RECT	r;
 
     WCUSER_GetSelectionRect(data, &r);
-    hDC = hRefDC ? hRefDC : GetDC(PRIVATE(data)->hWnd);
+    hDC = hRefDC ? hRefDC : GetDC(data->hWnd);
     if (hDC)
     {
-	if (PRIVATE(data)->hWnd == GetFocus() && data->curcfg.cursor_visible)
-	    HideCaret(PRIVATE(data)->hWnd);
+	if (data->hWnd == GetFocus() && data->curcfg.cursor_visible)
+	    HideCaret(data->hWnd);
 	InvertRect(hDC, &r);
 	if (hDC != hRefDC)
-	    ReleaseDC(PRIVATE(data)->hWnd, hDC);
-	if (PRIVATE(data)->hWnd == GetFocus() && data->curcfg.cursor_visible)
-	    ShowCaret(PRIVATE(data)->hWnd);
+	    ReleaseDC(data->hWnd, hDC);
+	if (data->hWnd == GetFocus() && data->curcfg.cursor_visible)
+	    ShowCaret(data->hWnd);
     }
 }
 
@@ -639,11 +637,11 @@ static void	WCUSER_MoveSelection(struct inner_data* data, COORD c1, COORD c2)
         return;
 
     WCUSER_GetSelectionRect(data, &r);
-    hDC = GetDC(PRIVATE(data)->hWnd);
+    hDC = GetDC(data->hWnd);
     if (hDC)
     {
-	if (PRIVATE(data)->hWnd == GetFocus() && data->curcfg.cursor_visible)
-	    HideCaret(PRIVATE(data)->hWnd);
+	if (data->hWnd == GetFocus() && data->curcfg.cursor_visible)
+	    HideCaret(data->hWnd);
 	InvertRect(hDC, &r);
     }
     PRIVATE(data)->selectPt1 = c1;
@@ -652,9 +650,9 @@ static void	WCUSER_MoveSelection(struct inner_data* data, COORD c1, COORD c2)
     {
 	WCUSER_GetSelectionRect(data, &r);
 	InvertRect(hDC, &r);
-	ReleaseDC(PRIVATE(data)->hWnd, hDC);
-	if (PRIVATE(data)->hWnd == GetFocus() && data->curcfg.cursor_visible)
-	    ShowCaret(PRIVATE(data)->hWnd);
+	ReleaseDC(data->hWnd, hDC);
+	if (data->hWnd == GetFocus() && data->curcfg.cursor_visible)
+	    ShowCaret(data->hWnd);
     }
 }
 
@@ -672,7 +670,7 @@ static void	WCUSER_CopySelectionToClipboard(const struct inner_data* data)
     w = abs(PRIVATE(data)->selectPt1.X - PRIVATE(data)->selectPt2.X) + 2;
     h = abs(PRIVATE(data)->selectPt1.Y - PRIVATE(data)->selectPt2.Y) + 1;
 
-    if (!OpenClipboard(PRIVATE(data)->hWnd)) return;
+    if (!OpenClipboard(data->hWnd)) return;
     EmptyClipboard();
 
     hMem = GlobalAlloc(GMEM_MOVEABLE, (w * h) * sizeof(WCHAR));
@@ -686,8 +684,17 @@ static void	WCUSER_CopySelectionToClipboard(const struct inner_data* data)
 
 	for (y = 0; y < h; y++, c.Y++)
 	{
-	    ReadConsoleOutputCharacter(data->hConOut, &p[y * w], w - 1, c, NULL);
-	    p[y * w + w - 1] = (y < h - 1) ? '\n' : '\0';
+	    LPWSTR end;
+	    DWORD count;
+
+	    ReadConsoleOutputCharacterW(data->hConOut, p, w - 1, c, &count);
+
+	    /* strip spaces from the end of the line */
+	    end = p + w - 1;
+	    while (end > p && *(end - 1) == ' ')
+	        end--;
+	    *end = (y < h - 1) ? '\n' : '\0';
+	    p = end + 1;
 	}
 	GlobalUnlock(hMem);
 	SetClipboardData(CF_UNICODETEXT, hMem);
@@ -705,7 +712,7 @@ static void	WCUSER_PasteFromClipboard(struct inner_data* data)
     HANDLE	h;
     WCHAR*	ptr;
 
-    if (!OpenClipboard(PRIVATE(data)->hWnd)) return;
+    if (!OpenClipboard(data->hWnd)) return;
     h = GetClipboardData(CF_UNICODETEXT);
     if (h && (ptr = GlobalLock(h)))
     {
@@ -723,15 +730,15 @@ static void	WCUSER_PasteFromClipboard(struct inner_data* data)
 	for (i = 0; i < len; i++)
 	{
 	    /* FIXME: the modifying keys are not generated (shift, ctrl...) */
-	    sh = VkKeyScan(ptr[i]);
+            sh = VkKeyScanW(ptr[i]);
 	    ir[0].Event.KeyEvent.wVirtualKeyCode = LOBYTE(sh);
-	    ir[0].Event.KeyEvent.wVirtualScanCode = MapVirtualKey(LOBYTE(sh), 0);
+            ir[0].Event.KeyEvent.wVirtualScanCode = MapVirtualKeyW(LOBYTE(sh), 0);
 	    ir[0].Event.KeyEvent.uChar.UnicodeChar = ptr[i];
 
 	    ir[1] = ir[0];
 	    ir[1].Event.KeyEvent.bKeyDown = FALSE;
 
-	    WriteConsoleInput(data->hConIn, ir, 2, &n);
+            WriteConsoleInputW(data->hConIn, ir, 2, &n);
 	}
 	GlobalUnlock(h);
     }
@@ -754,8 +761,8 @@ static void WCUSER_Refresh(const struct inner_data* data, int tp, int bm)
 	r.right  = data->curcfg.win_width * data->curcfg.cell_width;
 	r.top    = (tp - data->curcfg.win_pos.Y) * data->curcfg.cell_height;
 	r.bottom = (bm - data->curcfg.win_pos.Y + 1) * data->curcfg.cell_height;
-	InvalidateRect(PRIVATE(data)->hWnd, &r, FALSE);
-	UpdateWindow(PRIVATE(data)->hWnd);
+	InvalidateRect(data->hWnd, &r, FALSE);
+	UpdateWindow(data->hWnd);
     }
 }
 
@@ -768,7 +775,8 @@ static void	WCUSER_Paint(const struct inner_data* data)
 {
     PAINTSTRUCT		ps;
 
-    BeginPaint(PRIVATE(data)->hWnd, &ps);
+    if (data->in_set_config) return; /* in order to avoid some flicker */
+    BeginPaint(data->hWnd, &ps);
     BitBlt(ps.hdc, 0, 0,
            data->curcfg.win_width * data->curcfg.cell_width,
            data->curcfg.win_height * data->curcfg.cell_height,
@@ -778,7 +786,7 @@ static void	WCUSER_Paint(const struct inner_data* data)
 	   SRCCOPY);
     if (PRIVATE(data)->has_selection)
 	WCUSER_SetSelection(data, ps.hdc);
-    EndPaint(PRIVATE(data)->hWnd, &ps);
+    EndPaint(data->hWnd, &ps);
 }
 
 /******************************************************************
@@ -790,15 +798,17 @@ static void WCUSER_Scroll(struct inner_data* data, int pos, BOOL horz)
 {
     if (horz)
     {
-	SetScrollPos(PRIVATE(data)->hWnd, SB_HORZ, pos, TRUE);
+        ScrollWindow(data->hWnd, (data->curcfg.win_pos.X - pos) * data->curcfg.cell_width, 0, NULL, NULL);
+	SetScrollPos(data->hWnd, SB_HORZ, pos, TRUE);
 	data->curcfg.win_pos.X = pos;
     }
     else
     {
-	SetScrollPos(PRIVATE(data)->hWnd, SB_VERT, pos, TRUE);
+        ScrollWindow(data->hWnd, 0, (data->curcfg.win_pos.Y - pos) * data->curcfg.cell_height, NULL, NULL);
+	SetScrollPos(data->hWnd, SB_VERT, pos, TRUE);
 	data->curcfg.win_pos.Y = pos;
     }
-    InvalidateRect(PRIVATE(data)->hWnd, NULL, FALSE);
+    InvalidateRect(data->hWnd, NULL, FALSE);
 }
 
 /******************************************************************
@@ -808,9 +818,9 @@ static void WCUSER_Scroll(struct inner_data* data, int pos, BOOL horz)
  */
 static BOOL WCUSER_FillMenu(HMENU hMenu, BOOL sep)
 {
-    HMENU		hSubMenu;
-    HINSTANCE		hInstance = GetModuleHandle(NULL);
-    WCHAR		buff[256];
+    HMENU     hSubMenu;
+    HINSTANCE hInstance = GetModuleHandleW(NULL);
+    WCHAR     buff[256];
 
     if (!hMenu) return FALSE;
 
@@ -818,26 +828,26 @@ static BOOL WCUSER_FillMenu(HMENU hMenu, BOOL sep)
     hSubMenu = CreateMenu();
     if (!hSubMenu) return FALSE;
 
-    LoadString(hInstance, IDS_MARK, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_MARK, buff);
-    LoadString(hInstance, IDS_COPY, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_COPY, buff);
-    LoadString(hInstance, IDS_PASTE, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_PASTE, buff);
-    LoadString(hInstance, IDS_SELECTALL, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SELECTALL, buff);
-    LoadString(hInstance, IDS_SCROLL, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SCROLL, buff);
-    LoadString(hInstance, IDS_SEARCH, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SEARCH, buff);
+    LoadStringW(hInstance, IDS_MARK, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_MARK, buff);
+    LoadStringW(hInstance, IDS_COPY, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_COPY, buff);
+    LoadStringW(hInstance, IDS_PASTE, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_PASTE, buff);
+    LoadStringW(hInstance, IDS_SELECTALL, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SELECTALL, buff);
+    LoadStringW(hInstance, IDS_SCROLL, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SCROLL, buff);
+    LoadStringW(hInstance, IDS_SEARCH, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SEARCH, buff);
 
-    if (sep) InsertMenu(hMenu, -1, MF_BYPOSITION|MF_SEPARATOR, 0, NULL);
-    LoadString(hInstance, IDS_EDIT, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hMenu, -1, MF_BYPOSITION|MF_STRING|MF_POPUP, (UINT_PTR)hSubMenu, buff);
-    LoadString(hInstance, IDS_DEFAULT, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hMenu, -1, MF_BYPOSITION|MF_STRING, IDS_DEFAULT, buff);
-    LoadString(hInstance, IDS_PROPERTIES, buff, sizeof(buff) / sizeof(WCHAR));
-    InsertMenu(hMenu, -1, MF_BYPOSITION|MF_STRING, IDS_PROPERTIES, buff);
+    if (sep) InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_SEPARATOR, 0, NULL);
+    LoadStringW(hInstance, IDS_EDIT, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_STRING|MF_POPUP, (UINT_PTR)hSubMenu, buff);
+    LoadStringW(hInstance, IDS_DEFAULT, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_STRING, IDS_DEFAULT, buff);
+    LoadStringW(hInstance, IDS_PROPERTIES, buff, ARRAY_SIZE(buff));
+    InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_STRING, IDS_PROPERTIES, buff);
 
     return TRUE;
 }
@@ -865,14 +875,14 @@ static void	WCUSER_SetMenuDetails(const struct inner_data* data, HMENU hMenu)
  *
  * Creates the window for the rendering
  */
-static LRESULT WCUSER_Create(HWND hWnd, LPCREATESTRUCT lpcs)
+static LRESULT WCUSER_Create(HWND hWnd, LPCREATESTRUCTW lpcs)
 {
     struct inner_data*	data;
     HMENU		hSysMenu;
 
     data = lpcs->lpCreateParams;
-    SetWindowLong(hWnd, 0L, (DWORD)data);
-    PRIVATE(data)->hWnd = hWnd;
+    SetWindowLongPtrW(hWnd, 0, (DWORD_PTR)data);
+    data->hWnd = hWnd;
 
     hSysMenu = GetSystemMenu(hWnd, FALSE);
     if (!hSysMenu) return 0;
@@ -923,7 +933,7 @@ static void WCUSER_HandleSelectionKey(struct inner_data* data, BOOL down,
     DWORD       state = WCUSER_GetCtrlKeyState(keyState) & ~(CAPSLOCK_ON|NUMLOCK_ON|SCROLLLOCK_ON);
     COORD       c1, c2;
 
-    if (down) return;
+    if (!down) return;
 
     switch (state)
     {
@@ -934,31 +944,31 @@ static void WCUSER_HandleSelectionKey(struct inner_data* data, BOOL down,
             PRIVATE(data)->has_selection = FALSE;
             WCUSER_SetSelection(data, 0);
             WCUSER_CopySelectionToClipboard(data);
-            break;
+            return;
         case VK_RIGHT:
             c1 = PRIVATE(data)->selectPt1;
             c2 = PRIVATE(data)->selectPt2;
             c1.X++; c2.X++;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         case VK_LEFT:
             c1 = PRIVATE(data)->selectPt1;
             c2 = PRIVATE(data)->selectPt2;
             c1.X--; c2.X--;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         case VK_UP:
             c1 = PRIVATE(data)->selectPt1;
             c2 = PRIVATE(data)->selectPt2;
             c1.Y--; c2.Y--;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         case VK_DOWN:
             c1 = PRIVATE(data)->selectPt1;
             c2 = PRIVATE(data)->selectPt2;
             c1.Y++; c2.Y++;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         }
         break;
     case SHIFT_PRESSED:
@@ -969,28 +979,34 @@ static void WCUSER_HandleSelectionKey(struct inner_data* data, BOOL down,
             c2 = PRIVATE(data)->selectPt2;
             c2.X++;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         case VK_LEFT:
             c1 = PRIVATE(data)->selectPt1;
             c2 = PRIVATE(data)->selectPt2;
             c2.X--;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         case VK_UP:
             c1 = PRIVATE(data)->selectPt1;
             c2 = PRIVATE(data)->selectPt2;
             c2.Y--;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         case VK_DOWN:
             c1 = PRIVATE(data)->selectPt1;
             c2 = PRIVATE(data)->selectPt2;
             c2.Y++;
             WCUSER_MoveSelection(data, c1, c2);
-            break;
+            return;
         }
         break;
     }
+
+    if (wParam < VK_SPACE)  /* Shift, Alt, Ctrl, Num Lock etc. */
+        return;
+    
+    WCUSER_SetSelection(data, 0);    
+    PRIVATE(data)->has_selection = FALSE;
 }
 
 /******************************************************************
@@ -999,7 +1015,7 @@ static void WCUSER_HandleSelectionKey(struct inner_data* data, BOOL down,
  * generates input_record from windows WM_KEYUP/WM_KEYDOWN messages
  */
 static void    WCUSER_GenerateKeyInputRecord(struct inner_data* data, BOOL down,
-                                             WPARAM wParam, LPARAM lParam, BOOL sys)
+                                             WPARAM wParam, LPARAM lParam)
 {
     INPUT_RECORD	ir;
     DWORD		n;
@@ -1017,30 +1033,26 @@ static void    WCUSER_GenerateKeyInputRecord(struct inner_data* data, BOOL down,
     ir.Event.KeyEvent.uChar.UnicodeChar = 0;
     ir.Event.KeyEvent.dwControlKeyState = WCUSER_GetCtrlKeyState(keyState);
     if (lParam & (1L << 24))		ir.Event.KeyEvent.dwControlKeyState |= ENHANCED_KEY;
-    if (sys)				ir.Event.KeyEvent.dwControlKeyState |= LEFT_ALT_PRESSED; /* FIXME: gotta choose one */
 
-    if (!(ir.Event.KeyEvent.dwControlKeyState & ENHANCED_KEY))
+    if (down)
     {
-	if (down)
-	{
-	    switch (ToUnicode(wParam, HIWORD(lParam), keyState, buf, 2, 0))
-	    {
-	    case 2:
-		/* FIXME... should generate two events... */
-		/* fall thru */
-	    case 1:
-		last = buf[0];
-		break;
-	    default:
-		last = 0;
-		break;
-	    }
-	}
-	ir.Event.KeyEvent.uChar.UnicodeChar = last; /* FIXME HACKY... and buggy 'coz it should be a stack, not a single value */
-	if (!down) last = 0;
+        switch (ToUnicode(wParam, HIWORD(lParam), keyState, buf, 2, 0))
+        {
+        case 2:
+            /* FIXME... should generate two events... */
+            /* fall through */
+        case 1:
+            last = buf[0];
+            break;
+        default:
+            last = 0;
+            break;
+        }
     }
+    ir.Event.KeyEvent.uChar.UnicodeChar = last; /* FIXME: HACKY... and buggy because it should be a stack, not a single value */
+    if (!down) last = 0;
 
-    WriteConsoleInput(data->hConIn, &ir, 1, &n);
+    WriteConsoleInputW(data->hConIn, &ir, 1, &n);
 }
 
 /******************************************************************
@@ -1071,7 +1083,7 @@ static void    WCUSER_GenerateMouseInputRecord(struct inner_data* data, COORD c,
     ir.Event.MouseEvent.dwControlKeyState = WCUSER_GetCtrlKeyState(keyState);
     ir.Event.MouseEvent.dwEventFlags = event;
 
-    WriteConsoleInput(data->hConIn, &ir, 1, &n);
+    WriteConsoleInputW(data->hConIn, &ir, 1, &n);
 }
 
 /******************************************************************
@@ -1081,14 +1093,14 @@ static void    WCUSER_GenerateMouseInputRecord(struct inner_data* data, COORD c,
  */
 static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-    struct inner_data*	data = (struct inner_data*)GetWindowLong(hWnd, 0);
+    struct inner_data* data = (struct inner_data*)GetWindowLongPtrW(hWnd, 0);
 
     switch (uMsg)
     {
     case WM_CREATE:
-        return WCUSER_Create(hWnd, (LPCREATESTRUCT)lParam);
+        return WCUSER_Create(hWnd, (LPCREATESTRUCTW)lParam);
     case WM_DESTROY:
-	PRIVATE(data)->hWnd = 0;
+	data->hWnd = 0;
 	PostQuitMessage(0);
 	break;
     case WM_PAINT:
@@ -1099,24 +1111,26 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
         if (PRIVATE(data)->has_selection)
             WCUSER_HandleSelectionKey(data, uMsg == WM_KEYDOWN, wParam, lParam);
         else
-            WCUSER_GenerateKeyInputRecord(data, uMsg == WM_KEYDOWN, wParam, lParam, FALSE);
+            WCUSER_GenerateKeyInputRecord(data, uMsg == WM_KEYDOWN, wParam, lParam);
 	break;
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:
-	WCUSER_GenerateKeyInputRecord(data, uMsg == WM_SYSKEYDOWN, wParam, lParam, TRUE);
+	WCUSER_GenerateKeyInputRecord(data, uMsg == WM_SYSKEYDOWN, wParam, lParam);
 	break;
     case WM_LBUTTONDOWN:
-        if (data->curcfg.quick_edit)
+        if (data->curcfg.quick_edit || PRIVATE(data)->has_selection)
         {
             if (PRIVATE(data)->has_selection)
+                WCUSER_SetSelection(data, 0);
+            
+            if (data->curcfg.quick_edit && PRIVATE(data)->has_selection)
             {
                 PRIVATE(data)->has_selection = FALSE;
-                WCUSER_SetSelection(data, 0);
             }
             else
             {
                 PRIVATE(data)->selectPt1 = PRIVATE(data)->selectPt2 = WCUSER_GetCell(data, lParam);
-                SetCapture(PRIVATE(data)->hWnd);
+                SetCapture(data->hWnd);
                 WCUSER_SetSelection(data, 0);
                 PRIVATE(data)->has_selection = TRUE;
             }
@@ -1127,9 +1141,9 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
         }
 	break;
     case WM_MOUSEMOVE:
-        if (data->curcfg.quick_edit)
+        if (data->curcfg.quick_edit || PRIVATE(data)->has_selection)
         {
-            if (GetCapture() == PRIVATE(data)->hWnd && PRIVATE(data)->has_selection &&
+            if (GetCapture() == data->hWnd && PRIVATE(data)->has_selection &&
                 (wParam & MK_LBUTTON))
             {
                 WCUSER_MoveSelection(data, PRIVATE(data)->selectPt1, WCUSER_GetCell(data, lParam));
@@ -1141,14 +1155,12 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
         }
 	break;
     case WM_LBUTTONUP:
-        if (data->curcfg.quick_edit)
+        if (data->curcfg.quick_edit || PRIVATE(data)->has_selection)
         {
-            if (GetCapture() == PRIVATE(data)->hWnd && PRIVATE(data)->has_selection &&
-                (wParam& MK_LBUTTON))
+            if (GetCapture() == data->hWnd && PRIVATE(data)->has_selection)
             {
                 WCUSER_MoveSelection(data, PRIVATE(data)->selectPt1, WCUSER_GetCell(data, lParam));
                 ReleaseCapture();
-                PRIVATE(data)->has_selection = FALSE;
             }
         }
         else
@@ -1159,12 +1171,14 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
     case WM_RBUTTONDOWN:
         if ((wParam & (MK_CONTROL|MK_SHIFT)) == data->curcfg.menu_mask)
         {
-            RECT        r;
+            POINT       pt;
 
-            GetWindowRect(hWnd, &r);
+            pt.x = (short)LOWORD(lParam);
+            pt.y = (short)HIWORD(lParam);
+            ClientToScreen(hWnd, &pt);
             WCUSER_SetMenuDetails(data, PRIVATE(data)->hPopMenu);
-            TrackPopupMenu(PRIVATE(data)->hPopMenu, TPM_LEFTALIGN|TPM_TOPALIGN,
-                           r.left + LOWORD(lParam), r.top + HIWORD(lParam), 0, hWnd, NULL);
+            TrackPopupMenu(PRIVATE(data)->hPopMenu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RIGHTBUTTON,
+                           pt.x, pt.y, 0, hWnd, NULL);
         }
         else
         {
@@ -1183,13 +1197,10 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
     case WM_RBUTTONDBLCLK:
         WCUSER_GenerateMouseInputRecord(data, WCUSER_GetCell(data, lParam), wParam, DOUBLE_CLICK);
         break;
-    case WM_MOUSEWHEEL:
-        WCUSER_GenerateMouseInputRecord(data,  WCUSER_GetCell(data, lParam), wParam, MOUSE_WHEELED);
-	break;
     case WM_SETFOCUS:
 	if (data->curcfg.cursor_visible)
 	{
-	    CreateCaret(PRIVATE(data)->hWnd, PRIVATE(data)->cursor_bitmap,
+	    CreateCaret(data->hWnd, PRIVATE(data)->cursor_bitmap,
                         data->curcfg.cell_width, data->curcfg.cell_height);
 	    WCUSER_PosCursor(data);
 	}
@@ -1200,60 +1211,64 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 	break;
     case WM_HSCROLL:
         {
-            int	pos = data->curcfg.win_pos.X;
+            struct config_data  cfg = data->curcfg;
 
             switch (LOWORD(wParam))
             {
-            case SB_PAGEUP: 	pos -= 8; 		break;
-            case SB_PAGEDOWN: 	pos += 8; 		break;
-            case SB_LINEUP: 	pos--;			break;
-            case SB_LINEDOWN: 	pos++;	 		break;
-            case SB_THUMBTRACK: pos = HIWORD(wParam);	break;
-            default: 					break;
+            case SB_PAGEUP: 	cfg.win_pos.X -= 8; 		break;
+            case SB_PAGEDOWN: 	cfg.win_pos.X += 8; 		break;
+            case SB_LINEUP: 	cfg.win_pos.X--;		break;
+            case SB_LINEDOWN: 	cfg.win_pos.X++; 		break;
+            case SB_THUMBTRACK: cfg.win_pos.X = HIWORD(wParam);	break;
+            default: 					        break;
             }
-            if (pos < 0) pos = 0;
-            if (pos > data->curcfg.sb_width - data->curcfg.win_width)
-                pos = data->curcfg.sb_width - data->curcfg.win_width;
-            if (pos != data->curcfg.win_pos.X)
+            if (cfg.win_pos.X < 0) cfg.win_pos.X = 0;
+            if (cfg.win_pos.X > data->curcfg.sb_width - data->curcfg.win_width)
+                cfg.win_pos.X = data->curcfg.sb_width - data->curcfg.win_width;
+            if (cfg.win_pos.X != data->curcfg.win_pos.X)
             {
-                ScrollWindow(hWnd, (data->curcfg.win_pos.X - pos) * data->curcfg.cell_width, 0,
-                             NULL, NULL);
-                data->curcfg.win_pos.X = pos;
-                SetScrollPos(hWnd, SB_HORZ, pos, TRUE);
-                UpdateWindow(hWnd);
-                WCUSER_PosCursor(data);
-                WINECON_NotifyWindowChange(data);
+                WINECON_SetConfig(data, &cfg);
             }
         }
 	break;
+    case WM_MOUSEWHEEL:
+        if (data->curcfg.sb_height <= data->curcfg.win_height)
+        {
+            WCUSER_GenerateMouseInputRecord(data,  WCUSER_GetCell(data, lParam), wParam, MOUSE_WHEELED);
+            break;
+        }
+        /* else fallthrough */
     case WM_VSCROLL:
         {
-	    int	pos = data->curcfg.win_pos.Y;
+	    struct config_data  cfg = data->curcfg;
 
-	    switch (LOWORD(wParam))
-	    {
-            case SB_PAGEUP: 	pos -= 8; 		break;
-            case SB_PAGEDOWN: 	pos += 8; 		break;
-            case SB_LINEUP: 	pos--;			break;
-	    case SB_LINEDOWN: 	pos++;	 		break;
-            case SB_THUMBTRACK: pos = HIWORD(wParam);	break;
-            default: 					break;
-	    }
-	    if (pos < 0) pos = 0;
-	    if (pos > data->curcfg.sb_height - data->curcfg.win_height)
-                pos = data->curcfg.sb_height - data->curcfg.win_height;
-	    if (pos != data->curcfg.win_pos.Y)
-	    {
-		ScrollWindow(hWnd, 0, (data->curcfg.win_pos.Y - pos) * data->curcfg.cell_height,
-                             NULL, NULL);
-		data->curcfg.win_pos.Y = pos;
-		SetScrollPos(hWnd, SB_VERT, pos, TRUE);
-		UpdateWindow(hWnd);
-		WCUSER_PosCursor(data);
-		WINECON_NotifyWindowChange(data);
-	    }
+            if (uMsg == WM_MOUSEWHEEL)
+            {
+                UINT scrollLines = 3;
+                SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &scrollLines, 0);
+                scrollLines *= -GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+                cfg.win_pos.Y += scrollLines;
+            } else {
+                switch (LOWORD(wParam))
+                {
+                case SB_PAGEUP:     cfg.win_pos.Y -= 8; 		break;
+                case SB_PAGEDOWN:   cfg.win_pos.Y += 8; 		break;
+                case SB_LINEUP:     cfg.win_pos.Y--;			break;
+                case SB_LINEDOWN:   cfg.win_pos.Y++;	 		break;
+                case SB_THUMBTRACK: cfg.win_pos.Y = HIWORD(wParam);	break;
+                default: 					        break;
+                }
+            }
 
+	    if (cfg.win_pos.Y < 0) cfg.win_pos.Y = 0;
+	    if (cfg.win_pos.Y > data->curcfg.sb_height - data->curcfg.win_height)
+                cfg.win_pos.Y = data->curcfg.sb_height - data->curcfg.win_height;
+	    if (cfg.win_pos.Y != data->curcfg.win_pos.Y)
+	    {
+                WINECON_SetConfig(data, &cfg);
+	    }
         }
+        break;
     case WM_SYSCOMMAND:
 	switch (wParam)
 	{
@@ -1264,7 +1279,7 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 	    WCUSER_GetProperties(data, TRUE);
 	    break;
 	default:
-	    return DefWindowProc(hWnd, uMsg, wParam, lParam);
+            return DefWindowProcW(hWnd, uMsg, wParam, lParam);
 	}
 	break;
     case WM_COMMAND:
@@ -1302,18 +1317,22 @@ static LRESULT CALLBACK WCUSER_Proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 	    break;
 	case IDS_SCROLL:
 	case IDS_SEARCH:
-	    WINE_FIXME("Unhandled yet command: %x\n", wParam);
+	    WINE_FIXME("Unhandled yet command: %lx\n", wParam);
 	    break;
 	default:
-	    return DefWindowProc(hWnd, uMsg, wParam, lParam);
+            return DefWindowProcW(hWnd, uMsg, wParam, lParam);
 	}
 	break;
     case WM_INITMENUPOPUP:
-	if (!HIWORD(lParam))	return DefWindowProc(hWnd, uMsg, wParam, lParam);
-	WCUSER_SetMenuDetails(data, GetSystemMenu(PRIVATE(data)->hWnd, FALSE));
+        if (!HIWORD(lParam)) return DefWindowProcW(hWnd, uMsg, wParam, lParam);
+	WCUSER_SetMenuDetails(data, GetSystemMenu(data->hWnd, FALSE));
 	break;
+    case WM_SIZE:
+        WINECON_ResizeWithContainer(data, LOWORD(lParam) / data->curcfg.cell_width,
+                                    HIWORD(lParam) / data->curcfg.cell_height);
+        break;
     default:
-	return DefWindowProc(hWnd, uMsg, wParam, lParam);
+        return DefWindowProcW(hWnd, uMsg, wParam, lParam);
     }
     return 0;
 }
@@ -1327,7 +1346,7 @@ static void WCUSER_DeleteBackend(struct inner_data* data)
 {
     if (!PRIVATE(data)) return;
     if (PRIVATE(data)->hMemDC)		DeleteDC(PRIVATE(data)->hMemDC);
-    if (PRIVATE(data)->hWnd)		DestroyWindow(PRIVATE(data)->hWnd);
+    if (data->hWnd)		        DestroyWindow(data->hWnd);
     if (PRIVATE(data)->hFont)		DeleteObject(PRIVATE(data)->hFont);
     if (PRIVATE(data)->cursor_bitmap)	DeleteObject(PRIVATE(data)->cursor_bitmap);
     if (PRIVATE(data)->hBitmap)		DeleteObject(PRIVATE(data)->hBitmap);
@@ -1343,24 +1362,23 @@ static int WCUSER_MainLoop(struct inner_data* data)
 {
     MSG		msg;
 
-    ShowWindow(PRIVATE(data)->hWnd, data->nCmdShow);
-    for (;;)
+    ShowWindow(data->hWnd, data->nCmdShow);
+    while (!data->dying || !data->curcfg.exit_on_die)
     {
 	switch (MsgWaitForMultipleObjects(1, &data->hSynchro, FALSE, INFINITE, QS_ALLINPUT))
 	{
 	case WAIT_OBJECT_0:
-	    if (!WINECON_GrabChanges(data) && data->curcfg.exit_on_die)
-                PostQuitMessage(0);
+	    WINECON_GrabChanges(data);
 	    break;
 	case WAIT_OBJECT_0+1:
-	    /* need to use PeekMessage loop instead of simple GetMessage:
+            /* need to use PeekMessageW loop instead of simple GetMessage:
 	     * multiple messages might have arrived in between,
 	     * so GetMessage would lead to delayed processing */
-	    while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+            while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE))
 	    {
-                if (msg.message == WM_QUIT) return 0;
+                if (msg.message == WM_QUIT) return 1;
                 WINE_TRACE("dispatching msg %04x\n", msg.message);
-                DispatchMessage(&msg);
+                DispatchMessageW(&msg);
 	    }
 	    break;
 	default:
@@ -1369,6 +1387,8 @@ static int WCUSER_MainLoop(struct inner_data* data)
 	    break;
 	}
     }
+    PostQuitMessage(0);
+    return 0;
 }
 
 /******************************************************************
@@ -1381,7 +1401,13 @@ enum init_return WCUSER_InitBackend(struct inner_data* data)
 {
     static const WCHAR wClassName[] = {'W','i','n','e','C','o','n','s','o','l','e','C','l','a','s','s',0};
 
-    WNDCLASS		wndclass;
+    WNDCLASSW   wndclass;
+    CHARSETINFO ci;
+
+    if (!TranslateCharsetInfo((DWORD *)(INT_PTR)GetACP(), &ci, TCI_SRCCODEPAGE))
+        return init_failed;
+    g_uiDefaultCharset = ci.ciCharset;
+    WINE_TRACE_(wc_font)("Code page %d => Default charset: %d\n", GetACP(), g_uiDefaultCharset);
 
     data->private = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct inner_data_user));
     if (!data->private) return init_failed;
@@ -1400,20 +1426,20 @@ enum init_return WCUSER_InitBackend(struct inner_data* data)
     wndclass.style         = CS_DBLCLKS;
     wndclass.lpfnWndProc   = WCUSER_Proc;
     wndclass.cbClsExtra    = 0;
-    wndclass.cbWndExtra    = sizeof(DWORD);
-    wndclass.hInstance     = GetModuleHandle(NULL);
-    wndclass.hIcon         = LoadIcon(0, IDI_WINLOGO);
-    wndclass.hCursor       = LoadCursor(0, IDC_ARROW);
+    wndclass.cbWndExtra    = sizeof(DWORD_PTR);
+    wndclass.hInstance     = GetModuleHandleW(NULL);
+    wndclass.hIcon         = LoadIconW(0, (LPCWSTR)IDI_WINLOGO);
+    wndclass.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
     wndclass.hbrBackground = GetStockObject(BLACK_BRUSH);
     wndclass.lpszMenuName  = NULL;
     wndclass.lpszClassName = wClassName;
 
-    RegisterClass(&wndclass);
+    RegisterClassW(&wndclass);
 
-    CreateWindow(wndclass.lpszClassName, NULL,
-		 WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MINIMIZEBOX|WS_HSCROLL|WS_VSCROLL,
-		 CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, 0, 0, wndclass.hInstance, data);
-    if (!PRIVATE(data)->hWnd) return init_failed;
+    data->hWnd = CreateWindowW(wndclass.lpszClassName, NULL,
+                               WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MINIMIZEBOX|WS_HSCROLL|WS_VSCROLL,
+                               CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, 0, 0, wndclass.hInstance, data);
+    if (!data->hWnd) return init_not_supported;
 
     return init_success;
 }

@@ -1,14 +1,15 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = oleacc.dll
-IMPORTLIB = liboleacc.$(IMPLIBEXT)
-IMPORTS   = kernel32
+IMPORTLIB = oleacc
+IMPORTS   = uuid oleaut32 ole32 user32 rpcrt4
 
 C_SRCS = \
-	main.c
+	client.c \
+	main.c \
+	propservice.c \
+	window.c
 
-@MAKE_DLL_RULES@
+IDL_SRCS = oleacc_classes.idl
 
-### Dependencies:
+RC_SRCS = oleacc.rc
+
+dlldata_EXTRADEFS = -DENTRY_PREFIX=OLEACC_ -DPROXY_DELEGATION -DWINE_REGISTER_DLL

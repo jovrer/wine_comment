@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * Note:
  *  This is a simplified version of the code, without all the explanations.
@@ -75,6 +75,9 @@ SOFTWARE.
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+#include "winternl.h"
 #include "request.h"
 #include "user.h"
 
@@ -105,7 +108,7 @@ static const rectangle_t empty_rect;  /* all-zero rectangle for empty regions */
 /* add a rectangle to a region */
 static inline rectangle_t *add_rect( struct region *reg )
 {
-    if (reg->num_rects >= reg->size - 1)
+    if (reg->num_rects >= reg->size)
     {
         rectangle_t *new_rect = realloc( reg->rects, 2 * sizeof(rectangle_t) * reg->size );
         if (!new_rect)
@@ -126,7 +129,7 @@ static inline int validate_rectangles( const rectangle_t *rects, unsigned int nb
 
     for (ptr = rects, end = rects + nb_rects; ptr < end; ptr++)
     {
-        if (ptr->left >= ptr->right || ptr->top >= ptr->bottom) return 0;  /* empty rectangle */
+        if (is_rect_empty( ptr )) return 0;  /* empty rectangle */
         if (ptr == end - 1) break;
         if (ptr[0].top == ptr[1].top)  /* same band */
         {
@@ -466,7 +469,8 @@ static int subtract_overlapping( struct region *pReg,
                 rect->bottom = bottom;
             }
             r1++;
-            left = r1->left;
+            if (r1 != r1End)
+                left = r1->left;
         }
     }
 
@@ -578,7 +582,7 @@ struct region *create_empty_region(void)
 }
 
 /* create a region from request data */
-struct region *create_region_from_req_data( const void *data, size_t size )
+struct region *create_region_from_req_data( const void *data, data_size_t size )
 {
     unsigned int alloc_rects;
     struct region *region;
@@ -619,7 +623,7 @@ void free_region( struct region *region )
 /* set region to a simple rectangle */
 void set_region_rect( struct region *region, const rectangle_t *rect )
 {
-    if (rect->left < rect->right && rect->top < rect->bottom)
+    if (!is_rect_empty( rect ))
     {
         region->num_rects = 1;
         region->rects[0] = region->extents = *rect;
@@ -627,15 +631,12 @@ void set_region_rect( struct region *region, const rectangle_t *rect )
     else
     {
         region->num_rects = 0;
-        region->extents.left = 0;
-        region->extents.top = 0;
-        region->extents.right = 0;
-        region->extents.bottom = 0;
+        region->extents = empty_rect;
     }
 }
 
 /* retrieve the region data for sending to the client */
-rectangle_t *get_region_data( const struct region *region, size_t max_size, size_t *total_size )
+rectangle_t *get_region_data( const struct region *region, data_size_t max_size, data_size_t *total_size )
 {
     const rectangle_t *data = region->rects;
 
@@ -651,7 +652,7 @@ rectangle_t *get_region_data( const struct region *region, size_t max_size, size
 }
 
 /* retrieve the region data for sending to the client and free the region at the same time */
-rectangle_t *get_region_data_and_free( struct region *region, size_t max_size, size_t *total_size )
+rectangle_t *get_region_data_and_free( struct region *region, data_size_t max_size, data_size_t *total_size )
 {
     rectangle_t *ret = region->rects;
 
@@ -696,17 +697,44 @@ void offset_region( struct region *region, int x, int y )
 
     if (!region->num_rects) return;
     for (rect = region->rects, end = rect + region->num_rects; rect < end; rect++)
-    {
-        rect->left += x;
-        rect->right += x;
-        rect->top += y;
-        rect->bottom += y;
-    }
-    region->extents.left += x;
-    region->extents.right += x;
-    region->extents.top += y;
-    region->extents.bottom += y;
+        offset_rect( rect, x, y );
+    offset_rect( &region->extents, x, y );
 }
+
+/* mirror a region relative to a window client rect */
+void mirror_region( const rectangle_t *client_rect, struct region *region )
+{
+    int start, end, i, j;
+
+    for (start = 0; start < region->num_rects; start = end + 1)
+    {
+        for (end = start; end < region->num_rects - 1; end++)
+            if (region->rects[end + 1].top != region->rects[end].top) break;
+        for (i = start, j = end; i < j; i++, j--)
+        {
+            rectangle_t rect = region->rects[j];
+            region->rects[i] = region->rects[j];
+            region->rects[j] = rect;
+            mirror_rect( client_rect, &region->rects[j] );
+            mirror_rect( client_rect, &region->rects[i] );
+        }
+        if (i == j) mirror_rect( client_rect, &region->rects[i] );
+    }
+    mirror_rect( client_rect, &region->extents );
+}
+
+
+/* scale a region for a given dpi factor */
+void scale_region( struct region *region, unsigned int dpi_from, unsigned int dpi_to )
+{
+    rectangle_t *rect, *end;
+
+    if (!region->num_rects) return;
+    for (rect = region->rects, end = rect + region->num_rects; rect < end; rect++)
+        scale_dpi_rect( rect, dpi_from, dpi_to );
+    scale_dpi_rect( &region->extents, dpi_from, dpi_to );
+}
+
 
 /* make a copy of a region; returns dst or NULL on error */
 struct region *copy_region( struct region *dst, const struct region *src )

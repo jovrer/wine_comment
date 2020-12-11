@@ -1,14 +1,14 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = setupapi.dll
-IMPORTS   = setupapi kernel32
+IMPORTS   = advapi32 setupapi shell32 uuid user32
 
-CTESTS = \
+C_SRCS = \
+	devinst.c \
+	diskspace.c \
+	install.c \
+	misc.c \
 	parser.c \
+	query.c \
+	setupcab.c \
 	stringtable.c
 
-@MAKE_TEST_RULES@
-
-### Dependencies:
+RC_SRCS = setupapi.rc

@@ -1,24 +1,7 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = version.dll
-IMPORTLIB = libversion.$(IMPLIBEXT)
-IMPORTS   = lz32 kernel32 ntdll
-EXTRALIBS = $(LIBUNICODE)
+IMPORTLIB = version
 
 C_SRCS = \
-	info.c \
-	install.c \
-	resource.c
+	version.c
 
-C_SRCS16 = \
-	ver16.c
-
-SPEC_SRCS16 = ver.spec
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = version.rc

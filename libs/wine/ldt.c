@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -31,12 +31,11 @@
 
 #include "windef.h"
 #include "winbase.h"
-#define WINE_EXPORT_LDT_COPY
 #include "wine/library.h"
 
-#ifdef __i386__
+#if defined(__i386__) && !defined(__MINGW32__) && !defined(_MSC_VER)
 
-#ifdef linux
+#ifdef __linux__
 
 #ifdef HAVE_SYS_SYSCALL_H
 # include <sys/syscall.h>
@@ -52,7 +51,7 @@ struct modify_ldt_s
     unsigned int  read_exec_only : 1;
     unsigned int  limit_in_pages : 1;
     unsigned int  seg_not_present : 1;
-    unsigned int  useable : 1;
+    unsigned int  usable : 1;
     unsigned int  garbage : 25;
 };
 
@@ -65,39 +64,18 @@ static inline void fill_modify_ldt_struct( struct modify_ldt_s *ptr, const LDT_E
     ptr->read_exec_only  = !(entry->HighWord.Bits.Type & 2);
     ptr->limit_in_pages  = entry->HighWord.Bits.Granularity;
     ptr->seg_not_present = !entry->HighWord.Bits.Pres;
-    ptr->useable         = entry->HighWord.Bits.Sys;
+    ptr->usable          = entry->HighWord.Bits.Sys;
     ptr->garbage         = 0;
 }
 
 static inline int modify_ldt( int func, struct modify_ldt_s *ptr, unsigned long count )
 {
-    int res;
-    __asm__ __volatile__( "pushl %%ebx\n\t"
-                          "movl %2,%%ebx\n\t"
-                          "int $0x80\n\t"
-                          "popl %%ebx"
-                          : "=a" (res)
-                          : "0" (SYS_modify_ldt),
-                            "r" (func),
-                            "c" (ptr),
-                            "d" (count) );
-    if (res >= 0) return res;
-    errno = -res;
-    return -1;
+    return syscall( 123 /* SYS_modify_ldt */, func, ptr, count );
 }
 
 static inline int set_thread_area( struct modify_ldt_s *ptr )
 {
-    int res;
-    __asm__ __volatile__( "pushl %%ebx\n\t"
-                          "movl %2,%%ebx\n\t"
-                          "int $0x80\n\t"
-                          "popl %%ebx"
-                          : "=a" (res)
-                          : "0" (243) /* SYS_set_thread_area */, "q" (ptr) );
-    if (res >= 0) return res;
-    errno = -res;
-    return -1;
+    return syscall( 243 /* SYS_set_thread_area */, ptr );
 }
 
 #endif  /* linux */
@@ -109,32 +87,19 @@ static inline int set_thread_area( struct modify_ldt_s *ptr )
 #endif
 #endif
 
-#if defined(__NetBSD__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+#if defined(__NetBSD__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__DragonFly__)
 #include <machine/segments.h>
-
-extern int i386_get_ldt(int, union descriptor *, int);
-extern int i386_set_ldt(int, union descriptor *, int);
+#include <machine/sysarch.h>
 #endif  /* __NetBSD__ || __FreeBSD__ || __OpenBSD__ */
 
+#ifdef __GNU__
+#include <mach/i386/mach_i386.h>
+#include <mach/mach_traps.h>
+#endif
+
 #ifdef __APPLE__
-
-static inline int thread_set_user_ldt( const void *addr, unsigned int size, unsigned int flags )
-{
-    int ret;
-    __asm__ __volatile__ ("pushl %4\n\t"
-                          "pushl %3\n\t"
-                          "pushl %2\n\t"
-                          "pushl $0\n\t"
-                          "lcall $0x3b,$0\n\t"
-                          "leal  16(%%esp),%%esp"
-                          : "=a" (ret)
-                          : "0" (4 /*thread_set_user_ldt*/), "r" (addr), "r" (size), "r" (flags) );
-    return ret;
-}
-
-#endif  /* __APPLE__ */
-
-#endif  /* __i386__ */
+#include <i386/user_ldt.h>
+#endif
 
 /* local copy of the LDT */
 #ifdef __APPLE__
@@ -206,8 +171,6 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
 
     if (index < LDT_FIRST_ENTRY) return 0;  /* cannot modify reserved entries */
 
-#ifdef __i386__
-
 #ifdef linux
     {
         struct modify_ldt_s ldt_info;
@@ -217,7 +180,7 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
         if ((ret = modify_ldt(0x11, &ldt_info, sizeof(ldt_info))) < 0)
             perror( "modify_ldt" );
     }
-#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__DragonFly__)
     {
 	LDT_ENTRY entry_copy = *entry;
 	/* The kernel will only let us set LDTs with user priority level */
@@ -242,12 +205,16 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
         ldt_mod.acc2 = entry->HighWord.Bytes.Flags2 >> 4;
         if ((ret = sysi86(SI86DSCR, &ldt_mod)) == -1) perror("sysi86");
     }
+#elif defined(__APPLE__)
+    if ((ret = i386_set_ldt(index, (union ldt_entry *)entry, 1)) < 0)
+        perror("i386_set_ldt");
+#elif defined(__GNU__)
+    if ((ret = i386_set_ldt(mach_thread_self(), sel, (descriptor_list_t)entry, 1)) != KERN_SUCCESS)
+        perror("i386_set_ldt");
 #else
     fprintf( stderr, "No LDT support on this platform\n" );
     exit(1);
 #endif
-
-#endif  /* __i386__ */
 
     if (ret >= 0)
     {
@@ -397,8 +364,6 @@ void wine_ldt_free_entries( unsigned short sel, int count )
 }
 
 
-#ifdef __i386__
-
 static int global_fs_sel = -1;  /* global selector for %fs shared among all threads */
 
 /***********************************************************************
@@ -415,19 +380,23 @@ unsigned short wine_ldt_alloc_fs(void)
         struct modify_ldt_s ldt_info;
         int ret;
 
+        /* the preloader may have allocated it already */
+        global_fs_sel = wine_get_fs();
+        if (global_fs_sel && is_gdt_sel(global_fs_sel)) return global_fs_sel;
+
+        memset( &ldt_info, 0, sizeof(ldt_info) );
         ldt_info.entry_number = -1;
-        fill_modify_ldt_struct( &ldt_info, &null_entry );
+        ldt_info.seg_32bit = 1;
+        ldt_info.usable = 1;
         if ((ret = set_thread_area( &ldt_info ) < 0))
         {
             global_fs_sel = 0;  /* don't try it again */
             if (errno != ENOSYS) perror( "set_thread_area" );
         }
         else global_fs_sel = (ldt_info.entry_number << 3) | 3;
-#elif defined(__APPLE__)
-        int ret = thread_set_user_ldt( NULL, 0, 0 );
-        if (ret != -1) global_fs_sel = ret;
-        else global_fs_sel = 0;
-#endif  /* __APPLE__ */
+#elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__)
+        global_fs_sel = GSEL( GUFS_SEL, SEL_UPL );
+#endif
     }
     if (global_fs_sel > 0) return global_fs_sel;
     return wine_ldt_alloc_entries( 1 );
@@ -453,11 +422,9 @@ void wine_ldt_init_fs( unsigned short sel, const LDT_ENTRY *entry )
         ldt_info.entry_number = sel >> 3;
         fill_modify_ldt_struct( &ldt_info, entry );
         if ((ret = set_thread_area( &ldt_info ) < 0)) perror( "set_thread_area" );
-#elif defined(__APPLE__)
-        int ret = thread_set_user_ldt( wine_ldt_get_base(entry), wine_ldt_get_limit(entry), 0 );
-        if (ret == -1) perror( "thread_set_user_ldt" );
-        else assert( ret == global_fs_sel );
-#endif  /* __APPLE__ */
+#elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__DragonFly__)
+        i386_set_fsbase( wine_ldt_get_base( entry ));
+#endif
     }
     else  /* LDT selector */
     {
@@ -489,8 +456,6 @@ void wine_ldt_free_fs( unsigned short sel )
 /***********************************************************************
  *           selector access functions
  */
-# ifndef _MSC_VER
-/* Nothing needs to be done for MS C, it will do with inline versions from the winnt.h */
 __ASM_GLOBAL_FUNC( wine_get_cs, "movw %cs,%ax\n\tret" )
 __ASM_GLOBAL_FUNC( wine_get_ds, "movw %ds,%ax\n\tret" )
 __ASM_GLOBAL_FUNC( wine_get_es, "movw %es,%ax\n\tret" )
@@ -499,6 +464,5 @@ __ASM_GLOBAL_FUNC( wine_get_gs, "movw %gs,%ax\n\tret" )
 __ASM_GLOBAL_FUNC( wine_get_ss, "movw %ss,%ax\n\tret" )
 __ASM_GLOBAL_FUNC( wine_set_fs, "movl 4(%esp),%eax\n\tmovw %ax,%fs\n\tret" )
 __ASM_GLOBAL_FUNC( wine_set_gs, "movl 4(%esp),%eax\n\tmovw %ax,%gs\n\tret" )
-# endif /* defined(_MSC_VER) */
 
 #endif /* __i386__ */

@@ -15,18 +15,20 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #define WIN32_LEAN_AND_MEAN     /* Exclude rarely-used stuff from Windows headers */
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
-#include <tchar.h>
 
 #include "main.h"
 
 void ShowAboutBox(HWND hWnd)
 {
-    ShellAbout(hWnd, _T("Registry Editor"), _T(""), LoadIcon(hInst, MAKEINTRESOURCE(IDI_REGEDIT)));
+    WCHAR title[64];
+    HICON icon = LoadImageW( hInst, MAKEINTRESOURCEW(IDI_REGEDIT), IMAGE_ICON, 48, 48, LR_SHARED );
+    LoadStringW(hInst, IDS_APP_TITLE, title, ARRAY_SIZE(title));
+    ShellAboutW(hWnd, title, NULL, icon);
 }

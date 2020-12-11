@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  *     These functions were involuntarily documented by Microsoft in 2002 as
@@ -45,14 +45,14 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dpa);
 
-struct _DPA
+typedef struct _DPA
 {
     INT    nItemCount;
     LPVOID   *ptrs;
     HANDLE hHeap;
     INT    nGrow;
     INT    nMaxCount;
-};
+} DPA;
 
 typedef struct _STREAMDATA
 {
@@ -60,15 +60,6 @@ typedef struct _STREAMDATA
     DWORD dwData2;
     DWORD dwItems;
 } STREAMDATA, *PSTREAMDATA;
-
-typedef struct _LOADDATA
-{
-    INT   nCount;
-    PVOID ptr;
-} LOADDATA, *LPLOADDATA;
-
-typedef HRESULT (CALLBACK *DPALOADPROC)(LPLOADDATA,IStream*,LPARAM);
-
 
 /**************************************************************************
  * DPA_LoadStream [COMCTL32.9]
@@ -79,58 +70,55 @@ typedef HRESULT (CALLBACK *DPALOADPROC)(LPLOADDATA,IStream*,LPARAM);
  *     phDpa    [O] pointer to a handle to a dynamic pointer array
  *     loadProc [I] pointer to a callback function
  *     pStream  [I] pointer to a stream
- *     lParam   [I] application specific value
+ *     pData    [I] pointer to callback data
  *
  * RETURNS
- *     Success: TRUE
- *     Failure: FALSE 
+ *     Success: S_OK, S_FALSE - partial success
+ *     Failure: HRESULT error code
  *
  * NOTES
  *     No more information available yet!
  */
-HRESULT WINAPI DPA_LoadStream (HDPA *phDpa, DPALOADPROC loadProc,
-                               IStream *pStream, LPARAM lParam)
+HRESULT WINAPI DPA_LoadStream (HDPA *phDpa, PFNDPASTREAM loadProc,
+                               IStream *pStream, LPVOID pData)
 {
     HRESULT errCode;
     LARGE_INTEGER position;
-    ULARGE_INTEGER newPosition;
+    ULARGE_INTEGER initial_pos;
     STREAMDATA  streamData;
-    LOADDATA loadData;
+    DPASTREAMINFO streamInfo;
     ULONG ulRead;
     HDPA hDpa;
     PVOID *ptr;
 
-    FIXME ("phDpa=%p loadProc=%p pStream=%p lParam=%lx\n",
-           phDpa, loadProc, pStream, lParam);
+    TRACE ("phDpa=%p loadProc=%p pStream=%p pData=%p\n",
+           phDpa, loadProc, pStream, pData);
 
     if (!phDpa || !loadProc || !pStream)
         return E_INVALIDARG;
 
-    *phDpa = (HDPA)NULL;
+    *phDpa = NULL;
 
     position.QuadPart = 0;
 
-    /*
-     * Zero out our streamData
-     */
-    memset(&streamData,0,sizeof(STREAMDATA));
-
-    errCode = IStream_Seek (pStream, position, STREAM_SEEK_CUR, &newPosition);
+    errCode = IStream_Seek (pStream, position, STREAM_SEEK_CUR, &initial_pos);
     if (errCode != S_OK)
         return errCode;
 
+    memset(&streamData, 0, sizeof(STREAMDATA));
     errCode = IStream_Read (pStream, &streamData, sizeof(STREAMDATA), &ulRead);
     if (errCode != S_OK)
         return errCode;
 
-    FIXME ("dwSize=%lu dwData2=%lu dwItems=%lu\n",
+    TRACE ("dwSize=%u dwData2=%u dwItems=%u\n",
            streamData.dwSize, streamData.dwData2, streamData.dwItems);
 
-    if ( ulRead < sizeof(STREAMDATA) ||
-    lParam < sizeof(STREAMDATA) ||
-        streamData.dwSize < sizeof(STREAMDATA) ||
-        streamData.dwData2 < 1) {
-        errCode = E_FAIL;
+    if (ulRead < sizeof(STREAMDATA) ||
+        streamData.dwSize < sizeof(STREAMDATA) || streamData.dwData2 != 1) {
+        /* back to initial position */
+        position.QuadPart = initial_pos.QuadPart;
+        IStream_Seek (pStream, position, STREAM_SEEK_SET, NULL);
+        return E_FAIL;
     }
 
     if (streamData.dwItems > (UINT_MAX / 2 / sizeof(VOID*))) /* 536870911 */
@@ -141,28 +129,30 @@ HRESULT WINAPI DPA_LoadStream (HDPA *phDpa, DPALOADPROC loadProc,
     if (!hDpa)
         return E_OUTOFMEMORY;
 
-    if (!DPA_Grow (hDpa, streamData.dwItems))
+    if (!DPA_Grow (hDpa, streamData.dwItems)) {
+        DPA_Destroy (hDpa);
         return E_OUTOFMEMORY;
+    }
 
     /* load data from the stream into the dpa */
     ptr = hDpa->ptrs;
-    for (loadData.nCount = 0; loadData.nCount < streamData.dwItems; loadData.nCount++) {
-        errCode = (loadProc)(&loadData, pStream, lParam);
+    for (streamInfo.iPos = 0; streamInfo.iPos < streamData.dwItems; streamInfo.iPos++) {
+        errCode = (loadProc)(&streamInfo, pStream, pData);
         if (errCode != S_OK) {
             errCode = S_FALSE;
             break;
         }
 
-        *ptr = loadData.ptr;
+        *ptr = streamInfo.pvItem;
         ptr++;
     }
 
     /* set the number of items */
-    hDpa->nItemCount = loadData.nCount;
+    hDpa->nItemCount = streamInfo.iPos;
 
     /* store the handle to the dpa */
     *phDpa = hDpa;
-    FIXME ("new hDpa=%p, errorcode=%lx\n", hDpa, errCode);
+    TRACE ("new hDpa=%p, errorcode=%x\n", hDpa, errCode);
 
     return errCode;
 }
@@ -175,25 +165,80 @@ HRESULT WINAPI DPA_LoadStream (HDPA *phDpa, DPALOADPROC loadProc,
  *
  * PARAMS
  *     hDpa     [I] handle to a dynamic pointer array
- *     loadProc [I] pointer to a callback function
+ *     saveProc [I] pointer to a callback function
  *     pStream  [I] pointer to a stream
- *     lParam   [I] application specific value
+ *     pData    [I] pointer to callback data
  *
  * RETURNS
- *     Success: TRUE
- *     Failure: FALSE 
+ *     Success: S_OK, S_FALSE - partial success
+ *     Failure: HRESULT error code
  *
  * NOTES
  *     No more information available yet!
  */
-HRESULT WINAPI DPA_SaveStream (const HDPA hDpa, DPALOADPROC loadProc,
-                               IStream *pStream, LPARAM lParam)
+HRESULT WINAPI DPA_SaveStream (HDPA hDpa, PFNDPASTREAM saveProc,
+                               IStream *pStream, LPVOID pData)
 {
+    LARGE_INTEGER position;
+    ULARGE_INTEGER initial_pos, curr_pos;
+    STREAMDATA  streamData;
+    DPASTREAMINFO streamInfo;
+    HRESULT hr;
+    PVOID *ptr;
 
-    FIXME ("hDpa=%p loadProc=%p pStream=%p lParam=%lx\n",
-           hDpa, loadProc, pStream, lParam);
+    TRACE ("hDpa=%p saveProc=%p pStream=%p pData=%p\n",
+            hDpa, saveProc, pStream, pData);
 
-    return E_FAIL;
+    if (!hDpa || !saveProc || !pStream) return E_INVALIDARG;
+
+    /* save initial position to write header after completion */
+    position.QuadPart = 0;
+    hr = IStream_Seek (pStream, position, STREAM_SEEK_CUR, &initial_pos);
+    if (hr != S_OK)
+        return hr;
+
+    /* write empty header */
+    streamData.dwSize  = sizeof(streamData);
+    streamData.dwData2 = 1;
+    streamData.dwItems = 0;
+
+    hr = IStream_Write (pStream, &streamData, sizeof(streamData), NULL);
+    if (hr != S_OK) {
+        position.QuadPart = initial_pos.QuadPart;
+        IStream_Seek (pStream, position, STREAM_SEEK_SET, NULL);
+        return hr;
+    }
+
+    /* no items - we're done */
+    if (hDpa->nItemCount == 0) return S_OK;
+
+    ptr = hDpa->ptrs;
+    for (streamInfo.iPos = 0; streamInfo.iPos < hDpa->nItemCount; streamInfo.iPos++) {
+        streamInfo.pvItem = *ptr;
+        hr = (saveProc)(&streamInfo, pStream, pData);
+        if (hr != S_OK) {
+            hr = S_FALSE;
+            break;
+        }
+        ptr++;
+    }
+
+    /* write updated header */
+    position.QuadPart = 0;
+    IStream_Seek (pStream, position, STREAM_SEEK_CUR, &curr_pos);
+
+    streamData.dwSize  = curr_pos.QuadPart - initial_pos.QuadPart;
+    streamData.dwData2 = 1;
+    streamData.dwItems = streamInfo.iPos;
+
+    position.QuadPart = initial_pos.QuadPart;
+    IStream_Seek (pStream, position, STREAM_SEEK_SET, NULL);
+    IStream_Write (pStream, &streamData, sizeof(streamData), NULL);
+
+    position.QuadPart = curr_pos.QuadPart;
+    IStream_Seek (pStream, position, STREAM_SEEK_SET, NULL);
+
+    return hr;
 }
 
 
@@ -217,7 +262,7 @@ HRESULT WINAPI DPA_SaveStream (const HDPA hDpa, DPALOADPROC loadProc,
  * NOTES
  *     No more information available yet!
  */
-BOOL WINAPI DPA_Merge (const HDPA hdpa1, const HDPA hdpa2, DWORD dwFlags,
+BOOL WINAPI DPA_Merge (HDPA hdpa1, HDPA hdpa2, DWORD dwFlags,
                        PFNDPACOMPARE pfnCompare, PFNDPAMERGE pfnMerge,
                        LPARAM lParam)
 {
@@ -226,7 +271,7 @@ BOOL WINAPI DPA_Merge (const HDPA hdpa1, const HDPA hdpa2, DWORD dwFlags,
     INT nResult, i;
     INT nIndex;
 
-    TRACE("%p %p %08lx %p %p %08lx)\n",
+    TRACE("(%p %p %08x %p %p %08lx)\n",
            hdpa1, hdpa2, dwFlags, pfnCompare, pfnMerge, lParam);
 
     if (IsBadWritePtr (hdpa1, sizeof(*hdpa1)))
@@ -241,14 +286,14 @@ BOOL WINAPI DPA_Merge (const HDPA hdpa1, const HDPA hdpa2, DWORD dwFlags,
     if (IsBadCodePtr ((FARPROC)pfnMerge))
         return FALSE;
 
-    if (!(dwFlags & DPAM_NOSORT)) {
-        TRACE("sorting dpa's!\n");
+    if (!(dwFlags & DPAM_SORTED)) {
+        TRACE("sorting dpa's.\n");
         if (hdpa1->nItemCount > 0)
         DPA_Sort (hdpa1, pfnCompare, lParam);
-        TRACE ("dpa 1 sorted!\n");
+        TRACE ("dpa 1 sorted.\n");
         if (hdpa2->nItemCount > 0)
         DPA_Sort (hdpa2, pfnCompare, lParam);
-        TRACE ("dpa 2 sorted!\n");
+        TRACE ("dpa 2 sorted.\n");
     }
 
     if (hdpa2->nItemCount < 1)
@@ -258,25 +303,23 @@ BOOL WINAPI DPA_Merge (const HDPA hdpa1, const HDPA hdpa2, DWORD dwFlags,
            hdpa1->nItemCount, hdpa2->nItemCount);
 
 
-    /* working but untrusted implementation */
-
-    pWork1 = &(hdpa1->ptrs[hdpa1->nItemCount - 1]);
-    pWork2 = &(hdpa2->ptrs[hdpa2->nItemCount - 1]);
-
     nIndex = hdpa1->nItemCount - 1;
     nCount = hdpa2->nItemCount - 1;
 
     do
     {
+        pWork1 = &hdpa1->ptrs[nIndex];
+        pWork2 = &hdpa2->ptrs[nCount];
+
         if (nIndex < 0) {
-            if ((nCount >= 0) && (dwFlags & DPAM_INSERT)) {
+            if ((nCount >= 0) && (dwFlags & DPAM_UNION)) {
                 /* Now insert the remaining new items into DPA 1 */
                 TRACE("%d items to be inserted at start of DPA 1\n",
                       nCount+1);
                 for (i=nCount; i>=0; i--) {
                     PVOID ptr;
 
-                    ptr = (pfnMerge)(3, *pWork2, NULL, lParam);
+                    ptr = (pfnMerge)(DPAMM_INSERT, *pWork2, NULL, lParam);
                     if (!ptr)
                         return FALSE;
                     DPA_InsertPtr (hdpa1, 0, ptr);
@@ -293,46 +336,42 @@ BOOL WINAPI DPA_Merge (const HDPA hdpa1, const HDPA hdpa2, DWORD dwFlags,
         {
             PVOID ptr;
 
-            ptr = (pfnMerge)(1, *pWork1, *pWork2, lParam);
+            ptr = (pfnMerge)(DPAMM_MERGE, *pWork1, *pWork2, lParam);
             if (!ptr)
                 return FALSE;
 
             nCount--;
-            pWork2--;
             *pWork1 = ptr;
             nIndex--;
-            pWork1--;
         }
         else if (nResult > 0)
         {
             /* item in DPA 1 missing from DPA 2 */
-            if (dwFlags & DPAM_DELETE)
+            if (dwFlags & DPAM_INTERSECT)
             {
                 /* Now delete the extra item in DPA1 */
                 PVOID ptr;
 
-                ptr = DPA_DeletePtr (hdpa1, hdpa1->nItemCount - 1);
+                ptr = DPA_DeletePtr (hdpa1, nIndex);
 
-                (pfnMerge)(2, ptr, NULL, lParam);
+                (pfnMerge)(DPAMM_DELETE, ptr, NULL, lParam);
             }
             nIndex--;
-            pWork1--;
         }
         else
         {
             /* new item in DPA 2 */
-            if (dwFlags & DPAM_INSERT)
+            if (dwFlags & DPAM_UNION)
             {
                 /* Now insert the new item in DPA 1 */
                 PVOID ptr;
 
-                ptr = (pfnMerge)(3, *pWork2, NULL, lParam);
+                ptr = (pfnMerge)(DPAMM_INSERT, *pWork2, NULL, lParam);
                 if (!ptr)
                     return FALSE;
                 DPA_InsertPtr (hdpa1, nIndex+1, ptr);
             }
             nCount--;
-            pWork2--;
         }
 
     }
@@ -354,7 +393,7 @@ BOOL WINAPI DPA_Merge (const HDPA hdpa1, const HDPA hdpa2, DWORD dwFlags,
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DPA_Destroy (const HDPA hdpa)
+BOOL WINAPI DPA_Destroy (HDPA hdpa)
 {
     TRACE("(%p)\n", hdpa);
 
@@ -381,14 +420,29 @@ BOOL WINAPI DPA_Destroy (const HDPA hdpa)
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DPA_Grow (const HDPA hdpa, INT nGrow)
+BOOL WINAPI DPA_Grow (HDPA hdpa, INT nGrow)
 {
+    INT items;
     TRACE("(%p %d)\n", hdpa, nGrow);
 
     if (!hdpa)
         return FALSE;
 
-    hdpa->nGrow = max(8, nGrow);
+    nGrow = max( 8, nGrow );
+    items = nGrow * (((hdpa->nMaxCount - 1) / nGrow) + 1);
+    if (items > hdpa->nMaxCount)
+    {
+        void *ptr;
+
+        if (hdpa->ptrs)
+            ptr = HeapReAlloc( hdpa->hHeap, HEAP_ZERO_MEMORY, hdpa->ptrs, items * sizeof(LPVOID) );
+        else
+            ptr = HeapAlloc( hdpa->hHeap, HEAP_ZERO_MEMORY, items * sizeof(LPVOID) );
+        if (!ptr) return FALSE;
+        hdpa->nMaxCount = items;
+        hdpa->ptrs = ptr;
+    }
+    hdpa->nGrow = nGrow;
 
     return TRUE;
 }
@@ -397,7 +451,7 @@ BOOL WINAPI DPA_Grow (const HDPA hdpa, INT nGrow)
 /**************************************************************************
  * DPA_Clone [COMCTL32.331]
  *
- * Copies a pointer array to an other one or creates a copy
+ * Copies a pointer array to another one or creates a copy
  *
  * PARAMS
  *     hdpa    [I] handle (pointer) to the existing (source) pointer array
@@ -409,11 +463,11 @@ BOOL WINAPI DPA_Grow (const HDPA hdpa, INT nGrow)
  *
  * NOTES
  *     - If the 'hdpaNew' is a NULL-Pointer, a copy of the source pointer
- *       array will be created and it's handle (pointer) is returned.
+ *       array will be created and its handle (pointer) is returned.
  *     - If 'hdpa' is a NULL-Pointer, the original implementation crashes,
  *       this implementation just returns NULL.
  */
-HDPA WINAPI DPA_Clone (const HDPA hdpa, const HDPA hdpaNew)
+HDPA WINAPI DPA_Clone (const HDPA hdpa, HDPA hdpaNew)
 {
     INT nNewItems, nSize;
     HDPA hdpaTemp;
@@ -443,7 +497,7 @@ HDPA WINAPI DPA_Clone (const HDPA hdpa, const HDPA hdpaNew)
 
     /* create a new pointer array */
     nNewItems = hdpaTemp->nGrow *
-                ((INT)((hdpa->nItemCount - 1) / hdpaTemp->nGrow) + 1);
+                (((hdpa->nItemCount - 1) / hdpaTemp->nGrow) + 1);
     nSize = nNewItems * sizeof(LPVOID);
     hdpaTemp->ptrs = HeapAlloc (hdpaTemp->hHeap, HEAP_ZERO_MEMORY, nSize);
     hdpaTemp->nMaxCount = nNewItems;
@@ -470,7 +524,7 @@ HDPA WINAPI DPA_Clone (const HDPA hdpa, const HDPA hdpaNew)
  *     Success: pointer
  *     Failure: NULL
  */
-LPVOID WINAPI DPA_GetPtr (const HDPA hdpa, INT nIndex)
+LPVOID WINAPI DPA_GetPtr (HDPA hdpa, INT nIndex)
 {
     TRACE("(%p %d)\n", hdpa, nIndex);
 
@@ -504,7 +558,7 @@ LPVOID WINAPI DPA_GetPtr (const HDPA hdpa, INT nIndex)
  *     Success: index of the specified pointer
  *     Failure: -1
  */
-INT WINAPI DPA_GetPtrIndex (const HDPA hdpa, LPVOID p)
+INT WINAPI DPA_GetPtrIndex (HDPA hdpa, LPCVOID p)
 {
     INT i;
 
@@ -534,7 +588,7 @@ INT WINAPI DPA_GetPtrIndex (const HDPA hdpa, LPVOID p)
  *     Success: index of the inserted pointer
  *     Failure: -1
  */
-INT WINAPI DPA_InsertPtr (const HDPA hdpa, INT i, LPVOID p)
+INT WINAPI DPA_InsertPtr (HDPA hdpa, INT i, LPVOID p)
 {
     TRACE("(%p %d %p)\n", hdpa, i, p);
 
@@ -569,7 +623,7 @@ INT WINAPI DPA_InsertPtr (const HDPA hdpa, INT i, LPVOID p)
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DPA_SetPtr (const HDPA hdpa, INT i, LPVOID p)
+BOOL WINAPI DPA_SetPtr (HDPA hdpa, INT i, LPVOID p)
 {
     LPVOID *lpTemp;
 
@@ -583,7 +637,7 @@ BOOL WINAPI DPA_SetPtr (const HDPA hdpa, INT i, LPVOID p)
         if (hdpa->nMaxCount <= i) {
             /* resize the block of memory */
             INT nNewItems =
-                hdpa->nGrow * ((INT)(((i+1) - 1) / hdpa->nGrow) + 1);
+                hdpa->nGrow * ((((i+1) - 1) / hdpa->nGrow) + 1);
             INT nSize = nNewItems * sizeof(LPVOID);
 
             if (hdpa->ptrs)
@@ -620,7 +674,7 @@ BOOL WINAPI DPA_SetPtr (const HDPA hdpa, INT i, LPVOID p)
  *     Success: deleted pointer
  *     Failure: NULL
  */
-LPVOID WINAPI DPA_DeletePtr (const HDPA hdpa, INT i)
+LPVOID WINAPI DPA_DeletePtr (HDPA hdpa, INT i)
 {
     LPVOID *lpDest, *lpSrc, lpTemp = NULL;
     INT  nSize;
@@ -654,7 +708,7 @@ LPVOID WINAPI DPA_DeletePtr (const HDPA hdpa, INT i)
             return NULL;
 
         hdpa->nMaxCount = nNewItems;
-        hdpa->ptrs = (LPVOID*)lpDest;
+        hdpa->ptrs = lpDest;
     }
 
     return lpTemp;
@@ -673,7 +727,7 @@ LPVOID WINAPI DPA_DeletePtr (const HDPA hdpa, INT i)
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DPA_DeleteAllPtrs (const HDPA hdpa)
+BOOL WINAPI DPA_DeleteAllPtrs (HDPA hdpa)
 {
     TRACE("(%p)\n", hdpa);
 
@@ -756,7 +810,7 @@ static VOID DPA_QuickSort (LPVOID *lpPtrs, INT l, INT r,
  *     Success: TRUE
  *     Failure: FALSE
  */
-BOOL WINAPI DPA_Sort (const HDPA hdpa, PFNDPACOMPARE pfnCompare, LPARAM lParam)
+BOOL WINAPI DPA_Sort (HDPA hdpa, PFNDPACOMPARE pfnCompare, LPARAM lParam)
 {
     if (!hdpa || !pfnCompare)
         return FALSE;
@@ -788,7 +842,7 @@ BOOL WINAPI DPA_Sort (const HDPA hdpa, PFNDPACOMPARE pfnCompare, LPARAM lParam)
  *     Success: index of the pointer in the array.
  *     Failure: -1
  */
-INT WINAPI DPA_Search (const HDPA hdpa, LPVOID pFind, INT nStart,
+INT WINAPI DPA_Search (HDPA hdpa, LPVOID pFind, INT nStart,
                        PFNDPACOMPARE pfnCompare, LPARAM lParam, UINT uOptions)
 {
     if (!hdpa || !pfnCompare || !pFind)
@@ -802,7 +856,8 @@ INT WINAPI DPA_Search (const HDPA hdpa, LPVOID pFind, INT nStart,
         INT l, r, x, n;
         LPVOID *lpPtr;
 
-        l = (nStart == -1) ? 0 : nStart;
+        /* for binary search ignore start index */
+        l = 0;
         r = hdpa->nItemCount - 1;
         lpPtr = hdpa->ptrs;
         while (r >= l) {
@@ -952,4 +1007,24 @@ void WINAPI DPA_DestroyCallback (HDPA hdpa, PFNDPAENUMCALLBACK enumProc,
 
     DPA_EnumCallback (hdpa, enumProc, lParam);
     DPA_Destroy (hdpa);
+}
+
+/**************************************************************************
+ * DPA_GetSize [COMCTL32.@]
+ *
+ * Returns all array allocated memory size
+ *
+ * PARAMS
+ *     hdpa     [I] handle to the dynamic pointer array
+ *
+ * RETURNS
+ *     Size in bytes
+ */
+ULONGLONG WINAPI DPA_GetSize(HDPA hdpa)
+{
+    TRACE("(%p)\n", hdpa);
+
+    if (!hdpa) return 0;
+
+    return sizeof(DPA) + hdpa->nMaxCount*sizeof(PVOID);
 }

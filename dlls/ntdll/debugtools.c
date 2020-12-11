@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -34,25 +34,16 @@
 #include "wine/exception.h"
 #include "wine/library.h"
 #include "wine/unicode.h"
-#include "ntstatus.h"
 #include "winnt.h"
 #include "winternl.h"
-#include "excpt.h"
 #include "ntdll_misc.h"
 
-WINE_DECLARE_DEBUG_CHANNEL(tid);
+WINE_DECLARE_DEBUG_CHANNEL(pid);
+WINE_DECLARE_DEBUG_CHANNEL(timestamp);
 
 static struct __wine_debug_functions default_funcs;
 
 /* ---------------------------------------------------------------------- */
-
-/* filter for page-fault exceptions */
-static WINE_EXCEPTION_FILTER(page_fault)
-{
-    if (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION)
-        return EXCEPTION_EXECUTE_HANDLER;
-    return EXCEPTION_CONTINUE_SEARCH;
-}
 
 /* get the debug info pointer for the current thread */
 static inline struct debug_info *get_info(void)
@@ -71,7 +62,7 @@ static char *get_temp_buffer( size_t n )
     return res;
 }
 
-/* release extra space that we requested in gimme1() */
+/* release extra space that we requested in get_temp_buffer() */
 static void release_temp_buffer( char *ptr, size_t size )
 {
     struct debug_info *info = get_info();
@@ -92,7 +83,7 @@ static const char *NTDLL_dbgstr_an( const char *src, int n )
     {
         res = default_funcs.dbgstr_an( src, n );
     }
-    __EXCEPT(page_fault)
+    __EXCEPT_PAGE_FAULT
     {
         release_temp_buffer( old_pos, 0 );
         return "(invalid)";
@@ -115,7 +106,7 @@ static const char *NTDLL_dbgstr_wn( const WCHAR *src, int n )
     {
         res = default_funcs.dbgstr_wn( src, n );
     }
-    __EXCEPT(page_fault)
+    __EXCEPT_PAGE_FAULT
     {
         release_temp_buffer( old_pos, 0 );
         return "(invalid)";
@@ -130,7 +121,7 @@ static const char *NTDLL_dbgstr_wn( const WCHAR *src, int n )
 static int NTDLL_dbg_vprintf( const char *format, va_list args )
 {
     struct debug_info *info = get_info();
-    char *p;
+    int end;
 
     int ret = vsnprintf( info->out_pos, sizeof(info->output) - (info->out_pos - info->output),
                          format, args );
@@ -147,16 +138,16 @@ static int NTDLL_dbg_vprintf( const char *format, va_list args )
        abort();
     }
 
-    p = strrchr( info->out_pos, '\n' );
-    if (!p) info->out_pos += ret;
+    for (end = ret; end > 0; end--) if (info->out_pos[end - 1] == '\n') break;
+
+    if (!end) info->out_pos += ret;
     else
     {
         char *pos = info->output;
-        p++;
-        write( 2, pos, p - pos );
+        write( 2, pos, info->out_pos + end - pos );
         /* move beginning of next line to start of buffer */
-        while ((*pos = *p++)) pos++;
-        info->out_pos = pos;
+        memmove( pos, info->out_pos + end, ret - end );
+        info->out_pos = pos + ret - end;
     }
     return ret;
 }
@@ -174,9 +165,17 @@ static int NTDLL_dbg_vlog( enum __wine_debug_class cls, struct __wine_debug_chan
     /* only print header if we are at the beginning of the line */
     if (info->out_pos == info->output || info->out_pos[-1] == '\n')
     {
-        if (TRACE_ON(tid))
-            ret = wine_dbg_printf( "%04lx:", GetCurrentThreadId() );
-        if (cls < sizeof(classes)/sizeof(classes[0]))
+        if (TRACE_ON(timestamp))
+        {
+            ULONG ticks = NtGetTickCount();
+            ret = wine_dbg_printf( "%3u.%03u:", ticks / 1000, ticks % 1000 );
+        }
+        if (TRACE_ON(pid))
+            ret += wine_dbg_printf( "%04x:", GetCurrentProcessId() );
+        ret += wine_dbg_printf( "%04x:", GetCurrentThreadId() );
+        if (*format == '\1')  /* special magic to avoid standard prefix */
+            format++;
+        else if (cls < ARRAY_SIZE( classes ))
             ret += wine_dbg_printf( "%s:%s:%s ", classes[cls], channel->name, function );
     }
     if (format)

@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package winapi_test_options;
@@ -46,7 +46,7 @@ my %options_short = (
     "v" => "verbose"
 );
 
-my $options_usage = "usage: winapi_test [--help]\n";
+my $options_usage = "Usage: winapi_test [--help]\n\nGenerates tests checking the size and alignment of the Windows structures.\n\n";
 
 $options = '_options'->new(\%options_long, \%options_short, $options_usage);
 

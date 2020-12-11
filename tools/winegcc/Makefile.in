@@ -1,54 +1,21 @@
-DEFS = \
-	-DINCLUDEDIR="\"$(includedir)\"" \
-	-DDLLDIR="\"$(dlldir)\"" \
-	-DLIBDIR="\"$(libdir)\"" \
-	-DDLLFLAGS="\"@DLLFLAGS@\"" \
-	-DLDDLLFLAGS="\"@LDDLLFLAGS@\"" \
-	-DAS="\"$(AS)\"" \
-	-DCC="\"$(CC)\"" \
-	-DCPP="\"@CPPBIN@\"" \
-	-DCXX="\"$(CXX)\"" \
-	-DLD="\"$(LD)\"" \
-	-DPRELINK="\"$(PRELINK)\""
+PROGRAMS = winegcc
 
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
-EXEEXT    = @EXEEXT@
-MODULE    = none
+MANPAGES = winegcc.man.in
 
-PROGRAMS = \
-	winecpp$(EXEEXT) \
-	winegcc$(EXEEXT) \
-	wineg++$(EXEEXT)
-
-MANPAGES = winegcc.man
+winegcc_SYMLINKS = winecpp wineg++
 
 C_SRCS = \
 	utils.c \
 	winegcc.c
 
-all: $(PROGRAMS) $(MANPAGES)
+winegcc_EXTRADEFS = \
+	-DINCLUDEDIR="\"${includedir}\"" \
+	-DDLLDIR="\"${dlldir}\"" \
+	-DLIBDIR="\"${libdir}\"" \
+	-DCC="\"$(CC)\"" \
+	-DCPP="\"$(CPPBIN)\"" \
+	-DCXX="\"$(CXX)\"" \
+	-DLD="\"$(LD)\"" \
+	-DPRELINK="\"$(PRELINK)\""
 
-@MAKE_RULES@
-
-winegcc$(EXEEXT): winegcc.o utils.o
-	$(CC) $(CFLAGS) -o $@ winegcc.o utils.o $(LIBPORT)
-
-winecpp$(EXEEXT) wineg++$(EXEEXT): winegcc$(EXEEXT)
-	$(RM) $@ && $(LN_S) winegcc$(EXEEXT) $@
-
-install:: $(PROGRAMS) $(MANPAGES)
-	$(MKINSTALLDIRS) $(bindir) $(mandir)/man$(prog_manext)
-	$(INSTALL_PROGRAM) winegcc$(EXEEXT) $(bindir)/winegcc$(EXEEXT)
-	cd $(bindir) && $(RM) wineg++$(EXEEXT) && $(LN_S) winegcc$(EXEEXT) wineg++$(EXEEXT)
-	cd $(bindir) && $(RM) winecpp$(EXEEXT) && $(LN_S) winegcc$(EXEEXT) winecpp$(EXEEXT)
-	$(INSTALL_DATA) winegcc.man $(mandir)/man$(prog_manext)/winegcc.$(prog_manext)
-	cd $(mandir)/man$(prog_manext) && $(RM) wineg++.$(prog_manext) && $(LN_S) winegcc.$(prog_manext) wineg++.$(prog_manext)
-
-uninstall::
-	$(RM) $(bindir)/winegcc$(EXEEXT) $(bindir)/wineg++$(EXEEXT) $(bindir)/winecpp$(EXEEXT) \
-	      $(mandir)/man$(prog_manext)/winegcc.$(prog_manext) $(mandir)/man$(prog_manext)/wineg++.$(prog_manext)
-
-### Dependencies:
+INSTALL_DEV = $(PROGRAMS) $(winegcc_SYMLINKS)

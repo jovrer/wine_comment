@@ -13,13 +13,59 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _EVNTRACE_
 #define _EVNTRACE_
 
 #include <guiddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define EVENT_TRACE_CONTROL_QUERY     0
+#define EVENT_TRACE_CONTROL_STOP      1
+#define EVENT_TRACE_CONTROL_UPDATE    2
+#define EVENT_TRACE_CONTROL_FLUSH     3
+
+#define TRACE_LEVEL_NONE              0
+#define TRACE_LEVEL_CRITICAL          1
+#define TRACE_LEVEL_FATAL             1
+#define TRACE_LEVEL_ERROR             2
+#define TRACE_LEVEL_WARNING           3
+#define TRACE_LEVEL_INFORMATION       4
+#define TRACE_LEVEL_VERBOSE           5
+
+#define EVENT_TRACE_FILE_MODE_NONE             0x00000000
+#define EVENT_TRACE_FILE_MODE_SEQUENTIAL       0x00000001
+#define EVENT_TRACE_FILE_MODE_CIRCULAR         0x00000002
+#define EVENT_TRACE_FILE_MODE_APPEND           0x00000004
+#define EVENT_TRACE_FILE_MODE_NEWFILE          0x00000008
+#define EVENT_TRACE_FILE_MODE_PREALLOCATE      0x00000020
+#define EVENT_TRACE_NONSTOPPABLE_MODE          0x00000040
+#define EVENT_TRACE_SECURE_MODE                0x00000080
+#define EVENT_TRACE_REAL_TIME_MODE             0x00000100
+#define EVENT_TRACE_DELAY_OPEN_FILE_MODE       0x00000200
+#define EVENT_TRACE_BUFFERING_MODE             0x00000400
+#define EVENT_TRACE_PRIVATE_LOGGER_MODE        0x00000800
+#define EVENT_TRACE_ADD_HEADER_MODE            0x00001000
+#define EVENT_TRACE_USE_KBYTES_FOR_SIZE        0x00002000
+#define EVENT_TRACE_USE_GLOBAL_SEQUENCE        0x00004000
+#define EVENT_TRACE_USE_LOCAL_SEQUENCE         0x00008000
+#define EVENT_TRACE_RELOG_MODE                 0x00010000
+#define EVENT_TRACE_PRIVATE_IN_PROC            0x00020000
+#define EVENT_TRACE_MODE_RESERVED              0x00100000
+#define EVENT_TRACE_STOP_ON_HYBRID_SHUTDOWN    0x00400000
+#define EVENT_TRACE_PERSIST_ON_HYBRID_SHUTDOWN 0x00800000
+#define EVENT_TRACE_USE_PAGED_MEMORY           0x01000000
+#define EVENT_TRACE_SYSTEM_LOGGER_MODE         0x02000000
+#define EVENT_TRACE_INDEPENDENT_SESSION_MODE   0x08000000
+#define EVENT_TRACE_NO_PER_PROCESSOR_BUFFERING 0x10000000
+#define EVENT_TRACE_ADDTO_TRIAGE_DUMP          0x80000000
+
+DEFINE_GUID (SystemTraceControlGuid, 0x9e814aad, 0x3204, 0x11d2, 0x9a, 0x82, 0x00, 0x60, 0x08, 0xa8, 0x69, 0x39);
 
 typedef ULONG64 TRACEHANDLE, *PTRACEHANDLE;
 
@@ -39,6 +85,15 @@ typedef struct _TRACE_GUID_REGISTRATION
     LPCGUID Guid;
     HANDLE RegHandle;
 } TRACE_GUID_REGISTRATION, *PTRACE_GUID_REGISTRATION;
+
+typedef struct _TRACE_GUID_PROPERTIES {
+    GUID    Guid;
+    ULONG   GuidType;
+    ULONG   LoggerId;
+    ULONG   EnableLevel;
+    ULONG   EnableFlags;
+    BOOLEAN IsEnable;
+} TRACE_GUID_PROPERTIES, *PTRACE_GUID_PROPERTIES;
 
 typedef struct _EVENT_TRACE_HEADER
 {
@@ -172,10 +227,93 @@ struct _EVENT_TRACE_LOGFILEA
     PVOID Context;
 };
 
+typedef struct _EVENT_TRACE_PROPERTIES
+{
+    WNODE_HEADER Wnode;
+    ULONG BufferSize;
+    ULONG MinimumBuffers;
+    ULONG MaximumBuffers;
+    ULONG MaximumFileSize;
+    ULONG LogFileMode;
+    ULONG FlushTimer;
+    ULONG EnableFlags;
+    LONG AgeLimit;
+    ULONG NumberOfBuffers;
+    ULONG FreeBuffers;
+    ULONG EventsLost;
+    ULONG BuffersWritten;
+    ULONG LogBuffersLost;
+    ULONG RealTimeBuffersLost;
+    HANDLE LoggerThreadId;
+    ULONG LogFileNameOffset;
+    ULONG LoggerNameOffset;
+} EVENT_TRACE_PROPERTIES, *PEVENT_TRACE_PROPERTIES;
+
+typedef struct _ENABLE_TRACE_PARAMETERS
+{
+    ULONG                            Version;
+    ULONG                            EnableProperty;
+    ULONG                            ControlFlags;
+    GUID                             SourceId;
+    struct _EVENT_FILTER_DESCRIPTOR *EnableFilterDesc;
+    ULONG                            FilterDescCount;
+} ENABLE_TRACE_PARAMETERS, *PENABLE_TRACE_PARAMETERS;
+
+typedef enum _TRACE_QUERY_INFO_CLASS
+{
+    TraceGuidQueryList,
+    TraceGuidQueryInfo,
+    TraceGuidQueryProcess,
+    TraceStackTracingInfo,
+    TraceSystemTraceEnableFlagsInfo,
+    TraceSampledProfileIntervalInfo,
+    TraceProfileSourceConfigInfo,
+    TraceProfileSourceListInfo,
+    TracePmcEventListInfo,
+    TracePmcCounterListInfo,
+    TraceSetDisallowList,
+    TraceVersionInfo,
+    TraceGroupQueryList,
+    TraceGroupQueryInfo,
+    TraceDisallowListQuery,
+    TraceCompressionInfo,
+    TracePeriodicCaptureStateListInfo,
+    TracePeriodicCaptureStateInfo,
+    TraceProviderBinaryTracking,
+    TraceMaxLoggersQuery,
+    MaxTraceSetInfoClass
+} TRACE_QUERY_INFO_CLASS, TRACE_INFO_CLASS;
+
+#define INVALID_PROCESSTRACE_HANDLE ((TRACEHANDLE)~(ULONG_PTR)0)
+
 ULONG WINAPI CloseTrace(TRACEHANDLE);
+ULONG WINAPI ControlTraceA(TRACEHANDLE,LPCSTR,PEVENT_TRACE_PROPERTIES,ULONG);
+ULONG WINAPI ControlTraceW(TRACEHANDLE,LPCWSTR,PEVENT_TRACE_PROPERTIES,ULONG);
+#define      ControlTrace WINELIB_NAME_AW(ControlTrace)
 ULONG WINAPI EnableTrace(ULONG,ULONG,ULONG,LPCGUID,TRACEHANDLE);
+ULONG WINAPI EnableTraceEx2(TRACEHANDLE,LPCGUID,ULONG,UCHAR,ULONGLONG,ULONGLONG,ULONG,PENABLE_TRACE_PARAMETERS);
+ULONG WINAPI FlushTraceA(TRACEHANDLE,LPCSTR,PEVENT_TRACE_PROPERTIES);
+ULONG WINAPI FlushTraceW(TRACEHANDLE,LPCWSTR,PEVENT_TRACE_PROPERTIES);
+#define      FlushTrace WINELIB_NAME_AW(FlushTrace)
+ULONG WINAPI GetTraceEnableFlags(TRACEHANDLE);
+UCHAR WINAPI GetTraceEnableLevel(TRACEHANDLE);
+TRACEHANDLE WINAPI GetTraceLoggerHandle(PVOID);
+ULONG WINAPI QueryAllTracesA(PEVENT_TRACE_PROPERTIES*,ULONG,PULONG);
+ULONG WINAPI QueryAllTracesW(PEVENT_TRACE_PROPERTIES*,ULONG,PULONG);
+#define      QueryAllTraces WINELIB_NAME_AW(QueryAllTraces)
 ULONG WINAPI RegisterTraceGuidsA(WMIDPREQUEST,PVOID,LPCGUID,ULONG,PTRACE_GUID_REGISTRATION,LPCSTR,LPCSTR,PTRACEHANDLE);
 ULONG WINAPI RegisterTraceGuidsW(WMIDPREQUEST,PVOID,LPCGUID,ULONG,PTRACE_GUID_REGISTRATION,LPCWSTR,LPCWSTR,PTRACEHANDLE);
 #define      RegisterTraceGuids WINELIB_NAME_AW(RegisterTraceGuids)
+ULONG WINAPI StartTraceA(PTRACEHANDLE,LPCSTR,PEVENT_TRACE_PROPERTIES);
+ULONG WINAPI StartTraceW(PTRACEHANDLE,LPCWSTR,PEVENT_TRACE_PROPERTIES);
+#define      StartTrace WINELIB_NAME_AW(StartTrace)
+ULONG WINAPI TraceEvent(TRACEHANDLE,PEVENT_TRACE_HEADER);
+ULONG WINAPIV TraceMessage(TRACEHANDLE,ULONG,LPGUID,USHORT,...);
+ULONG WINAPI TraceMessageVa(TRACEHANDLE,ULONG,LPGUID,USHORT,__ms_va_list);
+ULONG WINAPI UnregisterTraceGuids(TRACEHANDLE);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _EVNTRACE_ */

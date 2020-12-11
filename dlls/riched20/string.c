@@ -15,303 +15,226 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "editor.h"     
+#include "editor.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
-int ME_GetOptimalBuffer(int nLen)
+static int ME_GetOptimalBuffer(int nLen)
 {
-  return ((2*nLen+1)+128)&~63;
+  return ((sizeof(WCHAR) * nLen) + 128) & ~63;
 }
 
-ME_String *ME_MakeString(LPCWSTR szText)
+static ME_String *make_string( void (*free)(ME_String *) )
 {
-  ME_String *s = ALLOC_OBJ(ME_String);
-  s->nLen = lstrlenW(szText);
-  s->nBuffer = ME_GetOptimalBuffer(s->nLen+1);
-  s->szData = ALLOC_N_OBJ(WCHAR, s->nBuffer);
-  lstrcpyW(s->szData, szText);
+  ME_String *s = heap_alloc( sizeof(*s) );
+
+  if (s) s->free = free;
+  return s;
+}
+
+/* Create a ME_String using the const string provided.
+ * str must exist for the lifetime of the returned ME_String.
+ */
+ME_String *ME_MakeStringConst(const WCHAR *str, int len)
+{
+  ME_String *s = make_string( NULL );
+  if (!s) return NULL;
+
+  s->szData = (WCHAR *)str;
+  s->nLen = len;
+  s->nBuffer = 0;
+  return s;
+}
+
+static void heap_string_free(ME_String *s)
+{
+  heap_free( s->szData );
+}
+
+/* Create a buffer (uninitialized string) of size nMaxChars */
+ME_String *ME_MakeStringEmpty(int nMaxChars)
+{
+  ME_String *s = make_string( heap_string_free );
+
+  if (!s) return NULL;
+  s->nLen = nMaxChars;
+  s->nBuffer = ME_GetOptimalBuffer(s->nLen + 1);
+  s->szData = heap_alloc( s->nBuffer * sizeof(WCHAR) );
+  if (!s->szData)
+  {
+    heap_free( s );
+    return NULL;
+  }
+  s->szData[s->nLen] = 0;
   return s;
 }
 
 ME_String *ME_MakeStringN(LPCWSTR szText, int nMaxChars)
 {
-  ME_String *s = ALLOC_OBJ(ME_String);
-  int i;
-  for (i=0; i<nMaxChars && szText[i]; i++)
-    ;
-  s->nLen = i;
-  s->nBuffer = ME_GetOptimalBuffer(s->nLen+1);
-  s->szData = ALLOC_N_OBJ(WCHAR, s->nBuffer);
-  lstrcpynW(s->szData, szText, s->nLen+1);
+  ME_String *s = ME_MakeStringEmpty(nMaxChars);
+
+  if (!s) return NULL;
+  memcpy(s->szData, szText, s->nLen * sizeof(WCHAR));
   return s;
 }
 
-ME_String *ME_StrDup(ME_String *s)
+/* Make a string by repeating a char nMaxChars times */
+ME_String *ME_MakeStringR(WCHAR cRepeat, int nMaxChars)
 {
-  return ME_MakeStringN(s->szData, s->nLen);
+  int i;
+  ME_String *s = ME_MakeStringEmpty(nMaxChars);
+
+  if (!s) return NULL;
+  for (i = 0; i < nMaxChars; i++)
+    s->szData[i] = cRepeat;
+  return s;
 }
 
 void ME_DestroyString(ME_String *s)
 {
-  FREE_OBJ(s->szData);
-  FREE_OBJ(s);
+  if (!s) return;
+  if (s->free) s->free( s );
+  heap_free( s );
 }
 
-void ME_AppendString(ME_String *s1, ME_String *s2)
+BOOL ME_InsertString(ME_String *s, int ofs, const WCHAR *insert, int len)
 {
-  if (s1->nLen+s2->nLen+1 <= s1->nBuffer) {
-    lstrcpyW(s1->szData+s1->nLen, s2->szData);
-    s1->nLen += s2->nLen;
-  }
-  else
-  {
-    WCHAR *buf;
-    s1->nBuffer = ME_GetOptimalBuffer(s1->nLen+s2->nLen+1);
+    DWORD new_len = s->nLen + len + 1;
+    WCHAR *new;
 
-    buf = ALLOC_N_OBJ(WCHAR, s1->nBuffer); 
-    lstrcpyW(buf, s1->szData);
-    lstrcpyW(buf+s1->nLen, s2->szData);
-    FREE_OBJ(s1->szData);
-    s1->szData = buf;
-    s1->nLen += s2->nLen;
-  }
+    assert( s->nBuffer ); /* Not a const string */
+    assert( ofs <= s->nLen );
+
+    if( new_len > s->nBuffer )
+    {
+        s->nBuffer = ME_GetOptimalBuffer( new_len );
+        new = heap_realloc( s->szData, s->nBuffer * sizeof(WCHAR) );
+        if (!new) return FALSE;
+        s->szData = new;
+    }
+
+    memmove( s->szData + ofs + len, s->szData + ofs, (s->nLen - ofs + 1) * sizeof(WCHAR) );
+    memcpy( s->szData + ofs, insert, len * sizeof(WCHAR) );
+    s->nLen += len;
+
+    return TRUE;
 }
 
-ME_String *ME_ConcatString(ME_String *s1, ME_String *s2)
+BOOL ME_AppendString(ME_String *s, const WCHAR *append, int len)
 {
-  ME_String *s = ALLOC_OBJ(ME_String);
-  s->nLen = s1->nLen+s2->nLen;
-  s->nBuffer = ME_GetOptimalBuffer(s1->nLen+s2->nLen+1);
-  s->szData = ALLOC_N_OBJ(WCHAR, s->nBuffer);
-  lstrcpyW(s->szData, s1->szData);
-  lstrcpyW(s->szData+s1->nLen, s2->szData);
-  return s;  
+    return ME_InsertString( s, s->nLen, append, len );
 }
 
 ME_String *ME_VSplitString(ME_String *orig, int charidx)
 {
   ME_String *s;
 
-  /*if (charidx<0) charidx = 0;
-  if (charidx>orig->nLen) charidx = orig->nLen;
-  */
+  assert(orig->nBuffer); /* Not a const string */
   assert(charidx>=0);
   assert(charidx<=orig->nLen);
 
-  s = ME_MakeString(orig->szData+charidx);
+  s = ME_MakeStringN(orig->szData+charidx, orig->nLen-charidx);
+  if (!s) return NULL;
+
   orig->nLen = charidx;
-  orig->szData[charidx] = L'\0';
+  orig->szData[charidx] = '\0';
   return s;
-}
-
-int ME_IsWhitespaces(ME_String *s)
-{
-  /* FIXME multibyte */
-  WCHAR *pos = s->szData;
-  while(ME_IsWSpace(*pos++))
-    ;
-  pos--;
-  if (*pos)
-    return 0;
-  else
-    return 1;
-}
-
-int ME_IsSplitable(ME_String *s)
-{
-  WCHAR *pos = s->szData;
-  WCHAR ch;
-  while(ME_IsWSpace(*pos++))
-    ;
-  pos--;
-  while((ch = *pos++) != 0)
-  {
-    if (ME_IsWSpace(ch))
-      return 1;
-  }
-  return 0;
-}
-
-/* FIXME multibyte */
-/*
-int ME_CalcSkipChars(ME_String *s)
-{
-  int cnt = 0;
-  while(cnt < s->nLen && s->szData[s->nLen-1-cnt]==' ')
-    cnt++;
-  return cnt;
-}
-*/
-
-int ME_StrLen(ME_String *s) { 
-  return s->nLen;
-}
-
-int ME_StrVLen(ME_String *s) {
-  return s->nLen;
-}
-
-/* FIXME we use widechars, not multibytes, inside, no need for complex logic anymore */
-int ME_StrRelPos(ME_String *s, int nVChar, int *pRelChars)
-{
-  TRACE("%s,%d,&%d\n", debugstr_w(s->szData), nVChar, *pRelChars);
-
-  assert(*pRelChars);
-  if (!*pRelChars) return nVChar;
-  
-  if (*pRelChars>0)
-  {
-    while(nVChar<s->nLen && *pRelChars>0)
-    {
-      nVChar++;
-      (*pRelChars)--;
-    }
-    return nVChar;
-  }
-
-  while(nVChar>0 && *pRelChars<0)
-  {
-    nVChar--;
-    (*pRelChars)++;
-  }
-  return nVChar;
-}
-
-int ME_StrRelPos2(ME_String *s, int nVChar, int nRelChars)
-{
-  return ME_StrRelPos(s, nVChar, &nRelChars);
-}
-
-int ME_VPosToPos(ME_String *s, int nVPos)
-{
-  return nVPos;
-  /*
-  int i = 0, len = 0;
-  if (!nVPos)
-    return 0;
-  while (i < s->nLen)
-  {
-    if (i == nVPos)
-      return len;
-    if (s->szData[i]=='\\') i++;
-    i++;
-    len++;
-  }
-  return len;
-  */
-}
-
-int ME_PosToVPos(ME_String *s, int nPos)
-{
-  if (!nPos)
-    return 0;
-  return ME_StrRelPos2(s, 0, nPos);
 }
 
 void ME_StrDeleteV(ME_String *s, int nVChar, int nChars)
 {
-  int end_ofs;
-  
-  assert(nVChar >=0 && nVChar <= s->nLen);
+  int end_ofs = nVChar + nChars;
+
+  assert(s->nBuffer); /* Not a const string */
   assert(nChars >= 0);
-  assert(nVChar+nChars <= s->nLen);
-  
-  end_ofs = ME_StrRelPos2(s, nVChar, nChars);
+  assert(nVChar >= 0);
   assert(end_ofs <= s->nLen);
-  memmove(s->szData+nVChar, s->szData+end_ofs, 2*(s->nLen+1-end_ofs));
-  s->nLen -= (end_ofs - nVChar);
+
+  memmove(s->szData + nVChar, s->szData + end_ofs,
+          (s->nLen - end_ofs + 1) * sizeof(WCHAR));
+  s->nLen -= nChars;
 }
 
-int ME_GetCharFwd(ME_String *s, int nPos)
+static int
+ME_WordBreakProc(LPWSTR s, INT start, INT len, INT code)
 {
-  int nVPos = 0;
-  
-  assert(nPos < ME_StrLen(s));
-  if (nPos)
-    nVPos = ME_StrRelPos2(s, nVPos, nPos);
-  
-  if (nVPos < s->nLen)
-    return s->szData[nVPos];
-  return -1;
+  /* FIXME: Native also knows about punctuation */
+  TRACE("s==%s, start==%d, len==%d, code==%d\n",
+        debugstr_wn(s, len), start, len, code);
+
+  switch (code)
+  {
+    case WB_ISDELIMITER:
+      return ME_IsWSpace(s[start]);
+    case WB_LEFT:
+    case WB_MOVEWORDLEFT:
+      while (start && ME_IsWSpace(s[start - 1]))
+        start--;
+      while (start && !ME_IsWSpace(s[start - 1]))
+        start--;
+      return start;
+    case WB_RIGHT:
+    case WB_MOVEWORDRIGHT:
+      while (start < len && !ME_IsWSpace(s[start]))
+        start++;
+      while (start < len && ME_IsWSpace(s[start]))
+        start++;
+      return start;
+  }
+  return 0;
 }
 
-int ME_GetCharBack(ME_String *s, int nPos)
+
+int
+ME_CallWordBreakProc(ME_TextEditor *editor, WCHAR *str, INT len, INT start, INT code)
 {
-  int nVPos = ME_StrVLen(s);
-  
-  assert(nPos < ME_StrLen(s));
-  if (nPos)
-    nVPos = ME_StrRelPos2(s, nVPos, -nPos);
-  
-  if (nVPos < s->nLen)
-    return s->szData[nVPos];
-  return -1;
+  if (!editor->pfnWordBreak) {
+    return ME_WordBreakProc(str, start, len, code);
+  } else if (!editor->bEmulateVersion10) {
+    /* MSDN lied about the third parameter for EditWordBreakProc being the number
+     * of characters, it is actually the number of bytes of the string. */
+    return editor->pfnWordBreak(str, start, len * sizeof(WCHAR), code);
+  } else {
+    int result;
+    int buffer_size = WideCharToMultiByte(CP_ACP, 0, str, len,
+                                          NULL, 0, NULL, NULL);
+    char *buffer = heap_alloc(buffer_size);
+    if (!buffer) return 0;
+    WideCharToMultiByte(CP_ACP, 0, str, len,
+                        buffer, buffer_size, NULL, NULL);
+    result = editor->pfnWordBreak((WCHAR*)buffer, start, buffer_size, code);
+    heap_free(buffer);
+    return result;
+  }
 }
 
-int ME_FindNonWhitespaceV(ME_String *s, int nVChar) {
-  int i;
-  for (i = nVChar; i<s->nLen && ME_IsWSpace(s->szData[i]); i++)
-    ;
-    
-  return i;
-}
-
-/* note: returns offset of the first trailing whitespace */
-int ME_ReverseFindNonWhitespaceV(ME_String *s, int nVChar) {
-  int i;
-  for (i = nVChar; i>0 && ME_IsWSpace(s->szData[i-1]); i--)
-    ;
-    
-  return i;
-}
-
-/* note: returns offset of the first trailing nonwhitespace */
-int ME_ReverseFindWhitespaceV(ME_String *s, int nVChar) {
-  int i;
-  for (i = nVChar; i>0 && !ME_IsWSpace(s->szData[i-1]); i--)
-    ;
-    
-  return i;
-}
-
-LPWSTR ME_ToUnicode(HWND hWnd, LPVOID psz)
+LPWSTR ME_ToUnicode(LONG codepage, LPVOID psz, INT *len)
 {
-  if (IsWindowUnicode(hWnd))
-    return (LPWSTR)psz;
+  *len = 0;
+  if (!psz) return NULL;
+
+  if (codepage == CP_UNICODE)
+  {
+    *len = lstrlenW(psz);
+    return psz;
+  }
   else {
     WCHAR *tmp;
-    int nChars = MultiByteToWideChar(CP_ACP, 0, (char *)psz, -1, NULL, 0);
-    if((tmp = ALLOC_N_OBJ(WCHAR, nChars)) != NULL)
-      MultiByteToWideChar(CP_ACP, 0, (char *)psz, -1, tmp, nChars);
+    int nChars = MultiByteToWideChar(codepage, 0, psz, -1, NULL, 0);
+
+    if(!nChars) return NULL;
+
+    if((tmp = heap_alloc( nChars * sizeof(WCHAR) )) != NULL)
+      *len = MultiByteToWideChar(codepage, 0, psz, -1, tmp, nChars) - 1;
     return tmp;
   }
 }
 
-void ME_EndToUnicode(HWND hWnd, LPVOID psz)
+void ME_EndToUnicode(LONG codepage, LPVOID psz)
 {
-  if (IsWindowUnicode(hWnd))
-    FREE_OBJ(psz);
-}
-
-LPSTR ME_ToAnsi(HWND hWnd, LPVOID psz)
-{
-  if (!IsWindowUnicode(hWnd))
-    return (LPSTR)psz;
-  else {
-    char *tmp;
-    int nChars = WideCharToMultiByte(CP_ACP, 0, (WCHAR *)psz, -1, NULL, 0, NULL, NULL);
-    if((tmp = ALLOC_N_OBJ(char, nChars)) != NULL)
-      WideCharToMultiByte(CP_ACP, 0, (WCHAR *)psz, -1, tmp, nChars, NULL, NULL);
-    return tmp;
-  }
-}
-
-void ME_EndToAnsi(HWND hWnd, LPVOID psz)
-{
-  if (!IsWindowUnicode(hWnd))
-    FREE_OBJ(psz);
+  if (codepage != CP_UNICODE)
+    heap_free( psz );
 }

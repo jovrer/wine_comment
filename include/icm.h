@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_ICM_H
@@ -176,8 +176,19 @@ typedef enum
     BM_16b_GRAY,
 } BMFORMAT, *PBMFORMAT, *LPBMFORMAT;
 
+typedef enum
+{
+    WCS_PROFILE_MANAGEMENT_SCOPE_SYSTEM_WIDE,
+    WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER
+} WCS_PROFILE_MANAGEMENT_SCOPE;
+
 typedef BOOL (CALLBACK *PBMCALLBACKFN)(ULONG,ULONG,LPARAM);
 typedef PBMCALLBACKFN LPPBMCALLBACKFN;
+
+#define INTENT_PERCEPTUAL               0
+#define INTENT_RELATIVE_COLORIMETRIC    1
+#define INTENT_SATURATION               2
+#define INTENT_ABSOLUTE_COLORIMETRIC    3
 
 typedef struct tagPROFILEHEADER
 {
@@ -206,6 +217,8 @@ typedef struct tagPROFILE
     PVOID pProfileData;
     DWORD cbDataSize;
 } PROFILE, *PPROFILE, *LPPROFILE;
+
+#define ENUM_TYPE_VERSION   0x0300
 
 typedef struct tagENUMTYPEA
 {
@@ -254,6 +267,24 @@ typedef struct tagENUMTYPEW
     DWORD   dwCreator;
     DWORD   dwDeviceClass;
 } ENUMTYPEW, *PENUMTYPEW, *LPENUMTYPEW;
+
+#define ET_DEVICENAME       0x00000001
+#define ET_MEDIATYPE        0x00000002
+#define ET_DITHERMODE       0x00000004
+#define ET_RESOLUTION       0x00000008
+#define ET_CMMTYPE          0x00000010
+#define ET_CLASS            0x00000020
+#define ET_DATACOLORSPACE   0x00000040
+#define ET_CONNECTIONSPACE  0x00000080
+#define ET_SIGNATURE        0x00000100
+#define ET_PLATFORM         0x00000200
+#define ET_PROFILEFLAGS     0x00000400
+#define ET_MANUFACTURER     0x00000800
+#define ET_MODEL            0x00001000
+#define ET_ATTRIBUTES       0x00002000
+#define ET_RENDERINGINTENT  0x00004000
+#define ET_CREATOR          0x00008000
+#define ET_DEVICECLASS      0x00010000
 
 struct _tagCOLORMATCHSETUPA;
 struct _tagCOLORMATCHSETUPW;
@@ -339,7 +370,6 @@ BOOL       WINAPI GetColorProfileElement(HPROFILE,TAGTYPE,DWORD,PDWORD,PVOID,PBO
 BOOL       WINAPI GetColorProfileElementTag(HPROFILE,DWORD,PTAGTYPE);
 BOOL       WINAPI GetColorProfileFromHandle(HPROFILE,PBYTE,PDWORD);
 BOOL       WINAPI GetColorProfileHeader(HPROFILE,PPROFILEHEADER);
-HCOLORSPACE WINAPI GetColorSpace(HDC);
 BOOL       WINAPI GetCountColorProfileElements(HPROFILE,PDWORD);
 BOOL       WINAPI GetNamedProfileInfo(HPROFILE,PNAMED_PROFILE_INFO);
 BOOL       WINAPI GetPS2ColorRenderingDictionary(HPROFILE,DWORD,PBYTE,PDWORD,PBOOL);
@@ -364,7 +394,6 @@ BOOL       WINAPI SetColorProfileElement(HPROFILE,TAGTYPE,DWORD,PDWORD,PVOID);
 BOOL       WINAPI SetColorProfileElementReference(HPROFILE,TAGTYPE,TAGTYPE);
 BOOL       WINAPI SetColorProfileElementSize(HPROFILE,TAGTYPE,DWORD);
 BOOL       WINAPI SetColorProfileHeader(HPROFILE,PPROFILEHEADER);
-HCOLORSPACE WINAPI SetColorSpace(HDC,HCOLORSPACE);
 BOOL       WINAPI SetStandardColorSpaceProfileA(PCSTR,DWORD,PSTR);
 BOOL       WINAPI SetStandardColorSpaceProfileW(PCWSTR,DWORD,PWSTR);
 #define    SetStandardColorSpaceProfile WINELIB_NAME_AW(SetStandardColorSpaceProfile)
@@ -380,6 +409,10 @@ BOOL       WINAPI UninstallColorProfileW(PCWSTR,PCWSTR,BOOL);
 BOOL       WINAPI UnregisterCMMA(PCSTR,DWORD);
 BOOL       WINAPI UnregisterCMMW(PCWSTR,DWORD);
 #define    UnregisterCMM WINELIB_NAME_AW(UnregisterCMM)
+BOOL       WINAPI WcsEnumColorProfilesSize(WCS_PROFILE_MANAGEMENT_SCOPE,ENUMTYPEW*,DWORD*);
+BOOL       WINAPI WcsGetUsePerUserProfiles(const WCHAR*,DWORD,BOOL*);
+HPROFILE   WINAPI WcsOpenColorProfileA(PROFILE*,PROFILE*,PROFILE*,DWORD,DWORD,DWORD,DWORD);
+HPROFILE   WINAPI WcsOpenColorProfileW(PROFILE*,PROFILE*,PROFILE*,DWORD,DWORD,DWORD,DWORD);
 
 #define PROFILE_FILENAME    1
 #define PROFILE_MEMBUFFER   2
@@ -398,6 +431,13 @@ BOOL       WINAPI UnregisterCMMW(PCWSTR,DWORD);
 #define SPACE_HLS   0x484C5320   /* 'HLS ' */
 #define SPACE_CMYK  0x434D594B   /* 'CMYK' */
 #define SPACE_CMY   0x434D5920   /* 'CMY ' */
+#define SPACE_2_CHANNEL 0x32434c52   /* '2CLR' */
+#define SPACE_3_CHANNEL 0x33434c52   /* '3CLR' */
+#define SPACE_4_CHANNEL 0x34434c52   /* '4CLR' */
+#define SPACE_5_CHANNEL 0x35434c52   /* '5CLR' */
+#define SPACE_6_CHANNEL 0x36434c52   /* '6CLR' */
+#define SPACE_7_CHANNEL 0x37434c52   /* '7CLR' */
+#define SPACE_8_CHANNEL 0x38434c52   /* '8CLR' */
 
 #ifdef __cplusplus
 }

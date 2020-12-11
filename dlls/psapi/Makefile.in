@@ -1,16 +1,4 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = psapi.dll
-IMPORTLIB = libpsapi.$(IMPLIBEXT)
-IMPORTS   = kernel32 ntdll
+IMPORTLIB = psapi
 
-C_SRCS = \
-	psapi_main.c
-
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = version.rc

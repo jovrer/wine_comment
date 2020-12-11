@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
 package winapi_function;
@@ -309,7 +309,7 @@ sub calling_convention16($) {
     } elsif(/^(?:VFWAPIV|WINAPIV)$/) {
 	if(!defined($suffix)) { return undef; }
 	return "pascal$suffix"; # FIXME: Is this correct?
-    } elsif(/^(?:__stdcall|__RPC_STUB|NET_API_FUNCTION|RPC_ENTRY|VFWAPI|WINAPI|CALLBACK)$/) {
+    } elsif(/^(?:__stdcall|__RPC_STUB|__RPC_USER|NET_API_FUNCTION|RPC_ENTRY|SEC_ENTRY|VFWAPI|WINGDIPAPI|WMIAPI|WINAPI|CALLBACK)$/) {
 	if(!defined($suffix)) { return undef; }
 	return "pascal$suffix";
     } elsif($_ eq "__asm") {
@@ -327,7 +327,7 @@ sub calling_convention32($) {
 	return "cdecl";
     } elsif(/^(?:VFWAPIV|WINAPIV)$/) {
 	return "varargs";
-    } elsif(/^(?:__stdcall|__RPC_STUB|NET_API_FUNCTION|RPC_ENTRY|VFWAPI|WINAPI|CALLBACK)$/) {
+    } elsif(/^(?:__stdcall|__RPC_STUB|__RPC_USER|NET_API_FUNCTION|RPC_ENTRY|SEC_ENTRY|VFWAPI|WINGDIPAPI|WMIAPI|WINAPI|CALLBACK)$/) {
 	return "stdcall";
     } elsif($_ eq "__asm") {
 	return "asm";

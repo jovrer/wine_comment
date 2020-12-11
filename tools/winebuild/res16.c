@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -31,22 +31,14 @@
 # include <sys/types.h>
 #endif
 #include <fcntl.h>
-#ifdef HAVE_SYS_STAT_H
-# include <sys/stat.h>
-#endif
-#ifdef HAVE_SYS_MMAN_H
-#include <sys/mman.h>
-#endif
 
-#include "windef.h"
-#include "winbase.h"
 #include "build.h"
 
 /* Unicode string or integer id */
 struct string_id
 {
     char  *str;  /* ptr to string */
-    WORD   id;   /* integer id if str is NULL */
+    unsigned short id;   /* integer id if str is NULL */
 };
 
 /* descriptor for a resource */
@@ -55,15 +47,17 @@ struct resource
     struct string_id type;
     struct string_id name;
     const void      *data;
+    unsigned int     name_offset;
     unsigned int     data_size;
-    WORD             memopt;
+    unsigned int     memopt;
 };
 
 /* type level of the resource tree */
 struct res_type
 {
     const struct string_id  *type;         /* type name */
-    const struct resource   *res;          /* first resource of this type */
+    struct resource         *res;          /* first resource of this type */
+    unsigned int             name_offset;  /* name offset if string */
     unsigned int             nb_names;     /* total number of names */
 };
 
@@ -74,18 +68,14 @@ struct res_tree
     unsigned int     nb_types;             /* total number of types */
 };
 
-static const unsigned char *file_pos;   /* current position in resource file */
-static const unsigned char *file_end;   /* end of resource file */
-static const char *file_name;  /* current resource file name */
 
-
-inline static struct resource *add_resource( DLLSPEC *spec )
+static inline struct resource *add_resource( DLLSPEC *spec )
 {
     spec->resources = xrealloc( spec->resources, (spec->nb_resources + 1) * sizeof(*spec->resources) );
     return &spec->resources[spec->nb_resources++];
 }
 
-static struct res_type *add_type( struct res_tree *tree, const struct resource *res )
+static struct res_type *add_type( struct res_tree *tree, struct resource *res )
 {
     struct res_type *type;
     tree->types = xrealloc( tree->types, (tree->nb_types + 1) * sizeof(*tree->types) );
@@ -96,56 +86,21 @@ static struct res_type *add_type( struct res_tree *tree, const struct resource *
     return type;
 }
 
-/* get the next byte from the current resource file */
-static unsigned char get_byte(void)
-{
-    unsigned char ret = *file_pos++;
-    if (file_pos > file_end) fatal_error( "%s is a truncated/corrupted file\n", file_name );
-    return ret;
-}
-
-/* get the next word from the current resource file */
-static WORD get_word(void)
-{
-    /* might not be aligned */
-#ifdef WORDS_BIGENDIAN
-    unsigned char high = get_byte();
-    unsigned char low = get_byte();
-#else
-    unsigned char low = get_byte();
-    unsigned char high = get_byte();
-#endif
-    return low | (high << 8);
-}
-
-/* get the next dword from the current resource file */
-static DWORD get_dword(void)
-{
-#ifdef WORDS_BIGENDIAN
-    WORD high = get_word();
-    WORD low = get_word();
-#else
-    WORD low = get_word();
-    WORD high = get_word();
-#endif
-    return low | (high << 16);
-}
-
 /* get a string from the current resource file */
 static void get_string( struct string_id *str )
 {
-    if (*file_pos == 0xff)
+    unsigned char c = get_byte();
+
+    if (c == 0xff)
     {
-        get_byte();  /* skip the 0xff */
         str->str = NULL;
         str->id = get_word();
     }
     else
     {
-        char *p = xmalloc( (strlen((char*)file_pos) + 1) );
-        str->str = p;
+        str->str = (char *)input_buffer + input_buffer_pos - 1;
         str->id = 0;
-        while ((*p++ = get_byte()));
+        while (get_byte()) /* nothing */;
     }
 }
 
@@ -158,34 +113,17 @@ static void load_next_resource( DLLSPEC *spec )
     get_string( &res->name );
     res->memopt    = get_word();
     res->data_size = get_dword();
-    res->data      = file_pos;
-    file_pos += res->data_size;
-    if (file_pos > file_end) fatal_error( "%s is a truncated/corrupted file\n", file_name );
+    res->data      = input_buffer + input_buffer_pos;
+    input_buffer_pos += res->data_size;
+    if (input_buffer_pos > input_buffer_size)
+        fatal_error( "%s is a truncated/corrupted file\n", input_buffer_filename );
 }
 
 /* load a Win16 .res file */
 void load_res16_file( const char *name, DLLSPEC *spec )
 {
-    int fd;
-    void *base;
-    struct stat st;
-
-    if ((fd = open( name, O_RDONLY )) == -1) fatal_perror( "Cannot open %s", name );
-    if ((fstat( fd, &st ) == -1)) fatal_perror( "Cannot stat %s", name );
-    if (!st.st_size) fatal_error( "%s is an empty file\n", name );
-#ifdef	HAVE_MMAP
-    if ((base = mmap( NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0 )) == (void*)-1)
-#endif	/* HAVE_MMAP */
-    {
-        base = xmalloc( st.st_size );
-        if (read( fd, base, st.st_size ) != st.st_size)
-            fatal_error( "Cannot read %s\n", name );
-    }
-
-    file_name = name;
-    file_pos  = base;
-    file_end  = file_pos + st.st_size;
-    while (file_pos < file_end) load_next_resource( spec );
+    init_input_buffer( name );
+    while (input_buffer_pos < input_buffer_size) load_next_resource( spec );
 }
 
 /* compare two strings/ids */
@@ -215,12 +153,14 @@ static int cmp_res( const void *ptr1, const void *ptr2 )
 /* build the 2-level (type,name) resource tree */
 static struct res_tree *build_resource_tree( DLLSPEC *spec )
 {
-    unsigned int i;
+    unsigned int i, j, offset;
     struct res_tree *tree;
     struct res_type *type = NULL;
+    struct resource *res;
 
     qsort( spec->resources, spec->nb_resources, sizeof(*spec->resources), cmp_res );
 
+    offset = 2;  /* alignment */
     tree = xmalloc( sizeof(*tree) );
     tree->types = NULL;
     tree->nb_types = 0;
@@ -228,8 +168,33 @@ static struct res_tree *build_resource_tree( DLLSPEC *spec )
     for (i = 0; i < spec->nb_resources; i++)
     {
         if (!i || cmp_string( &spec->resources[i].type, &spec->resources[i-1].type ))  /* new type */
+        {
             type = add_type( tree, &spec->resources[i] );
+            offset += 8;
+        }
         type->nb_names++;
+        offset += 12;
+    }
+    offset += 2;  /* terminator */
+
+    for (i = 0, type = tree->types; i < tree->nb_types; i++, type++)
+    {
+        if (type->type->str)
+        {
+            type->name_offset = offset;
+            offset += strlen(type->type->str) + 1;
+        }
+        else type->name_offset = type->type->id | 0x8000;
+
+        for (j = 0, res = type->res; j < type->nb_names; j++, res++)
+        {
+            if (res->name.str)
+            {
+                res->name_offset = offset;
+                offset += strlen(res->name.str) + 1;
+            }
+            else res->name_offset = res->name.id | 0x8000;
+        }
     }
     return tree;
 }
@@ -242,32 +207,36 @@ static void free_resource_tree( struct res_tree *tree )
 }
 
 /* output a string preceded by its length */
-static void output_string( FILE *outfile, const char *str )
+static void output_string( const char *str )
 {
     unsigned int i, len = strlen(str);
-    fprintf( outfile, "\t.byte 0x%02x", len );
-    for (i = 0; i < len; i++) fprintf( outfile, ",0x%02x", (unsigned char)str[i] );
-    fprintf( outfile, " /* %s */\n", str );
+    output( "\t.byte 0x%02x", len );
+    for (i = 0; i < len; i++) output( ",0x%02x", (unsigned char)str[i] );
+    output( " /* %s */\n", str );
+}
+
+/* output a string preceded by its length in binary format*/
+static void output_bin_string( const char *str )
+{
+    put_byte( strlen(str) );
+    while (*str) put_byte( *str++ );
 }
 
 /* output the resource data */
-void output_res16_data( FILE *outfile, DLLSPEC *spec )
+void output_res16_data( DLLSPEC *spec )
 {
     const struct resource *res;
     unsigned int i;
 
-    if (!spec->nb_resources) return;
-
     for (i = 0, res = spec->resources; i < spec->nb_resources; i++, res++)
     {
-        fprintf( outfile, ".L__wine_spec_resource_%u:\n", i );
-        dump_bytes( outfile, res->data, res->data_size );
-        fprintf( outfile, ".L__wine_spec_resource_%u_end:\n", i );
+        output( ".L__wine_spec_resource_%u:\n", i );
+        dump_bytes( res->data, res->data_size );
     }
 }
 
 /* output the resource definitions */
-void output_res16_directory( FILE *outfile, DLLSPEC *spec, const char *header_name )
+void output_res16_directory( DLLSPEC *spec )
 {
     unsigned int i, j;
     struct res_tree *tree;
@@ -276,58 +245,90 @@ void output_res16_directory( FILE *outfile, DLLSPEC *spec, const char *header_na
 
     tree = build_resource_tree( spec );
 
-    fprintf( outfile, "\n.L__wine_spec_ne_rsrctab:\n" );
-    fprintf( outfile, "\t%s 0\n", get_asm_short_keyword() );  /* alignment */
+    output( "\n.L__wine_spec_ne_rsrctab:\n" );
+    output( "\t.short 0\n" );  /* alignment */
 
     /* type and name structures */
 
     for (i = 0, type = tree->types; i < tree->nb_types; i++, type++)
     {
-        if (type->type->str)
-            fprintf( outfile, "\t%s .L__wine_spec_restype_%u-.L__wine_spec_ne_rsrctab\n",
-                     get_asm_short_keyword(), i );
-        else
-            fprintf( outfile, "\t%s 0x%04x\n", get_asm_short_keyword(), type->type->id | 0x8000 );
-
-        fprintf( outfile, "\t%s %u,0,0\n", get_asm_short_keyword(), type->nb_names );
+        output( "\t.short 0x%04x,%u,0,0\n", type->name_offset, type->nb_names );
 
         for (j = 0, res = type->res; j < type->nb_names; j++, res++)
         {
-            fprintf( outfile, "\t%s .L__wine_spec_resource_%u-%s\n",
-                     get_asm_short_keyword(), res - spec->resources, header_name );
-            fprintf( outfile, "\t%s .L__wine_spec_resource_%u_end-.L__wine_spec_resource_%u\n",
-                     get_asm_short_keyword(), res - spec->resources, res - spec->resources );
-            fprintf( outfile, "\t%s 0x%04x\n", get_asm_short_keyword(), res->memopt );
-            if (res->name.str)
-                fprintf( outfile, "\t%s .L__wine_spec_resname_%u_%u-.L__wine_spec_ne_rsrctab\n",
-                         get_asm_short_keyword(), i, j );
-            else
-                fprintf( outfile, "\t%s 0x%04x\n", get_asm_short_keyword(), res->name.id | 0x8000 );
-
-            fprintf( outfile, "\t%s 0,0\n", get_asm_short_keyword() );
+            output( "\t.short .L__wine_spec_resource_%lu-.L__wine_spec_dos_header,%u\n",
+                    (unsigned long)(res - spec->resources), res->data_size );
+            output( "\t.short 0x%04x,0x%04x,0,0\n", res->memopt, res->name_offset );
         }
     }
-    fprintf( outfile, "\t%s 0\n", get_asm_short_keyword() );  /* terminator */
+    output( "\t.short 0\n" );  /* terminator */
 
     /* name strings */
 
     for (i = 0, type = tree->types; i < tree->nb_types; i++, type++)
     {
-        if (type->type->str)
-        {
-            fprintf( outfile, ".L__wine_spec_restype_%u:\n", i );
-            output_string( outfile, type->type->str );
-        }
+        if (type->type->str) output_string( type->type->str );
+        for (j = 0, res = type->res; j < type->nb_names; j++, res++)
+            if (res->name.str) output_string( res->name.str );
+    }
+    output( "\t.byte 0\n" );  /* names terminator */
+
+    free_resource_tree( tree );
+}
+
+/* output the resource data in binary format */
+void output_bin_res16_data( DLLSPEC *spec )
+{
+    const struct resource *res;
+    unsigned int i;
+
+    for (i = 0, res = spec->resources; i < spec->nb_resources; i++, res++)
+        put_data( res->data, res->data_size );
+}
+
+/* output the resource definitions in binary format */
+void output_bin_res16_directory( DLLSPEC *spec, unsigned int data_offset )
+{
+    unsigned int i, j;
+    struct res_tree *tree;
+    const struct res_type *type;
+    const struct resource *res;
+
+    tree = build_resource_tree( spec );
+
+    put_word( 0 );  /* alignment */
+
+    /* type and name structures */
+
+    for (i = 0, type = tree->types; i < tree->nb_types; i++, type++)
+    {
+        put_word( type->name_offset );
+        put_word( type->nb_names );
+        put_word( 0 );
+        put_word( 0 );
+
         for (j = 0, res = type->res; j < type->nb_names; j++, res++)
         {
-            if (res->name.str)
-            {
-                fprintf( outfile, ".L__wine_spec_resname_%u_%u:\n", i, j );
-                output_string( outfile, res->name.str );
-            }
+            put_word( data_offset );
+            put_word( res->data_size );
+            put_word( res->memopt );
+            put_word( res->name_offset );
+            put_word( 0 );
+            put_word( 0 );
+            data_offset += res->data_size;
         }
     }
-    fprintf( outfile, "\t.byte 0\n" );  /* names terminator */
+    put_word( 0 );  /* terminator */
+
+    /* name strings */
+
+    for (i = 0, type = tree->types; i < tree->nb_types; i++, type++)
+    {
+        if (type->type->str) output_bin_string( type->type->str );
+        for (j = 0, res = type->res; j < type->nb_names; j++, res++)
+            if (res->name.str) output_bin_string( res->name.str );
+    }
+    put_byte( 0 );  /* names terminator */
 
     free_resource_tree( tree );
 }

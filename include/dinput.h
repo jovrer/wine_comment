@@ -13,12 +13,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_DINPUT_H
-#define __WINE_DINPUT_H
+#ifndef __DINPUT_INCLUDED__
+#define __DINPUT_INCLUDED__
 
+#define COM_NO_WINDOWS_H
 #include <objbase.h>
 
 #ifndef DIRECTINPUT_VERSION
@@ -113,6 +114,8 @@ DECL_WINELIB_TYPE_AW(LPDIRECTINPUT)
 DECL_WINELIB_TYPE_AW(LPDIRECTINPUT2)
 #define IID_IDirectInput7 WINELIB_NAME_AW(IID_IDirectInput7)
 DECL_WINELIB_TYPE_AW(LPDIRECTINPUT7)
+#define IID_IDirectInput8 WINELIB_NAME_AW(IID_IDirectInput8)
+DECL_WINELIB_TYPE_AW(LPDIRECTINPUT8)
 #define IID_IDirectInputDevice WINELIB_NAME_AW(IID_IDirectInputDevice)
 DECL_WINELIB_TYPE_AW(LPDIRECTINPUTDEVICE)
 #define IID_IDirectInputDevice2 WINELIB_NAME_AW(IID_IDirectInputDevice2)
@@ -127,11 +130,13 @@ DECL_WINELIB_TYPE_AW(LPDIRECTINPUTDEVICE8)
 #define DI_BUFFEROVERFLOW               S_FALSE
 #define DI_PROPNOEFFECT                 S_FALSE
 #define DI_NOEFFECT                     S_FALSE
-#define DI_POLLEDDEVICE                 ((HRESULT)0x00000002L)
-#define DI_DOWNLOADSKIPPED              ((HRESULT)0x00000003L)
-#define DI_EFFECTRESTARTED              ((HRESULT)0x00000004L)
-#define DI_TRUNCATED                    ((HRESULT)0x00000008L)
-#define DI_TRUNCATEDANDRESTARTED        ((HRESULT)0x0000000CL)
+#define DI_POLLEDDEVICE                 ((HRESULT)0x00000002)
+#define DI_DOWNLOADSKIPPED              ((HRESULT)0x00000003)
+#define DI_EFFECTRESTARTED              ((HRESULT)0x00000004)
+#define DI_TRUNCATED                    ((HRESULT)0x00000008)
+#define DI_SETTINGSNOTSAVED             ((HRESULT)0x0000000B)
+#define DI_TRUNCATEDANDRESTARTED        ((HRESULT)0x0000000C)
+#define DI_WRITEPROTECT                 ((HRESULT)0x00000013)
 
 #define DIERR_OLDDIRECTINPUTVERSION     \
     MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, ERROR_OLD_WIN_VERSION)
@@ -164,26 +169,26 @@ DECL_WINELIB_TYPE_AW(LPDIRECTINPUTDEVICE8)
 #define DIERR_READONLY                  E_ACCESSDENIED
 #define DIERR_HANDLEEXISTS              E_ACCESSDENIED
 #ifndef E_PENDING
-#define E_PENDING                       0x8000000AL
+#define E_PENDING                       __MSABI_LONG(0x8000000A)
 #endif
-#define DIERR_INSUFFICIENTPRIVS         0x80040200L
-#define DIERR_DEVICEFULL                0x80040201L
-#define DIERR_MOREDATA                  0x80040202L
-#define DIERR_NOTDOWNLOADED             0x80040203L
-#define DIERR_HASEFFECTS                0x80040204L
-#define DIERR_NOTEXCLUSIVEACQUIRED      0x80040205L
-#define DIERR_INCOMPLETEEFFECT          0x80040206L
-#define DIERR_NOTBUFFERED               0x80040207L
-#define DIERR_EFFECTPLAYING             0x80040208L
-#define DIERR_UNPLUGGED                 0x80040209L
-#define DIERR_REPORTFULL                0x8004020AL
-#define DIERR_MAPFILEFAIL               0x8004020BL
+#define DIERR_INSUFFICIENTPRIVS         __MSABI_LONG(0x80040200)
+#define DIERR_DEVICEFULL                __MSABI_LONG(0x80040201)
+#define DIERR_MOREDATA                  __MSABI_LONG(0x80040202)
+#define DIERR_NOTDOWNLOADED             __MSABI_LONG(0x80040203)
+#define DIERR_HASEFFECTS                __MSABI_LONG(0x80040204)
+#define DIERR_NOTEXCLUSIVEACQUIRED      __MSABI_LONG(0x80040205)
+#define DIERR_INCOMPLETEEFFECT          __MSABI_LONG(0x80040206)
+#define DIERR_NOTBUFFERED               __MSABI_LONG(0x80040207)
+#define DIERR_EFFECTPLAYING             __MSABI_LONG(0x80040208)
+#define DIERR_UNPLUGGED                 __MSABI_LONG(0x80040209)
+#define DIERR_REPORTFULL                __MSABI_LONG(0x8004020A)
+#define DIERR_MAPFILEFAIL               __MSABI_LONG(0x8004020B)
 
 #define DIENUM_STOP                     0
 #define DIENUM_CONTINUE                 1
 
 #define DIEDFL_ALLDEVICES               0x00000000
-#define DIEDFL_ATTACHEDONLY             0x00000000
+#define DIEDFL_ATTACHEDONLY             0x00000001
 #define DIEDFL_FORCEFEEDBACK            0x00000100
 #define DIEDFL_INCLUDEALIASES           0x00010000
 #define DIEDFL_INCLUDEPHANTOMS          0x00020000
@@ -437,6 +442,19 @@ typedef BOOL (CALLBACK *LPDIENUMDEVICESCALLBACKA)(LPCDIDEVICEINSTANCEA,LPVOID);
 typedef BOOL (CALLBACK *LPDIENUMDEVICESCALLBACKW)(LPCDIDEVICEINSTANCEW,LPVOID);
 DECL_WINELIB_TYPE_AW(LPDIENUMDEVICESCALLBACK)
 
+#define DIEDBS_MAPPEDPRI1		0x00000001
+#define DIEDBS_MAPPEDPRI2		0x00000002
+#define DIEDBS_RECENTDEVICE		0x00000010
+#define DIEDBS_NEWDEVICE		0x00000020
+
+#define DIEDBSFL_ATTACHEDONLY		0x00000000
+#define DIEDBSFL_THISUSER		0x00000010
+#define DIEDBSFL_FORCEFEEDBACK		DIEDFL_FORCEFEEDBACK
+#define DIEDBSFL_AVAILABLEDEVICES	0x00001000
+#define DIEDBSFL_MULTIMICEKEYBOARDS	0x00002000
+#define DIEDBSFL_NONGAMINGDEVICES	0x00004000
+#define DIEDBSFL_VALID			0x00007110
+
 typedef BOOL (CALLBACK *LPDIENUMDEVICESBYSEMANTICSCBA)(LPCDIDEVICEINSTANCEA,LPDIRECTINPUTDEVICE8A,DWORD,DWORD,LPVOID);
 typedef BOOL (CALLBACK *LPDIENUMDEVICESBYSEMANTICSCBW)(LPCDIDEVICEINSTANCEW,LPDIRECTINPUTDEVICE8W,DWORD,DWORD,LPVOID);
 DECL_WINELIB_TYPE_AW(LPDIENUMDEVICESBYSEMANTICSCB)
@@ -588,6 +606,147 @@ typedef BOOL (CALLBACK *LPDIENUMCREATEDEFFECTOBJECTSCALLBACK)(LPDIRECTINPUTEFFEC
 #define DIK_DOWNARROW       DIK_DOWN            /* DownArrow on arrow keypad */
 #define DIK_PGDN            DIK_NEXT            /* PgDn on arrow keypad */
 
+/* New DirectInput8 style keyboard constants */
+
+#define DIKEYBOARD_ESCAPE               (DIK_ESCAPE | 0x81000400)
+#define DIKEYBOARD_1                    (DIK_1 | 0x81000400)
+#define DIKEYBOARD_2                    (DIK_2 | 0x81000400)
+#define DIKEYBOARD_3                    (DIK_3 | 0x81000400)
+#define DIKEYBOARD_4                    (DIK_4 | 0x81000400)
+#define DIKEYBOARD_5                    (DIK_5 | 0x81000400)
+#define DIKEYBOARD_6                    (DIK_6 | 0x81000400)
+#define DIKEYBOARD_7                    (DIK_7 | 0x81000400)
+#define DIKEYBOARD_8                    (DIK_8 | 0x81000400)
+#define DIKEYBOARD_9                    (DIK_9 | 0x81000400)
+#define DIKEYBOARD_0                    (DIK_0 | 0x81000400)
+#define DIKEYBOARD_MINUS                (DIK_MINUS | 0x81000400)
+#define DIKEYBOARD_EQUALS               (DIK_EQUALS | 0x81000400)
+#define DIKEYBOARD_BACK                 (DIK_BACK | 0x81000400)
+#define DIKEYBOARD_TAB                  (DIK_TAB | 0x81000400)
+#define DIKEYBOARD_Q                    (DIK_Q | 0x81000400)
+#define DIKEYBOARD_W                    (DIK_W | 0x81000400)
+#define DIKEYBOARD_E                    (DIK_E | 0x81000400)
+#define DIKEYBOARD_R                    (DIK_R | 0x81000400)
+#define DIKEYBOARD_T                    (DIK_T | 0x81000400)
+#define DIKEYBOARD_Y                    (DIK_Y | 0x81000400)
+#define DIKEYBOARD_U                    (DIK_U | 0x81000400)
+#define DIKEYBOARD_I                    (DIK_I | 0x81000400)
+#define DIKEYBOARD_O                    (DIK_O | 0x81000400)
+#define DIKEYBOARD_P                    (DIK_P | 0x81000400)
+#define DIKEYBOARD_LBRACKET             (DIK_LBRACKET | 0x81000400)
+#define DIKEYBOARD_RBRACKET             (DIK_RBRACKET | 0x81000400)
+#define DIKEYBOARD_RETURN               (DIK_RETURN | 0x81000400)
+#define DIKEYBOARD_LCONTROL             (DIK_LCONTROL | 0x81000400)
+#define DIKEYBOARD_A                    (DIK_A | 0x81000400)
+#define DIKEYBOARD_S                    (DIK_S | 0x81000400)
+#define DIKEYBOARD_D                    (DIK_D | 0x81000400)
+#define DIKEYBOARD_F                    (DIK_F | 0x81000400)
+#define DIKEYBOARD_G                    (DIK_G | 0x81000400)
+#define DIKEYBOARD_H                    (DIK_H | 0x81000400)
+#define DIKEYBOARD_J                    (DIK_J | 0x81000400)
+#define DIKEYBOARD_K                    (DIK_K | 0x81000400)
+#define DIKEYBOARD_L                    (DIK_L | 0x81000400)
+#define DIKEYBOARD_SEMICOLON            (DIK_SEMICOLON | 0x81000400)
+#define DIKEYBOARD_APOSTROPHE           (DIK_APOSTROPHE | 0x81000400)
+#define DIKEYBOARD_GRAVE                (DIK_GRAVE | 0x81000400)
+#define DIKEYBOARD_LSHIFT               (DIK_LSHIFT | 0x81000400)
+#define DIKEYBOARD_BACKSLASH            (DIK_BACKSLASH | 0x81000400)
+#define DIKEYBOARD_Z                    (DIK_Z | 0x81000400)
+#define DIKEYBOARD_X                    (DIK_X | 0x81000400)
+#define DIKEYBOARD_C                    (DIK_C | 0x81000400)
+#define DIKEYBOARD_V                    (DIK_V | 0x81000400)
+#define DIKEYBOARD_B                    (DIK_B | 0x81000400)
+#define DIKEYBOARD_N                    (DIK_N | 0x81000400)
+#define DIKEYBOARD_M                    (DIK_M | 0x81000400)
+#define DIKEYBOARD_COMMA                (DIK_COMMA | 0x81000400)
+#define DIKEYBOARD_PERIOD               (DIK_PERIOD | 0x81000400)
+#define DIKEYBOARD_SLASH                (DIK_SLASH | 0x81000400)
+#define DIKEYBOARD_RSHIFT               (DIK_RSHIFT | 0x81000400)
+#define DIKEYBOARD_MULTIPLY             (DIK_MULTIPLY | 0x81000400)
+#define DIKEYBOARD_LMENU                (DIK_LMENU | 0x81000400)
+#define DIKEYBOARD_SPACE                (DIK_SPACE | 0x81000400)
+#define DIKEYBOARD_CAPITAL              (DIK_CAPITAL | 0x81000400)
+#define DIKEYBOARD_F1                   (DIK_F1 | 0x81000400)
+#define DIKEYBOARD_F2                   (DIK_F2 | 0x81000400)
+#define DIKEYBOARD_F3                   (DIK_F3 | 0x81000400)
+#define DIKEYBOARD_F4                   (DIK_F4 | 0x81000400)
+#define DIKEYBOARD_F5                   (DIK_F5 | 0x81000400)
+#define DIKEYBOARD_F6                   (DIK_F6 | 0x81000400)
+#define DIKEYBOARD_F7                   (DIK_F7 | 0x81000400)
+#define DIKEYBOARD_F8                   (DIK_F8 | 0x81000400)
+#define DIKEYBOARD_F9                   (DIK_F9 | 0x81000400)
+#define DIKEYBOARD_F10                  (DIK_F10 | 0x81000400)
+#define DIKEYBOARD_NUMLOCK              (DIK_NUMLOCK | 0x81000400)
+#define DIKEYBOARD_SCROLL               (DIK_SCROLL | 0x81000400)
+#define DIKEYBOARD_NUMPAD7              (DIK_NUMPAD7 | 0x81000400)
+#define DIKEYBOARD_NUMPAD8              (DIK_NUMPAD8 | 0x81000400)
+#define DIKEYBOARD_NUMPAD9              (DIK_NUMPAD9 | 0x81000400)
+#define DIKEYBOARD_SUBTRACT             (DIK_SUBTRACT | 0x81000400)
+#define DIKEYBOARD_NUMPAD4              (DIK_NUMPAD4 | 0x81000400)
+#define DIKEYBOARD_NUMPAD5              (DIK_NUMPAD5 | 0x81000400)
+#define DIKEYBOARD_NUMPAD6              (DIK_NUMPAD6 | 0x81000400)
+#define DIKEYBOARD_ADD                  (DIK_ADD | 0x81000400)
+#define DIKEYBOARD_NUMPAD1              (DIK_NUMPAD1 | 0x81000400)
+#define DIKEYBOARD_NUMPAD2              (DIK_NUMPAD2 | 0x81000400)
+#define DIKEYBOARD_NUMPAD3              (DIK_NUMPAD3 | 0x81000400)
+#define DIKEYBOARD_NUMPAD0              (DIK_NUMPAD0 | 0x81000400)
+#define DIKEYBOARD_DECIMAL              (DIK_DECIMAL | 0x81000400)
+#define DIKEYBOARD_F11                  (DIK_F11 | 0x81000400)
+#define DIKEYBOARD_F12                  (DIK_F12 | 0x81000400)
+#define DIKEYBOARD_F13                  (DIK_F13 | 0x81000400)
+#define DIKEYBOARD_F14                  (DIK_F14 | 0x81000400)
+#define DIKEYBOARD_F15                  (DIK_F15 | 0x81000400)
+#define DIKEYBOARD_KANA                 (DIK_KANA | 0x81000400)
+#define DIKEYBOARD_CONVERT              (DIK_CONVERT | 0x81000400)
+#define DIKEYBOARD_NOCONVERT            (DIK_NOCONVERT | 0x81000400)
+#define DIKEYBOARD_YEN                  (DIK_YEN | 0x81000400)
+#define DIKEYBOARD_NUMPADEQUALS         (DIK_NUMPADEQUALS | 0x81000400)
+#define DIKEYBOARD_CIRCUMFLEX           (DIK_CIRCUMFLEX | 0x81000400)
+#define DIKEYBOARD_AT                   (DIK_AT | 0x81000400)
+#define DIKEYBOARD_COLON                (DIK_COLON | 0x81000400)
+#define DIKEYBOARD_UNDERLINE            (DIK_UNDERLINE | 0x81000400)
+#define DIKEYBOARD_KANJI                (DIK_KANJI | 0x81000400)
+#define DIKEYBOARD_STOP                 (DIK_STOP | 0x81000400)
+#define DIKEYBOARD_AX                   (DIK_AX | 0x81000400)
+#define DIKEYBOARD_UNLABELED            (DIK_UNLABELED | 0x81000400)
+#define DIKEYBOARD_NUMPADENTER          (DIK_NUMPADENTER | 0x81000400)
+#define DIKEYBOARD_RCONTROL             (DIK_RCONTROL | 0x81000400)
+#define DIKEYBOARD_NUMPADCOMMA          (DIK_NUMPADCOMMA | 0x81000400)
+#define DIKEYBOARD_DIVIDE               (DIK_DIVIDE | 0x81000400)
+#define DIKEYBOARD_SYSRQ                (DIK_SYSRQ | 0x81000400)
+#define DIKEYBOARD_RMENU                (DIK_RMENU | 0x81000400)
+#define DIKEYBOARD_PAUSE                (DIK_PAUSE | 0x81000400)
+#define DIKEYBOARD_HOME                 (DIK_HOME | 0x81000400)
+#define DIKEYBOARD_UP                   (DIK_UP | 0x81000400)
+#define DIKEYBOARD_PRIOR                (DIK_PRIOR | 0x81000400)
+#define DIKEYBOARD_LEFT                 (DIK_LEFT | 0x81000400)
+#define DIKEYBOARD_RIGHT                (DIK_RIGHT | 0x81000400)
+#define DIKEYBOARD_END                  (DIK_END | 0x81000400)
+#define DIKEYBOARD_DOWN                 (DIK_DOWN | 0x81000400)
+#define DIKEYBOARD_NEXT                 (DIK_NEXT | 0x81000400)
+#define DIKEYBOARD_INSERT               (DIK_INSERT | 0x81000400)
+#define DIKEYBOARD_DELETE               (DIK_DELETE | 0x81000400)
+#define DIKEYBOARD_LWIN                 (DIK_LWIN | 0x81000400)
+#define DIKEYBOARD_RWIN                 (DIK_RWIN | 0x81000400)
+#define DIKEYBOARD_APPS                 (DIK_APPS | 0x81000400)
+#define DIKEYBOARD_POWER                (DIK_POWER | 0x81000400)
+#define DIKEYBOARD_SLEEP                (DIK_SLEEP | 0x81000400)
+#define DIKEYBOARD_BACKSPACE            (DIK_BACKSPACE | 0x81000400)
+#define DIKEYBOARD_NUMPADSTAR           (DIK_NUMPADSTAR | 0x81000400)
+#define DIKEYBOARD_LALT                 (DIK_LALT | 0x81000400)
+#define DIKEYBOARD_CAPSLOCK             (DIK_CAPSLOCK | 0x81000400)
+#define DIKEYBOARD_NUMPADMINUS          (DIK_NUMPADMINUS | 0x81000400)
+#define DIKEYBOARD_NUMPADPLUS           (DIK_NUMPADPLUS | 0x81000400)
+#define DIKEYBOARD_NUMPADPERIOD         (DIK_NUMPADPERIOD | 0x81000400)
+#define DIKEYBOARD_NUMPADSLASH          (DIK_NUMPADSLASH | 0x81000400)
+#define DIKEYBOARD_RALT                 (DIK_RALT | 0x81000400)
+#define DIKEYBOARD_UPARROW              (DIK_UPARROW | 0x81000400)
+#define DIKEYBOARD_PGUP                 (DIK_PGUP | 0x81000400)
+#define DIKEYBOARD_LEFTARROW            (DIK_LEFTARROW | 0x81000400)
+#define DIKEYBOARD_RIGHTARROW           (DIK_RIGHTARROW | 0x81000400)
+#define DIKEYBOARD_DOWNARROW            (DIK_DOWNARROW | 0x81000400)
+#define DIKEYBOARD_PGDN                 (DIK_PGDN | 0x81000400)
+
 #define DIDFT_ALL		0x00000000
 #define DIDFT_RELAXIS		0x00000001
 #define DIDFT_ABSAXIS		0x00000002
@@ -617,6 +776,8 @@ typedef BOOL (CALLBACK *LPDIENUMCREATEDEFFECTOBJECTSCALLBACK)(LPDIRECTINPUTEFFEC
 #define DIDF_RELAXIS		0x00000002
 
 #define DIGDD_PEEK		0x00000001
+
+#define DISEQUENCE_COMPARE(dwSq1,cmp,dwSq2) ((int)((dwSq1) - (dwSq2)) cmp 0)
 
 typedef struct DIDEVICEOBJECTDATA_DX3 {
     DWORD	dwOfs;
@@ -709,6 +870,12 @@ typedef struct DIPROPGUIDANDPATH {
 } DIPROPGUIDANDPATH, *LPDIPROPGUIDANDPATH;
 typedef const DIPROPGUIDANDPATH *LPCDIPROPGUIDANDPATH;
 
+typedef struct DIPROPSTRING {
+        DIPROPHEADER diph;
+        WCHAR        wsz[MAX_PATH];
+} DIPROPSTRING, *LPDIPROPSTRING;
+typedef const DIPROPSTRING *LPCDIPROPSTRING;
+
 /* special property GUIDs */
 #ifdef __cplusplus
 #define MAKEDIPROP(prop)	(*(const GUID *)(prop))
@@ -739,6 +906,18 @@ typedef const DIPROPGUIDANDPATH *LPCDIPROPGUIDANDPATH;
 
 #define DIPROP_CALIBRATION	MAKEDIPROP(11)
 #define DIPROP_GUIDANDPATH	MAKEDIPROP(12)
+
+#define DIPROP_INSTANCENAME     MAKEDIPROP(13)
+#define DIPROP_PRODUCTNAME      MAKEDIPROP(14)
+#define DIPROP_JOYSTICKID       MAKEDIPROP(15)
+
+#define DIPROP_KEYNAME     MAKEDIPROP(20)
+#define DIPROP_CPOINTS     MAKEDIPROP(21)
+#define DIPROP_APPDATA     MAKEDIPROP(22)
+#define DIPROP_SCANCODE    MAKEDIPROP(23)
+#define DIPROP_VIDPID      MAKEDIPROP(24)
+#define DIPROP_USERNAME    MAKEDIPROP(25)
+#define DIPROP_TYPENAME    MAKEDIPROP(26)
 
 typedef struct DIDEVCAPS_DX3 {
     DWORD	dwSize;
@@ -785,6 +964,7 @@ typedef struct DIDEVCAPS {
 #define DISCL_NONEXCLUSIVE	0x00000002
 #define DISCL_FOREGROUND	0x00000004
 #define DISCL_BACKGROUND	0x00000008
+#define DISCL_NOWINKEY          0x00000010
 
 /* Device FF flags */
 #define DISFFC_RESET            0x00000001
@@ -1080,7 +1260,7 @@ typedef BOOL (CALLBACK *LPDIENUMEFFECTSINFILECALLBACK)(LPCDIFILEEFFECT , LPVOID)
 /* DInput 8 structures and types */
 typedef struct _DIACTIONA {
 	UINT_PTR	uAppData;
-	DWORD		dwSemantics;
+	DWORD		dwSemantic;
 	DWORD		dwFlags;
 	union {
 		LPCSTR	lptszActionName;
@@ -1094,7 +1274,7 @@ typedef const DIACTIONA *LPCDIACTIONA;
 
 typedef struct _DIACTIONW {
 	UINT_PTR	uAppData;
-	DWORD		dwSemantics;
+	DWORD		dwSemantic;
 	DWORD		dwFlags;
 	union {
 		LPCWSTR	lptszActionName;
@@ -1334,7 +1514,7 @@ DECLARE_INTERFACE_(IDirectInputEffect,IUnknown)
 #define IDirectInputEffect_SetParameters(p,a,b)   (p)->lpVtbl->SetParameters(p,a,b)
 #define IDirectInputEffect_Start(p,a,b)           (p)->lpVtbl->Start(p,a,b)
 #define IDirectInputEffect_Stop(p)                (p)->lpVtbl->Stop(p)
-#define IDirectInputEffect_GetEffectStatus(p,a,b) (p)->lpVtbl->GetEffectStatus(p,a)
+#define IDirectInputEffect_GetEffectStatus(p,a)   (p)->lpVtbl->GetEffectStatus(p,a)
 #define IDirectInputEffect_Download(p)            (p)->lpVtbl->Download(p)
 #define IDirectInputEffect_Unload(p)              (p)->lpVtbl->Unload(p)
 #define IDirectInputEffect_Escape(p,a)            (p)->lpVtbl->Escape(p,a)
@@ -1350,7 +1530,7 @@ DECLARE_INTERFACE_(IDirectInputEffect,IUnknown)
 #define IDirectInputEffect_SetParameters(p,a,b)   (p)->SetParameters(a,b)
 #define IDirectInputEffect_Start(p,a,b)           (p)->Start(a,b)
 #define IDirectInputEffect_Stop(p)                (p)->Stop()
-#define IDirectInputEffect_GetEffectStatus(p,a,b) (p)->GetEffectStatus(a)
+#define IDirectInputEffect_GetEffectStatus(p,a)   (p)->GetEffectStatus(a)
 #define IDirectInputEffect_Download(p)            (p)->Download()
 #define IDirectInputEffect_Unload(p)              (p)->Unload()
 #define IDirectInputEffect_Escape(p,a)            (p)->Escape(a)
@@ -1955,6 +2135,22 @@ typedef struct DIMOUSESTATE2 {
 #define DIMOFS_BUTTON6 (FIELD_OFFSET(DIMOUSESTATE2, rgbButtons) + 6)
 #define DIMOFS_BUTTON7 (FIELD_OFFSET(DIMOUSESTATE2, rgbButtons) + 7)
 
+/* New DirectInput8 mouse definitions */
+
+#define DIMOUSE_XAXISAB            (0x82000200 | DIMOFS_X)
+#define DIMOUSE_YAXISAB            (0x82000200 | DIMOFS_Y)
+#define DIMOUSE_XAXIS              (0x82000300 | DIMOFS_X)
+#define DIMOUSE_YAXIS              (0x82000300 | DIMOFS_Y)
+#define DIMOUSE_WHEEL              (0x82000300 | DIMOFS_Z)
+#define DIMOUSE_BUTTON0            (0x82000400 | DIMOFS_BUTTON0)
+#define DIMOUSE_BUTTON1            (0x82000400 | DIMOFS_BUTTON1)
+#define DIMOUSE_BUTTON2            (0x82000400 | DIMOFS_BUTTON2)
+#define DIMOUSE_BUTTON3            (0x82000400 | DIMOFS_BUTTON3)
+#define DIMOUSE_BUTTON4            (0x82000400 | DIMOFS_BUTTON4)
+#define DIMOUSE_BUTTON5            (0x82000400 | DIMOFS_BUTTON5)
+#define DIMOUSE_BUTTON6            (0x82000400 | DIMOFS_BUTTON6)
+#define DIMOUSE_BUTTON7            (0x82000400 | DIMOFS_BUTTON7)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1966,6 +2162,37 @@ extern const DIDATAFORMAT c_dfDIJoystick2;
 #ifdef __cplusplus
 };
 #endif
+
+#define DIAXIS_ANY_X_1             0xFF00C201
+#define DIAXIS_ANY_X_2             0xFF00C202
+#define DIAXIS_ANY_Y_1             0xFF014201
+#define DIAXIS_ANY_Y_2             0xFF014202
+#define DIAXIS_ANY_Z_1             0xFF01C201
+#define DIAXIS_ANY_Z_2             0xFF01C202
+#define DIAXIS_ANY_R_1             0xFF024201
+#define DIAXIS_ANY_R_2             0xFF024202
+#define DIAXIS_ANY_U_1             0xFF02C201
+#define DIAXIS_ANY_U_2             0xFF02C202
+#define DIAXIS_ANY_V_1             0xFF034201
+#define DIAXIS_ANY_V_2             0xFF034202
+#define DIAXIS_ANY_A_1             0xFF03C201
+#define DIAXIS_ANY_A_2             0xFF03C202
+#define DIAXIS_ANY_B_1             0xFF044201
+#define DIAXIS_ANY_B_2             0xFF044202
+#define DIAXIS_ANY_C_1             0xFF04C201
+#define DIAXIS_ANY_C_2             0xFF04C202
+#define DIAXIS_ANY_S_1             0xFF054201
+#define DIAXIS_ANY_S_2             0xFF054202
+#define DIAXIS_ANY_1               0xFF004201
+#define DIAXIS_ANY_2               0xFF004202
+#define DIAXIS_ANY_3               0xFF004203
+#define DIAXIS_ANY_4               0xFF004204
+#define DIPOV_ANY_1                0xFF004601
+#define DIPOV_ANY_2                0xFF004602
+#define DIPOV_ANY_3                0xFF004603
+#define DIPOV_ANY_4                0xFF004604
+#define DIBUTTON_ANY(instance)     (0xFF004400 | (instance))
+
 
 /*****************************************************************************
  * IDirectInputA interface
@@ -2271,4 +2498,4 @@ HRESULT WINAPI DirectInputCreateEx(HINSTANCE,DWORD,REFIID,LPVOID *,LPUNKNOWN);
 };
 #endif
 
-#endif /* __WINE_DINPUT_H */
+#endif /* __DINPUT_INCLUDED__ */

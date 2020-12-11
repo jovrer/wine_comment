@@ -13,8 +13,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#include <windef.h>
 
 #define MAIN_MENU                 0x100
 #define IDM_ANALOG                0x101
@@ -24,9 +26,7 @@
 #define IDM_SECONDS               0x105
 #define IDM_DATE                  0x106
 
-#define IDM_LICENSE               0x110
-#define IDM_NOWARRANTY            0x111
-#define IDM_ABOUT                 0x112
+#define IDM_ABOUT                 0x110
 
 #define IDM_ONTOP                 0x113
 

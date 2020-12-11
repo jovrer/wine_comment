@@ -1,16 +1,10 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = regsvr32.exe
-APPMODE   = -mconsole
-IMPORTS   = kernel32
+APPMODE   = -mwindows -municode
+IMPORTS   = ole32 user32
 
 C_SRCS = \
 	regsvr32.c
 
 RC_SRCS = regsvr32.rc
 
-@MAKE_PROG_RULES@
-
-### Dependencies:
+MANPAGES = regsvr32.man.in

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * TODO
  *     - actually add smooth scrolling
@@ -68,7 +68,7 @@ typedef struct tagSMOOTHSCROLLSTRUCT {
  *     Currently only scrolls ONCE. The comctl32 implementation uses GetTickCount
  *     and what else to do smooth scrolling.
  */
-BOOL WINAPI SmoothScrollWindow( SMOOTHSCROLLSTRUCT *smooth ) {
+BOOL WINAPI SmoothScrollWindow( const SMOOTHSCROLLSTRUCT *smooth ) {
    LPRECT	lpupdaterect = smooth->lpupdaterect;
    HRGN		hrgnupdate = smooth->hrgnupdate;
    RECT		tmprect;
@@ -112,7 +112,7 @@ BOOL WINAPI SmoothScrollWindow( SMOOTHSCROLLSTRUCT *smooth ) {
 	   );
    }
 
-   FIXME("(hwnd=%p,flags=%lx,x2=%lx): should smooth scroll here.\n",
+   FIXME("(hwnd=%p,flags=%x,x2=%x): should smooth scroll here.\n",
 	   smooth->hwnd,flags,smooth->x2
    );
    /* FIXME: do timer based smooth scrolling */

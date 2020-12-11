@@ -15,12 +15,13 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef DO_NO_IMPORTS
 import "objidl.idl";
 import "oaidl.idl";
-
+#endif
 
 /*
  * Windows SDK braindamage alert
@@ -29,17 +30,17 @@ import "oaidl.idl";
  * PID_SECURITY is defined in msidefs.h with a different value!
  * So these need to be undefined first.
  */
-cpp_quote("#ifdef PID_DICTIONARY");
-cpp_quote("#undef PID_DICTIONARY");
-cpp_quote("#endif");
+cpp_quote("#ifdef PID_DICTIONARY")
+cpp_quote("#undef PID_DICTIONARY")
+cpp_quote("#endif")
 
-cpp_quote("#ifdef PID_CODEPAGE");
-cpp_quote("#undef PID_CODEPAGE");
-cpp_quote("#endif");
+cpp_quote("#ifdef PID_CODEPAGE")
+cpp_quote("#undef PID_CODEPAGE")
+cpp_quote("#endif")
 
-cpp_quote("#ifdef PID_SECURITY");
-cpp_quote("#undef PID_SECURITY");
-cpp_quote("#endif");
+cpp_quote("#ifdef PID_SECURITY")
+cpp_quote("#undef PID_SECURITY")
+cpp_quote("#endif")
 
 /******************** Property Storage ********************/
 
@@ -140,6 +141,8 @@ interface IPropertyStorage : IUnknown
     [case(VT_BSTR_BLOB)]                  BSTRBLOB bstrblobVal;
     [case(VT_LPSTR)]                      LPSTR pszVal;
     [case(VT_LPWSTR)]                     LPWSTR pwszVal;
+    [case(VT_UNKNOWN)]                    IUnknown *punkVal;
+    [case(VT_DISPATCH)]                   IDispatch *pdispVal;
     [case(VT_UI1|VT_VECTOR)]              CAUB caub;
     [case(VT_I2|VT_VECTOR)]               CAI cai;
     [case(VT_UI2|VT_VECTOR)]              CAUI caui;
@@ -161,10 +164,61 @@ interface IPropertyStorage : IUnknown
     [case(VT_LPSTR|VT_VECTOR)]            CALPSTR calpstr;
     [case(VT_LPWSTR|VT_VECTOR)]           CALPWSTR calpwstr;
     [case(VT_VARIANT|VT_VECTOR)]          CAPROPVARIANT capropvar;
+    [case(VT_ARRAY|VT_I1,
+          VT_ARRAY|VT_UI1,
+          VT_ARRAY|VT_I2,
+          VT_ARRAY|VT_UI2,
+          VT_ARRAY|VT_I4,
+          VT_ARRAY|VT_UI4,
+          VT_ARRAY|VT_INT,
+          VT_ARRAY|VT_UINT,
+          VT_ARRAY|VT_R4,
+          VT_ARRAY|VT_R8,
+          VT_ARRAY|VT_CY,
+          VT_ARRAY|VT_DATE,
+          VT_ARRAY|VT_BSTR,
+          VT_ARRAY|VT_BOOL,
+          VT_ARRAY|VT_DECIMAL,
+          VT_ARRAY|VT_DISPATCH,
+          VT_ARRAY|VT_UNKNOWN,
+          VT_ARRAY|VT_ERROR,
+          VT_ARRAY|VT_VARIANT)]           LPSAFEARRAY parray;
+    [case(VT_BYREF|VT_I1)]                CHAR *pcVal;
+    [case(VT_BYREF|VT_UI1)]               UCHAR *pbVal;
+    [case(VT_BYREF|VT_I2)]                SHORT *piVal;
+    [case(VT_BYREF|VT_UI2)]               USHORT *puiVal;
+    [case(VT_BYREF|VT_I4)]                LONG *plVal;
+    [case(VT_BYREF|VT_UI4)]               ULONG *pulVal;
+    [case(VT_BYREF|VT_INT)]               INT *pintVal;
+    [case(VT_BYREF|VT_UINT)]              UINT *puintVal;
+    [case(VT_BYREF|VT_R4)]                FLOAT *pfltVal;
+    [case(VT_BYREF|VT_R8)]                DOUBLE *pdblVal;
+    [case(VT_BYREF|VT_BOOL)]              VARIANT_BOOL *pboolVal;
+    [case(VT_BYREF|VT_DECIMAL)]           DECIMAL *pdecVal;
+    [case(VT_BYREF|VT_ERROR)]             SCODE *pscode;
+    [case(VT_BYREF|VT_CY)]                CY *pcyVal;
+    [case(VT_BYREF|VT_DATE)]              DATE *pdate;
+    [case(VT_BYREF|VT_BSTR)]              BSTR *pbstrVal;
+    [case(VT_BYREF|VT_UNKNOWN)]           IUnknown **ppunkVal;
+    [case(VT_BYREF|VT_DISPATCH)]          IDispatch **ppdispVal;
+    [case(VT_BYREF|VT_ARRAY)]             LPSAFEARRAY *pparray;
+    [case(VT_BYREF|VT_VARIANT)]           PROPVARIANT *pvarVal;
     };
   };
 
   typedef struct tagPROPVARIANT *LPPROPVARIANT;
+
+  cpp_quote("#if 0")
+  typedef const PROPVARIANT * REFPROPVARIANT;
+  cpp_quote("#endif")
+  cpp_quote("#ifndef _REFPROPVARIANT_DEFINED")
+  cpp_quote("#define _REFPROPVARIANT_DEFINED")
+  cpp_quote("#ifdef __cplusplus")
+  cpp_quote("#define REFPROPVARIANT const PROPVARIANT &")
+  cpp_quote("#else")
+  cpp_quote("#define REFPROPVARIANT const PROPVARIANT * __MIDL_CONST")
+  cpp_quote("#endif")
+  cpp_quote("#endif")
 
   cpp_quote("#define PIDDI_THUMBNAIL 0x00000002L /* VT_BLOB */")
   cpp_quote("")
@@ -213,7 +267,7 @@ interface IPropertyStorage : IUnknown
     [case(PRSPEC_PROPID)] PROPID propid;
     [case(PRSPEC_LPWSTR)] LPOLESTR lpwstr;
     [default]             ;
-    };
+    } DUMMYUNIONNAME;
   } PROPSPEC;
 
   typedef struct tagSTATPROPSTG {
@@ -379,21 +433,25 @@ interface IEnumSTATPROPSETSTG : IUnknown
     [out] IEnumSTATPROPSETSTG **ppenum);
 }
 
+typedef struct SERIALIZEDPROPERTYVALUE {
+    DWORD dwType;
+    BYTE rgb[1];
+} SERIALIZEDPROPERTYVALUE;
 
-cpp_quote("HRESULT WINAPI FreePropVariantArray(ULONG,PROPVARIANT*);");
-cpp_quote("HRESULT WINAPI PropVariantClear(PROPVARIANT*);");
-cpp_quote("HRESULT WINAPI PropVariantCopy(PROPVARIANT*,const PROPVARIANT*);");
+cpp_quote("HRESULT WINAPI FreePropVariantArray(ULONG,PROPVARIANT*);")
+cpp_quote("HRESULT WINAPI PropVariantClear(PROPVARIANT*);")
+cpp_quote("HRESULT WINAPI PropVariantCopy(PROPVARIANT*,const PROPVARIANT*);")
 cpp_quote("")
 cpp_quote("#define _PROPVARIANT_INIT_DEFINED_")
 cpp_quote("#define PropVariantInit(p) memset((p), 0, sizeof(PROPVARIANT))")
 cpp_quote("")
 cpp_quote("#ifndef _STGCREATEPROPSTG_DEFINED_")
 cpp_quote("#define _STGCREATEPROPSTG_DEFINED_")
-cpp_quote("HRESULT WINAPI StgCreatePropStg(IUnknown *, REFFMTID, const CLSID *, DWORD, DWORD, IPropertyStorage **);");
-cpp_quote("HRESULT WINAPI StgOpenPropStg(IUnknown *, REFFMTID, DWORD, DWORD, IPropertyStorage **);");
-cpp_quote("HRESULT WINAPI StgCreatePropSetStg(IStorage *, DWORD, IPropertySetStorage **);");
-cpp_quote("#define CCH_MAX_PROPSTG_NAME 31");
-cpp_quote("HRESULT WINAPI FmtIdToPropStgName(const FMTID *, LPOLESTR);");
-cpp_quote("HRESULT WINAPI PropStgNameToFmtId(const LPOLESTR, FMTID *);");
-cpp_quote("#endif /* _STGCREATEPROPSTG_DEFINED_ */");
+cpp_quote("HRESULT WINAPI StgCreatePropStg(IUnknown *, REFFMTID, const CLSID *, DWORD, DWORD, IPropertyStorage **);")
+cpp_quote("HRESULT WINAPI StgOpenPropStg(IUnknown *, REFFMTID, DWORD, DWORD, IPropertyStorage **);")
+cpp_quote("HRESULT WINAPI StgCreatePropSetStg(IStorage *, DWORD, IPropertySetStorage **);")
+cpp_quote("#define CCH_MAX_PROPSTG_NAME 31")
+cpp_quote("HRESULT WINAPI FmtIdToPropStgName(const FMTID *, LPOLESTR);")
+cpp_quote("HRESULT WINAPI PropStgNameToFmtId(const LPOLESTR, FMTID *);")
+cpp_quote("#endif /* _STGCREATEPROPSTG_DEFINED_ */")
 cpp_quote("")

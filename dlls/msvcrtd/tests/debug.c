@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -30,22 +30,33 @@
 
 /**********************************************************************/
 
-static void * (*pMSVCRTD_operator_new_dbg)(unsigned long, int, const char *, int) = NULL;
+static void * (__cdecl *pMSVCRTD_operator_new_dbg)(size_t, int, const char *, int) = NULL;
+static void * (__cdecl *pMSVCRTD_operator_delete)(void *) = NULL;
 
 /* Some exports are only available in later versions */
 #define SETNOFAIL(x,y) x = (void*)GetProcAddress(hModule,y)
-#define SET(x,y) SETNOFAIL(x,y); ok(x != NULL, "Export '%s' not found\n", y)
+#define SET(x,y) do { SETNOFAIL(x,y); ok(x != NULL, "Export '%s' not found\n", y); } while(0)
 
-static int init_functions(void)
+static BOOL init_functions(void)
 {
   HMODULE hModule = LoadLibraryA("msvcrtd.dll");
 
   if (!hModule) {
-    trace("LoadLibraryA failed to load msvcrtd.dll with GLE=%ld\n", GetLastError());
+    trace("LoadLibraryA failed to load msvcrtd.dll with GLE=%d\n", GetLastError());
     return FALSE;
   }
 
-  SET(pMSVCRTD_operator_new_dbg, "??2@YAPAXIHPBDH@Z");
+  if (sizeof(void *) > sizeof(int))  /* 64-bit has a different mangled name */
+  {
+      SET(pMSVCRTD_operator_new_dbg, "??2@YAPEAX_KHPEBDH@Z");
+      SET(pMSVCRTD_operator_delete, "??3@YAXPEAX@Z");
+  }
+  else
+  {
+      SET(pMSVCRTD_operator_new_dbg, "??2@YAPAXIHPBDH@Z");
+      SET(pMSVCRTD_operator_delete, "??3@YAXPAX@Z");
+  }
+
   if (pMSVCRTD_operator_new_dbg == NULL)
     return FALSE;
 
@@ -60,6 +71,11 @@ static void test_new(void)
 
   mem = pMSVCRTD_operator_new_dbg(42, _NORMAL_BLOCK, __FILE__, __LINE__);
   ok(mem != NULL, "memory not allocated\n");
+  pMSVCRTD_operator_delete(mem);
+
+  mem = pMSVCRTD_operator_new_dbg(42, _CRT_BLOCK, __FILE__, __LINE__);
+  ok(mem != NULL, "memory not allocated\n");
+  pMSVCRTD_operator_delete(mem);
 }
 
 /**********************************************************************/

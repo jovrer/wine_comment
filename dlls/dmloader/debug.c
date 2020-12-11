@@ -2,27 +2,27 @@
  *
  * Copyright (C) 2004 Rok Mandeljc
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Library General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
- 
+
+#include "config.h"
+#include "wine/port.h"
+
 #include "dmloader_private.h"
 
-/* check whether the given DWORD is even (return 0) or odd (return 1) */
-int even_or_odd (DWORD number) {
-	return (number & 0x1); /* basically, check if bit 0 is set ;) */
-}
+WINE_DEFAULT_DEBUG_CHANNEL(dmloader);
 
 /* figures out whether given FOURCC is valid DirectMusic form ID */
 BOOL IS_VALID_DMFORM (FOURCC chunkID) {
@@ -56,7 +56,7 @@ const char *debugstr_fourcc (DWORD fourcc) {
 }
 
 /* DMUS_VERSION struct to string conversion for debug messages */
-const char *debugstr_dmversion (LPDMUS_VERSION version) {
+const char *debugstr_dmversion (const DMUS_VERSION *version) {
 	if (!version) return "'null'";
 	return wine_dbg_sprintf ("\'%i,%i,%i,%i\'",
 		HIWORD(version->dwVersionMS),LOWORD(version->dwVersionMS),
@@ -64,7 +64,7 @@ const char *debugstr_dmversion (LPDMUS_VERSION version) {
 }
 
 /* month number into month name (for debugstr_filetime) */
-const char *debugstr_month (DWORD dwMonth) {
+static const char *debugstr_month (DWORD dwMonth) {
 	switch (dwMonth) {
 		case 1: return "January";
 		case 2: return "February";
@@ -83,14 +83,14 @@ const char *debugstr_month (DWORD dwMonth) {
 }
 
 /* FILETIME struct to string conversion for debug messages */
-const char *debugstr_filetime (LPFILETIME time) {
+const char *debugstr_filetime (const FILETIME *time) {
 	SYSTEMTIME sysTime;
 
 	if (!time) return "'null'";
 	
 	FileTimeToSystemTime (time, &sysTime);
 	
-	return wine_dbg_sprintf ("\'%02i. %s %04i %02i:%02i:%02i\'", \
+	return wine_dbg_sprintf ("\'%02i. %s %04i %02i:%02i:%02i\'",
 		sysTime.wDay, debugstr_month(sysTime.wMonth), sysTime.wYear,
 		sysTime.wHour, sysTime.wMinute, sysTime.wSecond);
 }
@@ -101,7 +101,6 @@ const char *debugstr_dmguid (const GUID *id) {
 		/* CLSIDs */
 		GE(CLSID_AudioVBScript),
 		GE(CLSID_DirectMusic),
-		GE(CLSID_DirectMusicAudioPath),
 		GE(CLSID_DirectMusicAudioPathConfig),
 		GE(CLSID_DirectMusicAuditionTrack),
 		GE(CLSID_DirectMusicBand),
@@ -270,7 +269,7 @@ const char *debugstr_dmguid (const GUID *id) {
 	unsigned int i;
 
 	if (!id) return "(null)";
-	for (i = 0; i < sizeof(guids)/sizeof(guids[0]); i++) {
+	for (i = 0; i < ARRAY_SIZE(guids); i++) {
 		if (IsEqualGUID(id, guids[i].guid))
 			return guids[i].name;
 	}
@@ -417,20 +416,21 @@ const char *debugstr_dmreturn (DWORD code) {
 	};
 	
 	unsigned int i;
-	for (i = 0; i < sizeof(codes)/sizeof(codes[0]); i++) {
+	for (i = 0; i < ARRAY_SIZE(codes); i++) {
 		if (code == codes[i].val)
 			return codes[i].name;
 	}
 	
 	/* if we didn't find it, return value */
-	return wine_dbg_sprintf("0x%08lX", code);
+	return wine_dbg_sprintf("0x%08X", code);
 }
 
 
 /* generic flag-dumping function */
-const char* debugstr_flags (DWORD flags, const flag_info* names, size_t num_names){
+static const char* debugstr_flags (DWORD flags, const flag_info* names, size_t num_names){
 	static char buffer[128] = "", *ptr = &buffer[0];
-	unsigned int i, size = sizeof(buffer);
+	unsigned int i;
+	int size = sizeof(buffer);
 		
 	for (i=0; i < num_names; i++) {
 		if ((flags & names[i].val)) {
@@ -446,7 +446,7 @@ const char* debugstr_flags (DWORD flags, const flag_info* names, size_t num_name
 }
 
 /* dump DMUS_OBJ flags */
-const char *debugstr_DMUS_OBJ_FLAGS (DWORD flagmask) {
+static const char *debugstr_DMUS_OBJ_FLAGS (DWORD flagmask) {
     static const flag_info flags[] = {
 	    FE(DMUS_OBJ_OBJECT),
 	    FE(DMUS_OBJ_CLASS),
@@ -461,58 +461,51 @@ const char *debugstr_DMUS_OBJ_FLAGS (DWORD flagmask) {
 	    FE(DMUS_OBJ_MEMORY),
 	    FE(DMUS_OBJ_STREAM)
 	};
-    return debugstr_flags (flagmask, flags, sizeof(flags)/sizeof(flags[0]));
+    return debugstr_flags(flagmask, flags, ARRAY_SIZE(flags));
 }
 
 /* dump DMUS_CONTAINER flags */
-const char *debugstr_DMUS_CONTAINER_FLAGS (DWORD flagmask) {
+static const char *debugstr_DMUS_CONTAINER_FLAGS (DWORD flagmask) {
     static const flag_info flags[] = {
 	    FE(DMUS_CONTAINER_NOLOADS)
 	};
-    return debugstr_flags (flagmask, flags, sizeof(flags)/sizeof(flags[0]));
+    return debugstr_flags(flagmask, flags, ARRAY_SIZE(flags));
 }
 
 /* dump DMUS_CONTAINED_OBJF flags */
-const char *debugstr_DMUS_CONTAINED_OBJF_FLAGS (DWORD flagmask) {
+static const char *debugstr_DMUS_CONTAINED_OBJF_FLAGS (DWORD flagmask) {
     static const flag_info flags[] = {
 	    FE(DMUS_CONTAINED_OBJF_KEEP)
 	};
-    return debugstr_flags (flagmask, flags, sizeof(flags)/sizeof(flags[0]));
+    return debugstr_flags(flagmask, flags, ARRAY_SIZE(flags));
 }
 
-const char *debugstr_DMUS_OBJECTDESC (LPDMUS_OBJECTDESC pDesc) {
-	if (pDesc) {
-		char buffer[1024] = "", *ptr = &buffer[0];
-		
-		ptr += sprintf(ptr, "DMUS_OBJECTDESC (%p):\n", pDesc);
-		ptr += sprintf(ptr, " - dwSize = 0x%08lX\n", pDesc->dwSize);
-		ptr += sprintf(ptr, " - dwValidData = 0x%08lX ( %s)\n", pDesc->dwValidData, debugstr_DMUS_OBJ_FLAGS (pDesc->dwValidData));
-		if (pDesc->dwValidData & DMUS_OBJ_CLASS) ptr +=	sprintf(ptr, " - guidClass = %s\n", debugstr_dmguid(&pDesc->guidClass));
-		if (pDesc->dwValidData & DMUS_OBJ_OBJECT) ptr += sprintf(ptr, " - guidObject = %s\n", debugstr_guid(&pDesc->guidObject));
-		if (pDesc->dwValidData & DMUS_OBJ_DATE) ptr += sprintf(ptr, " - ftDate = %s\n", debugstr_filetime (&pDesc->ftDate));
-		if (pDesc->dwValidData & DMUS_OBJ_VERSION) ptr += sprintf(ptr, " - vVersion = %s\n", debugstr_dmversion(&pDesc->vVersion));
-		if (pDesc->dwValidData & DMUS_OBJ_NAME) ptr += sprintf(ptr, " - wszName = %s\n", debugstr_w(pDesc->wszName));
-		if (pDesc->dwValidData & DMUS_OBJ_CATEGORY) ptr += sprintf(ptr, " - wszCategory = %s\n", debugstr_w(pDesc->wszCategory));
-		if (pDesc->dwValidData & DMUS_OBJ_FILENAME) ptr += sprintf(ptr, " - wszFileName = %s\n", debugstr_w(pDesc->wszFileName));
-		if (pDesc->dwValidData & DMUS_OBJ_MEMORY) ptr += sprintf(ptr, " - llMemLength = %lli\n  - pbMemData = %p\n", pDesc->llMemLength, pDesc->pbMemData);
-		if (pDesc->dwValidData & DMUS_OBJ_STREAM) ptr += sprintf(ptr, " - pStream = %p\n", pDesc->pStream);
-		
-		ptr = &buffer[0];
-		return ptr;
-	} else {
-		return wine_dbg_sprintf("(NULL)");
-	}
+/* Dump whole DMUS_OBJECTDESC struct */
+void dump_DMUS_OBJECTDESC(LPDMUS_OBJECTDESC desc)
+{
+    TRACE("DMUS_OBJECTDESC (%p):\n", desc);
+    TRACE(" - dwSize = %d\n", desc->dwSize);
+    TRACE(" - dwValidData = %s\n", debugstr_DMUS_OBJ_FLAGS (desc->dwValidData));
+    if (desc->dwValidData & DMUS_OBJ_CLASS)    TRACE(" - guidClass = %s\n", debugstr_dmguid(&desc->guidClass));
+    if (desc->dwValidData & DMUS_OBJ_OBJECT)   TRACE(" - guidObject = %s\n", debugstr_guid(&desc->guidObject));
+    if (desc->dwValidData & DMUS_OBJ_DATE)     TRACE(" - ftDate = %s\n", debugstr_filetime (&desc->ftDate));
+    if (desc->dwValidData & DMUS_OBJ_VERSION)  TRACE(" - vVersion = %s\n", debugstr_dmversion(&desc->vVersion));
+    if (desc->dwValidData & DMUS_OBJ_NAME)     TRACE(" - wszName = %s\n", debugstr_w(desc->wszName));
+    if (desc->dwValidData & DMUS_OBJ_CATEGORY) TRACE(" - wszCategory = %s\n", debugstr_w(desc->wszCategory));
+    if (desc->dwValidData & DMUS_OBJ_FILENAME) TRACE(" - wszFileName = %s\n", debugstr_w(desc->wszFileName));
+    if (desc->dwValidData & DMUS_OBJ_MEMORY)   TRACE(" - llMemLength = 0x%s\n  - pbMemData = %p\n",
+                                                     wine_dbgstr_longlong(desc->llMemLength), desc->pbMemData);
+    if (desc->dwValidData & DMUS_OBJ_STREAM)   TRACE(" - pStream = %p\n", desc->pStream);
 }
 
 const char *debugstr_DMUS_IO_CONTAINER_HEADER (LPDMUS_IO_CONTAINER_HEADER pHeader) {
 	if (pHeader) {
-		char buffer[1024] = "", *ptr = &buffer[0];
+		char buffer[1024], *ptr = buffer;
 		
-		ptr += sprintf(ptr, "DMUS_IO_CONTAINER_HEADER (%p):\n", pHeader);
-		ptr += sprintf(ptr, " - dwFlags = %s\n", debugstr_DMUS_CONTAINER_FLAGS(pHeader->dwFlags));
+		ptr += sprintf(ptr, "DMUS_IO_CONTAINER_HEADER (%p):", pHeader);
+		ptr += sprintf(ptr, "\n - dwFlags = %s", debugstr_DMUS_CONTAINER_FLAGS(pHeader->dwFlags));
 		
-		ptr = &buffer[0];
-		return ptr;
+		return wine_dbg_sprintf("%s", buffer);
 	} else {
 		return wine_dbg_sprintf("(NULL)");
 	}
@@ -520,16 +513,15 @@ const char *debugstr_DMUS_IO_CONTAINER_HEADER (LPDMUS_IO_CONTAINER_HEADER pHeade
 
 const char *debugstr_DMUS_IO_CONTAINED_OBJECT_HEADER (LPDMUS_IO_CONTAINED_OBJECT_HEADER pHeader) {
 	if (pHeader) {
-		char buffer[1024] = "", *ptr = &buffer[0];
+		char buffer[1024], *ptr = buffer;
 		
-		ptr += sprintf(ptr, "DMUS_IO_CONTAINED_OBJECT_HEADER (%p):\n", pHeader);
-		ptr += sprintf(ptr, " - guidClassID = %s\n", debugstr_dmguid(&pHeader->guidClassID));
-		ptr += sprintf(ptr, " - dwFlags = %s\n", debugstr_DMUS_CONTAINED_OBJF_FLAGS (pHeader->dwFlags));
-		ptr += sprintf(ptr, " - ckid = %s\n", debugstr_fourcc (pHeader->ckid));
-		ptr += sprintf(ptr, " - fccType = %s\n", debugstr_fourcc (pHeader->fccType));
+		ptr += sprintf(ptr, "DMUS_IO_CONTAINED_OBJECT_HEADER (%p):", pHeader);
+		ptr += sprintf(ptr, "\n - guidClassID = %s", debugstr_dmguid(&pHeader->guidClassID));
+		ptr += sprintf(ptr, "\n - dwFlags = %s", debugstr_DMUS_CONTAINED_OBJF_FLAGS (pHeader->dwFlags));
+		ptr += sprintf(ptr, "\n - ckid = %s", debugstr_fourcc (pHeader->ckid));
+		ptr += sprintf(ptr, "\n - fccType = %s", debugstr_fourcc (pHeader->fccType));
 
-		ptr = &buffer[0];
-		return ptr;
+		return wine_dbg_sprintf("%s", buffer);
 	} else {
 		return wine_dbg_sprintf("(NULL)");
 	}

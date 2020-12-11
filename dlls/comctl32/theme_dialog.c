@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  */
 
@@ -28,11 +28,9 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "uxtheme.h"
-#include "tmschema.h"
+#include "vssym32.h"
 #include "comctl32.h"
 #include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(themingdialog);
 
 /**********************************************************************
  * The dialog subclass window proc.
@@ -56,7 +54,9 @@ LRESULT CALLBACK THEMING_DialogSubclassProc (HWND hWnd, UINT msg,
     
     case WM_DESTROY:
         CloseThemeData ( theme );
-	return THEMING_CallOriginalClass (hWnd, msg, wParam, lParam);
+        SetWindowTheme( hWnd, NULL, NULL );
+        OpenThemeData( hWnd, NULL );
+        return THEMING_CallOriginalClass (hWnd, msg, wParam, lParam);
 
     case WM_THEMECHANGED:
         CloseThemeData ( theme );
@@ -74,8 +74,8 @@ LRESULT CALLBACK THEMING_DialogSubclassProc (HWND hWnd, UINT msg,
 	if (!doTheming) return THEMING_CallOriginalClass (hWnd, msg, wParam, lParam);
         {
             RECT rc;
-            DLGPROC dlgp = (DLGPROC)GetWindowLongPtrW (hWnd, DWLP_DLGPROC);
-            if (!dlgp (hWnd, msg, wParam, lParam))
+            WNDPROC dlgp = (WNDPROC)GetWindowLongPtrW (hWnd, DWLP_DLGPROC);
+            if (!CallWindowProcW(dlgp, hWnd, msg, wParam, lParam))
             {
                 /* Draw background*/
                 GetClientRect (hWnd, &rc);
@@ -104,8 +104,8 @@ LRESULT CALLBACK THEMING_DialogSubclassProc (HWND hWnd, UINT msg,
     case WM_CTLCOLORSTATIC:
         if (!doTheming) return THEMING_CallOriginalClass (hWnd, msg, wParam, lParam);
         {
-            DLGPROC dlgp = (DLGPROC)GetWindowLongPtrW (hWnd, DWLP_DLGPROC);
-            LRESULT result = (LRESULT)dlgp (hWnd, msg, wParam, lParam);
+            WNDPROC dlgp = (WNDPROC)GetWindowLongPtrW (hWnd, DWLP_DLGPROC);
+            LRESULT result = CallWindowProcW(dlgp, hWnd, msg, wParam, lParam);
             if (!result)
             {
                 /* Override defaults with more suitable values when themed */
@@ -114,8 +114,7 @@ LRESULT CALLBACK THEMING_DialogSubclassProc (HWND hWnd, UINT msg,
                 WCHAR controlClass[32];
                 RECT rc;
 
-                GetClassNameW (controlWnd, controlClass, 
-                    sizeof(controlClass) / sizeof(controlClass[0]));
+                GetClassNameW (controlWnd, controlClass, ARRAY_SIZE(controlClass));
                 if (lstrcmpiW (controlClass, WC_STATICW) == 0)
                 {
                     /* Static control - draw parent background and set text to 

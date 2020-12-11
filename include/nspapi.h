@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef _WINE_NSPAPI_
@@ -38,7 +38,7 @@ extern "C" {
 #define XP_DISCONNECT_DATA		0x00000100
 #define XP_SUPPORTS_BROADCAST		0x00000200
 #define XP_SUPPORTS_MULTICAST		0x00000400
-#define XP_BANDWITH_ALLOCATION		0x00000800
+#define XP_BANDWIDTH_ALLOCATION		0x00000800
 #define XP_FRAGMENTATION		0x00001000
 #define XP_ENCRYPTS			0x00002000
 
@@ -190,6 +190,13 @@ INT WINAPI SetServiceA(DWORD dwNameSpace, DWORD dwOperation, DWORD dwFlags, LPSE
 INT WINAPI SetServiceW(DWORD dwNameSpace, DWORD dwOperation, DWORD dwFlags, LPSERVICE_INFOW lpServiceInfo,
                        LPSERVICE_ASYNC_INFO lpServiceAsyncInfo, LPDWORD lpdwStatusFlags);
 #define SetService WINELIB_NAME_AW(SetService)
+INT WINAPI GetServiceA(DWORD dwNameSpace, LPGUID lpGuid, LPSTR lpServiceName,
+                       DWORD dwProperties, LPVOID lpBuffer, LPDWORD lpdwBufferSize,
+                       LPSERVICE_ASYNC_INFO lpServiceAsyncInfo);
+INT WINAPI GetServiceW(DWORD dwNameSpace, LPGUID lpGuid, LPSTR lpServiceName,
+                       DWORD dwProperties, LPVOID lpBuffer, LPDWORD lpdwBufferSize,
+                       LPSERVICE_ASYNC_INFO lpServiceAsyncInfo);
+#define GetService WINELIB_NAME_AW(GetService)
 
 #ifdef __cplusplus
 }      /* extern "C" */

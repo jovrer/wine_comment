@@ -15,31 +15,34 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_EH_H
 #define __WINE_EH_H
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
 
 #if !defined(__cplusplus) && !defined(__WINE_MSVCRT_TEST)
 #error "eh.h is meant only for C++ applications"
 #endif
 
+#include <pshpack8.h>
+
 struct _EXCEPTION_POINTERS;
 
-typedef void (*terminate_handler)(void);
-typedef void (*terminate_function)(void);
-typedef void (*unexpected_handler)(void);
-typedef void (*unexpected_function)(void);
-typedef void (*_se_translator_function)(unsigned int code, struct _EXCEPTION_POINTERS *info);
+typedef void (__cdecl *terminate_handler)(void);
+typedef void (__cdecl *terminate_function)(void);
+typedef void (__cdecl *unexpected_handler)(void);
+typedef void (__cdecl *unexpected_function)(void);
+typedef void (__cdecl *_se_translator_function)(unsigned int code, struct _EXCEPTION_POINTERS *info);
 
-terminate_function set_terminate(terminate_function func);
-unexpected_function set_unexpected(unexpected_function func);
-_se_translator_function _set_se_translator(_se_translator_function func);
+terminate_function __cdecl set_terminate(terminate_function func);
+unexpected_function __cdecl set_unexpected(unexpected_function func);
+_se_translator_function __cdecl set_se_translator(_se_translator_function func);
 
-void        terminate(void);
-void        unexpected(void);
+void __cdecl terminate(void);
+void __cdecl unexpected(void);
+
+#include <poppack.h>
 
 #endif /* __WINE_EH_H */

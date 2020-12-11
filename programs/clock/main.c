@@ -20,16 +20,16 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdio.h>
 
 #include "windows.h"
 #include "commdlg.h"
+#include "shellapi.h"
 
 #include "main.h"
-#include "license.h"
 #include "winclock.h"
 
 #define INITIAL_WINDOW_SIZE 200
@@ -66,13 +66,13 @@ static VOID CLOCK_UpdateMenuCheckmarks(VOID)
 
 static VOID CLOCK_UpdateWindowCaption(VOID)
 {
-    CHAR szCaption[MAX_STRING_LEN];
+    WCHAR szCaption[MAX_STRING_LEN];
     int chars = 0;
 
     /* Set frame caption */
     if (Globals.bDate) {
-	chars = GetDateFormat(LOCALE_USER_DEFAULT, DATE_LONGDATE, NULL, NULL,
-			      szCaption, sizeof(szCaption));
+	chars = GetDateFormatW(LOCALE_USER_DEFAULT, DATE_LONGDATE, NULL, NULL,
+                               szCaption, ARRAY_SIZE(szCaption));
         if (chars) {
 	    --chars;
 	    szCaption[chars++] = ' ';
@@ -81,8 +81,8 @@ static VOID CLOCK_UpdateWindowCaption(VOID)
 	    szCaption[chars] = '\0';
 	}
     }
-    LoadString(0, IDS_CLOCK, szCaption + chars, sizeof(szCaption) - chars);
-    SetWindowText(Globals.hMainWnd, szCaption);
+    LoadStringW(0, IDS_CLOCK, szCaption + chars, MAX_STRING_LEN - chars);
+    SetWindowTextW(Globals.hMainWnd, szCaption);
 }
 
 /***********************************************************************
@@ -104,9 +104,10 @@ static BOOL CLOCK_ResetTimer(void)
 	period = 1000;
 
     if (!SetTimer (Globals.hMainWnd, TIMER_ID, period, NULL)) {
-	CHAR szApp[MAX_STRING_LEN];
-	LoadString(Globals.hInstance, IDS_CLOCK, szApp, sizeof(szApp));
-        MessageBox(0, "No available timers", szApp, MB_ICONEXCLAMATION | MB_OK);
+        static const WCHAR notimersW[] = {'N','o',' ','a','v','a','i','l','a','b','l','e',' ','t','i','m','e','r','s',0};
+        WCHAR szApp[MAX_STRING_LEN];
+        LoadStringW(Globals.hInstance, IDS_CLOCK, szApp, MAX_STRING_LEN);
+        MessageBoxW(0, notimersW, szApp, MB_ICONEXCLAMATION | MB_OK);
         return FALSE;
     }
     return TRUE;
@@ -136,15 +137,15 @@ static VOID CLOCK_ResetFont(VOID)
  */
 static VOID CLOCK_ChooseFont(VOID)
 {
-    LOGFONT lf;
-    CHOOSEFONT cf;
+    LOGFONTW lf;
+    CHOOSEFONTW cf;
     memset(&cf, 0, sizeof(cf));
     lf = Globals.logfont;
     cf.lStructSize = sizeof(cf);
     cf.hwndOwner = Globals.hMainWnd;
     cf.lpLogFont = &lf;
-    cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT;
-    if (ChooseFont(&cf)) {
+    cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_NOVERTFONTS;
+    if (ChooseFontW(&cf)) {
 	Globals.logfont = lf;
 	CLOCK_ResetFont();
     }
@@ -157,7 +158,7 @@ static VOID CLOCK_ChooseFont(VOID)
 static VOID CLOCK_ToggleTitle(VOID)
 {
     /* Also shows/hides the menu */
-    LONG style = GetWindowLong(Globals.hMainWnd, GWL_STYLE);
+    LONG style = GetWindowLongW(Globals.hMainWnd, GWL_STYLE);
     if ((Globals.bWithoutTitle = !Globals.bWithoutTitle)) {
 	style = (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP|WS_THICKFRAME;
 	SetMenu(Globals.hMainWnd, 0);
@@ -165,8 +166,9 @@ static VOID CLOCK_ToggleTitle(VOID)
     else {
 	style = (style & ~(WS_POPUP|WS_THICKFRAME)) | WS_OVERLAPPEDWINDOW;
         SetMenu(Globals.hMainWnd, Globals.hMainMenu);
+        SetWindowRgn(Globals.hMainWnd, 0, TRUE);
     }
-    SetWindowLong(Globals.hMainWnd, GWL_STYLE, style);
+    SetWindowLongW(Globals.hMainWnd, GWL_STYLE, style);
     SetWindowPos(Globals.hMainWnd, 0,0,0,0,0, 
 		 SWP_DRAWFRAME|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);
     
@@ -199,8 +201,8 @@ static VOID CLOCK_ToggleOnTop(VOID)
 
 static int CLOCK_MenuCommand (WPARAM wParam)
 {
-    CHAR szApp[MAX_STRING_LEN];
-    CHAR szAppRelease[MAX_STRING_LEN];
+    WCHAR szApp[MAX_STRING_LEN];
+    WCHAR szAppRelease[MAX_STRING_LEN];
     switch (wParam) {
         /* switch to analog */
         case IDM_ANALOG: {
@@ -251,21 +253,11 @@ static int CLOCK_MenuCommand (WPARAM wParam)
             CLOCK_UpdateWindowCaption();
             break;
         }
-            /* show license */
-        case IDM_LICENSE: {
-            WineLicense(Globals.hMainWnd);
-            break;
-        }
-            /* show warranties */
-        case IDM_NOWARRANTY: {
-            WineWarranty(Globals.hMainWnd);
-            break;
-        }
             /* show "about" box */
         case IDM_ABOUT: {
-            LoadString(Globals.hInstance, IDS_CLOCK, szApp, sizeof(szApp));
-            lstrcpy(szAppRelease,szApp);
-            ShellAbout(Globals.hMainWnd, szApp, szAppRelease, 0);
+            LoadStringW(Globals.hInstance, IDS_CLOCK, szApp, ARRAY_SIZE(szApp));
+            lstrcpyW(szAppRelease,szApp);
+            ShellAboutW(Globals.hMainWnd, szApp, szAppRelease, 0);
             break;
         }
     }
@@ -293,10 +285,10 @@ static VOID CLOCK_Paint(HWND hWnd)
 
     SetViewportOrgEx(dcMem, -ps.rcPaint.left, -ps.rcPaint.top, NULL);
     /* Erase the background */
-    FillRect(dcMem, &ps.rcPaint, GetStockObject(LTGRAY_BRUSH));
+    FillRect(dcMem, &ps.rcPaint, GetSysColorBrush(COLOR_3DFACE));
 
     if(Globals.bAnalog)
-	AnalogClock(dcMem, Globals.MaxX, Globals.MaxY, Globals.bSeconds);
+	AnalogClock(dcMem, Globals.MaxX, Globals.MaxY, Globals.bSeconds, Globals.bWithoutTitle);
     else
 	DigitalClock(dcMem, Globals.MaxX, Globals.MaxY, Globals.bSeconds, Globals.hFont);
 
@@ -325,7 +317,7 @@ static LRESULT WINAPI CLOCK_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
     switch (msg) {
 	/* L button drag moves the window */
         case WM_NCHITTEST: {
-	    LRESULT ret = DefWindowProc (hWnd, msg, wParam, lParam);
+	    LRESULT ret = DefWindowProcW(hWnd, msg, wParam, lParam);
 	    if (ret == HTCLIENT)
 		ret = HTCAPTION;
             return ret;
@@ -346,6 +338,19 @@ static LRESULT WINAPI CLOCK_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
         case WM_SIZE: {
             Globals.MaxX = LOWORD(lParam);
             Globals.MaxY = HIWORD(lParam);
+            if (Globals.bAnalog && Globals.bWithoutTitle)
+            {
+                RECT rect;
+                INT diameter = min( Globals.MaxX, Globals.MaxY );
+                HRGN hrgn = CreateEllipticRgn( (Globals.MaxX - diameter) / 2,
+                                               (Globals.MaxY - diameter) / 2,
+                                               (Globals.MaxX + diameter) / 2,
+                                               (Globals.MaxY + diameter) / 2 );
+                GetWindowRect( hWnd, &rect );
+                MapWindowPoints( 0, hWnd, (LPPOINT)&rect, 2 );
+                OffsetRgn( hrgn, -rect.left, -rect.top );
+                SetWindowRgn( Globals.hMainWnd, hrgn, TRUE );
+            }
 	    CLOCK_ResetFont();
             break;
         }
@@ -369,7 +374,7 @@ static LRESULT WINAPI CLOCK_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
         }
 
         default:
-            return DefWindowProc (hWnd, msg, wParam, lParam);
+            return DefWindowProcW(hWnd, msg, wParam, lParam);
     }
     return 0;
 }
@@ -383,10 +388,10 @@ static LRESULT WINAPI CLOCK_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
 int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show)
 {
     MSG      msg;
-    WNDCLASS class;
+    WNDCLASSW class;
 
-    static const char szClassName[] = "CLClass";  /* To make sure className >= 0x10000 */
-    static const char szWinName[]   = "Clock";
+    static const WCHAR szClassName[] = {'C','L','C','l','a','s','s',0};
+    static const WCHAR szWinName[]   = {'C','l','o','c','k',0};
 
     /* Setup Globals */
     memset(&Globals.hFont, 0, sizeof (Globals.hFont));
@@ -399,17 +404,17 @@ int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show
         class.cbClsExtra    = 0;
         class.cbWndExtra    = 0;
         class.hInstance     = hInstance;
-        class.hIcon         = LoadIcon (0, IDI_APPLICATION);
-        class.hCursor       = LoadCursor (0, IDC_ARROW);
+        class.hIcon         = LoadIconW(0, (LPCWSTR)IDI_APPLICATION);
+        class.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
         class.hbrBackground = 0;
         class.lpszMenuName  = 0;
         class.lpszClassName = szClassName;
     }
     
-    if (!RegisterClass (&class)) return FALSE;
+    if (!RegisterClassW(&class)) return FALSE;
     
     Globals.MaxX = Globals.MaxY = INITIAL_WINDOW_SIZE;
-    Globals.hMainWnd = CreateWindow (szClassName, szWinName, WS_OVERLAPPEDWINDOW,
+    Globals.hMainWnd = CreateWindowW(szClassName, szWinName, WS_OVERLAPPEDWINDOW,
                                      CW_USEDEFAULT, CW_USEDEFAULT,
                                      Globals.MaxX, Globals.MaxY, 0,
                                      0, hInstance, 0);
@@ -417,7 +422,7 @@ int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show
     if (!CLOCK_ResetTimer())
         return FALSE;
 
-    Globals.hMainMenu = LoadMenu(0, MAKEINTRESOURCE(MAIN_MENU));
+    Globals.hMainMenu = LoadMenuW(0, MAKEINTRESOURCEW(MAIN_MENU));
     SetMenu(Globals.hMainWnd, Globals.hMainMenu);
     CLOCK_UpdateMenuCheckmarks();
     CLOCK_UpdateWindowCaption();
@@ -425,9 +430,9 @@ int PASCAL WinMain (HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show
     ShowWindow (Globals.hMainWnd, show);
     UpdateWindow (Globals.hMainWnd);
     
-    while (GetMessage(&msg, 0, 0, 0)) {
+    while (GetMessageW(&msg, 0, 0, 0)) {
         TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        DispatchMessageW(&msg);
     }
 
     KillTimer(Globals.hMainWnd, TIMER_ID);

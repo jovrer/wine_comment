@@ -15,77 +15,52 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifdef HAVE_LCMS
+#ifdef HAVE_LCMS2
+#include <lcms2.h>
 
-/*  These basic Windows types are defined in lcms.h when compiling on
- *  a non-Windows platform (why?), so they would normally not conflict
- *  with anything included earlier. But since we are building Wine they
- *  most certainly will have been defined before we include lcms.h.
- *  The preprocessor comes to the rescue.
+/*  A simple structure to tie together a pointer to an icc profile, an lcms
+ *  color profile handle and a Windows file handle. If the profile is memory
+ *  based the file handle field is set to INVALID_HANDLE_VALUE. The 'access'
+ *  field records the access parameter supplied to an OpenColorProfile()
+ *  call, i.e. PROFILE_READ or PROFILE_READWRITE.
  */
 
-#define BYTE    LCMS_BYTE
-#define LPBYTE  LCMS_LPBYTE
-#define WORD    LCMS_WORD
-#define LPWORD  LCMS_LPWORD
-#define DWORD   LCMS_DWORD
-#define LPDWORD LCMS_LPDWORD
-#define BOOL    LCMS_BOOL
-#define LPSTR   LCMS_LPSTR
-#define LPVOID  LCMS_LPVOID
+struct profile
+{
+    HANDLE      file;
+    DWORD       access;
+    char       *data;
+    DWORD       size;
+    cmsHPROFILE cmsprofile;
+};
 
-#undef cdecl
-#undef FAR
+struct transform
+{
+    cmsHTRANSFORM cmstransform;
+};
 
-#undef ZeroMemory
-#undef CopyMemory
+extern HPROFILE create_profile( struct profile * ) DECLSPEC_HIDDEN;
+extern BOOL close_profile( HPROFILE ) DECLSPEC_HIDDEN;
 
-#undef LOWORD
-#undef MAX_PATH
+extern HTRANSFORM create_transform( struct transform * ) DECLSPEC_HIDDEN;
+extern BOOL close_transform( HTRANSFORM ) DECLSPEC_HIDDEN;
 
-#ifdef HAVE_LCMS_LCMS_H
-#include <lcms/lcms.h>
-#else
-#include <lcms.h>
-#endif
+struct profile *grab_profile( HPROFILE ) DECLSPEC_HIDDEN;
+struct transform *grab_transform( HTRANSFORM ) DECLSPEC_HIDDEN;
 
-/*  Funny thing is lcms.h defines DWORD as an 'unsigned int' whereas Wine
- *  defines it as an 'unsigned long'. To avoid compiler warnings we use a
- *  preprocessor define for DWORD and LPDWORD to get back Wine's orginal
- *  (typedef) definitions.
- */
+void release_profile( struct profile * ) DECLSPEC_HIDDEN;
+void release_transform( struct transform * ) DECLSPEC_HIDDEN;
 
-#undef DWORD
-#undef LPDWORD
+extern void free_handle_tables( void ) DECLSPEC_HIDDEN;
 
-#define DWORD   DWORD
-#define LPDWORD LPDWORD
+extern BOOL get_tag_data( const struct profile *, TAGTYPE, DWORD, void *, DWORD * ) DECLSPEC_HIDDEN;
+extern BOOL set_tag_data( const struct profile *, TAGTYPE, DWORD, const void *, DWORD * ) DECLSPEC_HIDDEN;
+extern void get_profile_header( const struct profile *, PROFILEHEADER * ) DECLSPEC_HIDDEN;
+extern void set_profile_header( const struct profile *, const PROFILEHEADER * ) DECLSPEC_HIDDEN;
 
-extern DWORD MSCMS_hprofile2access( HPROFILE );
-extern HPROFILE MSCMS_handle2hprofile( HANDLE file );
-extern HPROFILE MSCMS_cmsprofile2hprofile( cmsHPROFILE cmsprofile );
-extern HPROFILE MSCMS_iccprofile2hprofile( icProfile *iccprofile );
-extern HANDLE MSCMS_hprofile2handle( HPROFILE profile );
-extern cmsHPROFILE MSCMS_hprofile2cmsprofile( HPROFILE profile );
-extern icProfile *MSCMS_hprofile2iccprofile( HPROFILE profile );
+#endif /* HAVE_LCMS2 */
 
-extern HPROFILE MSCMS_create_hprofile_handle( HANDLE file, icProfile *iccprofile,
-                                              cmsHPROFILE cmsprofile, DWORD access );
-extern void MSCMS_destroy_hprofile_handle( HPROFILE profile );
-
-extern cmsHTRANSFORM MSCMS_htransform2cmstransform( HTRANSFORM transform );
-extern HTRANSFORM MSCMS_create_htransform_handle( cmsHTRANSFORM cmstransform );
-extern void MSCMS_destroy_htransform_handle( HTRANSFORM transform );
-
-extern DWORD MSCMS_get_tag_count( icProfile *iccprofile );
-extern void MSCMS_get_tag_by_index( icProfile *iccprofile, DWORD index, icTag *tag );
-extern void MSCMS_get_tag_data( icProfile *iccprofile, icTag *tag, DWORD offset, void *buffer );
-extern void MSCMS_set_tag_data( icProfile *iccprofile, icTag *tag, DWORD offset, void *buffer );
-extern void MSCMS_get_profile_header( icProfile *iccprofile, PROFILEHEADER *header );
-extern void MSCMS_set_profile_header( icProfile *iccprofile, PROFILEHEADER *header );
-extern DWORD MSCMS_get_profile_size( icProfile *iccprofile );
-
-#endif /* HAVE_LCMS */
+extern const char *dbgstr_tag(DWORD) DECLSPEC_HIDDEN;

@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_OLE2_H
@@ -35,14 +35,19 @@ extern "C" {
 #define E_DRAW                  VIEW_E_DRAW
 #define DATA_E_FORMATETC        DV_E_FORMATETC
 
-#define OLEIVERB_PRIMARY            (0L)
-#define OLEIVERB_SHOW               (-1L)
-#define OLEIVERB_OPEN               (-2L)
-#define OLEIVERB_HIDE               (-3L)
-#define OLEIVERB_UIACTIVATE         (-4L)
-#define OLEIVERB_INPLACEACTIVATE    (-5L)
-#define OLEIVERB_DISCARDUNDOSTATE   (-6L)
-#define OLEIVERB_PROPERTIES         (-7L)
+#define OLEIVERB_PRIMARY            (__MSABI_LONG(0))
+#define OLEIVERB_SHOW               (__MSABI_LONG(-1))
+#define OLEIVERB_OPEN               (__MSABI_LONG(-2))
+#define OLEIVERB_HIDE               (__MSABI_LONG(-3))
+#define OLEIVERB_UIACTIVATE         (__MSABI_LONG(-4))
+#define OLEIVERB_INPLACEACTIVATE    (__MSABI_LONG(-5))
+#define OLEIVERB_DISCARDUNDOSTATE   (__MSABI_LONG(-6))
+#define OLEIVERB_PROPERTIES         (__MSABI_LONG(-7))
+
+#define EMBDHLP_INPROC_HANDLER  0x00000000
+#define EMBDHLP_INPROC_SERVER   0x00000001
+#define EMBDHLP_CREATENOW       0x00000000
+#define EMBDHLP_DELAYCREATE     0x00010000
 
 /*
  * API declarations
@@ -79,6 +84,7 @@ HRESULT     WINAPI OleCreateLinkFromData(LPDATAOBJECT pSrcDataObj, REFIID riid,
                 LPOLECLIENTSITE pClientSite, LPSTORAGE pStg,
                 LPVOID* ppvObj);
 HRESULT     WINAPI OleSetContainedObject(LPUNKNOWN pUnknown, BOOL fContained);
+HRESULT     WINAPI OleNoteObjectVisible(LPUNKNOWN pUnknown, BOOL fVisible);
 HRESULT     WINAPI OleQueryLinkFromData(IDataObject* pSrcDataObject);
 HRESULT     WINAPI OleQueryCreateFromData(LPDATAOBJECT pSrcDataObject);
 HRESULT     WINAPI OleRun(LPUNKNOWN pUnknown);
@@ -96,14 +102,20 @@ HRESULT     WINAPI GetHGlobalFromILockBytes(LPLOCKBYTES plkbyt, HGLOBAL* phgloba
 HRESULT     WINAPI CreateILockBytesOnHGlobal(HGLOBAL hGlobal, BOOL fDeleteOnRelease, LPLOCKBYTES* pplkbyt);
 HRESULT     WINAPI CreateDataAdviseHolder(LPDATAADVISEHOLDER* ppDAHolder);
 HGLOBAL     WINAPI OleGetIconOfClass(REFCLSID rclsid, LPOLESTR lpszLabel, BOOL fUseTypeAsLabel);
+HGLOBAL     WINAPI OleGetIconOfFile(LPOLESTR lpszPath, BOOL fUseFileAsLabel);
+HGLOBAL     WINAPI OleMetafilePictFromIconAndLabel(HICON hIcon, LPOLESTR lpszLabel, LPOLESTR lpszSourceFile, UINT iIconIndex);
 HRESULT     WINAPI OleLockRunning(LPUNKNOWN pUnknown, BOOL fLock, BOOL fLastUnlockCloses);
 HRESULT     WINAPI OleCreateFromFile(REFCLSID rclsid, LPCOLESTR lpszFileName, REFIID riid,
                 DWORD renderopt, LPFORMATETC lpFormatEtc, LPOLECLIENTSITE pClientSite, LPSTORAGE pStg, LPVOID* ppvObj);
+HRESULT     WINAPI OleCreateFromFileEx(REFCLSID clsid, LPCOLESTR filename, REFIID iid, DWORD flags,
+                DWORD renderopt, ULONG num_fmts, DWORD *adv_flags, LPFORMATETC fmts, IAdviseSink *sink,
+                DWORD *conns, LPOLECLIENTSITE client_site, LPSTORAGE storage, LPVOID* obj);
 HRESULT     WINAPI OleCreateLink(LPMONIKER pmkLinkSrc, REFIID riid, DWORD renderopt, LPFORMATETC lpFormatEtc,
                 LPOLECLIENTSITE pClientSite, LPSTORAGE pStg, LPVOID* ppvObj);
 HRESULT     WINAPI OleCreate(REFCLSID rclsid, REFIID riid, DWORD renderopt, LPFORMATETC pFormatEtc, LPOLECLIENTSITE pClientSite,
                 LPSTORAGE pStg, LPVOID* ppvObj);
 HRESULT     WINAPI OleFlushClipboard(void);
+HRESULT     WINAPI GetConvertStg(LPSTORAGE pStg);
 HRESULT     WINAPI SetConvertStg(LPSTORAGE pStg, BOOL fConvert);
 BOOL        WINAPI IsAccelerator(HACCEL hAccel, int cAccelEntries, struct tagMSG* lpMsg, WORD* lpwCmd);
 HRESULT     WINAPI OleCreateLinkToFile(LPCOLESTR lpszFileName, REFIID riid, DWORD renderopt, LPFORMATETC lpFormatEtc,
@@ -113,8 +125,17 @@ HRESULT     WINAPI WriteFmtUserTypeStg(LPSTORAGE pstg, CLIPFORMAT cf, LPOLESTR l
 HRESULT     WINAPI OleTranslateAccelerator (LPOLEINPLACEFRAME lpFrame, LPOLEINPLACEFRAMEINFO lpFrameInfo, struct tagMSG* lpmsg);
 HRESULT     WINAPI OleCreateFromData(LPDATAOBJECT pSrcDataObj, REFIID riid, DWORD renderopt, LPFORMATETC pFormatEtc,
                 LPOLECLIENTSITE pClientSite, LPSTORAGE pStg, LPVOID* ppvObj);
+HRESULT     WINAPI OleCreateFromDataEx(LPDATAOBJECT pSrcDataObj, REFIID riid, DWORD dwFlags, DWORD renderopt, ULONG num_formats,
+                                       DWORD *adv_flags, LPFORMATETC fmts, IAdviseSink *sink, DWORD *conns,
+                                       LPOLECLIENTSITE pClientSite, LPSTORAGE pStg, LPVOID* ppvObj);
 HRESULT     WINAPI OleCreateDefaultHandler(REFCLSID  clsid,
 					   LPUNKNOWN pUnkOuter,
+					   REFIID    riid,
+					   LPVOID*   ppvObj);
+HRESULT     WINAPI OleCreateEmbeddingHelper(REFCLSID  clsid,
+					   LPUNKNOWN pUnkOuter,
+					   DWORD     flags,
+					   IClassFactory *pCF,
 					   REFIID    riid,
 					   LPVOID*   ppvObj);
 HRESULT     WINAPI CreateOleAdviseHolder (LPOLEADVISEHOLDER *ppOAHolder);
@@ -141,6 +162,7 @@ typedef struct _OLESTREAM {
 HRESULT     WINAPI OleConvertOLESTREAMToIStorage( LPOLESTREAM lpolestream, LPSTORAGE pstg, const DVTARGETDEVICE* ptd);
 HRESULT     WINAPI OleConvertIStorageToOLESTREAM( LPSTORAGE pstg, LPOLESTREAM lpolestream);
 
+HRESULT     WINAPI OleDoAutoConvert( LPSTORAGE pStg, LPCLSID pClsidNew );
 HRESULT     WINAPI OleGetAutoConvert( REFCLSID clsidOld, LPCLSID pClsidNew );
 HRESULT     WINAPI OleSetAutoConvert( REFCLSID clsidOld, REFCLSID clsidNew );
 

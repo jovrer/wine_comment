@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -28,7 +28,6 @@
 
 struct inner_data_user {
     /* the following fields are only user by the USER backend (should be hidden in user) */
-    HWND		hWnd;		/* handle to windows for rendering */
     HFONT		hFont;		/* font used for rendering, usually fixed */
     LONG                ext_leading;    /* external leading for hFont */
     HDC			hMemDC;		/* memory DC holding the bitmap below */
@@ -44,17 +43,15 @@ struct inner_data_user {
 #define PRIVATE(data)   ((struct inner_data_user*)((data)->private))
 
 /* from user.c */
-extern COLORREF	WCUSER_ColorMap[16];
+extern const COLORREF WCUSER_ColorMap[16];
 extern BOOL WCUSER_GetProperties(struct inner_data*, BOOL);
-extern BOOL WCUSER_ValidateFont(const struct inner_data* data, const LOGFONT* lf);
-extern BOOL WCUSER_ValidateFontMetric(const struct inner_data* data,
-                                      const TEXTMETRIC* tm, DWORD fontType);
-extern BOOL WCUSER_AreFontsEqual(const struct config_data* config,
-                                 const LOGFONT* lf);
-extern HFONT WCUSER_CopyFont(struct config_data* config, HWND hWnd, const LOGFONT* lf,
-                             LONG* el);
-extern void WCUSER_FillLogFont(LOGFONT* lf, const WCHAR* name,
+extern BOOL WCUSER_ValidateFont(const struct inner_data* data, const LOGFONTW* lf, int pass);
+extern BOOL WCUSER_ValidateFontMetric(const struct inner_data* data, const TEXTMETRICW* tm,
+                                      DWORD type, int pass);
+extern HFONT WCUSER_CopyFont(struct config_data* config, HWND hWnd,
+                             const LOGFONTW* lf, LONG* el);
+extern void WCUSER_FillLogFont(LOGFONTW* lf, const WCHAR* name,
                                UINT height, UINT weight);
 
-extern void WCUSER_DumpLogFont(const char* pfx, const LOGFONT* lf, DWORD ft);
-extern void WCUSER_DumpTextMetric(const TEXTMETRIC* tm, DWORD ft);
+extern void WCUSER_DumpLogFont(const char* pfx, const LOGFONTW* lf, DWORD ft);
+extern void WCUSER_DumpTextMetric(const TEXTMETRICW* tm, DWORD ft);

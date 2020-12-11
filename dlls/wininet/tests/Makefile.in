@@ -1,14 +1,10 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = wininet.dll
-IMPORTS   = wininet kernel32
+IMPORTS   = wininet crypt32 ws2_32 user32 advapi32 shell32
 
-CTESTS = \
+C_SRCS = \
+	ftp.c \
 	generated.c \
-	http.c
-
-@MAKE_TEST_RULES@
-
-### Dependencies:
+	http.c \
+	internet.c \
+	url.c \
+	urlcache.c

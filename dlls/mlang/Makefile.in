@@ -1,19 +1,9 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = mlang.dll
-IMPORTLIB = libmlang.$(IMPLIBEXT)
-IMPORTS   = ole32 user32 gdi32 advapi32 kernel32 ntdll
-EXTRALIBS = $(LIBUNICODE) -luuid
-EXTRADEFS = -DCOM_NO_WINDOWS_H
+IMPORTLIB = mlang
+IMPORTS   = uuid ole32 gdi32 advapi32
+DELAYIMPORTS = oleaut32
 
 C_SRCS = \
-	mlang.c \
-	regsvr.c
+	mlang.c
 
-SUBDIRS = tests
-
-@MAKE_DLL_RULES@
-
-### Dependencies:
+IDL_SRCS = mlang_classes.idl

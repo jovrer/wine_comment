@@ -1,23 +1,14 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = winemine.exe
-APPMODE   = -mwindows
-IMPORTS   = user32 gdi32 advapi32 kernel32
+APPMODE   = -mwindows -municode
+IMPORTS   = user32 gdi32 advapi32
+DELAYIMPORTS = shell32
 
 C_SRCS = \
-        dialog.c \
+	dialog.c \
 	main.c
 
-RC_SRCS = rsrc.rc
-RC_BINSRC = rsrc.rc
-RC_BINARIES = \
-	faces.bmp \
-	leds.bmp \
-	mines.bmp \
-	winemine.ico
+RC_SRCS = winemine.rc
 
-@MAKE_PROG_RULES@
+MANPAGES = winemine.man.in
 
-### Dependencies:
+SVG_SRCS = winemine.svg

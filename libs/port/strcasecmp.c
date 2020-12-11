@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -24,6 +24,7 @@
 #include <ctype.h>
 
 #ifndef HAVE_STRCASECMP
+#undef strcasecmp
 int strcasecmp( const char *str1, const char *str2 )
 {
     const unsigned char *ustr1 = (const unsigned char *)str1;

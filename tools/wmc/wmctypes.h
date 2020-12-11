@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WMC_WMCTYPES_H
@@ -73,6 +73,8 @@ typedef struct lanmsg {
 	int		cp;		/* Codepage of message */
 	WCHAR		*msg;		/* Message text */
 	int		len;		/* Message length including trailing '\0' */
+	const char	*file;		/* File location for definition */
+	int		line;
 } lanmsg_t;
 
 typedef struct msg {
@@ -115,6 +117,7 @@ typedef struct lan_blk {
 	struct lan_blk	*next;		/* Linkage for languages */
 	struct lan_blk	*prev;
 	int		lan;		/* The language of this block */
+	int		version;	/* The resource version for auto-translated resources */
 	block_t		*blks;		/* Array of blocks for this language */
 	int		nblk;		/* Nr of blocks in array */
 } lan_blk_t;

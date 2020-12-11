@@ -1,35 +1,34 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = wined3d.dll
-IMPORTLIB = libwined3d.$(IMPLIBEXT)
-IMPORTS   = user32 gdi32 advapi32 kernel32
-EXTRAINCL = @X_CFLAGS@
-EXTRALIBS = -luuid @X_LIBS@ @X_PRE_LIBS@ @XLIB@ @X_EXTRA_LIBS@ @OPENGL_LIBS@
+IMPORTLIB = wined3d
+IMPORTS   = opengl32 user32 gdi32 advapi32
 
 C_SRCS = \
-	basetexture.c \
-	cubetexture.c \
+	adapter_gl.c \
+	arb_program_shader.c \
+	ati_fragment_shader.c \
+	buffer.c \
+	context.c \
+	cs.c \
 	device.c \
 	directx.c \
-	drawprim.c \
-	indexbuffer.c \
-	pixelshader.c \
+	gl_compat.c \
+	glsl_shader.c \
+	nvidia_texture_shader.c \
+	palette.c \
 	query.c \
 	resource.c \
+	sampler.c \
+	shader.c \
+	shader_sm1.c \
+	shader_sm4.c \
+	state.c \
 	stateblock.c \
 	surface.c \
 	swapchain.c \
 	texture.c \
 	utils.c \
-	vertexbuffer.c \
 	vertexdeclaration.c \
-	vertexshader.c \
-	volume.c \
-	volumetexture.c \
+	view.c \
 	wined3d_main.c
 
-@MAKE_DLL_RULES@
-
-### Dependencies:
+RC_SRCS = version.rc

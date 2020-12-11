@@ -1,10 +1,6 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = wsock32.dll
-IMPORTLIB = libwsock32.$(IMPLIBEXT)
-IMPORTS   = ws2_32 iphlpapi kernel32
+IMPORTLIB = wsock32
+IMPORTS   = mswsock ws2_32 iphlpapi
 
 C_SRCS = \
 	protocol.c \
@@ -12,7 +8,3 @@ C_SRCS = \
 	socket.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
-
-### Dependencies:

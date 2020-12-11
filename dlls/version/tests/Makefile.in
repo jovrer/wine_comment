@@ -1,15 +1,8 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = version.dll
-IMPORTS   = version kernel32
+IMPORTS   = version
 
-CTESTS = \
-	info.c
+C_SRCS = \
+	info.c \
+	install.c
 
 RC_SRCS = version.rc
-
-@MAKE_TEST_RULES@
-
-### Dependencies:

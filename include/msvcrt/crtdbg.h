@@ -15,13 +15,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_CRTDBG_H_
 #define __WINE_CRTDBG_H_
-#ifndef __WINE_USE_MSVCRT
-#define __WINE_USE_MSVCRT
-#endif
+
+#include <crtdefs.h>
 
 /* The debug API is not implemented in Winelib.
  * Redirect everything to the regular APIs.
@@ -45,10 +44,10 @@
 typedef struct _CrtMemState
 {
     struct _CrtMemBlockHeader* pBlockHeader;
-    unsigned long lCounts[_MAX_BLOCKS];
-    unsigned long lSizes[_MAX_BLOCKS];
-    unsigned long lHighWaterCount;
-    unsigned long lTotalCount;
+    __msvcrt_ulong lCounts[_MAX_BLOCKS];
+    __msvcrt_ulong lSizes[_MAX_BLOCKS];
+    __msvcrt_ulong lHighWaterCount;
+    __msvcrt_ulong lTotalCount;
 } _CrtMemState;
 
 
@@ -61,7 +60,7 @@ typedef struct _CrtMemState
 #define _CrtCheckMemory()               ((int)1)
 #define _CrtDbgReport(...)              ((int)0)
 #define _CrtDumpMemoryLeaks()           ((int)0)
-#define _CrtSetBreakAlloc(a)            ((long)0)
+#define _CrtSetBreakAlloc(a)            ((__msvcrt_long)0)
 #define _CrtSetDbgFlag(f)               ((int)0)
 #define _CrtSetDumpClient(f)            ((void)0)
 #define _CrtSetReportMode(t,m)          ((int)0)
@@ -77,18 +76,26 @@ typedef struct _CrtMemState
 #define _CrtDbgBreak()                  ((void)0)
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern int _crtAssertBusy;
 extern int _crtBreakAlloc;
 extern int _crtDbgFlag;
 
-int   _CrtCheckMemory();
-int   _CrtDbgReport(int reportType, const char *filename, int linenumber,
-                    const char *moduleName, const char *format, ...);
-int   _CrtDumpMemoryLeaks();
-int   _CrtSetBreakAlloc(int new);
-int   _CrtSetDbgFlag(int new);
-void *_CrtSetDumpClient(void *dumpClient);
-int   _CrtSetReportMode(int reportType, int reportMode);
+int   __cdecl _CrtCheckMemory(void);
+int   WINAPIV _CrtDbgReport(int reportType, const char *filename, int linenumber,
+                            const char *moduleName, const char *format, ...);
+int   __cdecl _CrtDumpMemoryLeaks(void);
+int   __cdecl _CrtSetBreakAlloc(int);
+int   __cdecl _CrtSetDbgFlag(int);
+void *__cdecl _CrtSetDumpClient(void *dumpClient);
+int   __cdecl _CrtSetReportMode(int reportType, int reportMode);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _DEBUG */
 

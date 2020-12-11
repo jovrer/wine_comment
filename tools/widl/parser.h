@@ -15,27 +15,39 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WIDL_PARSER_H
 #define __WIDL_PARSER_H
 
-int yyparse(void);
+typedef struct
+{
+  type_t *interface;
+  unsigned char old_pointer_default;
+} interface_info_t;
 
-extern FILE *yyin;
-extern char *yytext;
-extern int yydebug;
+int parser_parse(void);
+
+extern FILE *parser_in;
+extern char *parser_text;
+extern int parser_debug;
 extern int yy_flex_debug;
 
-int yylex(void);
+int parser_lex(void);
 
 extern int import_stack_ptr;
 int do_import(char *fname);
 void abort_import(void);
+void pop_import(void);
 
 #define parse_only import_stack_ptr
 
 int is_type(const char *name);
+
+int do_warning(char *toggle, warning_list_t *wnum);
+int is_warning_enabled(int warning);
+
+extern char *temp_name;
 
 #endif

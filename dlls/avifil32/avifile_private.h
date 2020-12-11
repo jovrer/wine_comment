@@ -1,5 +1,5 @@
 /*
- * Copyright 2002 Michael Günnewig
+ * Copyright 2002 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,18 +13,17 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __AVIFILE_PRIVATE_H
 #define __AVIFILE_PRIVATE_H
 
+#include <windef.h>
+#include <winuser.h>
+
 #ifndef MAX_AVISTREAMS
 #define MAX_AVISTREAMS 8
-#endif
-
-#ifndef comptypeDIB
-#define comptypeDIB  mmioFOURCC('D','I','B',' ')
 #endif
 
 #ifndef DIBWIDTHBYTES
@@ -50,25 +49,23 @@
 #define IDS_ALLFILES         0x0185
 #define IDS_VIDEO            0x0189
 #define IDS_AUDIO            0x0190
-#define IDS_AVISTREAMFORMAT  0x0191
 #define IDS_AVIFILETYPE      0x0192
 #define IDS_UNCOMPRESSED     0x0193
 
 DEFINE_AVIGUID(CLSID_ICMStream, 0x00020001, 0, 0);
 DEFINE_AVIGUID(CLSID_WAVFile,   0x00020003, 0, 0);
 DEFINE_AVIGUID(CLSID_ACMStream, 0x0002000F, 0, 0);
-DEFINE_AVIGUID(IID_IEditStreamInternal, 0x0002000A,0,0);
 
-extern HMODULE AVIFILE_hModule;
+extern HMODULE AVIFILE_hModule DECLSPEC_HIDDEN;
 
-extern HRESULT AVIFILE_CreateAVIFile(REFIID riid, LPVOID *ppobj);
-extern HRESULT AVIFILE_CreateWAVFile(REFIID riid, LPVOID *ppobj);
-extern HRESULT AVIFILE_CreateACMStream(REFIID riid, LPVOID *ppobj);
-extern HRESULT AVIFILE_CreateICMStream(REFIID riid, LPVOID *ppobj);
-extern PAVIEDITSTREAM AVIFILE_CreateEditStream(PAVISTREAM pstream);
-extern PGETFRAME AVIFILE_CreateGetFrame(PAVISTREAM pstream);
-extern PAVIFILE  AVIFILE_CreateAVITempFile(int nStreams,PAVISTREAM *ppStreams);
+extern HRESULT AVIFILE_CreateAVIFile(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT AVIFILE_CreateWAVFile(IUnknown *outer_unk, REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT AVIFILE_CreateACMStream(REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern HRESULT AVIFILE_CreateICMStream(REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
+extern PGETFRAME AVIFILE_CreateGetFrame(PAVISTREAM pstream) DECLSPEC_HIDDEN;
+extern PAVIFILE  AVIFILE_CreateAVITempFile(int nStreams, const PAVISTREAM *ppStreams) DECLSPEC_HIDDEN;
 
-extern LPCWSTR  AVIFILE_BasenameW(LPCWSTR szFileName);
+extern LPCWSTR  AVIFILE_BasenameW(LPCWSTR szFileName) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI avifil32_DllGetClassObject(REFCLSID pclsid, REFIID piid, LPVOID *ppv) DECLSPEC_HIDDEN;
 
 #endif

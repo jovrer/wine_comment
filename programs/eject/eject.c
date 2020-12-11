@@ -15,8 +15,10 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#define WIN32_LEAN_AND_MEAN
 
 #include "config.h"
 
@@ -31,8 +33,8 @@
 WINE_DEFAULT_DEBUG_CHANNEL(eject);
 
 /* options */
-static int unmount_only;
-static int eject_all;
+static BOOL unmount_only;
+static BOOL eject_all;
 
 /* wrapper for GetDriveTypeW */
 static DWORD get_drive_type( WCHAR drive )
@@ -72,16 +74,16 @@ static BOOL eject_cd( WCHAR drive )
     WINE_TRACE( "ejecting %c:\n", (char)drive );
 
     if (!DeviceIoControl( handle, FSCTL_DISMOUNT_VOLUME, NULL, 0, NULL, 0, &result, NULL ))
-        WINE_WARN( "FSCTL_DISMOUNT_VOLUME failed with err %ld\n", GetLastError() );
+        WINE_WARN( "FSCTL_DISMOUNT_VOLUME failed with err %d\n", GetLastError() );
 
     removal.PreventMediaRemoval = FALSE;
     if (!DeviceIoControl( handle, IOCTL_STORAGE_MEDIA_REMOVAL, &removal, sizeof(removal), NULL, 0, &result, NULL ))
-        WINE_WARN( "IOCTL_STORAGE_MEDIA_REMOVAL failed with err %ld\n", GetLastError() );
+        WINE_WARN( "IOCTL_STORAGE_MEDIA_REMOVAL failed with err %d\n", GetLastError() );
 
     if (!unmount_only)
     {
         if (!DeviceIoControl( handle, IOCTL_STORAGE_EJECT_MEDIA, NULL, 0, NULL, 0, &result, NULL ))
-            WINE_WARN( "IOCTL_STORAGE_EJECT_MEDIA failed with err %ld\n", GetLastError() );
+            WINE_WARN( "IOCTL_STORAGE_EJECT_MEDIA failed with err %d\n", GetLastError() );
     }
 
     CloseHandle( handle );
@@ -132,8 +134,8 @@ static void parse_options( int *argc, char *argv[] )
         }
         for (opt = argv[i] + 1; *opt; opt++) switch(*opt)
         {
-        case 'a': eject_all = 1; break;
-        case 'u': unmount_only = 1; break;
+        case 'a': eject_all = TRUE; break;
+        case 'u': unmount_only = TRUE; break;
         case 'h': usage(); break;
         default:
             WINE_MESSAGE( "Unknown option -%c\n", *opt );

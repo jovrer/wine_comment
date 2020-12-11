@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 import "objidl.idl";
@@ -21,7 +21,7 @@ import "objidl.idl";
 /* trick widl into thinking that it knows the DirectDraw types 
  * as there is no IDL file for them (yet) */
 cpp_quote("#if 0")
-typedef void * LPDIRECTDRAW;
+interface IDirectDraw;
 typedef void DDSURFACEDESC,DDCAPS;
 typedef DWORD RGBQUAD;
 typedef LONGLONG REFERENCE_TIME;
@@ -61,7 +61,9 @@ cpp_quote("#define AMDSS_PRIMARY (AMDDS_DCIPS | AMDDS_PS)")
 
 [
     object,
-    pointer_default(unique)
+    /* uuid(36d39eb0-dd75-11ce-bf0e-00aa0055595a)  conflicts with uuids.h */
+    pointer_default(unique),
+    local
 ]
 interface IDirectDrawVideo : IUnknown
 {
@@ -71,8 +73,8 @@ interface IDirectDrawVideo : IUnknown
     HRESULT GetEmulatedCaps([out] DDCAPS *pCaps);
     HRESULT GetSurfaceDesc([out] DDSURFACEDESC * pSurfaceDesc);
     HRESULT GetFourCCCodes([out] DWORD * pCount, [out] DWORD * pCodes);
-    HRESULT SetDirectDraw([in] LPDIRECTDRAW pDirectDraw);
-    HRESULT GetDirectDraw([out] LPDIRECTDRAW * ppDirectDraw);
+    HRESULT SetDirectDraw([in] IDirectDraw *ddraw);
+    HRESULT GetDirectDraw([out] IDirectDraw **ddraw);
     HRESULT GetSurfaceType([out] DWORD * pSurfaceType);
     HRESULT SetDefault();
     HRESULT UseScanLine([in] long UseScanLine);
@@ -85,7 +87,9 @@ interface IDirectDrawVideo : IUnknown
 
 [
     object,
-    pointer_default(unique)
+    /* uuid(1bd0ecb0-f8e2-11ce-aac6-0020af0b99a3)  conflicts with uuids.h */
+    pointer_default(unique),
+    local
 ]
 interface IQualProp : IUnknown
 {
@@ -99,6 +103,7 @@ interface IQualProp : IUnknown
 
 [
     object,
+    /* uuid(dd1d7110-7836-11cf-bf47-00aa0055595a)  conflicts with uuids.h */
     pointer_default(unique)
 ]
 interface IFullScreenVideo : IUnknown
@@ -124,7 +129,9 @@ interface IFullScreenVideo : IUnknown
 
 [
     object,
-    pointer_default(unique)
+    /* uuid(53479470-f1dd-11cf-bc42-00aa00ac74f6)  conflicts with uuids.h */
+    pointer_default(unique),
+    local
 ]
 interface IFullScreenVideoEx : IFullScreenVideo
 {
@@ -137,7 +144,9 @@ interface IFullScreenVideoEx : IFullScreenVideo
 
 [
     object,
-    pointer_default(unique)
+    /* uuid(61ded640-e912-11ce-a099-00aa00479a58)  conflicts with uuids.h */
+    pointer_default(unique),
+    local
 ]
 interface IBaseVideoMixer : IUnknown
 {

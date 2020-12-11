@@ -12,7 +12,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef __WINE_NBNAMECACHE_H
 #define __WINE_NBNAMECACHE_H
@@ -45,13 +45,13 @@ typedef struct _NBNameCacheEntry
 
 /* Functions that create, manipulate, and destroy a name cache.  Thread-safe,
  * with the exception of NBNameCacheDestroy--ensure that no other threads are
- * manipulating the cache before destoying it.
+ * manipulating the cache before destroying it.
  */
 
 /* Allocates a new name cache from heap, and sets the expire time on new
  * entries to entryExpireTimeMS after a cache entry is added.
  */
-struct NBNameCache *NBNameCacheCreate(HANDLE heap, DWORD entryExpireTimeMS);
+struct NBNameCache *NBNameCacheCreate(HANDLE heap, DWORD entryExpireTimeMS) DECLSPEC_HIDDEN;
 
 /* Adds an entry to the cache.  The entry is assumed to have been allocated
  * from the same heap as the name cache; the name cache will own the entry
@@ -60,23 +60,14 @@ struct NBNameCache *NBNameCacheCreate(HANDLE heap, DWORD entryExpireTimeMS);
  * same name was in the cache, the entry is replaced.  Returns TRUE on success
  * or FALSE on failure.
  */
-BOOL NBNameCacheAddEntry(struct NBNameCache *cache, NBNameCacheEntry *entry);
+BOOL NBNameCacheAddEntry(struct NBNameCache *cache, NBNameCacheEntry *entry) DECLSPEC_HIDDEN;
 
 /* Finds the entry with name name in the cache and returns a pointer to it, or
  * NULL if it isn't found.
  */
 const NBNameCacheEntry *NBNameCacheFindEntry(struct NBNameCache *cache,
- const UCHAR name[NCBNAMSZ]);
+ const UCHAR name[NCBNAMSZ]) DECLSPEC_HIDDEN;
 
-/* If the entry with name name is in the cache, updates its nbname member to
- * nbname.  The entry's expire time is implicitly updated to entryExpireTimeMS
- * + the current time in MS, since getting the NetBIOS name meant validating
- * the name and address anyway.
- * Returns TRUE on success or FALSE on failure.
- */
-BOOL NBNameCacheUpdateNBName(struct NBNameCache *cache,
- const UCHAR name[NCBNAMSZ], const UCHAR nbname[NCBNAMSZ]);
-
-void NBNameCacheDestroy(struct NBNameCache *cache);
+void NBNameCacheDestroy(struct NBNameCache *cache) DECLSPEC_HIDDEN;
 
 #endif /* ndef __WINE_NBNAMECACHE_H */

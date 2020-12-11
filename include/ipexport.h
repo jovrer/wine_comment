@@ -15,15 +15,18 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_IPEXPORT_H
 #define __WINE_IPEXPORT_H
 
-typedef unsigned long   IPAddr;
-typedef unsigned long   IPMask;
-typedef unsigned long   IP_STATUS;
+#include <in6addr.h>
+#include <inaddr.h>
+
+typedef ULONG IPAddr;
+typedef ULONG IPMask;
+typedef ULONG IP_STATUS;
 
 struct ip_option_information
 {
@@ -51,8 +54,8 @@ struct ip_option_information
 struct icmp_echo_reply
 {
     IPAddr                       Address;
-    unsigned long                Status;
-    unsigned long                RoundTripTime;
+    ULONG                        Status;
+    ULONG                        RoundTripTime;
     unsigned short               DataSize;
     unsigned short               Reserved;
     void*                        Data;

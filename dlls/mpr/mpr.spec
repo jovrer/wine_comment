@@ -23,16 +23,14 @@
 24 stdcall @(ptr) MPR_Free
 25 stdcall @(ptr long) _MPR_25
 
-@ stdcall -private DllCanUnloadNow()
-@ stub DllGetClassObject
 @ stdcall MultinetGetConnectionPerformanceA(ptr ptr)
 @ stdcall MultinetGetConnectionPerformanceW(ptr ptr)
-@ stdcall MultinetGetErrorTextA(long ptr long)
-@ stdcall MultinetGetErrorTextW(long ptr long)
+@ stdcall MultinetGetErrorTextA(long long long)
+@ stdcall MultinetGetErrorTextW(long long long)
 @ stdcall NPSAuthenticationDialogA(ptr)
 @ stdcall NPSCopyStringA(str ptr ptr)
 @ stdcall NPSDeviceGetNumberA(str ptr ptr)
-@ stdcall NPSDeviceGetStringA(long long ptr long)
+@ stdcall NPSDeviceGetStringA(long long ptr ptr)
 @ stdcall NPSGetProviderHandleA(ptr)
 @ stdcall NPSGetProviderNameA(long ptr)
 @ stdcall NPSGetSectionNameA(long ptr)
@@ -40,12 +38,12 @@
 @ stdcall NPSNotifyRegisterA(long ptr)
 @ stdcall NPSSetCustomTextA(str)
 @ stdcall NPSSetExtendedErrorA(long str)
-@ stub PwdChangePasswordA
-@ stub PwdChangePasswordW
-@ stub PwdGetPasswordStatusA
-@ stub PwdGetPasswordStatusW
-@ stub PwdSetPasswordStatusA
-@ stub PwdSetPasswordStatusW
+@ stdcall PwdChangePasswordA(str ptr long ptr)
+@ stdcall PwdChangePasswordW(wstr ptr long ptr)
+@ stdcall PwdGetPasswordStatusA(str long ptr)
+@ stdcall PwdGetPasswordStatusW(wstr long ptr)
+@ stdcall PwdSetPasswordStatusA(str long long)
+@ stdcall PwdSetPasswordStatusW(wstr long long)
 @ stdcall WNetAddConnection2A(ptr str str long)
 @ stdcall WNetAddConnection2W(ptr wstr wstr long)
 @ stdcall WNetAddConnection3A(long ptr str str long)
@@ -57,6 +55,7 @@
 @ stdcall WNetCancelConnection2W(wstr long long)
 @ stdcall WNetCancelConnectionA(str long)
 @ stdcall WNetCancelConnectionW(wstr long)
+@ stdcall WNetClearConnections(long)
 @ stdcall WNetCloseEnum(long)
 @ stdcall WNetConnectionDialog1A(ptr)
 @ stdcall WNetConnectionDialog1W(ptr)

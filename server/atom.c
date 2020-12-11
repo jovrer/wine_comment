@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -27,6 +27,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+
 #include "unicode.h"
 #include "request.h"
 #include "object.h"
@@ -34,12 +37,13 @@
 #include "handle.h"
 #include "user.h"
 #include "winuser.h"
+#include "winternl.h"
 
 #define HASH_SIZE     37
 #define MIN_HASH_SIZE 4
 #define MAX_HASH_SIZE 0x200
 
-#define MAX_ATOM_LEN  255
+#define MAX_ATOM_LEN  (255 * sizeof(WCHAR))
 #define MIN_STR_ATOM  0xc000
 #define MAX_ATOMS     0x4000
 
@@ -61,7 +65,7 @@ struct atom_table
     int                 count;               /* count of atom handles */
     int                 last;                /* last handle in-use */
     struct atom_entry **handles;             /* atom handles */
-    int                 entries_count;       /* humber of hash entries */
+    int                 entries_count;       /* number of hash entries */
     struct atom_entry **entries;             /* hash table entries */
 };
 
@@ -72,16 +76,25 @@ static const struct object_ops atom_table_ops =
 {
     sizeof(struct atom_table),    /* size */
     atom_table_dump,              /* dump */
+    no_get_type,                  /* get_type */
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
+    no_map_access,                /* map_access */
+    default_get_sd,               /* get_sd */
+    default_set_sd,               /* set_sd */
+    no_lookup_name,               /* lookup_name */
+    no_link_name,                 /* link_name */
+    NULL,                         /* unlink_name */
+    no_open_file,                 /* open_file */
     no_close_handle,              /* close_handle */
     atom_table_destroy            /* destroy */
 };
 
+static struct atom_table *global_table;
 
 /* create an atom table */
 static struct atom_table *create_table(int entries_count)
@@ -92,6 +105,7 @@ static struct atom_table *create_table(int entries_count)
     {
         if ((entries_count < MIN_HASH_SIZE) ||
             (entries_count > MAX_HASH_SIZE)) entries_count = HASH_SIZE;
+        table->handles = NULL;
         table->entries_count = entries_count;
         if (!(table->entries = malloc( sizeof(*table->entries) * table->entries_count )))
         {
@@ -149,11 +163,11 @@ static atom_t add_atom_entry( struct atom_table *table, struct atom_entry *entry
 }
 
 /* compute the hash code for a string */
-static unsigned short atom_hash( struct atom_table *table, const WCHAR *str, size_t len )
+static unsigned short atom_hash( struct atom_table *table, const struct unicode_str *str )
 {
     unsigned int i;
     unsigned short hash = 0;
-    for (i = 0; i < len; i++) hash ^= toupperW(str[i]) + i;
+    for (i = 0; i < str->len / sizeof(WCHAR); i++) hash ^= toupperW(str->str[i]) + i;
     return hash % table->entries_count;
 }
 
@@ -173,7 +187,7 @@ static void atom_table_dump( struct object *obj, int verbose )
         if (!entry) continue;
         fprintf( stderr, "  %04x: ref=%d pinned=%c hash=%d \"",
                  entry->atom, entry->count, entry->pinned ? 'Y' : 'N', entry->hash );
-        dump_strW( entry->str, entry->len, stderr, "\"\"");
+        dump_strW( entry->str, entry->len / sizeof(WCHAR), stderr, "\"\"");
         fprintf( stderr, "\"\n" );
     }
 }
@@ -189,46 +203,46 @@ static void atom_table_destroy( struct object *obj )
         for (i = 0; i <= table->last; i++) free( table->handles[i] );
         free( table->handles );
     }
-    if (table->entries) free( table->entries );
+    free( table->entries );
 }
 
 /* find an atom entry in its hash list */
-static struct atom_entry *find_atom_entry( struct atom_table *table, const WCHAR *str,
-                                           size_t len, unsigned short hash )
+static struct atom_entry *find_atom_entry( struct atom_table *table, const struct unicode_str *str,
+                                           unsigned short hash )
 {
     struct atom_entry *entry = table->entries[hash];
     while (entry)
     {
-        if (entry->len == len && !memicmpW( entry->str, str, len )) break;
+        if (entry->len == str->len && !memicmpW( entry->str, str->str, str->len/sizeof(WCHAR) )) break;
         entry = entry->next;
     }
     return entry;
 }
 
 /* add an atom to the table */
-static atom_t add_atom( struct atom_table *table, const WCHAR *str, size_t len )
+static atom_t add_atom( struct atom_table *table, const struct unicode_str *str )
 {
     struct atom_entry *entry;
-    unsigned short hash = atom_hash( table, str, len );
+    unsigned short hash = atom_hash( table, str );
     atom_t atom = 0;
 
-    if (!len)
+    if (!str->len)
     {
         set_error( STATUS_OBJECT_NAME_INVALID );
         return 0;
     }
-    if (len > MAX_ATOM_LEN)
+    if (str->len > MAX_ATOM_LEN)
     {
         set_error( STATUS_INVALID_PARAMETER );
         return 0;
     }
-    if ((entry = find_atom_entry( table, str, len, hash )))  /* exists already */
+    if ((entry = find_atom_entry( table, str, hash )))  /* exists already */
     {
         entry->count++;
         return entry->atom;
     }
 
-    if ((entry = mem_alloc( sizeof(*entry) + (len - 1) * sizeof(WCHAR) )))
+    if ((entry = mem_alloc( FIELD_OFFSET( struct atom_entry, str[str->len / sizeof(WCHAR)] ) )))
     {
         if ((atom = add_atom_entry( table, entry )))
         {
@@ -238,8 +252,8 @@ static atom_t add_atom( struct atom_table *table, const WCHAR *str, size_t len )
             entry->count  = 1;
             entry->pinned = 0;
             entry->hash   = hash;
-            entry->len    = len;
-            memcpy( entry->str, str, len * sizeof(WCHAR) );
+            entry->len    = str->len;
+            memcpy( entry->str, str->str, str->len );
         }
         else free( entry );
     }
@@ -264,21 +278,21 @@ static void delete_atom( struct atom_table *table, atom_t atom, int if_pinned )
 }
 
 /* find an atom in the table */
-static atom_t find_atom( struct atom_table *table, const WCHAR *str, size_t len )
+static atom_t find_atom( struct atom_table *table, const struct unicode_str *str )
 {
     struct atom_entry *entry;
 
-    if (!len)
+    if (!str->len)
     {
         set_error( STATUS_OBJECT_NAME_INVALID );
         return 0;
     }
-    if (len > MAX_ATOM_LEN)
+    if (str->len > MAX_ATOM_LEN)
     {
         set_error( STATUS_INVALID_PARAMETER );
         return 0;
     }
-    if (table && (entry = find_atom_entry( table, str, len, atom_hash(table, str, len) )))
+    if (table && (entry = find_atom_entry( table, str, atom_hash(table, str) )))
         return entry->atom;
     set_error( STATUS_OBJECT_NAME_NOT_FOUND );
     return 0;
@@ -286,12 +300,22 @@ static atom_t find_atom( struct atom_table *table, const WCHAR *str, size_t len 
 
 static struct atom_table *get_global_table( struct winstation *winstation, int create )
 {
-    if (!winstation->atom_table)
+    struct atom_table *table = winstation ? winstation->atom_table : global_table;
+    if (!table)
     {
-        if (create) winstation->atom_table = create_table( HASH_SIZE );
+        if (create)
+        {
+            table = create_table( HASH_SIZE );
+            if (winstation) winstation->atom_table = table;
+            else
+            {
+                global_table = table;
+                make_object_static( &global_table->obj );
+            }
+        }
         else set_error( STATUS_OBJECT_NAME_NOT_FOUND );
     }
-    return winstation->atom_table;
+    return table;
 }
 
 static struct atom_table *get_table( obj_handle_t h, int create )
@@ -304,34 +328,28 @@ static struct atom_table *get_table( obj_handle_t h, int create )
     }
     else
     {
-        struct winstation *winstation = get_process_winstation( current->process,
-                                                                WINSTA_ACCESSGLOBALATOMS );
-        if (winstation)
-        {
-            table = get_global_table( winstation, 1 );
-            if (table) grab_object( table );
-            release_object( winstation );
-        }
+        table = get_global_table( NULL, 1 );
+        if (table) grab_object( table );
     }
     return table;
 }
 
 /* add an atom in the global table; used for window properties */
-atom_t add_global_atom( struct winstation *winstation, const WCHAR *str, size_t len )
+atom_t add_global_atom( struct winstation *winstation, const struct unicode_str *str )
 {
-    struct atom_table *global_table = get_global_table( winstation, 1 );
-    if (!global_table) return 0;
-    return add_atom( global_table, str, len );
+    struct atom_table *table = get_global_table( winstation, 1 );
+    if (!table) return 0;
+    return add_atom( table, str );
 }
 
 /* find an atom in the global table; used for window properties */
-atom_t find_global_atom( struct winstation *winstation, const WCHAR *str, size_t len )
+atom_t find_global_atom( struct winstation *winstation, const struct unicode_str *str )
 {
-    struct atom_table *global_table = get_global_table( winstation, 0 );
+    struct atom_table *table = get_global_table( winstation, 0 );
     struct atom_entry *entry;
 
-    if (!len || len > MAX_ATOM_LEN || !global_table) return 0;
-    if ((entry = find_atom_entry( global_table, str, len, atom_hash(global_table, str, len) )))
+    if (!str->len || str->len > MAX_ATOM_LEN || !table) return 0;
+    if ((entry = find_atom_entry( table, str, atom_hash(table, str) )))
         return entry->atom;
     return 0;
 }
@@ -341,10 +359,10 @@ int grab_global_atom( struct winstation *winstation, atom_t atom )
 {
     if (atom >= MIN_STR_ATOM)
     {
-        struct atom_table *global_table = get_global_table( winstation, 0 );
-        if (global_table)
+        struct atom_table *table = get_global_table( winstation, 0 );
+        if (table)
         {
-            struct atom_entry *entry = get_atom_entry( global_table, atom );
+            struct atom_entry *entry = get_atom_entry( table, atom );
             if (entry) entry->count++;
             return (entry != NULL);
         }
@@ -358,18 +376,20 @@ void release_global_atom( struct winstation *winstation, atom_t atom )
 {
     if (atom >= MIN_STR_ATOM)
     {
-        struct atom_table *global_table = get_global_table( winstation, 0 );
-        if (global_table) delete_atom( global_table, atom, 1 );
+        struct atom_table *table = get_global_table( winstation, 0 );
+        if (table) delete_atom( table, atom, 1 );
     }
 }
 
 /* add a global atom */
 DECL_HANDLER(add_atom)
 {
+    struct unicode_str name = get_req_unicode_str();
     struct atom_table *table = get_table( req->table, 1 );
+
     if (table)
     {
-        reply->atom = add_atom( table, get_req_data(), get_req_data_size() / sizeof(WCHAR) );
+        reply->atom = add_atom( table, &name );
         release_object( table );
     }
 }
@@ -388,10 +408,12 @@ DECL_HANDLER(delete_atom)
 /* find a global atom */
 DECL_HANDLER(find_atom)
 {
+    struct unicode_str name = get_req_unicode_str();
     struct atom_table *table = get_table( req->table, 0 );
+
     if (table)
     {
-        reply->atom = find_atom( table, get_req_data(), get_req_data_size() / sizeof(WCHAR) );
+        reply->atom = find_atom( table, &name );
         release_object( table );
     }
 }
@@ -406,11 +428,10 @@ DECL_HANDLER(get_atom_information)
 
         if ((entry = get_atom_entry( table, req->atom )))
         {
-            size_t len = entry->len * sizeof(WCHAR);
-            if (len <= get_reply_max_size()) set_reply_data( entry->str, len );
-            else if (get_reply_max_size()) set_error( STATUS_BUFFER_OVERFLOW );
+            set_reply_data( entry->str, min( entry->len, get_reply_max_size() ));
             reply->count = entry->count;
             reply->pinned = entry->pinned;
+            reply->total = entry->len;
         }
         else reply->count = -1;
         release_object( table );
@@ -440,7 +461,7 @@ DECL_HANDLER(init_atom_table)
 
     if (table)
     {
-        reply->table = alloc_handle( current->process, table, 0, FALSE);
+        reply->table = alloc_handle( current->process, table, 0, 0 );
         release_object( table );
     }
 }

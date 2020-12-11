@@ -1,23 +1,20 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 TESTDLL   = msvcrt.dll
-IMPORTS   = msvcrt kernel32
-MODCFLAGS = @BUILTINFLAG@
-EXTRAINCL = -I$(TOPSRCDIR)/include/msvcrt -I$(SRCDIR)/..
+APPMODE   = -mno-cygwin
+EXTRAINCL = -I$(srcdir)/..
+IMPORTS   = advapi32
 
-CTESTS = \
+C_SRCS = \
 	cpp.c \
+	data.c \
+	dir.c \
 	environ.c \
 	file.c \
 	headers.c \
 	heap.c \
+	locale.c \
+	misc.c \
 	printf.c \
 	scanf.c \
+	signal.c \
 	string.c \
 	time.c
-
-@MAKE_TEST_RULES@
-
-### Dependencies:

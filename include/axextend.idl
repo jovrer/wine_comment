@@ -13,8 +13,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#if 0
+#pragma makedep install
+#endif
 
 interface IAMAnalogVideoDecoder;
 interface IAMAnalogVideoEncoder;
@@ -22,6 +26,8 @@ interface IAMAudioInputMixer;
 interface IAMAudioRendererStats;
 interface IAMBufferNegotiation;
 interface IAMCameraControl;
+interface IAMCertifiedOutputProtection;
+interface IAMClockSlave;
 interface IAMCopyCaptureFileProgress;
 interface IAMCrossbar;
 interface IAMDevMemoryAllocator;
@@ -45,6 +51,7 @@ interface IAMVfwCompressDialogs;
 interface IAMVideoCompression;
 interface IAMVideoDecimationProperties;
 interface IAMVideoProcAmp;
+interface IAMGraphBuilderCallback;
 interface ICaptureGraphBuilder;
 interface ICaptureGraphBuilder2;
 interface IConfigAviMux;
@@ -171,7 +178,7 @@ interface IFilterMapper : IUnknown
          [in]  CLSID clsInMaj,
          [in]  CLSID clsInSub,
          [in]  BOOL  bRender,
-         [in]  BOOL  bOututNeeded,
+         [in]  BOOL  bOutputNeeded,
          [in]  CLSID clsOutMaj,
          [in]  CLSID clsOutSub
        );
@@ -235,18 +242,18 @@ typedef struct
             {
                 ULONG cPins;
                 [size_is(cPins)] const REGFILTERPINS *rgPins;
-            } DUMMYSTRUCTNAME;
+            };
 
         [case(2)]
             struct
             {
                 ULONG cPins2;
                 [size_is(cPins2)] const REGFILTERPINS2 *rgPins2;
-            } DUMMYSTRUCTNAME1;
+            };
 
         [default]
             ;
-    } DUMMYUNIONNAME;
+    };
 
 } REGFILTER2;
 
@@ -266,7 +273,7 @@ interface IFilterMapper2 : IUnknown
 
     HRESULT UnregisterFilter
         ( [in] const CLSID *pclsidCategory,
-          [in] const OLECHAR *szInstance,
+          [in] LPCOLESTR szInstance,
           [in] REFCLSID Filter
         );
 
@@ -275,7 +282,7 @@ interface IFilterMapper2 : IUnknown
           [in] LPCWSTR Name,
           [in, out] IMoniker **ppMoniker,
           [in] const CLSID *pclsidCategory,
-          [in] const OLECHAR *szInstance,
+          [in] LPCOLESTR szInstance,
           [in] const REGFILTER2 *prf2
         );
 
@@ -317,7 +324,7 @@ typedef enum tagQualityMessageType
 typedef struct tagQuality
 {
     QualityMessageType Type;
-    long               Proportion;
+    LONG               Proportion;
     REFERENCE_TIME       Late;
     REFERENCE_TIME       TimeStamp;
 } Quality;
@@ -486,7 +493,7 @@ pointer_default(unique)
 interface IMediaEventSink : IUnknown
 {
     HRESULT Notify(
-        [in] long EventCode,
+        [in] LONG EventCode,
         [in] LONG_PTR EventParam1,
         [in] LONG_PTR EventParam2
     );
@@ -730,6 +737,122 @@ interface ICaptureGraphBuilder2 : IUnknown
         [out] IPin **ppPin);
 }
 
+[
+    local,
+    object,
+    uuid(5acd6aa0-f482-11ce-8b67-00aa00a3f1a6),
+    pointer_default(unique)
+]
+interface IConfigAviMux : IUnknown
+{
+    HRESULT SetMasterStream(
+        [in] LONG iStream);
+
+    HRESULT GetMasterStream(
+        [out] LONG *pStream);
+
+    HRESULT SetOutputCompatibilityIndex(
+        [in] BOOL fOldIndex);
+
+    HRESULT GetOutputCompatibilityIndex(
+        [out] BOOL *pfOldIndex);
+}
+
+[
+    local,
+    object,
+    uuid(bee3d220-157b-11d0-bd23-00a0c911ce86),
+    pointer_default(unique)
+]
+interface IConfigInterleaving : IUnknown
+{
+    typedef enum InterleavingMode {
+        INTERLEAVE_NONE,
+        INTERLEAVE_CAPTURE,
+        INTERLEAVE_FULL,
+        INTERLEAVE_NONE_BUFFERED
+    } InterleavingMode;
+
+    HRESULT put_Mode(
+        [in] InterleavingMode mode);
+
+    HRESULT get_Mode(
+        [out] InterleavingMode *pMode);
+
+    HRESULT put_Interleaving(
+        [in] const REFERENCE_TIME *prtInterleave,
+        [in] const REFERENCE_TIME *prtPreroll);
+
+    HRESULT get_Interleaving(
+        [out] REFERENCE_TIME *prtInterleave,
+        [out] REFERENCE_TIME *prtPreroll);
+}
+
+[
+    local,
+    object,
+    uuid(9fd52741-176d-4b36-8f51-ca8f933223be),
+    pointer_default(unique)
+]
+interface IAMClockSlave : IUnknown
+{
+    HRESULT SetErrorTolerance(
+        [in] DWORD dwTolerance);
+
+    HRESULT GetErrorTolerance(
+        [out] DWORD *pdwTolerance);
+}
+
+typedef struct _AMCOPPSignature {
+    BYTE Signature[256];
+} AMCOPPSignature;
+
+typedef struct _AMCOPPCommand {
+    GUID macKDI;
+    GUID guidCommandID;
+    DWORD dwSequence;
+    DWORD bSizeData;
+    BYTE CommandData[4056];
+} AMCOPPCommand, *LPAMCOPPCommand;
+
+typedef struct _AMCOPPStatusInput {
+    GUID rApp;
+    GUID guidStatusRequestID;
+    DWORD dwSequence;
+    DWORD cbSizeData;
+    BYTE StatusData[4056];
+} AMCOPPStatusInput, *LPAMCOPPStatusInput;
+
+typedef struct _AMCOPPStatusOutput {
+    GUID macKDI;
+    DWORD cbSizeData;
+    BYTE COPPStatus[4076];
+} AMCOPPStatusOutput, *LPAMCOPPStatusOutput;
+
+[
+    local,
+    object,
+    uuid(6feded3e-0ff1-4901-a2f1-43f7012c8515),
+    pointer_default(unique)
+]
+interface IAMCertifiedOutputProtection : IUnknown
+{
+    HRESULT KeyExchange (
+        [out] GUID* pRandom,
+        [out] BYTE** VarLenCertGH,
+        [out] DWORD* pdwLengthCertGH);
+
+    HRESULT SessionSequenceStart(
+        [in] AMCOPPSignature* pSig);
+
+    HRESULT ProtectionCommand(
+        [in] const AMCOPPCommand* cmd);
+
+    HRESULT ProtectionStatus(
+        [in] const AMCOPPStatusInput* pStatusInput,
+        [out] AMCOPPStatusOutput* pStatusOutput);
+}
+
 enum _AM_RENSDEREXFLAGS
 {
     AM_RENDEREX_RENDERTOEXISTINGRENDERERS = 0x01
@@ -790,6 +913,43 @@ interface IStreamBuilder : IUnknown
 ]
 interface IAMStreamConfig : IUnknown
 {
+    typedef struct _VIDEO_STREAM_CONFIG_CAPS {
+        GUID  guid;
+        ULONG VideoStandard;
+        SIZE  InputSize;
+        SIZE  MinCroppingSize;
+        SIZE  MaxCroppingSize;
+        int   CropGranularityX;
+        int   CropGranularityY;
+        int   CropAlignX;
+        int   CropAlignY;
+        SIZE  MinOutputSize;
+        SIZE  MaxOutputSize;
+        int   OutputGranularityX;
+        int   OutputGranularityY;
+        int   StretchTapsX;
+        int   StretchTapsY;
+        int   ShrinkTapsX;
+        int   ShrinkTapsY;
+        LONGLONG MinFrameInterval;
+        LONGLONG MaxFrameInterval;
+        LONG  MinBitsPerSecond;
+        LONG  MaxBitsPerSecond;
+    } VIDEO_STREAM_CONFIG_CAPS;
+
+    typedef struct _AUDIO_STREAM_CONFIG_CAPS {
+        GUID guid;
+        ULONG MinimumChannels;
+        ULONG MaximumChannels;
+        ULONG ChannelsGranularity;
+        ULONG MinimumBitsPerSample;
+        ULONG MaximumBitsPerSample;
+        ULONG BitsPerSampleGranularity;
+        ULONG MinimumSampleFrequency;
+        ULONG MaximumSampleFrequency;
+        ULONG SampleFrequencyGranularity;
+    } AUDIO_STREAM_CONFIG_CAPS;
+
     HRESULT SetFormat( [in] AM_MEDIA_TYPE *pmt);
     HRESULT GetFormat( [in] AM_MEDIA_TYPE **pmt);
     HRESULT GetNumberOfCapabilities( [out] int *piCount, [out] int *piSize);
@@ -828,11 +988,11 @@ typedef enum tagVideoProcAmpFlags
 ]
 interface IAMVideoProcAmp : IUnknown
 {
-    HRESULT GetRange( [in] long Property, [out] long *pMin, [out] long *pMax,
-                     [out] long *pSteppingDelta, [out] long *pDefault,
-                     [out] long *pCapsFlags);
-    HRESULT Set( [in] long Property, [in] long lValue, [in] long Flags);
-    HRESULT Get( [in] long Property, [out] long *lValue, [out] long *Flags);
+    HRESULT GetRange( [in] LONG Property, [out] LONG *pMin, [out] LONG *pMax,
+                     [out] LONG *pSteppingDelta, [out] LONG *pDefault,
+                     [out] LONG *pCapsFlags);
+    HRESULT Set( [in] LONG Property, [in] LONG lValue, [in] LONG Flags);
+    HRESULT Get( [in] LONG Property, [out] LONG *lValue, [out] LONG *Flags);
 }
 
 
@@ -950,6 +1110,44 @@ interface IResourceManager : IUnknown
 
 }
 
+typedef enum AM_STREAM_INFO_FLAGS
+{
+    AM_STREAM_INFO_START_DEFINED   = 0x01,
+    AM_STREAM_INFO_STOP_DEFINED    = 0x02,
+    AM_STREAM_INFO_DISCARDING      = 0x04,
+    AM_STREAM_INFO_STOP_SEND_EXTRA = 0x10
+} AM_STREAM_INFO_FLAGS;
+
+typedef struct AM_STREAM_INFO
+{
+    REFERENCE_TIME tStart;
+    REFERENCE_TIME tStop;
+    DWORD dwStartCookie;
+    DWORD dwStopCookie;
+    DWORD dwFlags;
+} AM_STREAM_INFO;
+
+[
+    local,
+    object,
+    uuid(36b73881-c2c8-11cf-8b46-00805f6cef60),
+    pointer_default(unique)
+]
+interface IAMStreamControl : IUnknown
+{
+    HRESULT StartAt(
+        [in] const REFERENCE_TIME *ptStart,
+        [in] DWORD dwCookie);
+
+    HRESULT StopAt(
+        [in] const REFERENCE_TIME *ptStop,
+        [in] BOOL bSendExtra,
+        [in] DWORD dwCookie);
+
+    HRESULT GetInfo(
+        [out] AM_STREAM_INFO *pInfo);
+}
+
 cpp_quote("#ifndef _IKsPropertySet_")
 cpp_quote("#define _IKsPropertySet_")
 cpp_quote("#define KSPROPERTY_SUPPORT_GET  1")
@@ -958,7 +1156,8 @@ cpp_quote("#define KSPROPERTY_SUPPORT_SET  2")
 [
     object,
     uuid(31efac30-515c-11d0-a9aa-00aa0061be93),
-    pointer_default(unique)
+    pointer_default(unique),
+    local
 ]
 interface IKsPropertySet : IUnknown
 {
@@ -982,3 +1181,104 @@ interface IKsPropertySet : IUnknown
                             [out] DWORD *pTypeSupport);
 }
 cpp_quote("#endif /* _IKsPropertySet_ */")
+
+[
+    local,
+    object,
+    uuid(6025a880-c0d5-11d0-bd4e-00a0c911ce86),
+    pointer_default(unique)
+]
+interface IMediaPropertyBag : IPropertyBag
+{
+    typedef IMediaPropertyBag *LPMEDIAPROPERTYBAG;
+
+    HRESULT EnumProperty(
+            [in]  ULONG iProperty,
+            [in, out] VARIANT *pvarPropertyName,
+            [in, out] VARIANT *pvarPropertyValue);
+}
+
+
+[
+    local,
+    object,
+    uuid(5738e040-b67f-11d0-bd4d-00a0c911ce86),
+    pointer_default(unique)
+]
+interface IPersistMediaPropertyBag : IPersist
+{
+    HRESULT InitNew(void);
+
+    HRESULT Load(
+            [in] IMediaPropertyBag *pPropBag,
+            [in] IErrorLog *pErrorLog);
+
+    HRESULT Save(
+            [in] IMediaPropertyBag *pPropBag,
+            [in] BOOL fClearDirty,
+            [in] BOOL fSaveAllProperties);
+
+    typedef IPersistMediaPropertyBag *LPPERSISTMEDIAPROPERTYBAG;
+}
+
+[
+    object,
+    uuid(36b73883-c2c8-11cf-8b46-00805f6cef60),
+    pointer_default(unique)
+]
+interface ISeekingPassThru : IUnknown
+{
+    HRESULT Init( [in] BOOL bSupportRendering, [in] IPin *pPin);
+}
+
+enum _AM_FILTER_MISC_FLAGS
+{
+    AM_FILTER_MISC_FLAGS_IS_RENDERER = 0x1,
+    AM_FILTER_MISC_FLAGS_IS_SOURCE = 0x2
+};
+
+[
+    local,
+    object,
+    uuid(2dd74950-a890-11d1-abe8-00a0c905f375),
+    pointer_default(unique)
+]
+interface IAMFilterMiscFlags : IUnknown
+{
+    ULONG GetMiscFlags();
+}
+
+[
+    local,
+    object,
+    uuid(4995f511-9ddb-4f12-bd3b-f04611807b79),
+    pointer_default(unique)
+]
+interface IAMGraphBuilderCallback : IUnknown
+{
+    HRESULT SelectedFilter(
+        [in] IMoniker *pMon);
+
+    HRESULT CreatedFilter(
+        [in] IBaseFilter *pFil);
+}
+
+[
+    local,
+    object,
+    uuid(d8d715a0-6e5e-11d0-b3f0-00aa003761c5),
+    pointer_default(unique)
+]
+interface IAMVfwCaptureDialogs : IUnknown
+{
+    HRESULT HasDialog(
+            [in] int dialog);
+    HRESULT ShowDialog(
+            [in] int dialog,
+            [in] HWND hwnd);
+    HRESULT SendDriverMessage(
+            [in] int dialog,
+            [in] int msg,
+            [in] long data1,
+            [in] long data2);
+}

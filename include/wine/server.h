@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINE_SERVER_H
@@ -32,7 +32,7 @@
 struct __server_iovec
 {
     const void  *ptr;
-    unsigned int size;
+    data_size_t  size;
 };
 
 #define __SERVER_MAX_DATA 5
@@ -50,13 +50,13 @@ struct __server_request_info
 };
 
 extern unsigned int wine_server_call( void *req_ptr );
-extern void wine_server_send_fd( int fd );
-extern int wine_server_fd_to_handle( int fd, unsigned int access, int inherit, obj_handle_t *handle );
-extern int wine_server_handle_to_fd( obj_handle_t handle, unsigned int access, int *unix_fd, int *flags );
-extern void wine_server_release_fd( obj_handle_t handle, int unix_fd );
+extern void CDECL wine_server_send_fd( int fd );
+extern int CDECL wine_server_fd_to_handle( int fd, unsigned int access, unsigned int attributes, HANDLE *handle );
+extern int CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int *unix_fd, unsigned int *options );
+extern void CDECL wine_server_release_fd( HANDLE handle, int unix_fd );
 
 /* do a server call and set the last error code */
-inline static unsigned int wine_server_call_err( void *req_ptr )
+static inline unsigned int wine_server_call_err( void *req_ptr )
 {
     unsigned int res = wine_server_call( req_ptr );
     if (res) SetLastError( RtlNtStatusToDosError(res) );
@@ -64,13 +64,13 @@ inline static unsigned int wine_server_call_err( void *req_ptr )
 }
 
 /* get the size of the variable part of the returned reply */
-inline static size_t wine_server_reply_size( const void *reply )
+static inline data_size_t wine_server_reply_size( const void *reply )
 {
     return ((const struct reply_header *)reply)->reply_size;
 }
 
 /* add some data to be sent along with the request */
-inline static void wine_server_add_data( void *req_ptr, const void *ptr, unsigned int size )
+static inline void wine_server_add_data( void *req_ptr, const void *ptr, data_size_t size )
 {
     struct __server_request_info * const req = req_ptr;
     if (size)
@@ -82,11 +82,42 @@ inline static void wine_server_add_data( void *req_ptr, const void *ptr, unsigne
 }
 
 /* set the pointer and max size for the reply var data */
-inline static void wine_server_set_reply( void *req_ptr, void *ptr, unsigned int max_size )
+static inline void wine_server_set_reply( void *req_ptr, void *ptr, data_size_t max_size )
 {
     struct __server_request_info * const req = req_ptr;
     req->reply_data = ptr;
     req->u.req.request_header.reply_size = max_size;
+}
+
+/* convert an object handle to a server handle */
+static inline obj_handle_t wine_server_obj_handle( HANDLE handle )
+{
+    if ((int)(INT_PTR)handle != (INT_PTR)handle) return 0xfffffff0;  /* some invalid handle */
+    return (INT_PTR)handle;
+}
+
+/* convert a user handle to a server handle */
+static inline user_handle_t wine_server_user_handle( HANDLE handle )
+{
+    return (UINT_PTR)handle;
+}
+
+/* convert a server handle to a generic handle */
+static inline HANDLE wine_server_ptr_handle( obj_handle_t handle )
+{
+    return (HANDLE)(INT_PTR)(int)handle;
+}
+
+/* convert a client pointer to a server client_ptr_t */
+static inline client_ptr_t wine_server_client_ptr( const void *ptr )
+{
+    return (client_ptr_t)(ULONG_PTR)ptr;
+}
+
+/* convert a server client_ptr_t to a real pointer */
+static inline void *wine_server_get_ptr( client_ptr_t ptr )
+{
+    return (void *)(ULONG_PTR)ptr;
 }
 
 

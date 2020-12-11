@@ -1,5 +1,5 @@
 /*
- * Copyright 2005 Kai Blin
+ * Copyright 2005, 2006 Kai Blin
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,20 +13,23 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * A dispatcher to run ntlm_auth for wine's sspi module.
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include <stdarg.h>
+#include <stdio.h>
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 #include <sys/types.h>
 #ifdef HAVE_SYS_WAIT_H
 #include <sys/wait.h>
-#endif 
+#endif
+#include <errno.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include "windef.h"
@@ -38,11 +41,12 @@
 
 #define INITIAL_BUFFER_SIZE 200
 
-WINE_DEFAULT_DEBUG_CHANNEL(secur32);
+WINE_DEFAULT_DEBUG_CHANNEL(ntlm);
 
 SECURITY_STATUS fork_helper(PNegoHelper *new_helper, const char *prog,
         char* const argv[])
 {
+#ifdef HAVE_FORK
     int pipe_in[2];
     int pipe_out[2];
     int i;
@@ -55,17 +59,29 @@ SECURITY_STATUS fork_helper(PNegoHelper *new_helper, const char *prog,
     }
     TRACE("\n");
 
-    if( pipe(pipe_in) < 0 )
+#ifdef HAVE_PIPE2
+    if (pipe2( pipe_in, O_CLOEXEC ) < 0 )
+#endif
     {
-        return SEC_E_INTERNAL_ERROR;
+        if( pipe(pipe_in) < 0 ) return SEC_E_INTERNAL_ERROR;
+        fcntl( pipe_in[0], F_SETFD, FD_CLOEXEC );
+        fcntl( pipe_in[1], F_SETFD, FD_CLOEXEC );
     }
-    if( pipe(pipe_out) < 0 )
+#ifdef HAVE_PIPE2
+    if (pipe2( pipe_out, O_CLOEXEC ) < 0 )
+#endif
     {
-        close(pipe_in[0]);
-        close(pipe_in[1]);
-        return SEC_E_INTERNAL_ERROR;
+        if( pipe(pipe_out) < 0 )
+        {
+            close(pipe_in[0]);
+            close(pipe_in[1]);
+            return SEC_E_INTERNAL_ERROR;
+        }
+        fcntl( pipe_out[0], F_SETFD, FD_CLOEXEC );
+        fcntl( pipe_out[1], F_SETFD, FD_CLOEXEC );
     }
-    if (!(helper = HeapAlloc(GetProcessHeap(),0, sizeof(NegoHelper))))
+
+    if (!(helper = heap_alloc( sizeof(NegoHelper) )))
     {
         close(pipe_in[0]);
         close(pipe_in[1]);
@@ -82,16 +98,13 @@ SECURITY_STATUS fork_helper(PNegoHelper *new_helper, const char *prog,
         close(pipe_in[1]);
         close(pipe_out[0]);
         close(pipe_out[1]);
-        HeapFree( GetProcessHeap(), 0, helper );
+        heap_free( helper );
         return SEC_E_INTERNAL_ERROR;
     }
 
     if(helper->helper_pid == 0)
     {
         /* We're in the child now */
-        close(0);
-        close(1);
-
         dup2(pipe_out[0], 0);
         close(pipe_out[0]);
         close(pipe_out[1]);
@@ -104,16 +117,24 @@ SECURITY_STATUS fork_helper(PNegoHelper *new_helper, const char *prog,
 
         /* Whoops, we shouldn't get here. Big badaboom.*/
         write(STDOUT_FILENO, "BH\n", 3);
-        exit(1);
+        _exit(1);
     }
     else
     {
         *new_helper = helper;
-        helper->version = -1;
-        helper->password = NULL;
+        helper->major = helper->minor = helper->micro = -1;
         helper->com_buf = NULL;
         helper->com_buf_size = 0;
         helper->com_buf_offset = 0;
+        helper->session_key = NULL;
+        helper->neg_flags = 0;
+        helper->crypt.ntlm.a4i = NULL;
+        helper->crypt.ntlm2.send_a4i = NULL;
+        helper->crypt.ntlm2.recv_a4i = NULL;
+        helper->crypt.ntlm2.send_sign_key = NULL;
+        helper->crypt.ntlm2.send_seal_key = NULL;
+        helper->crypt.ntlm2.recv_sign_key = NULL;
+        helper->crypt.ntlm2.recv_seal_key = NULL;
         helper->pipe_in = pipe_in[0];
         close(pipe_in[1]);
         helper->pipe_out = pipe_out[1];
@@ -121,6 +142,10 @@ SECURITY_STATUS fork_helper(PNegoHelper *new_helper, const char *prog,
     }
 
     return SEC_E_OK;
+#else
+    ERR( "no fork support on this platform\n" );
+    return SEC_E_INTERNAL_ERROR;
+#endif
 }
 
 static SECURITY_STATUS read_line(PNegoHelper helper, int *offset_len)
@@ -131,7 +156,7 @@ static SECURITY_STATUS read_line(PNegoHelper helper, int *offset_len)
     if(helper->com_buf == NULL)
     {
         TRACE("Creating a new buffer for the helper\n");
-        if((helper->com_buf = HeapAlloc(GetProcessHeap(), 0, INITIAL_BUFFER_SIZE)) == NULL)
+        if (!(helper->com_buf = heap_alloc(INITIAL_BUFFER_SIZE)))
             return SEC_E_INSUFFICIENT_MEMORY;
         
         /* Created a new buffer, size is INITIAL_BUFFER_SIZE, offset is 0 */
@@ -145,8 +170,7 @@ static SECURITY_STATUS read_line(PNegoHelper helper, int *offset_len)
         if(helper->com_buf_offset + INITIAL_BUFFER_SIZE > helper->com_buf_size)
         {
             /* increment buffer size in INITIAL_BUFFER_SIZE steps */
-            char *buf = HeapReAlloc(GetProcessHeap(), 0, helper->com_buf,
-                                    helper->com_buf_size + INITIAL_BUFFER_SIZE);
+            char *buf = heap_realloc(helper->com_buf, helper->com_buf_size + INITIAL_BUFFER_SIZE);
             TRACE("Resizing buffer!\n");
             if (!buf) return SEC_E_INSUFFICIENT_MEMORY;
             helper->com_buf_size += INITIAL_BUFFER_SIZE;
@@ -219,7 +243,7 @@ SECURITY_STATUS run_helper(PNegoHelper helper, char *buffer,
         return sec_status;
     }
     
-    TRACE("In helper: recieved %s\n", debugstr_a(helper->com_buf));
+    TRACE("In helper: received %s\n", debugstr_a(helper->com_buf));
     *buflen = lstrlenA(helper->com_buf);
 
     if( *buflen > max_buflen)
@@ -232,11 +256,6 @@ SECURITY_STATUS run_helper(PNegoHelper helper, char *buffer,
     if( *buflen < 2 )
     {
         return SEC_E_ILLEGAL_MESSAGE;
-    }
-
-    if( (*buflen <= 3) && (strncmp(helper->com_buf, "BH", 2) == 0))
-    {
-        return SEC_E_INTERNAL_ERROR;
     }
 
     /* We only get ERR if the input size is too big. On a GENSEC error,
@@ -257,26 +276,34 @@ void cleanup_helper(PNegoHelper helper)
 {
 
     TRACE("Killing helper %p\n", helper);
-    if( (helper == NULL) || (helper->helper_pid == 0))
+    if(helper == NULL)
         return;
-      
-    HeapFree(GetProcessHeap(), 0, helper->password);
-    HeapFree(GetProcessHeap(), 0, helper->com_buf);
+
+    heap_free(helper->com_buf);
+    heap_free(helper->session_key);
 
     /* closing stdin will terminate ntlm_auth */
     close(helper->pipe_out);
     close(helper->pipe_in);
 
-    waitpid(helper->helper_pid, NULL, 0);
+#ifdef HAVE_FORK
+    if (helper->helper_pid > 0) /* reap child */
+    {
+        pid_t wret;
+        do {
+            wret = waitpid(helper->helper_pid, NULL, 0);
+        } while (wret < 0 && errno == EINTR);
+    }
+#endif
 
-    helper->helper_pid = 0;
-    HeapFree(GetProcessHeap(), 0, helper);
+    heap_free(helper);
 }
 
 void check_version(PNegoHelper helper)
 {
     char temp[80];
     char *newline;
+    int major = 0, minor = 0, micro = 0, ret;
 
     TRACE("Checking version of helper\n");
     if(helper != NULL)
@@ -290,18 +317,18 @@ void check_version(PNegoHelper helper)
                 temp[len] = 0;
 
             TRACE("Exact version is %s\n", debugstr_a(temp));
-            if(strncmp(temp+8, "3.9", 3) == 0)
+            ret = sscanf(temp, "Version %d.%d.%d", &major, &minor, &micro);
+            if(ret != 3)
             {
-                helper->version = 4;
-            }
-            else if(strncmp(temp+8, "3.0", 3) == 0)
-            {
-                helper->version = 3;
+                ERR("Failed to get the helper version.\n");
+                helper->major = helper->minor = helper->micro = -1;
             }
             else
             {
-                TRACE("Unknown version!\n");
-                helper->version = -1;
+                TRACE("Version recognized: %d.%d.%d\n", major, minor, micro);
+                helper->major = major;
+                helper->minor = minor;
+                helper->micro = micro;
             }
         }
     }

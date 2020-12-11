@@ -41,7 +41,7 @@
  51 cdecl ldap_search_st(ptr str long str ptr long ptr ptr) ldap_search_stA
  52 cdecl ldap_compare_s(ptr str str str) ldap_compare_sA
  53 cdecl LdapUnicodeToUTF8(wstr long ptr long)
- 54 cdecl ber_bvfree(ptr)
+ 54 cdecl ber_bvfree(ptr) WLDAP32_ber_bvfree
  55 cdecl cldap_openA(str long)
  56 cdecl ldap_addA(ptr str ptr)
  57 cdecl ldap_add_ext(ptr str ptr ptr ptr ptr) ldap_add_extA
@@ -52,7 +52,7 @@
  62 cdecl ldap_add_extW(ptr wstr ptr ptr ptr ptr)
  63 cdecl ldap_add_ext_s(ptr str ptr ptr ptr) ldap_add_ext_sA
  64 cdecl ldap_add_ext_sA(ptr str ptr ptr ptr)
- 65 cdecl ldap_add_ext_sW(ptr str ptr ptr ptr)
+ 65 cdecl ldap_add_ext_sW(ptr wstr ptr ptr ptr)
  66 cdecl ldap_add_sA(ptr str ptr)
  67 cdecl ldap_modrdn2(ptr str ptr long) ldap_modrdn2A
  68 cdecl ldap_modrdn2_s(ptr str ptr long) ldap_modrdn2_sA
@@ -85,9 +85,9 @@
  95 cdecl ldap_count_references(ptr ptr) WLDAP32_ldap_count_references
  96 cdecl ldap_count_valuesA(ptr)
  97 cdecl ldap_count_valuesW(ptr)
- 98 stub ldap_create_page_control
- 99 stub ldap_create_page_controlA
-100 stub ldap_create_page_controlW
+ 98 cdecl ldap_create_page_control(ptr long ptr long ptr) ldap_create_page_controlA
+ 99 cdecl ldap_create_page_controlA(ptr long ptr long ptr)
+100 cdecl ldap_create_page_controlW(ptr long ptr long ptr)
 101 cdecl ldap_create_sort_control(ptr ptr long ptr) ldap_create_sort_controlA
 102 cdecl ldap_create_sort_controlA(ptr ptr long ptr)
 103 cdecl ldap_create_sort_controlW(ptr ptr long ptr)
@@ -102,8 +102,8 @@
 112 cdecl ldap_delete_sA(ptr str)
 113 cdecl ldap_delete_sW(ptr wstr)
 114 cdecl ldap_dn2ufnW(wstr)
-115 stub ldap_encode_sort_controlA
-116 stub ldap_encode_sort_controlW
+115 cdecl ldap_encode_sort_controlA(ptr ptr ptr long)
+116 cdecl ldap_encode_sort_controlW(ptr ptr ptr long)
 117 cdecl ldap_err2stringA(long)
 118 cdecl ldap_err2stringW(long)
 119 cdecl ldap_escape_filter_elementA(str long ptr long)
@@ -121,11 +121,11 @@
 131 cdecl ldap_free_controlsW(ptr)
 132 cdecl ldap_get_dnA(ptr ptr)
 133 cdecl ldap_get_dnW(ptr ptr)
-134 stub ldap_get_next_page
-135 stub ldap_get_next_page_s
+134 cdecl ldap_get_next_page(ptr ptr long ptr)
+135 cdecl ldap_get_next_page_s(ptr ptr ptr long ptr ptr)
 136 cdecl ldap_get_option(ptr long ptr) ldap_get_optionA
 137 cdecl ldap_get_optionA(ptr long ptr)
-138 stub ldap_get_paged_count
+138 cdecl ldap_get_paged_count(ptr ptr ptr ptr)
 139 cdecl ldap_get_valuesA(ptr ptr str)
 140 cdecl ldap_get_valuesW(ptr ptr wstr)
 141 cdecl ldap_get_values_lenA(ptr ptr str)
@@ -158,18 +158,18 @@
 168 cdecl ldap_next_reference(ptr ptr) WLDAP32_ldap_next_reference
 169 cdecl ldap_openA(str long)
 170 cdecl ldap_openW(wstr long)
-171 stub ldap_parse_page_control
-172 stub ldap_parse_page_controlA
-173 stub ldap_parse_page_controlW
-174 stub ldap_parse_reference
-175 stub ldap_parse_referenceA
-176 stub ldap_parse_referenceW
-177 stub ldap_parse_result
-178 stub ldap_parse_resultA
-179 stub ldap_parse_resultW
-180 stub ldap_parse_sort_control
-181 stub ldap_parse_sort_controlA
-182 stub ldap_parse_sort_controlW
+171 cdecl ldap_parse_page_control(ptr ptr ptr ptr) ldap_parse_page_controlA
+172 cdecl ldap_parse_page_controlA(ptr ptr ptr ptr)
+173 cdecl ldap_parse_page_controlW(ptr ptr ptr ptr)
+174 cdecl ldap_parse_reference(ptr ptr ptr) ldap_parse_referenceA
+175 cdecl ldap_parse_referenceA(ptr ptr ptr)
+176 cdecl ldap_parse_referenceW(ptr ptr ptr)
+177 cdecl ldap_parse_result(ptr ptr ptr ptr ptr ptr ptr long) ldap_parse_resultA
+178 cdecl ldap_parse_resultA(ptr ptr ptr ptr ptr ptr ptr long)
+179 cdecl ldap_parse_resultW(ptr ptr ptr ptr ptr ptr ptr long)
+180 cdecl ldap_parse_sort_control(ptr ptr ptr ptr) ldap_parse_sort_controlA
+181 cdecl ldap_parse_sort_controlA(ptr ptr ptr ptr)
+182 cdecl ldap_parse_sort_controlW(ptr ptr ptr ptr)
 183 cdecl ldap_rename_ext(ptr str str str long ptr ptr ptr) ldap_rename_extA
 184 cdecl ldap_rename_extA(ptr str str str long ptr ptr ptr)
 185 cdecl ldap_rename_extW(ptr wstr wstr wstr long ptr ptr ptr)
@@ -178,7 +178,7 @@
 188 cdecl ldap_rename_ext_sW(ptr wstr wstr wstr long ptr ptr)
 189 cdecl ldap_searchA(ptr str long str ptr long)
 190 cdecl ldap_searchW(ptr wstr long wstr ptr long)
-191 stub ldap_search_abandon_page
+191 cdecl ldap_search_abandon_page(ptr ptr)
 192 cdecl ldap_search_ext(ptr str long str ptr long ptr ptr long long ptr) ldap_search_extA
 193 cdecl ldap_search_extA(ptr str long str ptr long ptr ptr long long ptr)
 194 cdecl ldap_search_extW(ptr wstr long wstr ptr long ptr ptr long long ptr)
@@ -188,12 +188,12 @@
 198 stub ldap_set_dbg_flags
 199 stub ldap_set_dbg_routine
 200 cdecl ldap_memfree(ptr) ldap_memfreeA
-201 stub ldap_startup
+201 cdecl ldap_startup(ptr ptr)
 202 cdecl ldap_cleanup(long)
 203 cdecl ldap_search_ext_sW(ptr wstr long wstr ptr long ptr ptr ptr long ptr)
-204 stub ldap_search_init_page
-205 stub ldap_search_init_pageA
-206 stub ldap_search_init_pageW
+204 cdecl ldap_search_init_page(ptr str long str ptr long ptr ptr long long ptr) ldap_search_init_pageA
+205 cdecl ldap_search_init_pageA(ptr str long str ptr long ptr ptr long long ptr)
+206 cdecl ldap_search_init_pageW(ptr wstr long wstr ptr long ptr ptr long long ptr)
 207 cdecl ldap_search_sA(ptr str long str ptr long ptr)
 208 cdecl ldap_search_sW(ptr wstr long wstr ptr long ptr)
 209 cdecl ldap_search_stA(ptr str long str ptr long ptr ptr)
@@ -204,9 +204,9 @@
 214 cdecl ldap_simple_bindW(ptr wstr wstr)
 215 cdecl ldap_simple_bind_sA(ptr str str)
 216 cdecl ldap_simple_bind_sW(ptr wstr wstr)
-217 stub ldap_sslinit
-218 stub ldap_sslinitA
-219 stub ldap_sslinitW
+217 cdecl ldap_sslinit(str long long) ldap_sslinitA
+218 cdecl ldap_sslinitA(str long long)
+219 cdecl ldap_sslinitW(wstr long long)
 220 cdecl ldap_ufn2dn(str ptr) ldap_ufn2dnA
 221 cdecl ldap_ufn2dnA(str ptr)
 222 cdecl ldap_ufn2dnW(wstr ptr)
@@ -215,31 +215,31 @@
 230 cdecl ldap_check_filterA(ptr str)
 231 cdecl ldap_check_filterW(ptr wstr)
 232 cdecl ldap_dn2ufnA(str)
-300 cdecl ber_init(ptr)
-301 cdecl ber_free(ptr long)
-302 cdecl ber_bvecfree(ptr)
-303 cdecl ber_bvdup(ptr)
-304 cdecl ber_alloc_t(long)
-305 cdecl ber_skip_tag(ptr ptr)
-306 cdecl ber_peek_tag(ptr ptr)
-307 cdecl ber_first_element(ptr ptr ptr)
-308 cdecl ber_next_element(ptr ptr ptr)
-309 cdecl ber_flatten(ptr ptr)
-310 varargs ber_printf(ptr str)
-311 varargs ber_scanf(ptr str)
+300 cdecl ber_init(ptr) WLDAP32_ber_init
+301 cdecl ber_free(ptr long) WLDAP32_ber_free
+302 cdecl ber_bvecfree(ptr) WLDAP32_ber_bvecfree
+303 cdecl ber_bvdup(ptr) WLDAP32_ber_bvdup
+304 cdecl ber_alloc_t(long) WLDAP32_ber_alloc_t
+305 cdecl ber_skip_tag(ptr ptr) WLDAP32_ber_skip_tag
+306 cdecl ber_peek_tag(ptr ptr) WLDAP32_ber_peek_tag
+307 cdecl ber_first_element(ptr ptr ptr) WLDAP32_ber_first_element
+308 cdecl ber_next_element(ptr ptr ptr) WLDAP32_ber_next_element
+309 cdecl ber_flatten(ptr ptr) WLDAP32_ber_flatten
+310 varargs ber_printf(ptr str) WLDAP32_ber_printf
+311 varargs ber_scanf(ptr str) WLDAP32_ber_scanf
 312 cdecl ldap_conn_from_msg(ptr ptr)
 313 cdecl ldap_sasl_bindW(ptr wstr wstr ptr ptr ptr ptr)
 314 cdecl ldap_sasl_bind_sW(ptr wstr wstr ptr ptr ptr ptr)
 315 cdecl ldap_sasl_bindA(ptr str str ptr ptr ptr ptr)
 316 cdecl ldap_sasl_bind_sA(ptr str str ptr ptr ptr ptr)
-317 stub ldap_parse_extended_resultW
-318 stub ldap_parse_extended_resultA
-319 stub ldap_create_vlv_controlW
-320 stub ldap_create_vlv_controlA
-321 stub ldap_parse_vlv_controlW
-322 stub ldap_parse_vlv_controlA
+317 cdecl ldap_parse_extended_resultW(ptr ptr ptr ptr long)
+318 cdecl ldap_parse_extended_resultA(ptr ptr ptr ptr long)
+319 cdecl ldap_create_vlv_controlW(ptr ptr long ptr)
+320 cdecl ldap_create_vlv_controlA(ptr ptr long ptr)
+321 cdecl ldap_parse_vlv_controlW(ptr ptr ptr ptr ptr ptr)
+322 cdecl ldap_parse_vlv_controlA(ptr ptr ptr ptr ptr ptr)
 329 cdecl ldap_start_tls_sW(ptr ptr ptr ptr ptr)
 330 cdecl ldap_start_tls_sA(ptr ptr ptr ptr ptr)
-331 stub ldap_stop_tls_s
+331 cdecl ldap_stop_tls_s(ptr)
 332 cdecl ldap_extended_operation_sW(ptr wstr ptr ptr ptr ptr ptr)
 333 cdecl ldap_extended_operation_sA(ptr str ptr ptr ptr ptr ptr)

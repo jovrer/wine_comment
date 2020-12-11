@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003 Raphael Junqueira
+ * Copyright (C) 2003-2005 Raphael Junqueira
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_DPLAY8_DPADDR_H
@@ -26,8 +26,10 @@
 extern "C" {
 #endif /* defined(__cplusplus) */
 
-
+typedef REFIID	        DPNAREFIID;
+#ifndef _WINSOCK2API_
 typedef struct sockaddr SOCKADDR;
+#endif
 
 /*****************************************************************************
  * DirectPlay8Addr defines
@@ -55,12 +57,17 @@ typedef struct sockaddr SOCKADDR;
 #define DPNA_KEY_DEVICE_A                   "device"
 #define DPNA_KEY_FLOWCONTROL_A              "flowcontrol"
 #define DPNA_KEY_HOSTNAME_A                 "hostname"
+#define DPNA_KEY_NAMEINFO_A                 "nameinfo"
 #define DPNA_KEY_PARITY_A                   "parity"
 #define DPNA_KEY_PHONENUMBER_A              "phonenumber"
 #define DPNA_KEY_PORT_A                     "port"
+#define DPNA_KEY_PROCESSOR_A                "processor"
 #define DPNA_KEY_PROGRAM_A                  "program"
 #define DPNA_KEY_PROVIDER_A                 "provider"
+#define DPNA_KEY_SCOPE_A                     "scope"
 #define DPNA_KEY_STOPBITS_A                 "stopbits"
+#define DPNA_KEY_TRAVERSALMODE_A             "traversalmode"
+
 #define DPNA_STOP_BITS_ONE_A                "1"
 #define DPNA_STOP_BITS_ONE_FIVE_A           "1.5"
 #define DPNA_STOP_BITS_TWO_A                "2"
@@ -88,12 +95,16 @@ typedef struct sockaddr SOCKADDR;
 # define DPNA_KEY_DEVICE               (const WCHAR []){ 'd','e','v','i','c','e',0 }
 # define DPNA_KEY_FLOWCONTROL          (const WCHAR []){ 'f','l','o','w','c','o','n','t','r','o','l',0 }
 # define DPNA_KEY_HOSTNAME             (const WCHAR []){ 'h','o','s','t','n','a','m','e',0 }
+# define DPNA_KEY_NAMEINFO             (const WCHAR []){ 'n','a','m','e','i','n','f','o',0 }
 # define DPNA_KEY_PARITY               (const WCHAR []){ 'p','a','r','i','t','y',0 }
 # define DPNA_KEY_PHONENUMBER          (const WCHAR []){ 'p','h','o','n','e','n','u','m','b','e','r',0 }
 # define DPNA_KEY_PORT                 (const WCHAR []){ 'p','o','r','t',0 }
+# define DPNA_KEY_PROCESSOR            (const WCHAR []){ 'p','r','o','c','e','s','s','o','r',0 }
 # define DPNA_KEY_PROGRAM              (const WCHAR []){ 'p','r','o','g','r','a','m',0 }
 # define DPNA_KEY_PROVIDER             (const WCHAR []){ 'p','r','o','v','i','d','e','r',0 }
+# define DPNA_KEY_SCOPE                (const WCHAR []){ 's','c','o','p','e',0 }
 # define DPNA_KEY_STOPBITS             (const WCHAR []){ 's','t','o','p','b','i','t','s',0 }
+# define DPNA_KEY_TRAVERSALMODE        (const WCHAR []){ 't','r','a','v','e','r','s','a','l','m','o','d','e',0 }
 # define DPNA_STOP_BITS_ONE            (const WCHAR []){ '1',0 }
 # define DPNA_STOP_BITS_ONE_FIVE       (const WCHAR []){ '1','.','5',0 }
 # define DPNA_STOP_BITS_TWO            (const WCHAR []){ '2',0 }
@@ -120,12 +131,16 @@ typedef struct sockaddr SOCKADDR;
 # define DPNA_KEY_DEVICE               L"device"
 # define DPNA_KEY_FLOWCONTROL          L"flowcontrol"
 # define DPNA_KEY_HOSTNAME             L"hostname"
+# define DPNA_KEY_NAMEINFO             L"nameinfo"
 # define DPNA_KEY_PARITY               L"parity"
 # define DPNA_KEY_PHONENUMBER          L"phonenumber"
 # define DPNA_KEY_PORT                 L"port"
+# define DPNA_KEY_PROCESSOR            L"processor"
 # define DPNA_KEY_PROGRAM              L"program"
 # define DPNA_KEY_PROVIDER             L"provider"
+# define DPNA_KEY_SCOPE                L"scope"
 # define DPNA_KEY_STOPBITS             L"stopbits"
+# define DPNA_KEY_TRAVERSALMODE        L"traversalmode"
 # define DPNA_STOP_BITS_ONE            L"1"
 # define DPNA_STOP_BITS_ONE_FIVE       L"1.5"
 # define DPNA_STOP_BITS_TWO            L"2"
@@ -152,12 +167,16 @@ static const WCHAR DPNA_KEY_BAUD[] = { 'b','a','u','d',0 };
 static const WCHAR DPNA_KEY_DEVICE[] = { 'd','e','v','i','c','e',0 };
 static const WCHAR DPNA_KEY_FLOWCONTROL[] = { 'f','l','o','w','c','o','n','t','r','o','l',0 };
 static const WCHAR DPNA_KEY_HOSTNAME[] = { 'h','o','s','t','n','a','m','e',0 };
+static const WCHAR DPNA_KEY_NAMEINFO[] = { 'n','a','m','e','i','n','f','o',0 };
 static const WCHAR DPNA_KEY_PARITY[] = { 'p','a','r','i','t','y',0 };
 static const WCHAR DPNA_KEY_PHONENUMBER[] = { 'p','h','o','n','e','n','u','m','b','e','r',0 };
 static const WCHAR DPNA_KEY_PORT[] =   { 'p','o','r','t',0 };
+static const WCHAR DPNA_KEY_PROCESSOR[] = { 'p','r','o','c','e','s','s','o','r',0 };
 static const WCHAR DPNA_KEY_PROGRAM[] = { 'p','r','o','g','r','a','m',0 };
 static const WCHAR DPNA_KEY_PROVIDER[] = { 'p','r','o','v','i','d','e','r',0 };
+static const WCHAR DPNA_KEY_SCOPE[] = { 's','c','o','p','e',0 };
 static const WCHAR DPNA_KEY_STOPBITS[] = { 's','t','o','p','b','i','t','s',0 };
+static const WCHAR DPNA_KEY_TRAVERSALMODE[] = { 't','r','a','v','e','r','s','a','l','m','o','d','e',0 };
 static const WCHAR DPNA_STOP_BITS_ONE[] = { '1',0 };
 static const WCHAR DPNA_STOP_BITS_ONE_FIVE[] = { '1','.','5',0 };
 static const WCHAR DPNA_STOP_BITS_TWO[] = { '2',0 };
@@ -219,14 +238,14 @@ DECLARE_INTERFACE_(IDirectPlay8Address,IUnknown)
     STDMETHOD(GetURLA)(THIS_ CHAR* pszURL, PDWORD pdwNumChars) PURE;
     STDMETHOD(GetSP)(THIS_ GUID* pguidSP) PURE;
     STDMETHOD(GetUserData)(THIS_ LPVOID pvUserData, PDWORD pdwBufferSize) PURE;
-    STDMETHOD(SetSP)(THIS_ CONST GUID* CONST pguidSP) PURE;
-    STDMETHOD(SetUserData)(THIS_ CONST void* CONST pvUserData, CONST DWORD dwDataSize) PURE;
+    STDMETHOD(SetSP)(THIS_ const GUID* pguidSP) PURE;
+    STDMETHOD(SetUserData)(THIS_ const void* pvUserData, DWORD dwDataSize) PURE;
     STDMETHOD(GetNumComponents)(THIS_ PDWORD pdwNumComponents) PURE;
-    STDMETHOD(GetComponentByName)(THIS_ CONST WCHAR* CONST pwszName, LPVOID pvBuffer, PDWORD pdwBufferSize, PDWORD pdwDataType) PURE;
-    STDMETHOD(GetComponentByIndex)(THIS_ CONST DWORD dwComponentID, WCHAR* pwszName, PDWORD pdwNameLen, void* pvBuffer, PDWORD pdwBufferSize, PDWORD pdwDataType) PURE;
-    STDMETHOD(AddComponent)(THIS_ CONST WCHAR* CONST pwszName, CONST void* CONST lpvData, CONST DWORD dwDataSize, CONST DWORD dwDataType) PURE;
+    STDMETHOD(GetComponentByName)(THIS_ const WCHAR* pwszName, LPVOID pvBuffer, PDWORD pdwBufferSize, PDWORD pdwDataType) PURE;
+    STDMETHOD(GetComponentByIndex)(THIS_ DWORD dwComponentID, WCHAR* pwszName, PDWORD pdwNameLen, void* pvBuffer, PDWORD pdwBufferSize, PDWORD pdwDataType) PURE;
+    STDMETHOD(AddComponent)(THIS_ const WCHAR* pwszName, const void* lpvData, DWORD dwDataSize, DWORD dwDataType) PURE;
     STDMETHOD(GetDevice)(THIS_ GUID* pDevGuid) PURE;
-    STDMETHOD(SetDevice)(THIS_ CONST GUID* CONST devGuid) PURE;
+    STDMETHOD(SetDevice)(THIS_ const GUID* devGuid) PURE;
     STDMETHOD(BuildFromDirectPlay4Address)(THIS_ LPVOID pvAddress, DWORD dwDataSize) PURE;
 };
 #undef INTERFACE
@@ -295,9 +314,9 @@ DECLARE_INTERFACE_(IDirectPlay8AddressIP,IUnknown)
     STDMETHOD_(ULONG,AddRef)(THIS) PURE;
     STDMETHOD_(ULONG,Release)(THIS) PURE;
     /*** IDirectPlay8AddressIP methods ***/
-    STDMETHOD(BuildFromSockAddr)(THIS_ CONST SOCKADDR* CONST pSockAddr) PURE;
-    STDMETHOD(BuildAddress)(THIS_ CONST WCHAR* CONST wszAddress, CONST USHORT usPort) PURE;
-    STDMETHOD(BuildLocalAddress)(THIS_ CONST GUID* CONST pguidAdapter, CONST USHORT usPort) PURE;
+    STDMETHOD(BuildFromSockAddr)(THIS_ const SOCKADDR* pSockAddr) PURE;
+    STDMETHOD(BuildAddress)(THIS_ const WCHAR* wszAddress, USHORT usPort) PURE;
+    STDMETHOD(BuildLocalAddress)(THIS_ const GUID* pguidAdapter, USHORT usPort) PURE;
     STDMETHOD(GetSockAddress)(THIS_ SOCKADDR* pSockAddr, PDWORD) PURE;
     STDMETHOD(GetLocalAddress)(THIS_ GUID* pguidAdapter, USHORT* pusPort) PURE;
     STDMETHOD(GetAddress)(THIS_ WCHAR* wszAddress, PDWORD pdwAddressLength, USHORT* psPort) PURE;
@@ -329,6 +348,10 @@ DECLARE_INTERFACE_(IDirectPlay8AddressIP,IUnknown)
 #define IDirectPlay8AddressIP_GetLocalAddress(p,a,b)        (p)->GetLocalAddress(a,b)
 #define IDirectPlay8AddressIP_GetAddress(p,a,b,c)           (p)->GetAddress(a,b,c)
 #endif
+
+/* Export functions */
+
+HRESULT WINAPI DirectPlay8AddressCreate(const GUID* pcIID, LPVOID* ppvInterface, IUnknown* pUnknown);
 
 #ifdef __cplusplus
 }

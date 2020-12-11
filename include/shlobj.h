@@ -13,7 +13,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_SHLOBJ_H
@@ -23,6 +23,12 @@
 #include <commctrl.h>
 #include <prsht.h>
 #include <shlguid.h>
+#include <shtypes.h>
+#include <shobjidl.h>
+
+#ifdef WINE_NO_UNICODE_MACROS
+#undef GetObject
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,26 +37,72 @@ extern "C" {
 /* Except for specific structs, this header is byte packed */
 #include <pshpack1.h>
 
-#include <shtypes.h>
-#include <shobjidl.h>
+#ifndef HPSXA_DEFINED
+#define HPSXA_DEFINED
+DECLARE_HANDLE(HPSXA);
+#endif
 
-LPVOID       WINAPI SHAlloc(ULONG);
+typedef enum
+{
+    KF_FLAG_DEFAULT                     = 0x00000000,
+    KF_FLAG_SIMPLE_IDLIST               = 0x00000100,
+    KF_FLAG_NOT_PARENT_RELATIVE         = 0x00000200,
+    KF_FLAG_DEFAULT_PATH                = 0x00000400,
+    KF_FLAG_INIT                        = 0x00000800,
+    KF_FLAG_NO_ALIAS                    = 0x00001000,
+    KF_FLAG_DONT_UNEXPAND               = 0x00002000,
+    KF_FLAG_DONT_VERIFY                 = 0x00004000,
+    KF_FLAG_CREATE                      = 0x00008000,
+    KF_FLAG_NO_APPCONTAINER_REDIRECTION = 0x00010000,
+    KF_FLAG_ALIAS_ONLY                  = 0x80000000
+} KNOWN_FOLDER_FLAG;
+
+enum
+{
+    GPFIDL_DEFAULT    = 0x00,
+    GPFIDL_ALTNAME    = 0x01,
+    GPFIDL_UNCPRINTER = 0x02
+};
+
+typedef int GPFIDL_FLAGS;
+
+UINT         WINAPI SHAddFromPropSheetExtArray(HPSXA,LPFNADDPROPSHEETPAGE,LPARAM);
+LPVOID       WINAPI SHAlloc(ULONG) __WINE_ALLOC_SIZE(1);
 HRESULT      WINAPI SHCoCreateInstance(LPCWSTR,const CLSID*,IUnknown*,REFIID,LPVOID*);
+HPSXA        WINAPI SHCreatePropSheetExtArray(HKEY,LPCWSTR,UINT);
+HPSXA        WINAPI SHCreatePropSheetExtArrayEx(HKEY,LPCWSTR,UINT,IDataObject*);
+HRESULT      WINAPI SHCreateQueryCancelAutoPlayMoniker(IMoniker**);
+HRESULT      WINAPI SHCreateShellItem(LPCITEMIDLIST,IShellFolder*,LPCITEMIDLIST,IShellItem**);
 DWORD        WINAPI SHCLSIDFromStringA(LPCSTR,CLSID*);
 DWORD        WINAPI SHCLSIDFromStringW(LPCWSTR,CLSID*);
 #define             SHCLSIDFromString WINELIB_NAME_AW(SHCLSIDFromString)
 HRESULT      WINAPI SHCreateStdEnumFmtEtc(DWORD,const FORMATETC *,IEnumFORMATETC**);
+void         WINAPI SHDestroyPropSheetExtArray(HPSXA);
 BOOL         WINAPI SHFindFiles(LPCITEMIDLIST,LPCITEMIDLIST);
 DWORD        WINAPI SHFormatDrive(HWND,UINT,UINT,UINT);
 void         WINAPI SHFree(LPVOID);
-BOOL         WINAPI GetFileNameFromBrowse(HWND,LPSTR,DWORD,LPCSTR,LPCSTR,LPCSTR,LPCSTR);
+BOOL         WINAPI GetFileNameFromBrowse(HWND,LPWSTR,DWORD,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR);
+HRESULT      WINAPI SHGetInstanceExplorer(IUnknown**);
+HRESULT      WINAPI SHGetFolderPathAndSubDirA(HWND,int,HANDLE,DWORD,LPCSTR,LPSTR);
+HRESULT      WINAPI SHGetFolderPathAndSubDirW(HWND,int,HANDLE,DWORD,LPCWSTR,LPWSTR);
+#define             SHGetFolderPathAndSubDir WINELIB_NAME_AW(SHGetFolderPathAndSubDir)
+HRESULT      WINAPI SHGetKnownFolderIDList(REFKNOWNFOLDERID,DWORD,HANDLE,PIDLIST_ABSOLUTE*);
+HRESULT      WINAPI SHGetKnownFolderItem(REFKNOWNFOLDERID,KNOWN_FOLDER_FLAG,HANDLE,REFIID,void**);
+HRESULT      WINAPI SHGetKnownFolderPath(REFKNOWNFOLDERID,DWORD,HANDLE,PWSTR*);
 BOOL         WINAPI SHGetPathFromIDListA(LPCITEMIDLIST,LPSTR);
 BOOL         WINAPI SHGetPathFromIDListW(LPCITEMIDLIST,LPWSTR);
 #define             SHGetPathFromIDList WINELIB_NAME_AW(SHGetPathFromIDList)
+BOOL         WINAPI SHGetPathFromIDListEx(PCIDLIST_ABSOLUTE,WCHAR*,DWORD,GPFIDL_FLAGS);
 INT          WINAPI SHHandleUpdateImage(LPCITEMIDLIST);
 HRESULT      WINAPI SHILCreateFromPath(LPCWSTR,LPITEMIDLIST*,DWORD*);
 HRESULT      WINAPI SHLoadOLE(LPARAM);
+HRESULT      WINAPI SHParseDisplayName(LPCWSTR,IBindCtx*,LPITEMIDLIST*,SFGAOF,SFGAOF*);
+HRESULT      WINAPI SHPathPrepareForWriteA(HWND,IUnknown*,LPCSTR,DWORD);
+HRESULT      WINAPI SHPathPrepareForWriteW(HWND,IUnknown*,LPCWSTR,DWORD);
+#define             SHPathPrepareForWrite WINELIB_NAME_AW(SHPathPrepareForWrite)
+UINT         WINAPI SHReplaceFromPropSheetExtArray(HPSXA,UINT,LPFNADDPROPSHEETPAGE,LPARAM);
 LPITEMIDLIST WINAPI SHSimpleIDListFromPath(LPCWSTR);
+BOOL         WINAPI SHRunControlPanel(LPCWSTR, HWND);
 int          WINAPI SHMapPIDLToSystemImageListIndex(IShellFolder*,LPCITEMIDLIST,int*);
 HRESULT      WINAPI SHStartNetConnectionDialog(HWND,LPCSTR,DWORD);
 VOID         WINAPI SHUpdateImageA(LPCSTR,INT,UINT,INT);
@@ -58,15 +110,32 @@ VOID         WINAPI SHUpdateImageW(LPCWSTR,INT,UINT,INT);
 #define             SHUpdateImage WINELIB_NAME_AW(SHUpdateImage)
 int          WINAPI RestartDialog(HWND,LPCWSTR,DWORD);
 int          WINAPI RestartDialogEx(HWND,LPCWSTR,DWORD,DWORD);
+int          WINAPI DriveType(int);
+int          WINAPI RealDriveType(int, BOOL);
+int          WINAPI IsNetDrive(int);
+BOOL         WINAPI IsUserAnAdmin(void);
+UINT         WINAPI Shell_MergeMenus(HMENU,HMENU,UINT,UINT,UINT,ULONG);
+BOOL         WINAPI Shell_GetImageLists(HIMAGELIST*,HIMAGELIST*);
+BOOL         WINAPI SignalFileOpen(PCIDLIST_ABSOLUTE);
+BOOL         WINAPI ImportPrivacySettings(LPCWSTR, BOOL*, BOOL*);
 
-#define SHFMT_ERROR     0xFFFFFFFFL  /* Error on last format, drive may be formatable */
-#define SHFMT_CANCEL    0xFFFFFFFEL  /* Last format was canceled */
-#define SHFMT_NOFORMAT  0xFFFFFFFDL  /* Drive is not formatable */
+#define SHFMT_ERROR     __MSABI_LONG(0xFFFFFFFF)  /* Error on last format, drive may be formattable */
+#define SHFMT_CANCEL    __MSABI_LONG(0xFFFFFFFE)  /* Last format was cancelled */
+#define SHFMT_NOFORMAT  __MSABI_LONG(0xFFFFFFFD)  /* Drive is not formattable */
 
 /* SHFormatDrive flags */
 #define SHFMT_ID_DEFAULT	0xFFFF
 #define SHFMT_OPT_FULL		1
 #define SHFMT_OPT_SYSONLY	2
+
+/* SHPathPrepareForWrite flags */
+#define SHPPFW_NONE             0x00000000
+#define SHPPFW_DIRCREATE        0x00000001
+#define SHPPFW_DEFAULT          SHPPFW_DIRCREATE
+#define SHPPFW_ASKDIRCREATE     0x00000002
+#define SHPPFW_IGNOREFILENAME   0x00000004
+#define SHPPFW_NOWRITECHECK     0x00000008
+#define SHPPFW_MEDIACHECKONLY   0x00000010
 
 /* SHObjectProperties flags */
 #define SHOP_PRINTERNAME 0x01
@@ -83,55 +152,202 @@ BOOL WINAPI SHObjectProperties(HWND,DWORD,LPCWSTR,LPCWSTR);
 
 int WINAPI PathCleanupSpec(LPCWSTR,LPWSTR);
 
+/* SHOpenWithDialog API */
+
+typedef enum
+{
+    OAIF_ALLOW_REGISTRATION = 0x00000001,
+    OAIF_REGISTER_EXT       = 0x00000002,
+    OAIF_EXEC               = 0x00000004,
+    OAIF_FORCE_REGISTRATION = 0x00000008,
+    OAIF_HIDE_REGISTRATION  = 0x00000020,
+    OAIF_URL_PROTOCOL       = 0x00000040,
+    OAIF_FILE_IS_URI        = 0x00000080
+} OPEN_AS_INFO_FLAGS;
+
+#include <pshpack8.h>
+typedef struct
+{
+    LPCWSTR pcszFile;
+    LPCWSTR pcszClass;
+    OPEN_AS_INFO_FLAGS oaifInFlags;
+} OPENASINFO;
+#include <poppack.h>
+
+HRESULT WINAPI SHOpenWithDialog(HWND,const OPENASINFO*);
+
+/* Shell_MergeMenus flags */
+#define MM_ADDSEPARATOR     0x00000001
+#define MM_SUBMENUSHAVEIDS  0x00000002
+#define MM_DONTREMOVESEPS   0x00000004
+
 /*****************************************************************************
  * IContextMenu interface
  */
 
 
 /* DATAOBJECT_InitShellIDList*/
-#define CFSTR_SHELLIDLIST       "Shell IDList Array"      /* CF_IDLIST */
+#define CFSTR_SHELLIDLISTA           "Shell IDList Array"   /* CF_IDLIST */
+#define CFSTR_SHELLIDLISTOFFSETA     "Shell Object Offsets" /* CF_OBJECTPOSITIONS */
+#define CFSTR_NETRESOURCESA          "Net Resource"         /* CF_NETRESOURCE */
+/* DATAOBJECT_InitFileGroupDesc */
+#define CFSTR_FILEDESCRIPTORA        "FileGroupDescriptor"  /* CF_FILEGROUPDESCRIPTORA */
+/* DATAOBJECT_InitFileContents*/
+#define CFSTR_FILECONTENTSA          "FileContents"         /* CF_FILECONTENTS */
+#define CFSTR_FILENAMEA              "FileName"             /* CF_FILENAMEA */
+#define CFSTR_FILENAMEMAPA           "FileNameMap"          /* CF_FILENAMEMAPA */
+#define CFSTR_PRINTERGROUPA          "PrinterFriendlyName"  /* CF_PRINTERS */
+#define CFSTR_SHELLURLA              "UniformResourceLocator"
+#define CFSTR_INETURLA               CFSTR_SHELLURLA
+#define CFSTR_PREFERREDDROPEFFECTA   "Preferred DropEffect"
+#define CFSTR_PERFORMEDDROPEFFECTA   "Performed DropEffect"
+#define CFSTR_PASTESUCCEEDEDA        "Paste Succeeded"
+#define CFSTR_INDRAGLOOPA            "InShellDragLoop"
+#define CFSTR_DRAGCONTEXTA           "DragContext"
+#define CFSTR_MOUNTEDVOLUMEA         "MountedVolume"
+#define CFSTR_PERSISTEDDATAOBJECTA   "PersistedDataObject"
+#define CFSTR_TARGETCLSIDA           "TargetCLSID"
+#define CFSTR_AUTOPLAY_SHELLIDLISTSA "Autoplay Enumerated IDList Array"
+#define CFSTR_LOGICALPERFORMEDDROPEFFECTA "Logical Performed DropEffect"
 
-extern UINT cfShellIDList;
+#if defined(__GNUC__)
+# define CFSTR_SHELLIDLISTW \
+    (const WCHAR []){ 'S','h','e','l','l',' ','I','D','L','i','s','t',' ','A','r','r','a','y',0 }
+# define CFSTR_SHELLIDLISTOFFSETW \
+    (const WCHAR []){ 'S','h','e','l','l',' ','O','b','j','e','c','t',' ','O','f','f','s','e','t','s',0 }
+# define CFSTR_NETRESOURCESW \
+    (const WCHAR []){ 'N','e','t',' ','R','e','s','o','u','r','c','e',0 }
+# define CFSTR_FILEDESCRIPTORW \
+    (const WCHAR []){ 'F','i','l','e','G','r','o','u','p','D','e','s','c','r','i','p','t','o','r','W',0 }
+# define CFSTR_FILECONTENTSW \
+    (const WCHAR []){ 'F','i','l','e','C','o','n','t','e','n','t','s',0 }
+# define CFSTR_FILENAMEW \
+    (const WCHAR []){ 'F','i','l','e','N','a','m','e','W',0 }
+# define CFSTR_FILENAMEMAPW \
+    (const WCHAR []){ 'F','i','l','e','N','a','m','e','M','a','p','W',0 }
+# define CFSTR_PRINTERGROUPW \
+    (const WCHAR []){ 'P','r','i','n','t','e','r','F','r','i','e','n','d','l','y','N','a','m','e',0 }
+# define CFSTR_SHELLURLW \
+    (const WCHAR []){ 'U','n','i','f','o','r','m','R','e','s','o','u','r','c','e','L','o','c','a','t','o','r',0 }
+# define CFSTR_INETURLW \
+    (const WCHAR []){ 'U','n','i','f','o','r','m','R','e','s','o','u','r','c','e','L','o','c','a','t','o','r','W',0 }
+# define CFSTR_PREFERREDDROPEFFECTW \
+    (const WCHAR []){ 'P','r','e','f','e','r','r','e','d',' ','D','r','o','p','E','f','f','e','c','t',0 }
+# define CFSTR_PERFORMEDDROPEFFECTW \
+    (const WCHAR []){ 'P','e','r','f','o','r','m','e','d',' ','D','r','o','p','E','f','f','e','c','t',0 }
+# define CFSTR_PASTESUCCEEDEDW \
+    (const WCHAR []){ 'P','a','s','t','e',' ','S','u','c','c','e','e','d','e','d',0 }
+# define CFSTR_INDRAGLOOPW \
+    (const WCHAR []){ 'I','n','S','h','e','l','l','D','r','a','g','L','o','o','p',0 }
+# define CFSTR_DRAGCONTEXTW \
+    (const WCHAR []){ 'D','r','a','g','C','o','n','t','e','x','t',0 }
+# define CFSTR_MOUNTEDVOLUMEW \
+    (const WCHAR []){ 'M','o','u','n','t','e','d','V','o','l','u','m','e',0 }
+# define CFSTR_PERSISTEDDATAOBJECTW \
+    (const WCHAR []){ 'P','e','r','s','i','s','t','e','d','D','a','t','a','O','b','j','e','c','t',0 }
+# define CFSTR_TARGETCLSIDW \
+    (const WCHAR []){ 'T','a','r','g','e','t','C','L','S','I','D',0 }
+# define CFSTR_AUTOPLAY_SHELLIDLISTSW \
+    (const WCHAR []){ 'A','u','t','o','p','l','a','y',' ','E','n','u','m','e','r','a','t','e','d',\
+                      ' ','I','D','L','i','s','t',' ','A','r','r','a','y',0 }
+# define CFSTR_LOGICALPERFORMEDDROPEFFECTW \
+    (const WCHAR []){ 'L','o','g','i','c','a','l',' ','P','e','r','f','o','r','m','e','d',\
+                      ' ','D','r','o','p','E','f','f','e','c','t',0 }
+#elif defined(_MSC_VER)
+# define CFSTR_SHELLIDLISTW           L"Shell IDList Array"
+# define CFSTR_SHELLIDLISTOFFSETW     L"Shell Object Offsets"
+# define CFSTR_NETRESOURCESW          L"Net Resource"
+# define CFSTR_FILEDESCRIPTORW        L"FileGroupDescriptorW"
+# define CFSTR_FILECONTENTSW          L"FileContents"
+# define CFSTR_FILENAMEW              L"FileNameW"
+# define CFSTR_FILENAMEMAPW           L"FileNameMapW"
+# define CFSTR_PRINTERGROUPW          L"PrinterFriendlyName"
+# define CFSTR_SHELLURLW              L"UniformResourceLocator"
+# define CFSTR_INETURLW               L"UniformResourceLocatorW"
+# define CFSTR_PREFERREDDROPEFFECTW   L"Preferred DropEffect"
+# define CFSTR_PERFORMEDDROPEFFECTW   L"Performed DropEffect"
+# define CFSTR_PASTESUCCEEDEDW        L"Paste Succeeded"
+# define CFSTR_INDRAGLOOPW            L"InShellDragLoop"
+# define CFSTR_DRAGCONTEXTW           L"DragContext"
+# define CFSTR_MOUNTEDVOLUMEW         L"MountedVolume"
+# define CFSTR_PERSISTEDDATAOBJECTW   L"PersistedDataObject"
+# define CFSTR_TARGETCLSIDW           L"TargetCLSID"
+# define CFSTR_AUTOPLAY_SHELLIDLISTSW L"Autoplay Enumerated IDList Array"
+# define CFSTR_LOGICALPERFORMEDDROPEFFECTW L"Logical Performed DropEffect"
+#else
+static const WCHAR CFSTR_SHELLIDLISTW[] =
+    { 'S','h','e','l','l',' ','I','D','L','i','s','t',' ','A','r','r','a','y',0 };
+static const WCHAR CFSTR_SHELLIDLISTOFFSETW[] =
+    { 'S','h','e','l','l',' ','O','b','j','e','c','t',' ','O','f','f','s','e','t','s',0 };
+static const WCHAR CFSTR_NETRESOURCESW[] =
+    { 'N','e','t',' ','R','e','s','o','u','r','c','e',0 };
+static const WCHAR CFSTR_FILEDESCRIPTORW[] =
+    { 'F','i','l','e','G','r','o','u','p','D','e','s','c','r','i','p','t','o','r','W',0 };
+static const WCHAR CFSTR_FILECONTENTSW[] =
+    { 'F','i','l','e','C','o','n','t','e','n','t','s',0 };
+static const WCHAR CFSTR_FILENAMEW[] =
+    { 'F','i','l','e','N','a','m','e','W',0 };
+static const WCHAR CFSTR_FILENAMEMAPW[] =
+    { 'F','i','l','e','N','a','m','e','M','a','p','W',0 };
+static const WCHAR CFSTR_PRINTERGROUPW[] =
+    { 'P','r','i','n','t','e','r','F','r','i','e','n','d','l','y','N','a','m','e',0 };
+static const WCHAR CFSTR_SHELLURLW[] =
+    { 'U','n','i','f','o','r','m','R','e','s','o','u','r','c','e','L','o','c','a','t','o','r',0 };
+static const WCHAR CFSTR_INETURLW[] =
+    { 'U','n','i','f','o','r','m','R','e','s','o','u','r','c','e','L','o','c','a','t','o','r','W',0 };
+static const WCHAR CFSTR_PREFERREDDROPEFFECTW[] =
+    { 'P','r','e','f','e','r','r','e','d',' ','D','r','o','p','E','f','f','e','c','t',0 };
+static const WCHAR CFSTR_PERFORMEDDROPEFFECTW[] =
+    { 'P','e','r','f','o','r','m','e','d',' ','D','r','o','p','E','f','f','e','c','t',0 };
+static const WCHAR CFSTR_PASTESUCCEEDEDW[] =
+    { 'P','a','s','t','e',' ','S','u','c','c','e','e','d','e','d',0 };
+static const WCHAR CFSTR_INDRAGLOOPW[] =
+    { 'I','n','S','h','e','l','l','D','r','a','g','L','o','o','p',0 };
+static const WCHAR CFSTR_DRAGCONTEXTW[] =
+    { 'D','r','a','g','C','o','n','t','e','x','t',0 };
+static const WCHAR CFSTR_MOUNTEDVOLUMEW[] =
+    { 'M','o','u','n','t','e','d','V','o','l','u','m','e',0 };
+static const WCHAR CFSTR_PERSISTEDDATAOBJECTW[] =
+    { 'P','e','r','s','i','s','t','e','d','D','a','t','a','O','b','j','e','c','t',0 };
+static const WCHAR CFSTR_TARGETCLSIDW[] =
+    { 'T','a','r','g','e','t','C','L','S','I','D',0 };
+static const WCHAR CFSTR_AUTOPLAY_SHELLIDLISTSW[] =
+    { 'A','u','t','o','p','l','a','y',' ','E','n','u','m','e','r','a','t','e','d',
+      ' ','I','D','L','i','s','t',' ','A','r','r','a','y',0 };
+static const WCHAR CFSTR_LOGICALPERFORMEDDROPEFFECTW[] =
+    { 'L','o','g','i','c','a','l',' ','P','e','r','f','o','r','m','e','d',
+      ' ','D','r','o','p','E','f','f','e','c','t',0 };
+#endif
+
+#define CFSTR_SHELLIDLIST           WINELIB_NAME_AW(CFSTR_SHELLIDLIST)
+#define CFSTR_SHELLIDLISTOFFSET     WINELIB_NAME_AW(CFSTR_SHELLIDLISTOFFSET)
+#define CFSTR_NETRESOURCES          WINELIB_NAME_AW(CFSTR_NETRESOURCES)
+#define CFSTR_FILEDESCRIPTOR        WINELIB_NAME_AW(CFSTR_FILEDESCRIPTOR)
+#define CFSTR_FILECONTENTS          WINELIB_NAME_AW(CFSTR_FILECONTENTS)
+#define CFSTR_FILENAME              WINELIB_NAME_AW(CFSTR_FILENAME)
+#define CFSTR_FILENAMEMAP           WINELIB_NAME_AW(CFSTR_FILENAMEMAP)
+#define CFSTR_PRINTERGROUP          WINELIB_NAME_AW(CFSTR_PRINTERGROUP)
+#define CFSTR_SHELLURL              WINELIB_NAME_AW(CFSTR_SHELLURL)
+#define CFSTR_INETURL               WINELIB_NAME_AW(CFSTR_INETURL)
+#define CFSTR_PREFERREDDROPEFFECT   WINELIB_NAME_AW(CFSTR_PREFERREDDROPEFFECT)
+#define CFSTR_PERFORMEDDROPEFFECT   WINELIB_NAME_AW(CFSTR_PERFORMEDDROPEFFECT)
+#define CFSTR_PASTESUCCEEDED        WINELIB_NAME_AW(CFSTR_PASTESUCCEEDED)
+#define CFSTR_INDRAGLOOP            WINELIB_NAME_AW(CFSTR_INDRAGLOOP)
+#define CFSTR_DRAGCONTEXT           WINELIB_NAME_AW(CFSTR_DRAGCONTEXT)
+#define CFSTR_MOUNTEDVOLUME         WINELIB_NAME_AW(CFSTR_MOUNTEDVOLUME)
+#define CFSTR_PERSISTEDDATAOBJECT   WINELIB_NAME_AW(CFSTR_PERSISTEDDATAOBJECT)
+#define CFSTR_TARGETCLSID           WINELIB_NAME_AW(CFSTR_TARGETCLSID)
+#define CFSTR_AUTOPLAY_SHELLIDLISTS WINELIB_NAME_AW(CFSTR_AUTOPLAY_SHELLIDLISTS)
+#define CFSTR_LOGICALPERFORMEDDROPEFFECT WINELIB_NAME_AW(CFSTR_LOGICALPERFORMEDDROPEFFECT)
 
 typedef struct
 {	UINT cidl;
 	UINT aoffset[1];
 } CIDA, *LPIDA;
 
-#define CFSTR_SHELLIDLISTOFFSET "Shell Object Offsets"    /* CF_OBJECTPOSITIONS */
-#define CFSTR_NETRESOURCES      "Net Resource"            /* CF_NETRESOURCE */
-
-/* DATAOBJECT_InitFileGroupDesc */
-#define CFSTR_FILEDESCRIPTORA   "FileGroupDescriptor"     /* CF_FILEGROUPDESCRIPTORA */
-extern UINT cfFileGroupDesc;
-
-#define CFSTR_FILEDESCRIPTORW   "FileGroupDescriptorW"    /* CF_FILEGROUPDESCRIPTORW */
-
-/* DATAOBJECT_InitFileContents*/
-#define CFSTR_FILECONTENTS      "FileContents"            /* CF_FILECONTENTS */
-extern UINT cfFileContents;
-
-#define CFSTR_FILENAMEA         "FileName"                /* CF_FILENAMEA */
-#define CFSTR_FILENAMEW         "FileNameW"               /* CF_FILENAMEW */
-#define CFSTR_PRINTERGROUP      "PrinterFriendlyName"     /* CF_PRINTERS */
-#define CFSTR_FILENAMEMAPA      "FileNameMap"             /* CF_FILENAMEMAPA */
-#define CFSTR_FILENAMEMAPW      "FileNameMapW"            /* CF_FILENAMEMAPW */
-#define CFSTR_SHELLURL          "UniformResourceLocator"
-#define CFSTR_PREFERREDDROPEFFECT "Preferred DropEffect"
-#define CFSTR_PERFORMEDDROPEFFECT "Performed DropEffect"
-#define CFSTR_PASTESUCCEEDED    "Paste Succeeded"
-#define CFSTR_INDRAGLOOP        "InShellDragLoop"
-
-#define CFSTR_FILEDESCRIPTOR WINELIB_NAME_AW(CFSTR_FILEDESCRIPTOR)
-#define CFSTR_FILENAME WINELIB_NAME_AW(CFSTR_FILENAME)
-
-
 /************************************************************************
 * IShellView interface
 */
-
-typedef GUID SHELLVIEWID;
-#define SV_CLASS_NAME   ("SHELLDLL_DefView")
 
 #define FCIDM_SHVIEWFIRST       0x0000
 /* undocumented */
@@ -195,33 +411,28 @@ typedef GUID SHELLVIEWID;
 #define FCIDM_TOOLBAR      (FCIDM_BROWSERFIRST + 0)
 #define FCIDM_STATUS       (FCIDM_BROWSERFIRST + 1)
 
-
-/****************************************************************************
- * IShellIcon interface
- */
-
-#define INTERFACE IShellIcon
-DECLARE_INTERFACE_(IShellIcon,IUnknown)
+#define INTERFACE IShellDetails
+DECLARE_INTERFACE_(IShellDetails, IUnknown)
 {
     /*** IUnknown methods ***/
-    STDMETHOD_(HRESULT,QueryInterface)(THIS_ REFIID riid, void** ppvObject) PURE;
-    STDMETHOD_(ULONG,AddRef)(THIS) PURE;
-    STDMETHOD_(ULONG,Release)(THIS) PURE;
-    /*** IShellIcon methods ***/
-    STDMETHOD(GetIconOf)(THIS_ LPCITEMIDLIST pidl, UINT flags, LPINT lpIconIndex) PURE;
+    STDMETHOD_(HRESULT,QueryInterface) (THIS_ REFIID riid, void **ppv) PURE;
+    STDMETHOD_(ULONG,AddRef) (THIS)  PURE;
+    STDMETHOD_(ULONG,Release) (THIS) PURE;
+    /*** IShellDetails methods ***/
+    STDMETHOD(GetDetailsOf)(THIS_ PCUITEMID_CHILD pidl, UINT iColumn, SHELLDETAILS *pDetails) PURE;
+    STDMETHOD(ColumnClick)(THIS_ UINT iColumn) PURE;
 };
 #undef INTERFACE
 
 #if !defined(__cplusplus) || defined(CINTERFACE)
 /*** IUnknown methods ***/
-#define IShellIcon_QueryInterface(p,a,b)      (p)->lpVtbl->QueryInterface(p,a,b)
-#define IShellIcon_AddRef(p)                  (p)->lpVtbl->AddRef(p)
-#define IShellIcon_Release(p)                 (p)->lpVtbl->Release(p)
-/*** IShellIcon methods ***/
-#define IShellIcon_GetIconOf(p,a,b,c)         (p)->lpVtbl->GetIconOf(p,a,b,c)
+#define IShellDetails_QueryInterface(p,a,b)    (p)->lpVtbl->QueryInterface(p,a,b)
+#define IShellDetails_AddRef(p)                (p)->lpVtbl->AddRef(p)
+#define IShellDetails_Release(p)               (p)->lpVtbl->Release(p)
+/*** IShellDetails methods ***/
+#define IShellDetails_GetDetailsOf(p,a,b,c)    (p)->lpVtbl->GetDetailsOf(p,a,b,c)
+#define IShellDetails_ColumnClick(p,a)         (p)->lpVtbl->ColumnClick(p,a)
 #endif
-
-typedef IShellIcon *LPSHELLICON;
 
 /* IQueryInfo interface */
 #define INTERFACE IQueryInfo
@@ -295,12 +506,256 @@ DECLARE_INTERFACE_(IInputObjectSite,IUnknown)
 #define IInputObjectSite_OnFocusChangeIS(p,a,b) (p)->lpVtbl->OnFocusChangeIS(p,a,b)
 #endif
 
+/* IObjMgr interface */
+#define INTERFACE IObjMgr
+DECLARE_INTERFACE_(IObjMgr,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface) (THIS_ REFIID riid, void** ppvObject) PURE;
+    STDMETHOD_(ULONG,AddRef) (THIS) PURE;
+    STDMETHOD_(ULONG,Release) (THIS) PURE;
+    /*** IObjMgr methods ***/
+    STDMETHOD(Append)(THIS_ LPUNKNOWN punk) PURE;
+    STDMETHOD(Remove)(THIS_ LPUNKNOWN punk) PURE;
+};
+#undef INTERFACE
+
+#if !defined(__cplusplus) || defined(CINTERFACE)
+/*** IUnknown methods ***/
+#define IObjMgr_QueryInterface(p,a,b)  (p)->lpVtbl->QueryInterface(p,a,b)
+#define IObjMgr_AddRef(p)              (p)->lpVtbl->AddRef(p)
+#define IObjMgr_Release(p)             (p)->lpVtbl->Release(p)
+/*** IObjMgr methods ***/
+#define IObjMgr_Append(p,a) (p)->lpVtbl->Append(p,a)
+#define IObjMgr_Remove(p,a) (p)->lpVtbl->Remove(p,a)
+#endif
+
+/* IACList interface */
+#define INTERFACE IACList
+DECLARE_INTERFACE_(IACList,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface) (THIS_ REFIID riid, void** ppvObject) PURE;
+    STDMETHOD_(ULONG,AddRef) (THIS) PURE;
+    STDMETHOD_(ULONG,Release) (THIS) PURE;
+    /*** IACList methods ***/
+    STDMETHOD(Expand)(THIS_ LPCOLESTR str) PURE;
+};
+#undef INTERFACE
+
+#if !defined(__cplusplus) || defined(CINTERFACE)
+/*** IUnknown methods ***/
+#define IACList_QueryInterface(p,a,b)  (p)->lpVtbl->QueryInterface(p,a,b)
+#define IACList_AddRef(p)              (p)->lpVtbl->AddRef(p)
+#define IACList_Release(p)             (p)->lpVtbl->Release(p)
+/*** IACList methods ***/
+#define IACList_Expand(p,a)             (p)->lpVtbl->Expand(p,a)
+#endif
+
+/* IACList2 interface */
+#define INTERFACE IACList2
+DECLARE_INTERFACE_(IACList2,IACList)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface) (THIS_ REFIID riid, void** ppvObject) PURE;
+    STDMETHOD_(ULONG,AddRef) (THIS) PURE;
+    STDMETHOD_(ULONG,Release) (THIS) PURE;
+    /*** IACList methods ***/
+    STDMETHOD(Expand)(THIS_ LPCOLESTR str) PURE;
+    /*** IACList2 methods ***/
+    STDMETHOD(SetOptions)(THIS_ DWORD dwFlag) PURE;
+    STDMETHOD(GetOptions)(THIS_ DWORD* pdwFlag) PURE;
+};
+#undef INTERFACE
+
+#if !defined(__cplusplus) || defined(CINTERFACE)
+/*** IUnknown methods ***/
+#define IACList2_QueryInterface(p,a,b)  (p)->lpVtbl->QueryInterface(p,a,b)
+#define IACList2_AddRef(p)              (p)->lpVtbl->AddRef(p)
+#define IACList2_Release(p)             (p)->lpVtbl->Release(p)
+/*** IACList2 methods ***/
+#define IACList2_GetOptions(p,a)        (p)->lpVtbl->GetOptions(p,a)
+#define IACList2_SetOptions(p,a)        (p)->lpVtbl->SetOptions(p,a)
+#endif
+
+/****************************************************************************
+ * IShellFolderViewCB interface
+ */
+
+#define INTERFACE IShellFolderViewCB
+DECLARE_INTERFACE_(IShellFolderViewCB,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface)(THIS_ REFIID riid, void** ppvObject) PURE;
+    STDMETHOD_(ULONG,AddRef)(THIS) PURE;
+    STDMETHOD_(ULONG,Release)(THIS) PURE;
+    /*** IShellFolderViewCB methods ***/
+    STDMETHOD(MessageSFVCB)(THIS_ UINT uMsg, WPARAM wParam, LPARAM lParam) PURE;
+};
+#undef INTERFACE
+
+#if !defined(__cplusplus) || defined(CINTERFACE)
+/*** IUnknown methods ***/
+#define IShellFolderViewCB_QueryInterface(p,a,b)      (p)->lpVtbl->QueryInterface(p,a,b)
+#define IShellFolderViewCB_AddRef(p)                  (p)->lpVtbl->AddRef(p)
+#define IShellFolderViewCB_Release(p)                 (p)->lpVtbl->Release(p)
+/*** IShellFolderViewCB methods ***/
+#define IShellFolderViewCB_MessageSFVCB(p,a,b,c)      (p)->lpVtbl->MessageSFVCB(p,a,b,c)
+#endif
+
+/****************************************************************************
+ * IShellFolderView interface
+ */
+
+#include <pshpack8.h>
+
+typedef struct _ITEMSPACING
+{
+    int cxSmall;
+    int cySmall;
+    int cxLarge;
+    int cyLarge;
+} ITEMSPACING;
+
+#include <poppack.h>
+
+#define INTERFACE IShellFolderView
+DEFINE_GUID(IID_IShellFolderView,0x37a378c0,0xf82d,0x11ce,0xae,0x65,0x08,0x00,0x2b,0x2e,0x12,0x62);
+DECLARE_INTERFACE_(IShellFolderView, IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface) (THIS_ REFIID riid, void **ppv) PURE;
+    STDMETHOD_(ULONG,AddRef) (THIS)  PURE;
+    STDMETHOD_(ULONG,Release) (THIS) PURE;
+
+    /*** IShellFolderView methods ***/
+    STDMETHOD(Rearrange) (THIS_ LPARAM lParamSort) PURE;
+    STDMETHOD(GetArrangeParam) (THIS_ LPARAM *plParamSort) PURE;
+    STDMETHOD(ArrangeGrid) (THIS) PURE;
+    STDMETHOD(AutoArrange) (THIS) PURE;
+    STDMETHOD(GetAutoArrange) (THIS) PURE;
+    STDMETHOD(AddObject) (THIS_ PITEMID_CHILD pidl, UINT *puItem) PURE;
+    STDMETHOD(GetObject) (THIS_ PITEMID_CHILD *ppidl, UINT uItem) PURE;
+    STDMETHOD(RemoveObject) (THIS_ PITEMID_CHILD pidl, UINT *puItem) PURE;
+    STDMETHOD(GetObjectCount) (THIS_ UINT *puCount) PURE;
+    STDMETHOD(SetObjectCount) (THIS_ UINT uCount, UINT dwFlags) PURE;
+    STDMETHOD(UpdateObject) (THIS_ PITEMID_CHILD pidlOld, PITEMID_CHILD pidlNew, UINT *puItem) PURE;
+    STDMETHOD(RefreshObject) (THIS_ PITEMID_CHILD pidl, UINT *puItem) PURE;
+    STDMETHOD(SetRedraw) (THIS_ BOOL bRedraw) PURE;
+    STDMETHOD(GetSelectedCount) (THIS_ UINT *puSelected) PURE;
+    STDMETHOD(GetSelectedObjects) (THIS_ PCITEMID_CHILD **pppidl, UINT *puItems) PURE;
+    STDMETHOD(IsDropOnSource) (THIS_ IDropTarget *pDropTarget) PURE;
+    STDMETHOD(GetDragPoint) (THIS_ POINT *ppt) PURE;
+    STDMETHOD(GetDropPoint) (THIS_ POINT *ppt) PURE;
+    STDMETHOD(MoveIcons) (THIS_ IDataObject *pDataObject) PURE;
+    STDMETHOD(SetItemPos) (THIS_ PCUITEMID_CHILD pidl, POINT *ppt) PURE;
+    STDMETHOD(IsBkDropTarget) (THIS_ IDropTarget *pDropTarget) PURE;
+    STDMETHOD(SetClipboard) (THIS_ BOOL bMove) PURE;
+    STDMETHOD(SetPoints) (THIS_ IDataObject *pDataObject) PURE;
+    STDMETHOD(GetItemSpacing) (THIS_ ITEMSPACING *pSpacing) PURE;
+    STDMETHOD(SetCallback) (THIS_ IShellFolderViewCB* pNewCB, IShellFolderViewCB** ppOldCB) PURE;
+    STDMETHOD(Select) ( THIS_  UINT dwFlags ) PURE;
+    STDMETHOD(QuerySupport) (THIS_ UINT * pdwSupport ) PURE;
+    STDMETHOD(SetAutomationObject)(THIS_ IDispatch* pdisp) PURE;
+};
+#undef INTERFACE
+
+#if !defined(__cplusplus) || defined(CINTERFACE)
+/*** IUnknown methods ***/
+#define IShellFolderView_QueryInterface(p,a,b)      (p)->lpVtbl->QueryInterface(p,a,b)
+#define IShellFolderView_AddRef(p)                  (p)->lpVtbl->AddRef(p)
+#define IShellFolderView_Release(p)                 (p)->lpVtbl->Release(p)
+/*** IShellFolderView methods ***/
+#define IShellFolderView_Rearrange(p,a)             (p)->lpVtbl->Rearrange(p,a)
+#define IShellFolderView_GetArrangeParam(p,a)       (p)->lpVtbl->GetArrangeParam(p,a)
+#define IShellFolderView_ArrangeGrid(p)             (p)->lpVtbl->ArrangeGrid(p)
+#define IShellFolderView_AutoArrange(p)             (p)->lpVtbl->AutoArrange(p)
+#define IShellFolderView_GetAutoArrange(p)          (p)->lpVtbl->GetAutoArrange(p)
+#define IShellFolderView_AddObject(p,a,b)           (p)->lpVtbl->AddObject(p,a,b)
+#define IShellFolderView_GetObject(p,a,b)           (p)->lpVtbl->GetObject(p,a,b)
+#define IShellFolderView_RemoveObject(p,a,b)        (p)->lpVtbl->RemoveObject(p,a,b)
+#define IShellFolderView_GetObjectCount(p,a)        (p)->lpVtbl->GetObjectCount(p,a)
+#define IShellFolderView_SetObjectCount(p,a,b)      (p)->lpVtbl->SetObjectCount(p,a,b)
+#define IShellFolderView_UpdateObject(p,a,b,c)      (p)->lpVtbl->UpdateObject(p,a,b,c)
+#define IShellFolderView_RefreshObject(p,a,b)       (p)->lpVtbl->RefreshObject(p,a,b)
+#define IShellFolderView_SetRedraw(p,a)             (p)->lpVtbl->SetRedraw(p,a)
+#define IShellFolderView_GetSelectedCount(p,a)      (p)->lpVtbl->GetSelectedCount(p,a)
+#define IShellFolderView_GetSelectedObjects(p,a,b)  (p)->lpVtbl->GetSelectedObjects(p,a,b)
+#define IShellFolderView_IsDropOnSource(p,a)        (p)->lpVtbl->IsDropOnSource(p,a)
+#define IShellFolderView_GetDragPoint(p,a)          (p)->lpVtbl->GetDragPoint(p,a)
+#define IShellFolderView_GetDropPoint(p,a)          (p)->lpVtbl->GetDropPoint(p,a)
+#define IShellFolderView_MoveIcons(p,a)             (p)->lpVtbl->MoveIcons(p,a)
+#define IShellFolderView_SetItemPos(p,a,b)          (p)->lpVtbl->SetItemPos(p,a,b)
+#define IShellFolderView_IsBkDropTarget(p,a)        (p)->lpVtbl->IsBkDropTarget(p,a)
+#define IShellFolderView_SetClipboard(p,a)          (p)->lpVtbl->SetClipboard(p,a)
+#define IShellFolderView_SetPoints(p,a)             (p)->lpVtbl->SetPoints(p,a)
+#define IShellFolderView_GetItemSpacing(p,a)        (p)->lpVtbl->GetItemSpacing(p,a)
+#define IShellFolderView_SetCallback(p,a,b)         (p)->lpVtbl->SetCallback(p,a,b)
+#define IShellFolderView_Select(p,a)                (p)->lpVtbl->Select(p,a)
+#define IShellFolderView_QuerySupport(p,a)          (p)->lpVtbl->QuerySupport(p,a)
+#define IShellFolderView_SetAutomationObject(p,a)   (p)->lpVtbl->SetAutomationObject(p,a)
+#endif
+
+/* IProgressDialog interface */
+#define PROGDLG_NORMAL           0x00000000
+#define PROGDLG_MODAL            0x00000001
+#define PROGDLG_AUTOTIME         0x00000002
+#define PROGDLG_NOTIME           0x00000004
+#define PROGDLG_NOMINIMIZE       0x00000008
+#define PROGDLG_NOPROGRESSBAR    0x00000010
+#define PROGDLG_MARQUEEPROGRESS  0x00000020
+#define PROGDLG_NOCANCEL         0x00000040
+
+#define PDTIMER_RESET            0x00000001
+#define PDTIMER_PAUSE            0x00000002
+#define PDTIMER_RESUME           0x00000003
+
+#define INTERFACE IProgressDialog
+DECLARE_INTERFACE_(IProgressDialog,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface) (THIS_ REFIID riid, void** ppvObject) PURE;
+    STDMETHOD_(ULONG,AddRef) (THIS) PURE;
+    STDMETHOD_(ULONG,Release) (THIS) PURE;
+    /*** IProgressDialog methods ***/
+    STDMETHOD(StartProgressDialog)(THIS_ HWND hwndParent, IUnknown *punkEnableModeless, DWORD dwFlags, LPCVOID reserved) PURE;
+    STDMETHOD(StopProgressDialog)(THIS) PURE;
+    STDMETHOD(SetTitle)(THIS_ LPCWSTR pwzTitle) PURE;
+    STDMETHOD(SetAnimation)(THIS_ HINSTANCE hInstance, UINT uiResourceId) PURE;
+    STDMETHOD_(BOOL,HasUserCancelled)(THIS) PURE;
+    STDMETHOD(SetProgress)(THIS_ DWORD dwCompleted, DWORD dwTotal) PURE;
+    STDMETHOD(SetProgress64)(THIS_ ULONGLONG ullCompleted, ULONGLONG ullTotal) PURE;
+    STDMETHOD(SetLine)(THIS_ DWORD dwLineNum, LPCWSTR pwzString, BOOL bPath, LPCVOID reserved) PURE;
+    STDMETHOD(SetCancelMsg)(THIS_ LPCWSTR pwzCancelMsg, LPCVOID reserved) PURE;
+    STDMETHOD(Timer)(THIS_ DWORD dwTimerAction, LPCVOID reserved) PURE;
+};
+#undef INTERFACE
+
+#if !defined(__cplusplus) || defined(CINTERFACE)
+/*** IUnknown methods ***/
+#define IProgressDialog_QueryInterface(p,a,b)  (p)->lpVtbl->QueryInterface(p,a,b)
+#define IProgressDialog_AddRef(p)              (p)->lpVtbl->AddRef(p)
+#define IProgressDialog_Release(p)             (p)->lpVtbl->Release(p)
+/*** IProgressDialog methods ***/
+#define IProgressDialog_StartProgressDialog(p,a,b,c,d)    (p)->lpVtbl->StartProgressDialog(p,a,b,c,d)
+#define IProgressDialog_StopProgressDialog(p)             (p)->lpVtbl->StopProgressDialog(p)
+#define IProgressDialog_SetTitle(p,a)                     (p)->lpVtbl->SetTitle(p,a)
+#define IProgressDialog_SetAnimation(p,a,b)               (p)->lpVtbl->SetAnimation(p,a,b)
+#define IProgressDialog_HasUserCancelled(p)               (p)->lpVtbl->HasUserCancelled(p)
+#define IProgressDialog_SetProgress(p,a,b)                (p)->lpVtbl->SetProgress(p,a,b)
+#define IProgressDialog_SetProgress64(p,a,b)              (p)->lpVtbl->SetProgress64(p,a,b)
+#define IProgressDialog_SetLine(p,a,b,c,d)                (p)->lpVtbl->SetLine(p,a,b,c,d)
+#define IProgressDialog_SetCancelMsg(p,a,b)               (p)->lpVtbl->SetCancelMsg(p,a,b)
+#define IProgressDialog_Timer(p,a,b)                      (p)->lpVtbl->Timer(p,a,b)
+#endif
+
+
 /****************************************************************************
 * SHAddToRecentDocs API
 */
-#define SHARD_PIDL      0x00000001L
-#define SHARD_PATHA     0x00000002L
-#define SHARD_PATHW     0x00000003L
+#define SHARD_PIDL      __MSABI_LONG(0x00000001)
+#define SHARD_PATHA     __MSABI_LONG(0x00000002)
+#define SHARD_PATHW     __MSABI_LONG(0x00000003)
 #define SHARD_PATH WINELIB_NAME_AW(SHARD_PATH)
 
 void WINAPI SHAddToRecentDocs(UINT,LPCVOID);
@@ -348,6 +803,11 @@ typedef struct tagBROWSEINFOW {
 #define BIF_EDITBOX            0x0010
 #define BIF_VALIDATE           0x0020
 #define BIF_NEWDIALOGSTYLE     0x0040
+#define BIF_USENEWUI           (BIF_NEWDIALOGSTYLE | BIF_EDITBOX)
+#define BIF_BROWSEINCLUDEURLS  0x0080
+#define BIF_UAHINT             0x0100
+#define BIF_NONEWFOLDERBUTTON  0x0200
+#define BIF_NOTRANSLATETARGETS 0x0400
 
 #define BIF_BROWSEFORCOMPUTER  0x1000
 #define BIF_BROWSEFORPRINTER   0x2000
@@ -356,8 +816,9 @@ typedef struct tagBROWSEINFOW {
 /* message from browser */
 #define BFFM_INITIALIZED        1
 #define BFFM_SELCHANGED         2
-#define BFFM_VALIDATEFAILEDA    3   /* lParam:szPath ret:1(cont),0(EndDialog) */
-#define BFFM_VALIDATEFAILEDW    4   /* lParam:wzPath ret:1(cont),0(EndDialog) */
+#define BFFM_VALIDATEFAILEDA    3
+#define BFFM_VALIDATEFAILEDW    4
+#define BFFM_IUNKNOWN           5
 
 /* messages to browser */
 #define BFFM_SETSTATUSTEXTA     (WM_USER+100)
@@ -387,6 +848,8 @@ typedef HRESULT (CALLBACK *LPFNVIEWCALLBACK)(
 	WPARAM wParam,
 	LPARAM lParam);
 
+#include <pshpack8.h>
+
 typedef struct _CSFV
 {
   UINT             cbSize;
@@ -397,6 +860,8 @@ typedef struct _CSFV
   LPFNVIEWCALLBACK pfnCallback;
   FOLDERVIEWMODE   fvm;
 } CSFV, *LPCSFV;
+
+#include <poppack.h>
 
 HRESULT WINAPI SHCreateShellFolderViewEx(LPCSFV pshfvi, IShellView **ppshv);
 
@@ -457,6 +922,20 @@ HRESULT WINAPI SHCreateShellFolderViewEx(LPCSFV pshfvi, IShellView **ppshv);
 #define SFVM_GET_WEBVIEW_TASKS        84 /* undocumented */
 #define SFVM_GET_WEBVIEW_THEME        86 /* undocumented */
 #define SFVM_GETDEFERREDVIEWSETTINGS  92 /* undocumented */
+
+#include <pshpack8.h>
+
+typedef struct _SFV_CREATE
+{
+    UINT cbSize;
+    IShellFolder *pshf;
+    IShellView *psvOuter;
+    IShellFolderViewCB *psfvcb;
+} SFV_CREATE;
+
+#include <poppack.h>
+
+HRESULT WINAPI SHCreateShellFolderView(const SFV_CREATE *pscfv, IShellView **ppsv);
 
 /* Types and definitions for the SFM_* parameters */
 #include <pshpack8.h>
@@ -871,9 +1350,9 @@ typedef struct _SHChangeNotifyEntry
 #define SHCNE_ALLEVENTS		0x7FFFFFFF
 #define SHCNE_INTERRUPT		0x80000000
 
-#define SHCNEE_ORDERCHANGED	0x0002L
-#define SHCNEE_MSI_CHANGE	0x0004L
-#define SHCNEE_MSI_UNINSTALL	0x0005L
+#define SHCNEE_ORDERCHANGED     __MSABI_LONG(0x0002)
+#define SHCNEE_MSI_CHANGE       __MSABI_LONG(0x0004)
+#define SHCNEE_MSI_UNINSTALL    __MSABI_LONG(0x0005)
 
 #define SHCNF_IDLIST		0x0000
 #define SHCNF_PATHA		0x0001
@@ -883,10 +1362,16 @@ typedef struct _SHChangeNotifyEntry
 #define SHCNF_PRINTERW		0x0006
 #define SHCNF_TYPE		0x00FF
 #define SHCNF_FLUSH		0x1000
-#define SHCNF_FLUSHNOWAIT	0x2000
+#define SHCNF_FLUSHNOWAIT	0x3000
+#define SHCNF_NOTIFYRECURSIVE	0x10000
 
 #define SHCNF_PATH              WINELIB_NAME_AW(SHCNF_PATH)
 #define SHCNF_PRINTER           WINELIB_NAME_AW(SHCNF_PRINTER)
+
+#define SHCNRF_InterruptLevel 0x0001
+#define SHCNRF_ShellLevel 0x0002
+#define SHCNRF_RecursiveInterrupt 0x1000
+#define SHCNRF_NewDelivery 0x8000
 
 void WINAPI SHChangeNotify(LONG wEventId, UINT uFlags, LPCVOID dwItem1, LPCVOID dwItem2);
 
@@ -901,7 +1386,7 @@ typedef enum {
     SLDF_UNICODE = 0x00000080,
     SLDF_FORCE_NO_LINKINFO = 0x00000100,
     SLDF_HAS_EXP_SZ = 0x00000200,
-    SLDF_RUN_IN_SEPERATE = 0x00000400,
+    SLDF_RUN_IN_SEPARATE = 0x00000400,
     SLDF_HAS_LOGO3ID = 0x00000800,
     SLDF_HAS_DARWINID = 0x00001000,
     SLDF_RUNAS_USER = 0x00002000,
@@ -909,6 +1394,10 @@ typedef enum {
     SLDF_NO_PIDL_ALIAS = 0x00008000,
     SLDF_FORCE_UNCNAME = 0x00010000,
     SLDF_RUN_WITH_SHIMLAYER = 0x00020000,
+    SLDF_FORCE_NO_LINKTRACK = 0x00040000,
+    SLDF_ENABLE_TARGET_METADATA = 0x00080000,
+    SLDF_DISABLE_KNOWNFOLDER_RELATIVE_TRACKING = 0x00200000,
+    SLDF_VALID = 0x003ff7ff,
     SLDF_RESERVED = 0x80000000,
 } SHELL_LINK_DATA_FLAGS;
 
@@ -938,13 +1427,20 @@ typedef struct {
     DWORD cbOffset;
 } EXP_SPECIAL_FOLDER, *LPEXP_SPECIAL_FOLDER;
 
+typedef struct {
+    DWORD cbSize;
+    DWORD dwSignature;
+    BYTE abPropertyStorage[1];
+} EXP_PROPERTYSTORAGE;
+
 #define EXP_SZ_LINK_SIG         0xa0000001
 #define NT_CONSOLE_PROPS_SIG    0xa0000002
 #define NT_FE_CONSOLE_PROPS_SIG 0xa0000004
 #define EXP_SPECIAL_FOLDER_SIG  0xa0000005
 #define EXP_DARWIN_ID_SIG       0xa0000006
-#define EXP_LOGO3_ID_SIG        0xa0000007
 #define EXP_SZ_ICON_SIG         0xa0000007
+#define EXP_LOGO3_ID_SIG        EXP_SZ_ICON_SIG /* Old SDKs only */
+#define EXP_PROPERTYSTORAGE_SIG 0xa0000009
 
 typedef struct _SHChangeDWORDAsIDList {
     USHORT   cb;
@@ -974,6 +1470,47 @@ HRESULT WINAPI SHGetRealIDL(IShellFolder *psf, LPCITEMIDLIST pidlSimple, LPITEMI
 DWORD WINAPI SHCreateDirectory(HWND, LPCVOID);
 int WINAPI SHCreateDirectoryExA(HWND, LPCSTR, LPSECURITY_ATTRIBUTES);
 int WINAPI SHCreateDirectoryExW(HWND, LPCWSTR, LPSECURITY_ATTRIBUTES);
+#define    SHCreateDirectoryEx WINELIB_NAME_AW(SHCreateDirectoryEx)
+
+/****************************************************************************
+* SHGetSetFolderCustomSettings API
+*/
+
+#define FCS_READ       0x00000001
+#define FCS_FORCEWRITE 0x00000002
+#define FCS_WRITE      (FCS_READ | FCS_FORCEWRITE)
+
+#define FCS_FLAG_DRAGDROP    0x00000002
+
+#define FCSM_VIEWID          0x00000001
+#define FCSM_WEBVIEWTEMPLATE 0x00000002
+#define FCSM_INFOTIP         0x00000004
+#define FCSM_CLSID           0x00000008
+#define FCSM_ICONFILE        0x00000010
+#define FCSM_LOGO            0x00000020
+#define FCSM_FLAGS           0x00000040
+
+#include <pshpack8.h>
+typedef struct {
+    DWORD dwSize;
+    DWORD dwMask;
+    SHELLVIEWID *pvid;
+    LPWSTR pszWebViewTemplate;
+    DWORD cchWebViewTemplate;
+    LPWSTR pszWebViewTemplateVersion;
+    LPWSTR pszInfoTip;
+    DWORD cchInfoTip;
+    CLSID *pclsid;
+    DWORD dwFlags;
+    LPWSTR pszIconFile;
+    DWORD cchIconFile;
+    int iIconIndex;
+    LPWSTR pszLogo;
+    DWORD cchLogo;
+} SHFOLDERCUSTOMSETTINGS, *LPSHFOLDERCUSTOMSETTINGS;
+#include <poppack.h>
+
+HRESULT WINAPI SHGetSetFolderCustomSettings(LPSHFOLDERCUSTOMSETTINGS pfcs, PCWSTR pszPath, DWORD dwReadWrite);
 
 /****************************************************************************
 * SHGetSpecialFolderLocation API
@@ -1005,7 +1542,7 @@ HRESULT WINAPI SHGetFolderPathW(HWND hwnd, int nFolder, HANDLE hToken, DWORD dwF
 #define CSIDL_SENDTO		0x0009
 #define CSIDL_BITBUCKET		0x000a
 #define CSIDL_STARTMENU		0x000b
-#define CSIDL_MYDOCUMENTS	0x000c
+#define CSIDL_MYDOCUMENTS	CSIDL_PERSONAL
 #define CSIDL_MYMUSIC		0x000d
 #define CSIDL_MYVIDEO		0x000e
 #define CSIDL_DESKTOPDIRECTORY	0x0010
@@ -1168,7 +1705,29 @@ BOOL WINAPI WriteCabinetState(CABINETSTATE *);
 /****************************************************************************
  * Path Manipulation Routines
  */
+
+/* PathProcessCommand flags */
+#define PPCF_ADDQUOTES        0x01
+#define PPCF_INCLUDEARGS      0x02
+#define PPCF_ADDARGUMENTS     0x03
+#define PPCF_NODIRECTORIES    0x10
+#define PPCF_DONTRESOLVE      0x20
+#define PPCF_FORCEQUALIFY     0x40
+#define PPCF_LONGESTPOSSIBLE  0x80
+
+/* PathResolve flags */
+#define PRF_VERIFYEXISTS         0x01
+#define PRF_EXECUTABLE           0x02
+#define PRF_TRYPROGRAMEXTENSIONS 0x03
+#define PRF_FIRSTDIRDEF          0x04
+#define PRF_DONTFINDLINK         0x08
+#define PRF_REQUIREABSOLUTE      0x10
+
 VOID WINAPI PathGetShortPath(LPWSTR pszPath);
+LONG WINAPI PathProcessCommand(LPCWSTR, LPWSTR, int, DWORD);
+int  WINAPI PathResolve(LPWSTR, PZPCWSTR, UINT);
+BOOL WINAPI PathYetAnotherMakeUniqueName(LPWSTR, LPCWSTR, LPCWSTR, LPCWSTR);
+BOOL WINAPI Win32DeleteFile(LPCWSTR);
 
 /****************************************************************************
  * Drag And Drop Routines
@@ -1193,6 +1752,23 @@ BOOL         WINAPI DAD_DragLeave(void);
 BOOL         WINAPI DAD_AutoScroll(HWND,AUTO_SCROLL_DATA*,LPPOINT);
 HRESULT      WINAPI SHDoDragDrop(HWND,IDataObject*,IDropSource*,DWORD,LPDWORD);
 
+/****************************************************************************
+ * Internet shortcut properties
+ */
+
+#define PID_IS_URL         2
+#define PID_IS_NAME        4
+#define PID_IS_WORKINGDIR  5
+#define PID_IS_HOTKEY      6
+#define PID_IS_SHOWCMD     7
+#define PID_IS_ICONINDEX   8
+#define PID_IS_ICONFILE    9
+#define PID_IS_WHATSNEW    10
+#define PID_IS_AUTHOR      11
+#define PID_IS_DESCRIPTION 12
+#define PID_IS_COMMENT     13
+
+
 LPITEMIDLIST WINAPI ILAppendID(LPITEMIDLIST,LPCSHITEMID,BOOL);
 LPITEMIDLIST WINAPI ILClone(LPCITEMIDLIST);
 LPITEMIDLIST WINAPI ILCloneFirst(LPCITEMIDLIST);
@@ -1211,6 +1787,38 @@ HRESULT      WINAPI ILLoadFromStream(LPSTREAM,LPITEMIDLIST*);
 BOOL         WINAPI ILRemoveLastID(LPITEMIDLIST);
 HRESULT      WINAPI ILSaveToStream(LPSTREAM,LPCITEMIDLIST);
 
+static inline BOOL ILIsEmpty(LPCITEMIDLIST pidl)
+{
+    return !(pidl && pidl->mkid.cb);
+}
+
+#include <pshpack8.h>
+
+typedef struct {
+    HWND hwnd;
+    IContextMenuCB *pcmcb;
+    PCIDLIST_ABSOLUTE pidlFolder;
+    IShellFolder *psf;
+    UINT cidl;
+    PCUITEMID_CHILD_ARRAY apidl;
+    IUnknown *punkAssociationInfo;
+    UINT cKeys;
+    const HKEY *aKeys;
+} DEFCONTEXTMENU;
+
+#include <poppack.h>
+
+HRESULT WINAPI SHCreateDefaultContextMenu(const DEFCONTEXTMENU *pdcm, REFIID riid, void **ppv);
+
+typedef HRESULT (CALLBACK *LPFNDFMCALLBACK)(IShellFolder*,HWND,IDataObject*,UINT,WPARAM,LPARAM);
+
+HRESULT WINAPI CDefFolderMenu_Create2(LPCITEMIDLIST pidlFolder, HWND hwnd, UINT cidl,
+                                      LPCITEMIDLIST *apidl, IShellFolder *psf,
+                                      LPFNDFMCALLBACK lpfn, UINT nKeys, const HKEY *ahkeys,
+                                      IContextMenu **ppcm);
+
+int WINAPI PickIconDlg(HWND owner, WCHAR *path, UINT path_len, int *index);
+HRESULT WINAPI SHLimitInputEdit(HWND hwnd, IShellFolder *folder);
 
 #include <poppack.h>
 

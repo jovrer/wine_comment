@@ -30,12 +30,21 @@
  ***************************************************************************/
 
 /***************************************************************************
- *                                                                         *
- *   This library is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU Lesser General Public License as        *
- *   published by the Free Software Foundation; either version 2.1 of the  *
- *   License, or (at your option) any later version.                       *
- *                                                                         *
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ *
  ***************************************************************************/
 
 #ifndef INCLUDED_CHMLIB_H
@@ -63,30 +72,25 @@ struct chmUnitInfo
     WCHAR              path[CHM_MAX_PATHLEN+1];
 };
 
-struct chmFile* chm_openW(const WCHAR *filename);
+struct chmFile* chm_openW(const WCHAR *filename) DECLSPEC_HIDDEN;
+struct chmFile *chm_dup(struct chmFile *oldHandle) DECLSPEC_HIDDEN;
 
 /* close an ITS archive */
-void chm_close(struct chmFile *h);
-
-/* methods for ssetting tuning parameters for particular file */
-#define CHM_PARAM_MAX_BLOCKS_CACHED 0
-void chm_set_param(struct chmFile *h,
-                   int paramType,
-                   int paramVal);
+void chm_close(struct chmFile *h) DECLSPEC_HIDDEN;
 
 /* resolve a particular object from the archive */
 #define CHM_RESOLVE_SUCCESS (0)
 #define CHM_RESOLVE_FAILURE (1)
 int chm_resolve_object(struct chmFile *h,
                        const WCHAR *objPath,
-                       struct chmUnitInfo *ui);
+                       struct chmUnitInfo *ui) DECLSPEC_HIDDEN;
 
 /* retrieve part of an object from the archive */
 LONGINT64 chm_retrieve_object(struct chmFile *h,
                               struct chmUnitInfo *ui,
                               unsigned char *buf,
                               LONGUINT64 addr,
-                              LONGINT64 len);
+                              LONGINT64 len) DECLSPEC_HIDDEN;
 
 /* enumerate the objects in the .chm archive */
 typedef int (*CHM_ENUMERATOR)(struct chmFile *h,
@@ -101,15 +105,10 @@ typedef int (*CHM_ENUMERATOR)(struct chmFile *h,
 #define CHM_ENUMERATOR_FAILURE  (0)
 #define CHM_ENUMERATOR_CONTINUE (1)
 #define CHM_ENUMERATOR_SUCCESS  (2)
-int chm_enumerate(struct chmFile *h,
-                  int what,
-                  CHM_ENUMERATOR e,
-                  void *context);
-
-int chm_enumerate_dir(struct chmFile *h,
-                      const WCHAR *prefix,
-                      int what,
-                      CHM_ENUMERATOR e,
-                      void *context);
+BOOL chm_enumerate_dir(struct chmFile *h,
+                       const WCHAR *prefix,
+                       int what,
+                       CHM_ENUMERATOR e,
+                       void *context) DECLSPEC_HIDDEN;
 
 #endif /* INCLUDED_CHMLIB_H */

@@ -1,11 +1,6 @@
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = avifil32.dll
-IMPORTLIB = libavifil32.$(IMPLIBEXT)
-IMPORTS   = msacm32 msvfw32 winmm ole32 user32 advapi32 kernel32 ntdll
-EXTRALIBS = -luuid
+IMPORTLIB = avifil32
+IMPORTS   = uuid msacm32 msvfw32 winmm ole32 user32 advapi32 rpcrt4
 
 C_SRCS = \
 	acmstream.c \
@@ -16,15 +11,11 @@ C_SRCS = \
 	factory.c \
 	getframe.c \
 	icmstream.c \
-	regsvr.c \
 	tmpfile.c \
 	wavfile.c
 
-SPEC_SRCS16 = avifile.spec
+IDL_SRCS = avifil32.idl
 
-RC_SRCS = \
-	rsrc.rc
+RC_SRCS = avifil32.rc
 
-@MAKE_DLL_RULES@
-
-### Dependencies:
+dlldata_EXTRADEFS = -DENTRY_PREFIX=avifil32_

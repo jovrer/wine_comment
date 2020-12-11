@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <string.h>
@@ -29,7 +29,7 @@ static const WCHAR mciaviW[] = {'M','C','I','A','V','I',0};
 
 static LRESULT WINAPI MCIAVI_WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-    TRACE("hwnd=%p msg=%x wparam=%x lparam=%lx\n", hWnd, uMsg, wParam, lParam);
+    TRACE("hwnd=%p msg=%x wparam=%lx lparam=%lx\n", hWnd, uMsg, wParam, lParam);
 
     switch (uMsg) {
     case WM_CREATE:
@@ -109,7 +109,7 @@ BOOL MCIAVI_RegisterClass(void)
     return FALSE;
 }
 
-BOOL    MCIAVI_CreateWindow(WINE_MCIAVI* wma, DWORD dwFlags, LPMCI_DGV_OPEN_PARMSW lpOpenParms)
+BOOL    MCIAVI_CreateWindow(WINE_MCIAVI* wma, DWORD dwFlags, LPMCI_DGV_OPEN_PARMSW lpParms)
 {
     static const WCHAR captionW[] = {'W','i','n','e',' ','M','C','I','-','A','V','I',' ','p','l','a','y','e','r',0};
     HWND	hParent = 0;
@@ -119,12 +119,14 @@ BOOL    MCIAVI_CreateWindow(WINE_MCIAVI* wma, DWORD dwFlags, LPMCI_DGV_OPEN_PARM
     /* what should be done ? */
     if (wma->hWnd) return TRUE;
 
-    if (dwFlags & MCI_DGV_OPEN_PARENT)	hParent = lpOpenParms->hWndParent;
-    if (dwFlags & MCI_DGV_OPEN_WS)	dwStyle = lpOpenParms->dwStyle;
+    if (dwFlags & MCI_DGV_OPEN_PARENT)	hParent = lpParms->hWndParent;
+    if (dwFlags & MCI_DGV_OPEN_WS)	dwStyle = lpParms->dwStyle;
 
-    rc.left = rc.top = 0;
-    rc.right = (wma->hic ? wma->outbih : wma->inbih)->biWidth;
-    rc.bottom = (wma->hic ? wma->outbih : wma->inbih)->biHeight;
+    if (wma->hic)
+        SetRect(&rc, 0, 0, wma->outbih->biWidth, wma->outbih->biHeight);
+    else
+        SetRect(&rc, 0, 0, wma->inbih->biWidth, wma->inbih->biHeight);
+
     AdjustWindowRect(&rc, dwStyle, FALSE);
     if (!(dwStyle & (WS_CHILD|WS_POPUP))) /* overlapped window ? */
     {
@@ -137,9 +139,12 @@ BOOL    MCIAVI_CreateWindow(WINE_MCIAVI* wma, DWORD dwFlags, LPMCI_DGV_OPEN_PARM
                               dwStyle, rc.left, rc.top,
                               rc.right, rc.bottom,
                               hParent, 0, MCIAVI_hInstance,
-                              (LPVOID)wma->wDevID);
+                              ULongToPtr(wma->wDevID));
     wma->hWndPaint = wma->hWnd;
-    return (BOOL)wma->hWnd;
+
+    TRACE("(%04x, %08X, %p, style %x, parent %p, dimensions %dx%d, hwnd %p)\n", wma->wDevID,
+          dwFlags, lpParms, dwStyle, hParent, rc.right - rc.left, rc.bottom - rc.top, wma->hWnd);
+    return wma->hWnd != 0;
 }
 
 /***************************************************************************
@@ -150,15 +155,19 @@ DWORD	MCIAVI_mciPut(UINT wDevID, DWORD dwFlags, LPMCI_DGV_PUT_PARMS lpParms)
     WINE_MCIAVI*	wma = MCIAVI_mciGetOpenDev(wDevID);
     RECT		rc;
 
-    TRACE("(%04x, %08lX, %p)\n", wDevID, dwFlags, lpParms);
+    TRACE("(%04x, %08X, %p)\n", wDevID, dwFlags, lpParms);
 
     if (lpParms == NULL)	return MCIERR_NULL_PARAMETER_BLOCK;
     if (wma == NULL)		return MCIERR_INVALID_DEVICE_ID;
+    if (dwFlags & MCI_TEST)	return 0;
 
     EnterCriticalSection(&wma->cs);
 
     if (dwFlags & MCI_DGV_RECT) {
-	rc = lpParms->rc;
+        /* In MCI, RECT structure is used differently: rc.right = width & rc.bottom = height
+         * So convert input MCI RECT into a normal RECT */
+        SetRect(&rc, lpParms->rc.left, lpParms->rc.top, lpParms->rc.left + lpParms->rc.right,
+                lpParms->rc.top + lpParms->rc.bottom);
     } else {
         GetClientRect(wma->hWndPaint, &rc);
     }
@@ -187,9 +196,8 @@ DWORD	MCIAVI_mciPut(UINT wDevID, DWORD dwFlags, LPMCI_DGV_PUT_PARMS lpParms)
         return MCIERR_UNRECOGNIZED_COMMAND;
     }
     if (dwFlags & MCI_DGV_PUT_WINDOW) {
-        FIXME("PUT_WINDOW %s\n", wine_dbgstr_rect(&rc));
-        LeaveCriticalSection(&wma->cs);
-        return MCIERR_UNRECOGNIZED_COMMAND;
+        TRACE("PUT_WINDOW %s\n", wine_dbgstr_rect(&rc));
+        SetWindowPos(wma->hWndPaint, NULL, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOZORDER);
     }
     LeaveCriticalSection(&wma->cs);
     return 0;
@@ -201,21 +209,23 @@ DWORD	MCIAVI_mciPut(UINT wDevID, DWORD dwFlags, LPMCI_DGV_PUT_PARMS lpParms)
 DWORD	MCIAVI_mciWhere(UINT wDevID, DWORD dwFlags, LPMCI_DGV_RECT_PARMS lpParms)
 {
     WINE_MCIAVI*	wma = MCIAVI_mciGetOpenDev(wDevID);
+    RECT		rc;
 
-    TRACE("(%04x, %08lx, %p)\n", wDevID, dwFlags, lpParms);
+    TRACE("(%04x, %08x, %p)\n", wDevID, dwFlags, lpParms);
 
     if (lpParms == NULL)	return MCIERR_NULL_PARAMETER_BLOCK;
     if (wma == NULL)		return MCIERR_INVALID_DEVICE_ID;
+    /* Ignore MCI_TEST flag. */
 
     EnterCriticalSection(&wma->cs);
 
     if (dwFlags & MCI_DGV_WHERE_DESTINATION) {
 	if (dwFlags & MCI_DGV_WHERE_MAX) {
-	    GetClientRect(wma->hWndPaint, &lpParms->rc);
-	    TRACE("WHERE_DESTINATION_MAX %s\n", wine_dbgstr_rect(&lpParms->rc));
+	    GetClientRect(wma->hWndPaint, &rc);
+	    TRACE("WHERE_DESTINATION_MAX %s\n", wine_dbgstr_rect(&rc));
 	} else {
 	    TRACE("WHERE_DESTINATION %s\n", wine_dbgstr_rect(&wma->dest));
-	    lpParms->rc = wma->dest;
+	    rc = wma->dest;
 	}
     }
     if (dwFlags & MCI_DGV_WHERE_FRAME) {
@@ -228,16 +238,11 @@ DWORD	MCIAVI_mciWhere(UINT wDevID, DWORD dwFlags, LPMCI_DGV_RECT_PARMS lpParms)
     }
     if (dwFlags & MCI_DGV_WHERE_SOURCE) {
 	if (dwFlags & MCI_DGV_WHERE_MAX) {
-	    RECT rect;
-	    rect.left = 0;
-	    rect.top = 0;
-	    rect.right = wma->inbih->biWidth; 
-	    rect.bottom = wma->inbih->biHeight; 
-	    TRACE("WHERE_SOURCE_MAX %s\n", wine_dbgstr_rect(&rect));
-	    lpParms->rc = rect;
+            SetRect(&rc, 0, 0, wma->inbih->biWidth, wma->inbih->biHeight);
+	    TRACE("WHERE_SOURCE_MAX %s\n", wine_dbgstr_rect(&rc));
  	} else {
 	    TRACE("WHERE_SOURCE %s\n", wine_dbgstr_rect(&wma->source));
-	    lpParms->rc = wma->source;
+	    rc = wma->source;
 	}
     }
     if (dwFlags & MCI_DGV_WHERE_VIDEO) {
@@ -250,13 +255,18 @@ DWORD	MCIAVI_mciWhere(UINT wDevID, DWORD dwFlags, LPMCI_DGV_RECT_PARMS lpParms)
     }
     if (dwFlags & MCI_DGV_WHERE_WINDOW) {
 	if (dwFlags & MCI_DGV_WHERE_MAX) {
-	    GetWindowRect(GetDesktopWindow(), &lpParms->rc);
-	    TRACE("WHERE_WINDOW_MAX %s\n", wine_dbgstr_rect(&lpParms->rc));
+	    GetWindowRect(GetDesktopWindow(), &rc);
+	    TRACE("WHERE_WINDOW_MAX %s\n", wine_dbgstr_rect(&rc));
 	} else {
-	    GetWindowRect(wma->hWndPaint, &lpParms->rc);
-	    TRACE("WHERE_WINDOW %s\n", wine_dbgstr_rect(&lpParms->rc));
+	    GetWindowRect(wma->hWndPaint, &rc);
+	    TRACE("WHERE_WINDOW %s\n", wine_dbgstr_rect(&rc));
 	}
     }
+
+    /* In MCI, RECT structure is used differently: rc.right = width & rc.bottom = height
+     * So convert the normal RECT into a MCI RECT before returning */
+    SetRect(&lpParms->rc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+
     LeaveCriticalSection(&wma->cs);
     return 0;
 }
@@ -268,10 +278,11 @@ DWORD	MCIAVI_mciWindow(UINT wDevID, DWORD dwFlags, LPMCI_DGV_WINDOW_PARMSW lpPar
 {
     WINE_MCIAVI*	wma = MCIAVI_mciGetOpenDev(wDevID);
 
-    TRACE("(%04x, %08lX, %p)\n", wDevID, dwFlags, lpParms);
+    TRACE("(%04x, %08X, %p)\n", wDevID, dwFlags, lpParms);
 
     if (lpParms == NULL)	return MCIERR_NULL_PARAMETER_BLOCK;
     if (wma == NULL)		return MCIERR_INVALID_DEVICE_ID;
+    if (dwFlags & MCI_TEST)	return 0;
 
     EnterCriticalSection(&wma->cs);
 

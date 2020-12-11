@@ -17,19 +17,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WIN32_LEAN_AND_MEAN        /* Exclude rarely-used stuff from Windows headers */
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <malloc.h>
-#include <memory.h>
-#include <tchar.h>
-#include <stdio.h>
-
-#include <math.h>
 #include "graphctl.h"
 #include "taskmgr.h"
 
@@ -58,7 +54,7 @@ static void GraphCtrl_Init(TGraphCtrl* this)
      * we need a starting point (i.e. a "previous" point)
      * use 0.0 as the default first point.
      * these are public member variables, and can be changed outside
-     * (after construction).  Therefore m_perviousPosition could be set to
+     * (after construction).  Therefore m_dPreviousPosition could be set to
      * a more appropriate value prior to the first call to SetPosition.
      */
     this->m_dPreviousPosition[0] = 0.0;
@@ -70,8 +66,8 @@ static void GraphCtrl_Init(TGraphCtrl* this)
     this->m_nYDecimals = 3;
 
     /*  set some initial values for the scaling until "SetRange" is called.
-     *  these are protected varaibles and must be set with SetRange
-     *  in order to ensure that m_dRange is updated accordingly 
+     *  these are protected variables and must be set with SetRange
+     *  in order to ensure that m_dRange is updated accordingly
      */
     /*   m_dLowerLimit = -10.0; */
     /*   m_dUpperLimit =  10.0; */
@@ -110,88 +106,37 @@ static void GraphCtrl_Init(TGraphCtrl* this)
     this->m_bitmapOldPlot = NULL;
 }
 
-#if 0
-TGraphCtrl::~TGraphCtrl()
+static void GraphCtrl_Resize(TGraphCtrl* this)
 {
-    /*  just to be picky restore the bitmaps for the two memory dc's */
-    /*  (these dc's are being destroyed so there shouldn't be any leaks) */
-    if (m_bitmapOldGrid != NULL) SelectObject(m_dcGrid, m_bitmapOldGrid);  
-    if (m_bitmapOldPlot != NULL) SelectObject(m_dcPlot, m_bitmapOldPlot);  
-    if (m_bitmapGrid    != NULL) DeleteObject(m_bitmapGrid);
-    if (m_bitmapPlot    != NULL) DeleteObject(m_bitmapPlot);
-    if (m_dcGrid        != NULL) DeleteDC(m_dcGrid);
-    if (m_dcPlot        != NULL) DeleteDC(m_dcPlot);
-    if (m_brushBack     != NULL) DeleteObject(m_brushBack);
+    /*  NOTE: Resize automatically gets called during the setup of the control */
+    GetClientRect(this->m_hWnd, &this->m_rectClient);
+
+    /*  set some member variables to avoid multiple function calls */
+    this->m_nClientHeight = this->m_rectClient.bottom - this->m_rectClient.top;/* m_rectClient.Height(); */
+    this->m_nClientWidth  = this->m_rectClient.right - this->m_rectClient.left;/* m_rectClient.Width(); */
+
+    /*  the "left" coordinate and "width" will be modified in  */
+    /*  InvalidateCtrl to be based on the width of the y axis scaling */
+    SetRect(&this->m_rectPlot, 0, -1, this->m_rectClient.right, this->m_rectClient.bottom);
+
+    /*  set some member variables to avoid multiple function calls */
+    this->m_nPlotHeight = this->m_rectPlot.bottom - this->m_rectPlot.top;/* m_rectPlot.Height(); */
+    this->m_nPlotWidth  = this->m_rectPlot.right - this->m_rectPlot.left;/* m_rectPlot.Width(); */
+
+    /*  set the scaling factor for now, this can be adjusted  */
+    /*  in the SetRange functions */
+    this->m_dVerticalFactor = (double)this->m_nPlotHeight / this->m_dRange;
 }
-#endif
 
-BOOL GraphCtrl_Create(TGraphCtrl* this, HWND hWnd, HWND hParentWnd, UINT nID) 
+void GraphCtrl_Create(TGraphCtrl* this, HWND hWnd, HWND hParentWnd, UINT nID)
 {
-    BOOL result = 0;
-
     GraphCtrl_Init(this);
     this->m_hParentWnd = hParentWnd;
     this->m_hWnd = hWnd;
     GraphCtrl_Resize(this);
-    if (result != 0)
-        GraphCtrl_InvalidateCtrl(this);
-    return result;
 }
 
-void GraphCtrl_SetRange(TGraphCtrl* this, double dLower, double dUpper, int nDecimalPlaces)
-{
-    /* ASSERT(dUpper > dLower); */
-    this->m_dLowerLimit     = dLower;
-    this->m_dUpperLimit     = dUpper;
-    this->m_nYDecimals      = nDecimalPlaces;
-    this->m_dRange          = this->m_dUpperLimit - this->m_dLowerLimit;
-    this->m_dVerticalFactor = (double)this->m_nPlotHeight / this->m_dRange; 
-    /*  clear out the existing garbage, re-start with a clean plot */
-    GraphCtrl_InvalidateCtrl(this);
-}
-
-#if 0
-void TGraphCtrl::SetXUnits(const char* string)
-{
-    lstrcpynA(m_strXUnitsString, string, sizeof(m_strXUnitsString));
-    /*  clear out the existing garbage, re-start with a clean plot */
-    InvalidateCtrl();
-}
-
-void TGraphCtrl::SetYUnits(const char* string)
-{
-    lstrcpynA(m_strYUnitsString, string, sizeof(m_strYUnitsString));
-    /*  clear out the existing garbage, re-start with a clean plot */
-    InvalidateCtrl();
-}
-#endif
-
-void GraphCtrl_SetGridColor(TGraphCtrl* this, COLORREF color)
-{
-    this->m_crGridColor = color;
-    /*  clear out the existing garbage, re-start with a clean plot */
-    GraphCtrl_InvalidateCtrl(this);
-}
-
-void GraphCtrl_SetPlotColor(TGraphCtrl* this, int plot, COLORREF color)
-{
-    this->m_crPlotColor[plot] = color;
-    DeleteObject(this->m_penPlot[plot]);
-    this->m_penPlot[plot] = CreatePen(PS_SOLID, 0, this->m_crPlotColor[plot]);
-    /*  clear out the existing garbage, re-start with a clean plot */
-    GraphCtrl_InvalidateCtrl(this);
-}
-
-void GraphCtrl_SetBackgroundColor(TGraphCtrl* this, COLORREF color)
-{
-    this->m_crBackColor = color;
-    DeleteObject(this->m_brushBack);
-    this->m_brushBack = CreateSolidBrush(this->m_crBackColor);
-    /*  clear out the existing garbage, re-start with a clean plot */
-    GraphCtrl_InvalidateCtrl(this);
-}
-
-void GraphCtrl_InvalidateCtrl(TGraphCtrl* this)
+static void GraphCtrl_InvalidateCtrl(TGraphCtrl* this)
 {
     /*  There is a lot of drawing going on here - particularly in terms of  */
     /*  drawing the grid.  Don't panic, this is all being drawn (only once) */
@@ -214,7 +159,7 @@ void GraphCtrl_InvalidateCtrl(TGraphCtrl* this)
     {
         this->m_dcGrid = CreateCompatibleDC(dc);
         this->m_bitmapGrid = CreateCompatibleBitmap(dc, this->m_nClientWidth, this->m_nClientHeight);
-        this->m_bitmapOldGrid = (HBITMAP)SelectObject(this->m_dcGrid, this->m_bitmapGrid);
+        this->m_bitmapOldGrid = SelectObject(this->m_dcGrid, this->m_bitmapGrid);
     }
   
     SetBkColor(this->m_dcGrid, this->m_crBackColor);
@@ -238,7 +183,7 @@ void GraphCtrl_InvalidateCtrl(TGraphCtrl* this)
     this->m_nPlotWidth    = this->m_rectPlot.right - this->m_rectPlot.left;/* m_rectPlot.Width(); */
 
     /*  draw the plot rectangle */
-    oldPen = (HPEN)SelectObject(this->m_dcGrid, solidPen); 
+    oldPen = SelectObject(this->m_dcGrid, solidPen);
     MoveToEx(this->m_dcGrid, this->m_rectPlot.left, this->m_rectPlot.top, NULL);
     LineTo(this->m_dcGrid, this->m_rectPlot.right+1, this->m_rectPlot.top);
     LineTo(this->m_dcGrid, this->m_rectPlot.right+1, this->m_rectPlot.bottom+1);
@@ -272,70 +217,15 @@ void GraphCtrl_InvalidateCtrl(TGraphCtrl* this)
         }
     }
 
-#if 0
-    /*  create some fonts (horizontal and vertical) */
-    /*  use a height of 14 pixels and 300 weight  */
-    /*  (these may need to be adjusted depending on the display) */
-    axisFont = CreateFont (14, 0, 0, 0, 300,
-                           FALSE, FALSE, 0, ANSI_CHARSET,
-                           OUT_DEFAULT_PRECIS, 
-                           CLIP_DEFAULT_PRECIS,
-                           DEFAULT_QUALITY, 
-                           DEFAULT_PITCH|FF_SWISS, "Arial");
-    yUnitFont = CreateFont (14, 0, 900, 0, 300,
-                            FALSE, FALSE, 0, ANSI_CHARSET,
-                            OUT_DEFAULT_PRECIS, 
-                            CLIP_DEFAULT_PRECIS,
-                            DEFAULT_QUALITY, 
-                            DEFAULT_PITCH|FF_SWISS, "Arial");
-  
-    /*  grab the horizontal font */
-    oldFont = (HFONT)SelectObject(m_dcGrid, axisFont);
-  
-    /*  y max */
-    SetTextColor(m_dcGrid, m_crGridColor);
-    SetTextAlign(m_dcGrid, TA_RIGHT|TA_TOP);
-    sprintf(strTemp, "%.*lf", m_nYDecimals, m_dUpperLimit);
-    TextOut(m_dcGrid, m_rectPlot.left-4, m_rectPlot.top, strTemp, _tcslen(strTemp));
-
-    /*  y min */
-    SetTextAlign(m_dcGrid, TA_RIGHT|TA_BASELINE);
-    sprintf(strTemp, "%.*lf", m_nYDecimals, m_dLowerLimit);
-    TextOut(m_dcGrid, m_rectPlot.left-4, m_rectPlot.bottom, strTemp, _tcslen(strTemp));
-
-    /*  x min */
-    SetTextAlign(m_dcGrid, TA_LEFT|TA_TOP);
-    TextOut(m_dcGrid, m_rectPlot.left, m_rectPlot.bottom+4, "0", 1);
-
-    /*  x max */
-    SetTextAlign(m_dcGrid, TA_RIGHT|TA_TOP);
-    sprintf(strTemp, "%d", m_nPlotWidth/m_nShiftPixels); 
-    TextOut(m_dcGrid, m_rectPlot.right, m_rectPlot.bottom+4, strTemp, _tcslen(strTemp));
-
-    /*  x units */
-    SetTextAlign(m_dcGrid, TA_CENTER|TA_TOP);
-    TextOut(m_dcGrid, (m_rectPlot.left+m_rectPlot.right)/2, 
-            m_rectPlot.bottom+4, m_strXUnitsString, _tcslen(m_strXUnitsString));
-
-    /*  restore the font */
-    SelectObject(m_dcGrid, oldFont);
-
-    /*  y units */
-    oldFont = (HFONT)SelectObject(m_dcGrid, yUnitFont);
-    SetTextAlign(m_dcGrid, TA_CENTER|TA_BASELINE);
-    TextOut(m_dcGrid, (m_rectClient.left+m_rectPlot.left)/2, 
-            (m_rectPlot.bottom+m_rectPlot.top)/2, m_strYUnitsString, _tcslen(m_strYUnitsString));
-    SelectObject(m_dcGrid, oldFont);
-#endif
-    /*  at this point we are done filling the the grid bitmap,  */
-    /*  no more drawing to this bitmap is needed until the setting are changed */
+    /*  at this point we are done filling the grid bitmap,  */
+    /*  no more drawing to this bitmap is needed until the settings are changed */
   
     /*  if we don't have one yet, set up a memory dc for the plot */
     if (this->m_dcPlot == NULL) 
     {
         this->m_dcPlot = CreateCompatibleDC(dc);
         this->m_bitmapPlot = CreateCompatibleBitmap(dc, this->m_nClientWidth, this->m_nClientHeight);
-        this->m_bitmapOldPlot = (HBITMAP)SelectObject(this->m_dcPlot, this->m_bitmapPlot);
+        this->m_bitmapOldPlot = SelectObject(this->m_dcPlot, this->m_bitmapPlot);
     }
 
     /*  make sure the plot bitmap is cleared */
@@ -347,60 +237,44 @@ void GraphCtrl_InvalidateCtrl(TGraphCtrl* this)
     ReleaseDC(this->m_hParentWnd, dc);
 }
 
-double GraphCtrl_AppendPoint(TGraphCtrl* this, 
-                             double dNewPoint0, double dNewPoint1,
-                             double dNewPoint2, double dNewPoint3)
+void GraphCtrl_SetRange(TGraphCtrl* this, double dLower, double dUpper, int nDecimalPlaces)
 {
-    /*  append a data point to the plot & return the previous point */
-    double dPrevious;
-  
-    dPrevious = this->m_dCurrentPosition[0];
-    this->m_dCurrentPosition[0] = dNewPoint0;
-    this->m_dCurrentPosition[1] = dNewPoint1;
-    this->m_dCurrentPosition[2] = dNewPoint2;
-    this->m_dCurrentPosition[3] = dNewPoint3;
-    GraphCtrl_DrawPoint(this);
-    /* Invalidate(); */
-    return dPrevious;
+    /* ASSERT(dUpper > dLower); */
+    this->m_dLowerLimit     = dLower;
+    this->m_dUpperLimit     = dUpper;
+    this->m_nYDecimals      = nDecimalPlaces;
+    this->m_dRange          = this->m_dUpperLimit - this->m_dLowerLimit;
+    this->m_dVerticalFactor = (double)this->m_nPlotHeight / this->m_dRange;
+    /*  clear out the existing garbage, re-start with a clean plot */
+    GraphCtrl_InvalidateCtrl(this);
 }
 
-void GraphCtrl_Paint(TGraphCtrl* this, HWND hWnd, HDC dc) 
+void GraphCtrl_SetGridColor(TGraphCtrl* this, COLORREF color)
 {
-    HDC memDC;
-    HBITMAP memBitmap;
-    HBITMAP oldBitmap; /*  bitmap originally found in CMemDC */
-
-/*   RECT rcClient; */
-/*   GetClientRect(hWnd, &rcClient); */
-/*   FillSolidRect(dc, &rcClient, RGB(255, 0, 255)); */
-/*   m_nClientWidth = rcClient.right - rcClient.left; */
-/*   m_nClientHeight = rcClient.bottom - rcClient.top; */
-
-    /*  no real plotting work is performed here,  */
-    /*  just putting the existing bitmaps on the client */
-    
-    /*  to avoid flicker, establish a memory dc, draw to it */
-    /*  and then BitBlt it to the client */
-    memDC = CreateCompatibleDC(dc);
-    memBitmap = (HBITMAP)CreateCompatibleBitmap(dc, this->m_nClientWidth, this->m_nClientHeight);
-    oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
-
-    if (memDC != NULL) 
-    {
-        /*  first drop the grid on the memory dc */
-        BitBlt(memDC, 0, 0, this->m_nClientWidth, this->m_nClientHeight, this->m_dcGrid, 0, 0, SRCCOPY);
-        /*  now add the plot on top as a "pattern" via SRCPAINT. */
-        /*  works well with dark background and a light plot */
-        BitBlt(memDC, 0, 0, this->m_nClientWidth, this->m_nClientHeight, this->m_dcPlot, 0, 0, SRCPAINT);  /* SRCPAINT */
-        /*  finally send the result to the display */
-        BitBlt(dc, 0, 0, this->m_nClientWidth, this->m_nClientHeight, memDC, 0, 0, SRCCOPY);
-    }
-    SelectObject(memDC, oldBitmap);
-    DeleteObject(memBitmap);
-    DeleteDC(memDC);
+    this->m_crGridColor = color;
+    /*  clear out the existing garbage, re-start with a clean plot */
+    GraphCtrl_InvalidateCtrl(this);
 }
 
-void GraphCtrl_DrawPoint(TGraphCtrl* this)
+void GraphCtrl_SetPlotColor(TGraphCtrl* this, int plot, COLORREF color)
+{
+    this->m_crPlotColor[plot] = color;
+    DeleteObject(this->m_penPlot[plot]);
+    this->m_penPlot[plot] = CreatePen(PS_SOLID, 0, this->m_crPlotColor[plot]);
+    /*  clear out the existing garbage, re-start with a clean plot */
+    GraphCtrl_InvalidateCtrl(this);
+}
+
+void GraphCtrl_SetBackgroundColor(TGraphCtrl* this, COLORREF color)
+{
+    this->m_crBackColor = color;
+    DeleteObject(this->m_brushBack);
+    this->m_brushBack = CreateSolidBrush(this->m_crBackColor);
+    /*  clear out the existing garbage, re-start with a clean plot */
+    GraphCtrl_InvalidateCtrl(this);
+}
+
+static void GraphCtrl_DrawPoint(TGraphCtrl* this)
 {
     /*  this does the work of "scrolling" the plot to the left
      *  and appending a new data point all of the plotting is
@@ -418,7 +292,7 @@ void GraphCtrl_DrawPoint(TGraphCtrl* this)
          *  note: the m_dcPlot covers the entire client
          *        but we only shift bitmap that is the size 
          *        of the plot rectangle
-         *  grab the right side of the plot (exluding m_nShiftPixels on the left)
+         *  grab the right side of the plot (excluding m_nShiftPixels on the left)
          *  move this grabbed bitmap to the left by m_nShiftPixels
          */
         BitBlt(this->m_dcPlot, this->m_rectPlot.left, this->m_rectPlot.top+1, 
@@ -427,29 +301,29 @@ void GraphCtrl_DrawPoint(TGraphCtrl* this)
                SRCCOPY);
 
         /*  establish a rectangle over the right side of plot */
-        /*  which now needs to be cleaned up proir to adding the new point */
+        /*  which now needs to be cleaned up prior to adding the new point */
         rectCleanUp = this->m_rectPlot;
         rectCleanUp.left  = rectCleanUp.right - this->m_nShiftPixels;
 
         /*  fill the cleanup area with the background */
         FillRect(this->m_dcPlot, &rectCleanUp, this->m_brushBack);
 
-        /*  draw the next line segement */
+        /*  draw the next line segment */
         for (i = 0; i < MAX_PLOTS; i++) 
         {
             /*  grab the plotting pen */
-            oldPen = (HPEN)SelectObject(this->m_dcPlot, this->m_penPlot[i]);
+            oldPen = SelectObject(this->m_dcPlot, this->m_penPlot[i]);
 
             /*  move to the previous point */
             prevX = this->m_rectPlot.right-this->m_nPlotShiftPixels;
-            prevY = this->m_rectPlot.bottom - 
-                (long)((this->m_dPreviousPosition[i] - this->m_dLowerLimit) * this->m_dVerticalFactor);
+            prevY = this->m_rectPlot.bottom -
+                (int)((this->m_dPreviousPosition[i] - this->m_dLowerLimit) * this->m_dVerticalFactor);
             MoveToEx(this->m_dcPlot, prevX, prevY, NULL);
 
             /*  draw to the current point */
             currX = this->m_rectPlot.right-this->m_nHalfShiftPixels;
             currY = this->m_rectPlot.bottom -
-                (long)((this->m_dCurrentPosition[i] - this->m_dLowerLimit) * this->m_dVerticalFactor);
+                (int)((this->m_dCurrentPosition[i] - this->m_dLowerLimit) * this->m_dVerticalFactor);
             LineTo(this->m_dcPlot, currX, currY);
 
             /*  Restore the pen  */
@@ -463,19 +337,14 @@ void GraphCtrl_DrawPoint(TGraphCtrl* this)
             if ((prevY <= this->m_rectPlot.top) || (currY <= this->m_rectPlot.top)) 
             {
                 RECT rc;
-                rc.bottom = this->m_rectPlot.top+1;
-                rc.left = prevX;
-                rc.right = currX+1;
-                rc.top = this->m_rectClient.top;
+                SetRect(&rc, prevX, this->m_rectClient.top, currX + 1, this->m_rectPlot.top + 1);
                 FillRect(this->m_dcPlot, &rc, this->m_brushBack);
             }
             if ((prevY >= this->m_rectPlot.bottom) || (currY >= this->m_rectPlot.bottom)) 
             {
                 RECT rc;
-                rc.bottom = this->m_rectClient.bottom+1;
-                rc.left = prevX;
-                rc.right = currX+1;
-                rc.top = this->m_rectPlot.bottom+1;
+                SetRect(&rc, prevX, this->m_rectPlot.bottom + 1, currX + 1,
+                        this->m_rectClient.bottom + 1);
                 /* RECT rc(prevX, m_rectPlot.bottom+1, currX+1, m_rectClient.bottom+1); */
                 FillRect(this->m_dcPlot, &rc, this->m_brushBack);
             }
@@ -486,46 +355,52 @@ void GraphCtrl_DrawPoint(TGraphCtrl* this)
     }
 }
 
-void GraphCtrl_Resize(TGraphCtrl* this) 
+double GraphCtrl_AppendPoint(TGraphCtrl* this,
+                             double dNewPoint0, double dNewPoint1,
+                             double dNewPoint2, double dNewPoint3)
 {
-    /*  NOTE: Resize automatically gets called during the setup of the control */
-    GetClientRect(this->m_hWnd, &this->m_rectClient);
+    /*  append a data point to the plot & return the previous point */
+    double dPrevious;
 
-    /*  set some member variables to avoid multiple function calls */
-    this->m_nClientHeight = this->m_rectClient.bottom - this->m_rectClient.top;/* m_rectClient.Height(); */
-    this->m_nClientWidth  = this->m_rectClient.right - this->m_rectClient.left;/* m_rectClient.Width(); */
-
-    /*  the "left" coordinate and "width" will be modified in  */
-    /*  InvalidateCtrl to be based on the width of the y axis scaling */
-#if 0
-    this->m_rectPlot.left   = 20;  
-    this->m_rectPlot.top    = 10;
-    this->m_rectPlot.right  = this->m_rectClient.right-10;
-    this->m_rectPlot.bottom = this->m_rectClient.bottom-25;
-#else
-    this->m_rectPlot.left   = 0;  
-    this->m_rectPlot.top    = -1;
-    this->m_rectPlot.right  = this->m_rectClient.right-0;
-    this->m_rectPlot.bottom = this->m_rectClient.bottom-0;
-#endif
-
-    /*  set some member variables to avoid multiple function calls */
-    this->m_nPlotHeight = this->m_rectPlot.bottom - this->m_rectPlot.top;/* m_rectPlot.Height(); */
-    this->m_nPlotWidth  = this->m_rectPlot.right - this->m_rectPlot.left;/* m_rectPlot.Width(); */
-
-    /*  set the scaling factor for now, this can be adjusted  */
-    /*  in the SetRange functions */
-    this->m_dVerticalFactor = (double)this->m_nPlotHeight / this->m_dRange; 
+    dPrevious = this->m_dCurrentPosition[0];
+    this->m_dCurrentPosition[0] = dNewPoint0;
+    this->m_dCurrentPosition[1] = dNewPoint1;
+    this->m_dCurrentPosition[2] = dNewPoint2;
+    this->m_dCurrentPosition[3] = dNewPoint3;
+    GraphCtrl_DrawPoint(this);
+    /* Invalidate(); */
+    return dPrevious;
 }
 
-#if 0
-void TGraphCtrl::Reset()
+static void GraphCtrl_Paint(TGraphCtrl* this, HWND hWnd, HDC dc)
 {
-    /*  to clear the existing data (in the form of a bitmap) */
-    /*  simply invalidate the entire control */
-    InvalidateCtrl();
+    HDC memDC;
+    HBITMAP memBitmap;
+    HBITMAP oldBitmap; /*  bitmap originally found in CMemDC */
+
+    /*  no real plotting work is performed here,  */
+    /*  just putting the existing bitmaps on the client */
+
+    /*  to avoid flicker, establish a memory dc, draw to it */
+    /*  and then BitBlt it to the client */
+    memDC = CreateCompatibleDC(dc);
+    memBitmap = CreateCompatibleBitmap(dc, this->m_nClientWidth, this->m_nClientHeight);
+    oldBitmap = SelectObject(memDC, memBitmap);
+
+    if (memDC != NULL)
+    {
+        /*  first drop the grid on the memory dc */
+        BitBlt(memDC, 0, 0, this->m_nClientWidth, this->m_nClientHeight, this->m_dcGrid, 0, 0, SRCCOPY);
+        /*  now add the plot on top as a "pattern" via SRCPAINT. */
+        /*  works well with dark background and a light plot */
+        BitBlt(memDC, 0, 0, this->m_nClientWidth, this->m_nClientHeight, this->m_dcPlot, 0, 0, SRCPAINT);  /* SRCPAINT */
+        /*  finally send the result to the display */
+        BitBlt(dc, 0, 0, this->m_nClientWidth, this->m_nClientHeight, memDC, 0, 0, SRCCOPY);
+    }
+    SelectObject(memDC, oldBitmap);
+    DeleteObject(memBitmap);
+    DeleteDC(memDC);
 }
-#endif
 
 extern TGraphCtrl PerformancePageCpuUsageHistoryGraph;
 extern TGraphCtrl PerformancePageMemUsageHistoryGraph;
@@ -627,5 +502,5 @@ GraphCtrl_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     /* 
      *  We pass on all non-handled messages
      */ 
-    return CallWindowProc((WNDPROC)OldGraphCtrlWndProc, hWnd, message, wParam, lParam);
+    return CallWindowProcW(OldGraphCtrlWndProc, hWnd, message, wParam, lParam);
 }

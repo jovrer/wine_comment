@@ -1,9 +1,0 @@
-Makefile
-generated.ok
-shelllink.ok
-shellpath.ok
-shlexec.ok
-shlfileop.ok
-shlfolder.ok
-string.ok
-testlist.c

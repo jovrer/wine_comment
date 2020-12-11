@@ -1,7 +1,8 @@
-/*		DirectDrawClipper implementation
+/* DirectDrawClipper implementation
  *
- * Copyright 2000 Marcus Meissner
- * Copyright 2000 TransGaming Technologies Inc.
+ * Copyright 2000 (c) Marcus Meissner
+ * Copyright 2000 (c) TransGaming Technologies Inc.
+ * Copyright 2006 (c) Stefan Dösinger
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,276 +16,321 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
-
-#include <stdarg.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "windef.h"
-#include "winbase.h"
-#include "wingdi.h"
-#include "ddraw.h"
-#include "winerror.h"
+#include "wine/port.h"
 
 #include "ddraw_private.h"
 
-#include "wine/debug.h"
-
 WINE_DEFAULT_DEBUG_CHANNEL(ddraw);
 
-/******************************************************************************
- *			DirectDrawCreateClipper (DDRAW.@)
- */
+static inline struct ddraw_clipper *impl_from_IDirectDrawClipper(IDirectDrawClipper *iface)
+{
+    return CONTAINING_RECORD(iface, struct ddraw_clipper, IDirectDrawClipper_iface);
+}
 
-static const IDirectDrawClipperVtbl DDRAW_Clipper_VTable;
+static HRESULT WINAPI ddraw_clipper_QueryInterface(IDirectDrawClipper *iface, REFIID iid, void **object)
+{
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
 
-HRESULT WINAPI DirectDrawCreateClipper(
-    DWORD dwFlags, LPDIRECTDRAWCLIPPER *lplpDDClipper, LPUNKNOWN pUnkOuter
-) {
-    IDirectDrawClipperImpl* This;
-    TRACE("(%08lx,%p,%p)\n", dwFlags, lplpDDClipper, pUnkOuter);
+    TRACE("iface %p, iid %s, object %p.\n", iface, debugstr_guid(iid), object);
 
-    if (pUnkOuter != NULL) return CLASS_E_NOAGGREGATION;
+    if (IsEqualGUID(&IID_IDirectDrawClipper, iid)
+            || IsEqualGUID(&IID_IUnknown, iid))
+    {
+        IDirectDrawClipper_AddRef(&clipper->IDirectDrawClipper_iface);
+        *object = &clipper->IDirectDrawClipper_iface;
+        return S_OK;
+    }
 
-    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-		     sizeof(IDirectDrawClipperImpl));
-    if (This == NULL) return E_OUTOFMEMORY;
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(iid));
+    *object = NULL;
 
-    ICOM_INIT_INTERFACE(This, IDirectDrawClipper, DDRAW_Clipper_VTable);
-    This->ref = 1;
-    This->hWnd = 0;
-    This->ddraw_owner = NULL;
+    return E_NOINTERFACE;
+}
 
-    *lplpDDClipper = ICOM_INTERFACE(This, IDirectDrawClipper);
+static ULONG WINAPI ddraw_clipper_AddRef(IDirectDrawClipper *iface)
+{
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
+    ULONG refcount = InterlockedIncrement(&clipper->ref);
+
+    TRACE("%p increasing refcount to %u.\n", clipper, refcount);
+
+    return refcount;
+}
+
+static ULONG WINAPI ddraw_clipper_Release(IDirectDrawClipper *iface)
+{
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
+    ULONG refcount = InterlockedDecrement(&clipper->ref);
+
+    TRACE("%p decreasing refcount to %u.\n", clipper, refcount);
+
+    if (!refcount)
+    {
+        if (clipper->region)
+            DeleteObject(clipper->region);
+        heap_free(clipper);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI ddraw_clipper_SetHWnd(IDirectDrawClipper *iface, DWORD flags, HWND window)
+{
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
+
+    TRACE("iface %p, flags %#x, window %p.\n", iface, flags, window);
+
+    if (flags)
+    {
+        FIXME("flags %#x, not supported.\n", flags);
+        return DDERR_INVALIDPARAMS;
+    }
+
+    wined3d_mutex_lock();
+    clipper->window = window;
+    wined3d_mutex_unlock();
+
     return DD_OK;
 }
 
-/* This is the classfactory implementation. */
-HRESULT DDRAW_CreateDirectDrawClipper(IUnknown* pUnkOuter, REFIID riid,
-				      LPVOID* ppObj)
+static HRGN get_window_region(HWND window)
 {
-    HRESULT hr;
-    LPDIRECTDRAWCLIPPER pClip;
+    POINT origin;
+    HRGN rgn;
+    HDC dc;
 
-    hr = DirectDrawCreateClipper(0, &pClip, pUnkOuter);
-    if (FAILED(hr)) return hr;
-
-    hr = IDirectDrawClipper_QueryInterface(pClip, riid, ppObj);
-    IDirectDrawClipper_Release(pClip);
-    return hr;
-}
-
-/******************************************************************************
- *			IDirectDrawClipper
- */
-HRESULT WINAPI Main_DirectDrawClipper_SetHwnd(
-    LPDIRECTDRAWCLIPPER iface, DWORD dwFlags, HWND hWnd
-) {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-
-    TRACE("(%p)->(0x%08lx,0x%08lx)\n", This, dwFlags, (DWORD)hWnd);
-    if( dwFlags ) {
-	FIXME("dwFlags = 0x%08lx, not supported.\n",dwFlags);
-	return DDERR_INVALIDPARAMS;
+    if (!(dc = GetDC(window)))
+    {
+        WARN("Failed to get dc.\n");
+        return NULL;
     }
 
-    This->hWnd = hWnd;
-    return DD_OK;
-}
-
-static void Main_DirectDrawClipper_Destroy(IDirectDrawClipperImpl* This)
-{
-    if (This->ddraw_owner != NULL)
-	Main_DirectDraw_RemoveClipper(This->ddraw_owner, This);
-
-    HeapFree(GetProcessHeap(), 0 ,This);
-}
-
-void Main_DirectDrawClipper_ForceDestroy(IDirectDrawClipperImpl* This)
-{
-    WARN("deleting clipper %p with refcnt %lu\n", This, This->ref);
-    Main_DirectDrawClipper_Destroy(This);
-}
-
-ULONG WINAPI Main_DirectDrawClipper_Release(LPDIRECTDRAWCLIPPER iface) {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-    ULONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p)->() decrementing from %lu.\n", This, ref + 1);
-
-    if (ref == 0)
+    if (!(rgn = CreateRectRgn(0, 0, 0, 0)))
     {
-	Main_DirectDrawClipper_Destroy(This);
-	return 0;
+        ERR("Failed to create region.\n");
+        ReleaseDC(window, dc);
+        return NULL;
     }
-    else return ref;
+
+    if (GetRandomRgn(dc, rgn, SYSRGN) != 1)
+    {
+        ERR("Failed to get window region.\n");
+        DeleteObject(rgn);
+        ReleaseDC(window, dc);
+        return NULL;
+    }
+
+    if (GetVersion() & 0x80000000)
+    {
+        GetDCOrgEx(dc, &origin);
+        OffsetRgn(rgn, origin.x, origin.y);
+    }
+
+    ReleaseDC(window, dc);
+    return rgn;
 }
 
-/***********************************************************************
-*           IDirectDrawClipper::GetClipList
-*
-* Retrieve a copy of the clip list
-*
-* PARAMS
-*  lpRect  Rectangle to be used to clip the clip list or NULL for the
-*          entire clip list
-*  lpClipList structure for the resulting copy of the clip list.
-           If NULL, fills lpdwSize up to the number of bytes necessary to hold
-           the entire clip.
-*  lpdwSize Size of resulting clip list; size of the buffer at lpClipList
-           or, if lpClipList is NULL, receives the required size of the buffer
-           in bytes
-* RETURNS
-*  Either DD_OK or DDERR_*
-*/
-HRESULT WINAPI Main_DirectDrawClipper_GetClipList(
-    LPDIRECTDRAWCLIPPER iface, LPRECT lpRect, LPRGNDATA lpClipList,
-    LPDWORD lpdwSize)
+/*****************************************************************************
+ * IDirectDrawClipper::GetClipList
+ *
+ * Retrieve a copy of the clip list
+ *
+ * Arguments:
+ *  rect: Rectangle to be used to clip the clip list or NULL for the
+ *      entire clip list.
+ *  clip_list: structure for the resulting copy of the clip list.
+ *      If NULL, fills Size up to the number of bytes necessary to hold
+ *      the entire clip.
+ *  clip_list_size: Size of resulting clip list; size of the buffer at clip_list
+ *      or, if clip_list is NULL, receives the required size of the buffer
+ *      in bytes.
+ *
+ * RETURNS
+ *  Either DD_OK or DDERR_*
+ ************************************************************************/
+static HRESULT WINAPI ddraw_clipper_GetClipList(IDirectDrawClipper *iface, RECT *rect,
+        RGNDATA *clip_list, DWORD *clip_list_size)
 {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
+    HRGN region;
 
-    TRACE("(%p,%p,%p,%p)\n", This, lpRect, lpClipList, lpdwSize);
+    TRACE("iface %p, rect %s, clip_list %p, clip_list_size %p.\n",
+            iface, wine_dbgstr_rect(rect), clip_list, clip_list_size);
 
-    if (This->hWnd)
+    wined3d_mutex_lock();
+
+    if (clipper->window)
     {
-        HDC hDC = GetDCEx(This->hWnd, NULL, DCX_WINDOW);
-        if (hDC)
+        if (!(region = get_window_region(clipper->window)))
         {
-            HRGN hRgn = CreateRectRgn(0,0,0,0);
-            if (GetRandomRgn(hDC, hRgn, SYSRGN))
-            {
-                if (GetVersion() & 0x80000000)
-                {
-                    /* map region to screen coordinates */
-                    POINT org;
-                    GetDCOrgEx( hDC, &org );
-                    OffsetRgn( hRgn, org.x, org.y );
-                }
-                if (lpRect)
-                {
-                    HRGN hRgnClip = CreateRectRgn(lpRect->left, lpRect->top,
-                        lpRect->right, lpRect->bottom);
-                    CombineRgn(hRgn, hRgn, hRgnClip, RGN_AND);
-                    DeleteObject(hRgnClip);
-                }
-                *lpdwSize = GetRegionData(hRgn, *lpdwSize, lpClipList);
-            }
-            DeleteObject(hRgn);
-            ReleaseDC(This->hWnd, hDC);
+            wined3d_mutex_unlock();
+            WARN("Failed to get window region.\n");
+            return E_FAIL;
         }
-        return DD_OK;
     }
     else
     {
-        static int warned = 0;
-        if (warned++ < 10)
-            FIXME("(%p,%p,%p,%p),stub!\n",This,lpRect,lpClipList,lpdwSize);
-        if (lpdwSize) *lpdwSize=0;
-        return DDERR_NOCLIPLIST;
+        if (!(region = clipper->region))
+        {
+            wined3d_mutex_unlock();
+            WARN("No clip list set.\n");
+            return DDERR_NOCLIPLIST;
+        }
     }
-}
 
-/***********************************************************************
-*           IDirectDrawClipper::SetClipList
-*
-* Sets or deletes (if lprgn is NULL) the clip list
-*
-* PARAMS
-*  lprgn   Pointer to a LRGNDATA structure or NULL
-*  dwFlags not used, must be 0
-* RETURNS
-*  Either DD_OK or DDERR_*
-*/
-HRESULT WINAPI Main_DirectDrawClipper_SetClipList(
-    LPDIRECTDRAWCLIPPER iface,LPRGNDATA lprgn,DWORD dwFlag
-) {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-    static int warned = 0;
-    if (warned++ < 10 || lprgn == NULL)
-        FIXME("(%p,%p,%ld),stub!\n",This,lprgn,dwFlag);
+    if (rect)
+    {
+        HRGN clip_region;
+
+        if (!(clip_region = CreateRectRgnIndirect(rect)))
+        {
+            wined3d_mutex_unlock();
+            ERR("Failed to create region.\n");
+            if (clipper->window)
+                DeleteObject(region);
+            return E_FAIL;
+        }
+
+        if (CombineRgn(clip_region, region, clip_region, RGN_AND) == ERROR)
+        {
+            wined3d_mutex_unlock();
+            ERR("Failed to combine regions.\n");
+            DeleteObject(clip_region);
+            if (clipper->window)
+                DeleteObject(region);
+            return E_FAIL;
+        }
+
+        if (clipper->window)
+            DeleteObject(region);
+        region = clip_region;
+    }
+
+    *clip_list_size = GetRegionData(region, *clip_list_size, clip_list);
+    if (rect || clipper->window)
+        DeleteObject(region);
+
+    wined3d_mutex_unlock();
     return DD_OK;
 }
 
-HRESULT WINAPI Main_DirectDrawClipper_QueryInterface(
-    LPDIRECTDRAWCLIPPER iface, REFIID riid, LPVOID* ppvObj
-) {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-
-    if (IsEqualGUID(&IID_IUnknown, riid)
-	|| IsEqualGUID(&IID_IDirectDrawClipper, riid))
-    {
-	*ppvObj = ICOM_INTERFACE(This, IDirectDrawClipper);
-	InterlockedIncrement(&This->ref);
-	return S_OK;
-    }
-    else
-    {
-	return E_NOINTERFACE;
-    }
-}
-
-ULONG WINAPI Main_DirectDrawClipper_AddRef( LPDIRECTDRAWCLIPPER iface )
+/*****************************************************************************
+ * IDirectDrawClipper::SetClipList
+ *
+ * Sets or deletes (if region is NULL) the clip list
+ *
+ * This implementation is a stub and returns DD_OK always to make the app
+ * happy.
+ *
+ * PARAMS
+ *  region  Pointer to a LRGNDATA structure or NULL
+ *  flags   not used, must be 0
+ * RETURNS
+ *  Either DD_OK or DDERR_*
+ *****************************************************************************/
+static HRESULT WINAPI ddraw_clipper_SetClipList(IDirectDrawClipper *iface, RGNDATA *region, DWORD flags)
 {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-    ULONG ref = InterlockedIncrement(&This->ref);
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
 
-    TRACE("(%p)->() incrementing from %lu.\n", This, ref - 1);
+    TRACE("iface %p, region %p, flags %#x.\n", iface, region, flags);
 
-    return ref;
-}
+    wined3d_mutex_lock();
 
-HRESULT WINAPI Main_DirectDrawClipper_GetHWnd(
-    LPDIRECTDRAWCLIPPER iface, HWND* hWndPtr
-) {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-    TRACE("(%p)->(%p)\n", This, hWndPtr);
+    if (clipper->window)
+    {
+        wined3d_mutex_unlock();
+        return DDERR_CLIPPERISUSINGHWND;
+    }
 
-    *hWndPtr = This->hWnd;
+    if (clipper->region)
+        DeleteObject(clipper->region);
+    if (!region)
+        clipper->region = NULL;
+    else if (!(clipper->region = ExtCreateRegion(NULL, 0, region)))
+    {
+        wined3d_mutex_unlock();
+        ERR("Failed to create region.\n");
+        return E_FAIL;
+    }
 
-    return DD_OK;
-}
-
-HRESULT WINAPI Main_DirectDrawClipper_Initialize(
-     LPDIRECTDRAWCLIPPER iface, LPDIRECTDRAW lpDD, DWORD dwFlags
-) {
-    IDirectDrawImpl* pOwner;
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-    TRACE("(%p)->(%p,0x%08lx)\n", This, lpDD, dwFlags);
-
-    if (This->ddraw_owner != NULL) return DDERR_ALREADYINITIALIZED;
-
-    pOwner = ICOM_OBJECT(IDirectDrawImpl, IDirectDraw, lpDD);
-    This->ddraw_owner = pOwner;
-    Main_DirectDraw_AddClipper(pOwner, This);
+    wined3d_mutex_unlock();
 
     return DD_OK;
 }
 
-HRESULT WINAPI Main_DirectDrawClipper_IsClipListChanged(
-    LPDIRECTDRAWCLIPPER iface, BOOL* lpbChanged
-) {
-    IDirectDrawClipperImpl *This = (IDirectDrawClipperImpl *)iface;
-    FIXME("(%p)->(%p),stub!\n",This,lpbChanged);
+static HRESULT WINAPI ddraw_clipper_GetHWnd(IDirectDrawClipper *iface, HWND *window)
+{
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
+
+    TRACE("iface %p, window %p.\n", iface, window);
+
+    wined3d_mutex_lock();
+    *window = clipper->window;
+    wined3d_mutex_unlock();
+
+    return DD_OK;
+}
+
+static HRESULT WINAPI ddraw_clipper_Initialize(IDirectDrawClipper *iface,
+        IDirectDraw *ddraw, DWORD flags)
+{
+    struct ddraw_clipper *clipper = impl_from_IDirectDrawClipper(iface);
+
+    TRACE("iface %p, ddraw %p, flags %#x.\n", iface, ddraw, flags);
+
+    wined3d_mutex_lock();
+    if (clipper->initialized)
+    {
+        wined3d_mutex_unlock();
+        return DDERR_ALREADYINITIALIZED;
+    }
+
+    clipper->initialized = TRUE;
+    wined3d_mutex_unlock();
+
+    return DD_OK;
+}
+
+static HRESULT WINAPI ddraw_clipper_IsClipListChanged(IDirectDrawClipper *iface, BOOL *changed)
+{
+    FIXME("iface %p, changed %p stub!\n", iface, changed);
 
     /* XXX What is safest? */
-    *lpbChanged = FALSE;
+    *changed = FALSE;
 
     return DD_OK;
 }
 
-static const IDirectDrawClipperVtbl DDRAW_Clipper_VTable =
+static const struct IDirectDrawClipperVtbl ddraw_clipper_vtbl =
 {
-    Main_DirectDrawClipper_QueryInterface,
-    Main_DirectDrawClipper_AddRef,
-    Main_DirectDrawClipper_Release,
-    Main_DirectDrawClipper_GetClipList,
-    Main_DirectDrawClipper_GetHWnd,
-    Main_DirectDrawClipper_Initialize,
-    Main_DirectDrawClipper_IsClipListChanged,
-    Main_DirectDrawClipper_SetClipList,
-    Main_DirectDrawClipper_SetHwnd
+    ddraw_clipper_QueryInterface,
+    ddraw_clipper_AddRef,
+    ddraw_clipper_Release,
+    ddraw_clipper_GetClipList,
+    ddraw_clipper_GetHWnd,
+    ddraw_clipper_Initialize,
+    ddraw_clipper_IsClipListChanged,
+    ddraw_clipper_SetClipList,
+    ddraw_clipper_SetHWnd,
 };
+
+HRESULT ddraw_clipper_init(struct ddraw_clipper *clipper)
+{
+    clipper->IDirectDrawClipper_iface.lpVtbl = &ddraw_clipper_vtbl;
+    clipper->ref = 1;
+
+    return DD_OK;
+}
+
+struct ddraw_clipper *unsafe_impl_from_IDirectDrawClipper(IDirectDrawClipper *iface)
+{
+    if (!iface)
+        return NULL;
+    assert(iface->lpVtbl == &ddraw_clipper_vtbl);
+
+    return impl_from_IDirectDrawClipper(iface);
+}

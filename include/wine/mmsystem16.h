@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_WINE_MMSYSTEM16_H
@@ -116,11 +116,11 @@ UINT16    WINAPI waveOutGetDevCaps16(UINT16,LPWAVEOUTCAPS16,UINT16);
 UINT16    WINAPI waveOutGetVolume16(UINT16,DWORD*);
 UINT16    WINAPI waveOutSetVolume16(UINT16,DWORD);
 UINT16    WINAPI waveOutGetErrorText16(UINT16,LPSTR,UINT16);
-UINT16    WINAPI waveOutOpen16(HWAVEOUT16*,UINT16,const LPWAVEFORMATEX,DWORD,DWORD,DWORD);
+UINT16    WINAPI waveOutOpen16(HWAVEOUT16*,UINT16,const WAVEFORMATEX *,DWORD,DWORD,DWORD);
 UINT16    WINAPI waveOutClose16(HWAVEOUT16);
 UINT16    WINAPI waveOutPrepareHeader16(HWAVEOUT16,SEGPTR,UINT16);
 UINT16    WINAPI waveOutUnprepareHeader16(HWAVEOUT16,SEGPTR,UINT16);
-UINT16    WINAPI waveOutWrite16(HWAVEOUT16,WAVEHDR*,UINT16);
+UINT16    WINAPI waveOutWrite16(HWAVEOUT16,SEGPTR,UINT16);
 UINT16    WINAPI waveOutPause16(HWAVEOUT16);
 UINT16    WINAPI waveOutRestart16(HWAVEOUT16);
 UINT16    WINAPI waveOutReset16(HWAVEOUT16);
@@ -135,11 +135,11 @@ DWORD     WINAPI waveOutMessage16(HWAVEOUT16,UINT16,DWORD,DWORD);
 UINT16    WINAPI waveInGetNumDevs16(void);
 UINT16    WINAPI waveInGetDevCaps16(UINT16,LPWAVEINCAPS16,UINT16);
 UINT16    WINAPI waveInGetErrorText16(UINT16,LPSTR,UINT16);
-UINT16    WINAPI waveInOpen16(HWAVEIN16*,UINT16,const LPWAVEFORMATEX,DWORD,DWORD,DWORD);
+UINT16    WINAPI waveInOpen16(HWAVEIN16*,UINT16,const WAVEFORMATEX *,DWORD,DWORD,DWORD);
 UINT16    WINAPI waveInClose16(HWAVEIN16);
 UINT16    WINAPI waveInPrepareHeader16(HWAVEIN16,SEGPTR,UINT16);
 UINT16    WINAPI waveInUnprepareHeader16(HWAVEIN16,SEGPTR,UINT16);
-UINT16    WINAPI waveInAddBuffer16(HWAVEIN16,WAVEHDR*,UINT16);
+UINT16    WINAPI waveInAddBuffer16(HWAVEIN16,SEGPTR,UINT16);
 UINT16    WINAPI waveInStart16(HWAVEIN16);
 UINT16    WINAPI waveInStop16(HWAVEIN16);
 UINT16    WINAPI waveInReset16(HWAVEIN16);
@@ -199,7 +199,7 @@ UINT16     WINAPI midiOutClose16(HMIDIOUT16);
 UINT16     WINAPI midiOutPrepareHeader16(HMIDIOUT16,SEGPTR,UINT16);
 UINT16     WINAPI midiOutUnprepareHeader16(HMIDIOUT16,SEGPTR,UINT16);
 UINT16     WINAPI midiOutShortMsg16(HMIDIOUT16,DWORD);
-UINT16     WINAPI midiOutLongMsg16(HMIDIOUT16,MIDIHDR16*,UINT16);
+UINT16     WINAPI midiOutLongMsg16(HMIDIOUT16,SEGPTR,UINT16);
 UINT16     WINAPI midiOutReset16(HMIDIOUT16);
 UINT16     WINAPI midiOutCachePatches16(HMIDIOUT16,UINT16,WORD*,UINT16);
 UINT16     WINAPI midiOutCacheDrumPatches16(HMIDIOUT16,UINT16,WORD*,UINT16);
@@ -212,7 +212,7 @@ UINT16     WINAPI midiInOpen16(HMIDIIN16*,UINT16,DWORD,DWORD,DWORD);
 UINT16     WINAPI midiInClose16(HMIDIIN16);
 UINT16     WINAPI midiInPrepareHeader16(HMIDIIN16,SEGPTR,UINT16);
 UINT16     WINAPI midiInUnprepareHeader16(HMIDIIN16,SEGPTR,UINT16);
-UINT16     WINAPI midiInAddBuffer16(HMIDIIN16,MIDIHDR16*,UINT16);
+UINT16     WINAPI midiInAddBuffer16(HMIDIIN16,SEGPTR,UINT16);
 UINT16     WINAPI midiInStart16(HMIDIIN16);
 UINT16     WINAPI midiInStop16(HMIDIIN16);
 UINT16     WINAPI midiInReset16(HMIDIIN16);
@@ -263,7 +263,7 @@ typedef struct {
     UINT16 wUmax;		/* maximum u (5th axis) position value */
     UINT16 wVmin;		/* minimum v (6th axis) position value */
     UINT16 wVmax;		/* maximum v (6th axis) position value */
-    UINT16 wCaps;		/* joystick capabilites */
+    UINT16 wCaps;		/* joystick capabilities */
     UINT16 wMaxAxes;		/* maximum number of axes supported */
     UINT16 wNumAxes;		/* number of axes in use */
     UINT16 wMaxButtons;		/* maximum number of buttons supported */
@@ -440,10 +440,10 @@ LONG 		WINAPI mmioWrite16(HMMIO16,HPCSTR,LONG);
 LONG 		WINAPI mmioSeek16(HMMIO16,LONG,INT16);
 MMRESULT16	WINAPI mmioGetInfo16(HMMIO16,MMIOINFO16*,UINT16);
 MMRESULT16 	WINAPI mmioSetInfo16(HMMIO16,const MMIOINFO16*,UINT16);
-UINT16 		WINAPI mmioSetBuffer16(HMMIO16,LPSTR,LONG,UINT16);
+UINT16 		WINAPI mmioSetBuffer16(HMMIO16,SEGPTR,LONG,UINT16);
 UINT16 		WINAPI mmioFlush16(HMMIO16,UINT16);
 UINT16 		WINAPI mmioAdvance16(HMMIO16,MMIOINFO16*,UINT16);
-LONG 		WINAPI mmioSendMessage16(HMMIO16,UINT16,LPARAM,LPARAM);
+LRESULT		WINAPI mmioSendMessage16(HMMIO16,UINT16,LPARAM,LPARAM);
 UINT16		WINAPI mmioDescend16(HMMIO16,MMCKINFO*,const MMCKINFO*,UINT16);
 UINT16		WINAPI mmioAscend16(HMMIO16,MMCKINFO*,UINT16);
 UINT16		WINAPI mmioCreateChunk16(HMMIO16,MMCKINFO*,UINT16);
@@ -513,7 +513,7 @@ typedef struct {
 
 typedef struct {
     DWORD	dwCallback;
-    LPCSTR	lpfilename;
+    SEGPTR	lpfilename;
 } MCI_LOAD_PARMS16, *LPMCI_LOAD_PARMS16;
 
 typedef struct {
@@ -582,7 +582,7 @@ typedef struct {
     WORD	wReserved1;
     WORD	nCmdShow;
     WORD	wReserved2;
-    LPCSTR	lpstrText;
+    SEGPTR	lpstrText;
 } MCI_ANIM_WINDOW_PARMS16, *LPMCI_ANIM_WINDOW_PARMS16;
 
 typedef struct {
@@ -605,9 +605,9 @@ typedef struct {
     DWORD		dwCallback;
     MCIDEVICEID16	wDeviceID;
     WORD		wReserved0;
-    LPCSTR		lpstrDeviceType;
-    LPCSTR		lpstrElementName;
-    LPCSTR		lpstrAlias;
+    SEGPTR		lpstrDeviceType;
+    SEGPTR		lpstrElementName;
+    SEGPTR		lpstrAlias;
     DWORD		dwStyle;
     HWND16		hWndParent;
     WORD		wReserved1;
@@ -619,7 +619,7 @@ typedef struct {
     WORD	wReserved1;
     UINT16	nCmdShow;
     WORD	wReserved2;
-    LPCSTR	lpstrText;
+    SEGPTR	lpstrText;
 } MCI_OVLY_WINDOW_PARMS16, *LPMCI_OVLY_WINDOW_PARMS16;
 
 typedef struct {
@@ -634,13 +634,13 @@ typedef struct {
 
 typedef struct {
     DWORD   dwCallback;
-    LPCSTR  lpfilename;
+    SEGPTR  lpfilename;
     RECT16  rc;
 } MCI_OVLY_SAVE_PARMS16, *LPMCI_OVLY_SAVE_PARMS16;
 
 typedef struct {
     DWORD	dwCallback;
-    LPCSTR	lpfilename;
+    SEGPTR	lpfilename;
     RECT16	rc;
 } MCI_OVLY_LOAD_PARMS16, *LPMCI_OVLY_LOAD_PARMS16;
 
@@ -652,7 +652,7 @@ typedef struct {
 
 typedef struct {
     DWORD   dwCallback;
-    LPSTR   lpstrFileName;
+    SEGPTR  lpstrFileName;
     RECT16  rc;
 } MCI_DGV_CAPTURE_PARMS16, *LPMCI_DGV_CAPTURE_PARMS16;
 
@@ -687,18 +687,18 @@ typedef MCI_DGV_RECT_PARMS16 MCI_DGV_FREEZE_PARMS16, * LPMCI_DGV_FREEZE_PARMS16;
 
 typedef struct  {
     DWORD   dwCallback;
-    LPSTR   lpstrReturn;
+    SEGPTR  lpstrReturn;
     DWORD   dwRetSize;
     DWORD   dwItem;
 } MCI_DGV_INFO_PARMS16, * LPMCI_DGV_INFO_PARMS16;
 
 typedef struct {
     DWORD   dwCallback;
-    LPSTR   lpstrReturn;
+    SEGPTR  lpstrReturn;
     DWORD   dwLength;
     DWORD   dwNumber;
     DWORD   dwItem;
-    LPSTR   lpstrAlgorithm;
+    SEGPTR  lpstrAlgorithm;
 } MCI_DGV_LIST_PARMS16, *LPMCI_DGV_LIST_PARMS16;
 
 typedef MCI_LOAD_PARMS16  MCI_DGV_LOAD_PARMS16 , * LPMCI_DGV_LOAD_PARMS16;
@@ -707,9 +707,9 @@ typedef struct {
     DWORD   dwCallback;
     UINT16  wDeviceID;
     UINT16  wReserved0;
-    LPSTR   lpstrDeviceType;
-    LPSTR   lpstrElementName;
-    LPSTR   lpstrAlias;
+    SEGPTR  lpstrDeviceType;
+    SEGPTR  lpstrElementName;
+    SEGPTR  lpstrAlias;
     DWORD   dwStyle;
     HWND16  hWndParent;
     UINT16  wReserved1;
@@ -728,8 +728,8 @@ typedef MCI_DGV_RECT_PARMS16 MCI_DGV_PUT_PARMS16, * LPMCI_DGV_PUT_PARMS16;
 typedef struct {
     DWORD       dwCallback;
     DWORD       dwItem;
-    LPSTR       lpstrName;
-    DWORD       lpstrAlgorithm;
+    SEGPTR      lpstrName;
+    SEGPTR      lpstrAlgorithm;
     DWORD       dwHandle;
 } MCI_DGV_QUALITY_PARMS16, *LPMCI_DGV_QUALITY_PARMS16;
 
@@ -744,19 +744,19 @@ typedef struct {
 
 typedef struct {
     DWORD   dwCallback;
-    LPSTR   lpstrPath;
+    SEGPTR  lpstrPath;
     DWORD   dwSize;
 } MCI_DGV_RESERVE_PARMS16, *LPMCI_DGV_RESERVE_PARMS16A;
 
 typedef struct {
     DWORD   dwCallback;
-    LPSTR   lpstrFileName;
+    SEGPTR  lpstrFileName;
     RECT16  rc;
 } MCI_DGV_RESTORE_PARMS16, *LPMCI_DGV_RESTORE_PARMS16;
 
 typedef struct {
     DWORD   dwCallback;
-    LPSTR   lpstrFileName;
+    SEGPTR  lpstrFileName;
     RECT16  rc;
 } MCI_DGV_SAVE_PARMS16, *LPMCI_DGV_SAVE_PARMS16;
 
@@ -765,8 +765,8 @@ typedef struct {
     DWORD   dwItem;
     DWORD   dwValue;
     DWORD   dwOver;
-    LPSTR   lpstrAlgorithm;
-    LPSTR   lpstrQuality;
+    SEGPTR  lpstrAlgorithm;
+    SEGPTR  lpstrQuality;
 } MCI_DGV_SETAUDIO_PARMS16, *LPMCI_DGV_SETAUDIO_PARMS16;
 
 typedef struct {
@@ -774,8 +774,8 @@ typedef struct {
     DWORD   dwItem;
     DWORD   dwValue;
     DWORD   dwOver;
-    LPSTR   lpstrAlgorithm;
-    LPSTR   lpstrQuality;
+    SEGPTR  lpstrAlgorithm;
+    SEGPTR  lpstrQuality;
     DWORD   dwSourceNumber;
 } MCI_DGV_SETVIDEO_PARMS16, *LPMCI_DGV_SETVIDEO_PARMS16;
 
@@ -805,7 +805,7 @@ typedef struct {
     UINT16  wReserved1;
     UINT16  nCmdShow;
     UINT16  wReserved2;
-    LPSTR   lpstrText;
+    SEGPTR  lpstrText;
 } MCI_DGV_WINDOW_PARMS16, *LPMCI_DGV_WINDOW_PARMS16;
 
 #include <poppack.h>

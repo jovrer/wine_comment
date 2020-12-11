@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003 Michael Günnewig
+ * Copyright (C) 2003 Michael GÃ¼nnewig
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,13 +13,12 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
 
 #define COBJMACROS
-#define COM_NO_WINDOWS_H
 
 #include "windef.h"
 #include "winbase.h"
@@ -40,7 +39,7 @@ HRESULT WINAPI MoCreateMediaType(DMO_MEDIA_TYPE** ppmedia, DWORD cbFormat)
 {
     HRESULT r;
 
-    TRACE("%p %lu\n", ppmedia, cbFormat);
+    TRACE("%p %u\n", ppmedia, cbFormat);
 
     if (!ppmedia)
         return E_POINTER;
@@ -66,7 +65,7 @@ HRESULT WINAPI MoCreateMediaType(DMO_MEDIA_TYPE** ppmedia, DWORD cbFormat)
  */
 HRESULT WINAPI MoInitMediaType(DMO_MEDIA_TYPE* pmedia, DWORD cbFormat)
 {
-    TRACE("%p %lu\n", pmedia, cbFormat);
+    TRACE("%p %u\n", pmedia, cbFormat);
 
     if (!pmedia)
         return E_POINTER;
@@ -121,11 +120,8 @@ HRESULT WINAPI MoFreeMediaType(DMO_MEDIA_TYPE* pmedia)
         pmedia->pUnk = NULL;
     }
 
-    if (pmedia->pbFormat)
-    {
-        CoTaskMemFree(pmedia->pbFormat);
-        pmedia->pbFormat = NULL;
-    }
+    CoTaskMemFree(pmedia->pbFormat);
+    pmedia->pbFormat = NULL;
 
     return S_OK;
 }
@@ -172,9 +168,9 @@ HRESULT WINAPI MoCopyMediaType(DMO_MEDIA_TYPE* pdst,
     if (!pdst || !psrc)
         return E_POINTER;
 
-    memcpy(&pdst->majortype,  &psrc->majortype,  sizeof(psrc->majortype));
-    memcpy(&pdst->subtype,    &psrc->subtype,    sizeof(psrc->subtype));
-    memcpy(&pdst->formattype, &psrc->formattype, sizeof(psrc->formattype));
+    pdst->majortype = psrc->majortype;
+    pdst->subtype = psrc->subtype;
+    pdst->formattype = psrc->formattype;
 
     pdst->bFixedSizeSamples    = psrc->bFixedSizeSamples;
     pdst->bTemporalCompression = psrc->bTemporalCompression;

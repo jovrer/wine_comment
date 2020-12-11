@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include <stdarg.h>
@@ -39,7 +39,7 @@ static inline BYTE hex( BYTE x )
     return x + 'A' - 10;
 }
 
-static inline CHAR ctox( CHAR x )
+static inline signed char ctox( CHAR x )
 {
     if( ( x >= '0' ) && ( x <= '9' ) )
         return x - '0';
@@ -50,14 +50,15 @@ static inline CHAR ctox( CHAR x )
     return -1;
 }
 
-static LPSTR MPR_GetValueName( LPSTR pbResource, WORD cbResource, BYTE nType )
+static LPSTR MPR_GetValueName( LPCSTR pbResource, WORD cbResource, BYTE nType )
 {
     LPSTR name;
     DWORD  i;
 
     name = HeapAlloc( GetProcessHeap(), 0, 6+cbResource*2 );
-    if( name )
-        sprintf( name, "X-%02X-", nType );
+    if( !name ) return NULL;
+
+    sprintf( name, "X-%02X-", nType );
     for(i=0; i<cbResource; i++)
     {
         name[5+i*2]=hex((pbResource[i]&0xf0)>>4);
@@ -73,7 +74,7 @@ static LPSTR MPR_GetValueName( LPSTR pbResource, WORD cbResource, BYTE nType )
  * WNetCachePassword [MPR.@]  Saves password in cache
  *
  * NOTES
- *	only the parameter count is verifyed
+ *	Only the parameter count is verified
  *
  *	---- everything below this line might be wrong (js) -----
  * RETURNS
@@ -220,7 +221,7 @@ DWORD WINAPI WNetGetCachedPassword(
  * WNetEnumCachedPasswords [MPR.@]
  *
  * NOTES
- *	the parameter count is verifyed
+ *	The parameter count is verified
  * 
  *  This function is a huge security risk, as virii and such can use
  * it to grab all the passwords in the cache.  It's bad enough to 
@@ -248,7 +249,7 @@ UINT WINAPI WNetEnumCachedPasswords(
     PASSWORD_CACHE_ENTRY *entry;
     CHAR val[256], prefix[6];
 
-    WARN( "(%s, %d, %d, %p, 0x%08lx) totally insecure\n",
+    WARN( "(%s, %d, %d, %p, 0x%08x) totally insecure\n",
            debugstr_an(pbPrefix,cbPrefix), cbPrefix,
 	   nType, enumPasswordProc, param );
 
@@ -259,7 +260,6 @@ UINT WINAPI WNetEnumCachedPasswords(
 
     sprintf(prefix, "X-%02X-", nType );
 
-    i = 0;
     for( i=0;  ; i++ )
     {
         val_sz  = sizeof val;
@@ -281,7 +281,7 @@ UINT WINAPI WNetEnumCachedPasswords(
         /* decode the value */
         for(j=5; j<val_sz; j+=2 )
         {
-            CHAR hi = ctox( val[j] ), lo = ctox( val[j+1] );
+            signed char hi = ctox( val[j] ), lo = ctox( val[j+1] );
             if( ( hi < 0 ) || ( lo < 0 ) )
                 break;
             val[(j-5)/2] = (hi<<4) | lo;
@@ -298,15 +298,16 @@ UINT WINAPI WNetEnumCachedPasswords(
             continue;
 
         /* read the value data */
-        size = sizeof *entry - sizeof entry->abResource[0] + val_sz + data_sz;
-        entry = HeapAlloc( GetProcessHeap(), 0, sizeof *entry + val_sz + data_sz );
+        size = offsetof( PASSWORD_CACHE_ENTRY, abResource[val_sz + data_sz] );
+        entry = HeapAlloc( GetProcessHeap(), 0, size );
         memcpy( entry->abResource, val, val_sz );
         entry->cbEntry = size;
         entry->cbResource = val_sz;
         entry->cbPassword = data_sz;
         entry->iEntry = i;
         entry->nType = nType;
-        r = RegEnumValueA( hkey, i, NULL, &val_sz, NULL, &type, 
+        size = sizeof val;
+        r = RegEnumValueA( hkey, i, val, &size, NULL, &type,
                            &entry->abResource[val_sz], &data_sz );
         if( r == ERROR_SUCCESS )
             enumPasswordProc( entry, param );

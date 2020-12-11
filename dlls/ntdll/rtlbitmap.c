@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
  *  Bitmaps are an efficient type for manipulating large arrays of bits. They
@@ -74,7 +74,7 @@ static const signed char NTDLL_mostSignificant[16] = {
  */
 VOID WINAPI RtlInitializeBitMap(PRTL_BITMAP lpBits, PULONG lpBuff, ULONG ulSize)
 {
-  TRACE("(%p,%p,%ld)\n", lpBits,lpBuff,ulSize);
+  TRACE("(%p,%p,%u)\n", lpBits,lpBuff,ulSize);
   lpBits->SizeOfBitMap = ulSize;
   lpBits->Buffer = lpBuff;
 }
@@ -130,7 +130,7 @@ VOID WINAPI RtlSetBits(PRTL_BITMAP lpBits, ULONG ulStart, ULONG ulCount)
 {
   LPBYTE lpOut;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulStart, ulCount);
+  TRACE("(%p,%u,%u)\n", lpBits, ulStart, ulCount);
 
   if (!lpBits || !ulCount ||
       ulStart >= lpBits->SizeOfBitMap ||
@@ -156,8 +156,8 @@ VOID WINAPI RtlSetBits(PRTL_BITMAP lpBits, ULONG ulStart, ULONG ulCount)
       /* Set from the start bit, possibly into the next byte also */
       USHORT initialWord = NTDLL_maskBits[ulCount] << (ulStart & 7);
 
-      *lpOut++ |= (initialWord & 0xff);
-      *lpOut |= (initialWord >> 8);
+      *lpOut |= (initialWord & 0xff);
+      if (initialWord >> 8) lpOut[1] |= (initialWord >> 8);
       return;
     }
   }
@@ -170,7 +170,8 @@ VOID WINAPI RtlSetBits(PRTL_BITMAP lpBits, ULONG ulStart, ULONG ulCount)
   }
 
   /* Set remaining bits, if any */
-  *lpOut |= NTDLL_maskBits[ulCount & 0x7];
+  if (ulCount & 0x7)
+    *lpOut |= NTDLL_maskBits[ulCount & 0x7];
 }
 
 /*************************************************************************
@@ -190,7 +191,7 @@ VOID WINAPI RtlClearBits(PRTL_BITMAP lpBits, ULONG ulStart, ULONG ulCount)
 {
   LPBYTE lpOut;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulStart, ulCount);
+  TRACE("(%p,%u,%u)\n", lpBits, ulStart, ulCount);
 
   if (!lpBits || !ulCount ||
       ulStart >= lpBits->SizeOfBitMap ||
@@ -216,8 +217,8 @@ VOID WINAPI RtlClearBits(PRTL_BITMAP lpBits, ULONG ulStart, ULONG ulCount)
       /* Clear from the start bit, possibly into the next byte also */
       USHORT initialWord = ~(NTDLL_maskBits[ulCount] << (ulStart & 7));
 
-      *lpOut++ &= (initialWord & 0xff);
-      *lpOut &= (initialWord >> 8);
+      *lpOut &= (initialWord & 0xff);
+      if ((initialWord >> 8) != 0xff) lpOut[1] &= (initialWord >> 8);
       return;
     }
   }
@@ -253,7 +254,7 @@ BOOLEAN WINAPI RtlAreBitsSet(PCRTL_BITMAP lpBits, ULONG ulStart, ULONG ulCount)
   LPBYTE lpOut;
   ULONG ulRemainder;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulStart, ulCount);
+  TRACE("(%p,%u,%u)\n", lpBits, ulStart, ulCount);
 
   if (!lpBits || !ulCount ||
       ulStart >= lpBits->SizeOfBitMap ||
@@ -326,7 +327,7 @@ BOOLEAN WINAPI RtlAreBitsClear(PCRTL_BITMAP lpBits, ULONG ulStart, ULONG ulCount
   LPBYTE lpOut;
   ULONG ulRemainder;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulStart, ulCount);
+  TRACE("(%p,%u,%u)\n", lpBits, ulStart, ulCount);
 
   if (!lpBits || !ulCount ||
       ulStart >= lpBits->SizeOfBitMap ||
@@ -394,7 +395,7 @@ ULONG WINAPI RtlFindSetBits(PCRTL_BITMAP lpBits, ULONG ulCount, ULONG ulHint)
 {
   ULONG ulPos, ulEnd;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulCount, ulHint);
+  TRACE("(%p,%u,%u)\n", lpBits, ulCount, ulHint);
 
   if (!lpBits || !ulCount || ulCount > lpBits->SizeOfBitMap)
     return ~0U;
@@ -441,7 +442,7 @@ ULONG WINAPI RtlFindClearBits(PCRTL_BITMAP lpBits, ULONG ulCount, ULONG ulHint)
 {
   ULONG ulPos, ulEnd;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulCount, ulHint);
+  TRACE("(%p,%u,%u)\n", lpBits, ulCount, ulHint);
 
   if (!lpBits || !ulCount || ulCount > lpBits->SizeOfBitMap)
     return ~0U;
@@ -488,7 +489,7 @@ ULONG WINAPI RtlFindSetBitsAndClear(PRTL_BITMAP lpBits, ULONG ulCount, ULONG ulH
 {
   ULONG ulPos;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulCount, ulHint);
+  TRACE("(%p,%u,%u)\n", lpBits, ulCount, ulHint);
 
   ulPos = RtlFindSetBits(lpBits, ulCount, ulHint);
   if (ulPos != ~0U)
@@ -513,7 +514,7 @@ ULONG WINAPI RtlFindClearBitsAndSet(PRTL_BITMAP lpBits, ULONG ulCount, ULONG ulH
 {
   ULONG ulPos;
 
-  TRACE("(%p,%ld,%ld)\n", lpBits, ulCount, ulHint);
+  TRACE("(%p,%u,%u)\n", lpBits, ulCount, ulHint);
 
   ulPos = RtlFindClearBits(lpBits, ulCount, ulHint);
   if (ulPos != ~0U)
@@ -554,9 +555,12 @@ ULONG WINAPI RtlNumberOfSetBits(PCRTL_BITMAP lpBits)
       lpOut++;
     }
 
-    bMasked = *lpOut & NTDLL_maskBits[ulRemainder];
-    ulSet += NTDLL_nibbleBitCount[bMasked >> 4];
-    ulSet += NTDLL_nibbleBitCount[bMasked & 0xf];
+    if (ulRemainder)
+    {
+      bMasked = *lpOut & NTDLL_maskBits[ulRemainder];
+      ulSet += NTDLL_nibbleBitCount[bMasked >> 4];
+      ulSet += NTDLL_nibbleBitCount[bMasked & 0xf];
+    }
   }
   return ulSet;
 }
@@ -727,6 +731,12 @@ static ULONG NTDLL_FindSetRun(PCRTL_BITMAP lpBits, ULONG ulStart, PULONG lpSize)
       return ~0U;
   }
 
+  /* Check if reached the end of bitmap */
+  if (ulStart >= lpBits->SizeOfBitMap) {
+    *lpSize = ulCount - (ulStart - lpBits->SizeOfBitMap);
+    return ulFoundAt;
+  }
+
   /* Count blocks of 8 set bits */
   while (*lpOut == 0xff)
   {
@@ -818,6 +828,12 @@ static ULONG NTDLL_FindClearRun(PCRTL_BITMAP lpBits, ULONG ulStart, PULONG lpSiz
       return ~0U;
   }
 
+  /* Check if reached the end of bitmap */
+  if (ulStart >= lpBits->SizeOfBitMap) {
+    *lpSize = ulCount - (ulStart - lpBits->SizeOfBitMap);
+    return ulFoundAt;
+  }
+
   /* Count blocks of 8 clear bits */
   while (!*lpOut)
   {
@@ -866,7 +882,7 @@ ULONG WINAPI RtlFindNextForwardRunSet(PCRTL_BITMAP lpBits, ULONG ulStart, PULONG
 {
   ULONG ulSize = 0;
 
-  TRACE("(%p,%ld,%p)\n", lpBits, ulStart, lpPos);
+  TRACE("(%p,%u,%p)\n", lpBits, ulStart, lpPos);
 
   if (lpBits && ulStart < lpBits->SizeOfBitMap && lpPos)
     *lpPos = NTDLL_FindSetRun(lpBits, ulStart, &ulSize);
@@ -893,7 +909,7 @@ ULONG WINAPI RtlFindNextForwardRunClear(PCRTL_BITMAP lpBits, ULONG ulStart, PULO
 {
   ULONG ulSize = 0;
 
-  TRACE("(%p,%ld,%p)\n", lpBits, ulStart, lpPos);
+  TRACE("(%p,%u,%p)\n", lpBits, ulStart, lpPos);
 
   if (lpBits && ulStart < lpBits->SizeOfBitMap && lpPos)
     *lpPos = NTDLL_FindClearRun(lpBits, ulStart, &ulSize);
@@ -918,7 +934,7 @@ ULONG WINAPI RtlFindNextForwardRunClear(PCRTL_BITMAP lpBits, ULONG ulStart, PULO
  */
 ULONG WINAPI RtlFindLastBackwardRunSet(PCRTL_BITMAP lpBits, ULONG ulStart, PULONG lpPos)
 {
-  FIXME("(%p,%ld,%p)-stub!\n", lpBits, ulStart, lpPos);
+  FIXME("(%p,%u,%p)-stub!\n", lpBits, ulStart, lpPos);
   return 0;
 }
 
@@ -939,7 +955,7 @@ ULONG WINAPI RtlFindLastBackwardRunSet(PCRTL_BITMAP lpBits, ULONG ulStart, PULON
  */
 ULONG WINAPI RtlFindLastBackwardRunClear(PCRTL_BITMAP lpBits, ULONG ulStart, PULONG lpPos)
 {
-  FIXME("(%p,%ld,%p)-stub!\n", lpBits, ulStart, lpPos);
+  FIXME("(%p,%u,%p)-stub!\n", lpBits, ulStart, lpPos);
   return 0;
 }
 
@@ -948,14 +964,14 @@ ULONG WINAPI RtlFindLastBackwardRunClear(PCRTL_BITMAP lpBits, ULONG ulStart, PUL
  *
  * Internal implementation of RtlFindSetRuns/RtlFindClearRuns.
  */
-static ULONG WINAPI NTDLL_FindRuns(PCRTL_BITMAP lpBits, PRTL_BITMAP_RUN lpSeries,
-                                   ULONG ulCount, BOOLEAN bLongest,
-                                   ULONG (*fn)(PCRTL_BITMAP,ULONG,PULONG))
+static ULONG NTDLL_FindRuns(PCRTL_BITMAP lpBits, PRTL_BITMAP_RUN lpSeries,
+                            ULONG ulCount, BOOLEAN bLongest,
+                            ULONG (*fn)(PCRTL_BITMAP,ULONG,PULONG))
 {
-  BOOL bNeedSort = ulCount > 1 ? TRUE : FALSE;
+  BOOL bNeedSort = ulCount > 1;
   ULONG ulPos = 0, ulRuns = 0;
 
-  TRACE("(%p,%p,%ld,%d)\n", lpBits, lpSeries, ulCount, bLongest);
+  TRACE("(%p,%p,%d,%d)\n", lpBits, lpSeries, ulCount, bLongest);
 
   if (!ulCount)
     return ~0U;
@@ -1017,7 +1033,7 @@ static ULONG WINAPI NTDLL_FindRuns(PCRTL_BITMAP lpBits, PRTL_BITMAP_RUN lpSeries
 ULONG WINAPI RtlFindSetRuns(PCRTL_BITMAP lpBits, PRTL_BITMAP_RUN lpSeries,
                             ULONG ulCount, BOOLEAN bLongest)
 {
-  TRACE("(%p,%p,%ld,%d)\n", lpBits, lpSeries, ulCount, bLongest);
+  TRACE("(%p,%p,%u,%d)\n", lpBits, lpSeries, ulCount, bLongest);
 
   return NTDLL_FindRuns(lpBits, lpSeries, ulCount, bLongest, NTDLL_FindSetRun);
 }
@@ -1039,7 +1055,7 @@ ULONG WINAPI RtlFindSetRuns(PCRTL_BITMAP lpBits, PRTL_BITMAP_RUN lpSeries,
 ULONG WINAPI RtlFindClearRuns(PCRTL_BITMAP lpBits, PRTL_BITMAP_RUN lpSeries,
                               ULONG ulCount, BOOLEAN bLongest)
 {
-  TRACE("(%p,%p,%ld,%d)\n", lpBits, lpSeries, ulCount, bLongest);
+  TRACE("(%p,%p,%u,%d)\n", lpBits, lpSeries, ulCount, bLongest);
 
   return NTDLL_FindRuns(lpBits, lpSeries, ulCount, bLongest, NTDLL_FindClearRun);
 }

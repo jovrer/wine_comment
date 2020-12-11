@@ -16,14 +16,14 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
    /* break handling */
 INTERNAL_VAR(BreakAllThreadsStartup,	FALSE,		NULL,  			dbg_itype_unsigned_int)
 INTERNAL_VAR(BreakOnCritSectTimeOut,    FALSE,          NULL,  			dbg_itype_unsigned_int)
 INTERNAL_VAR(BreakOnAttach,		FALSE,		NULL,			dbg_itype_unsigned_int)
-INTERNAL_VAR(BreakOnFirstChance,	TRUE,		NULL,			dbg_itype_unsigned_int)
+INTERNAL_VAR(BreakOnFirstChance,	FALSE,		NULL,			dbg_itype_unsigned_int)
 INTERNAL_VAR(BreakOnDllLoad,		FALSE, 		NULL, 			dbg_itype_unsigned_int)
 INTERNAL_VAR(CanDeferOnBPByAddr,        FALSE,          NULL,                   dbg_itype_unsigned_int)
 
@@ -33,3 +33,9 @@ INTERNAL_VAR(ProcessId,			FALSE,		&dbg_curr_pid,		dbg_itype_unsigned_int)
 
    /* symbol manipulation */
 INTERNAL_VAR(AlwaysShowThunks,          FALSE,          NULL,                   dbg_itype_unsigned_int)
+
+   /* process manipulation */
+INTERNAL_VAR(AlsoDebugProcChild,        FALSE,          NULL,                   dbg_itype_unsigned_int)
+
+   /* automatic invocation on failure */
+INTERNAL_VAR(ShowCrashDialog,           TRUE,           NULL,                   dbg_itype_unsigned_int)

@@ -52,7 +52,8 @@ dump other information from PE files; See the section 'Dumping' below.
 Usage
 -----
 Winedump is a command line tool. For the list of options and the basic usage
-see the the winedump(1) man page.
+see the winedump(1) man page.
+
 
 Spec mode: Generating stub DLLs
 -------------------------------
@@ -202,10 +203,10 @@ If a prototype is found, or correctly demangled, the following is emitted:
 @ stdcall _OpenZipFile ZIPEXTRA__OpenZipFile
 
 .h:
-BOOL __stdcall ZIPEXTRA__OpenZipFile(LPCSTR pszFileName);
+BOOL __stdcall ZIPEXTRA__OpenZipFile(const char *filename);
 
 .c:
-BOOL __stdcall ZIPEXTRA__OpenZipFile(LPCSTR pszFileName)
+BOOL __stdcall ZIPEXTRA__OpenZipFile(const char *filename)
 {
   TRACE("stub\n");
   return 0;
@@ -244,16 +245,16 @@ forward DLL automatically:
 
 HMODULE hDLL = 0; /* DLL to call through to */
 
-BOOL WINAPI ZIPEXTRA_Init(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+BOOL WINAPI ZIPEXTRA_Init(HINSTANCE dll, DWORD reason, void *reserved)
 {
-    TRACE("(0x%08x, %ld, %p)\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("(0x%08x, %u, %p)\n", dll, reason, reserved);
 
-    if (fdwReason == DLL_PROCESS_ATTACH)
+    if (reason == DLL_PROCESS_ATTACH)
     {
         hDLL = LoadLibraryA( "real_zipextra" );
         TRACE ("Forwarding DLL (real_zipextra) loaded\n" );
     }
-    else if (fdwReason == DLL_PROCESS_DETACH)
+    else if (reason == DLL_PROCESS_DETACH)
     {
         FreeLibrary( hDLL );
         TRACE ("Forwarding DLL (real_zipextra) freed\n" );
@@ -264,12 +265,12 @@ BOOL WINAPI ZIPEXTRA_Init(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserve
 
 The stub function is changed to call the forwarding DLL and return that value.
 
-BOOL __stdcall ZIPEXTRA__OpenZipFile(LPCSTR pszFileName)
+BOOL __stdcall ZIPEXTRA__OpenZipFile(const char *filename)
 {
-  BOOL (__stdcall *pFunc)(LPCSTR) = (void*)GetProcAddress(hDLL,"_OpenZipFile");
+  BOOL (__stdcall *pFunc)(const char *) = (void*)GetProcAddress(hDLL,"_OpenZipFile");
   BOOL retVal;
-  TRACE("((LPCSTR)%s) stub\n", pszFileName);
-  retVal = pFunc(pszFileName);
+  TRACE("((const char *)%s) stub\n", filename);
+  retVal = pFunc(filename);
   TRACE("returned (%ld)\n",(LONG)retVal));
   return retVal;
 }
@@ -397,7 +398,7 @@ couldn't generate code and has placed an '@forward' line in the .spec file):
 
 winedump spec msvcrt -C -o ms_msvcrt
 
-Install this DLL into the wine tree (since its a stub DLL, no changes are
+Install this DLL into the wine tree (since it's a stub DLL, no changes are
 needed to the code).
 
 Now uncomment the line that winedump inserted into msvcrt.spec:
@@ -449,5 +450,5 @@ Please send questions and bug reports to jon_p_griffiths@yahoo.com.
 References
 ----------
 
-[1] See the wine and wine.conf man pages for details on how to tell Wine
+[1] See the wine man page for details on how to tell Wine
     whether to use native (Win32) or internal DLL's.

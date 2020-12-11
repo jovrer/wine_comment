@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -26,11 +26,11 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
+#include "vfwmsgs.h"
 #include "uxtheme.h"
 #include "tmschema.h"
 
 #include "msstyles.h"
-#include "uxthemedll.h"
 
 #include "wine/debug.h"
 
@@ -87,7 +87,7 @@ COLORREF WINAPI GetThemeSysColor(HTHEME hTheme, int iColorID)
                 SetLastError(hr);
        }
     }
-    return GetSysColor(iColorID - TMT_FIRSTCOLOR);
+    return GetSysColor(iColorID);
 }
 
 /***********************************************************************
@@ -118,7 +118,7 @@ HRESULT WINAPI GetThemeSysFont(HTHEME hTheme, int iFontID, LOGFONTW *plf)
        }
     }
     if(iFontID == TMT_ICONTITLEFONT) {
-        if(!SystemParametersInfoW(SPI_GETICONTITLELOGFONT, sizeof(LOGFONTW), &plf, 0))
+        if(!SystemParametersInfoW(SPI_GETICONTITLELOGFONT, sizeof(LOGFONTW), plf, 0))
             return HRESULT_FROM_WIN32(GetLastError());
     }
     else {
@@ -135,7 +135,7 @@ HRESULT WINAPI GetThemeSysFont(HTHEME hTheme, int iFontID, LOGFONTW *plf)
             case TMT_MSGBOXFONT: font = &ncm.lfMessageFont; break;
             default: FIXME("Unknown FontID: %d\n", iFontID); break;
         }
-        if(font) CopyMemory(plf, font, sizeof(LOGFONTW));
+        if(font) *plf = *font;
         else     hr = STG_E_INVALIDPARAMETER;
     }
     return hr;
@@ -151,8 +151,8 @@ HRESULT WINAPI GetThemeSysInt(HTHEME hTheme, int iIntID, int *piValue)
     TRACE("(%p, %d)\n", hTheme, iIntID);
     if(!hTheme)
         return E_HANDLE;
-    if(iIntID <= TMT_FIRSTINT || iIntID >= TMT_LASTINT) {
-        TRACE("Unknown IntID: %d\n", iIntID);
+    if(iIntID < TMT_FIRSTINT || iIntID > TMT_LASTINT) {
+        WARN("Unknown IntID: %d\n", iIntID);
         return STG_E_INVALIDPARAMETER;
     }
     if((tp = MSSTYLES_FindMetric(TMT_INT, iIntID)))
@@ -165,9 +165,7 @@ HRESULT WINAPI GetThemeSysInt(HTHEME hTheme, int iIntID, int *piValue)
  */
 int WINAPI GetThemeSysSize(HTHEME hTheme, int iSizeID)
 {
-    PTHEME_PROPERTY tp;
-    int i, id = -1;
-    int metricMap[] = {
+    static const int metricMap[] = {
         SM_CXVSCROLL, TMT_SCROLLBARWIDTH,
         SM_CYHSCROLL, TMT_SCROLLBARHEIGHT,
         SM_CXSIZE, TMT_CAPTIONBARWIDTH,
@@ -179,9 +177,11 @@ int WINAPI GetThemeSysSize(HTHEME hTheme, int iSizeID)
         SM_CXMENUSIZE, TMT_MENUBARWIDTH,
         SM_CYMENUSIZE, TMT_MENUBARHEIGHT
     };
+    PTHEME_PROPERTY tp;
+    int i, id = -1;
 
     if(hTheme) {
-        for(i=0; i<sizeof(metricMap)/sizeof(metricMap[0]); i+=2) {
+        for(i=0; i<ARRAY_SIZE(metricMap); i+=2) {
             if(metricMap[i] == iSizeID) {
                 id = metricMap[i+1];
                 break;
@@ -215,11 +215,23 @@ HRESULT WINAPI GetThemeSysString(HTHEME hTheme, int iStringID,
     TRACE("(%p, %d)\n", hTheme, iStringID);
     if(!hTheme)
         return E_HANDLE;
-    if(iStringID <= TMT_FIRSTSTRING || iStringID >= TMT_LASTSTRING) {
-        TRACE("Unknown StringID: %d\n", iStringID);
+    if(iStringID < TMT_FIRSTSTRING || iStringID > TMT_LASTSTRING) {
+        WARN("Unknown StringID: %d\n", iStringID);
         return STG_E_INVALIDPARAMETER;
     }
     if((tp = MSSTYLES_FindMetric(TMT_STRING, iStringID)))
         return MSSTYLES_GetPropertyString(tp, pszStringBuff, cchMaxStringChars);
     return E_PROP_ID_UNSUPPORTED;
+}
+
+/***********************************************************************
+ *      GetThemeTransitionDuration                          (UXTHEME.@)
+ */
+HRESULT WINAPI GetThemeTransitionDuration(HTHEME hTheme, int iPartId, int iStateIdFrom,
+                                          int iStateIdTo, int iPropId, DWORD *pdwDuration)
+{
+    FIXME("(%p, %u, %u, %u, %u, %p) stub\n", hTheme, iPartId, iStateIdFrom, iStateIdTo,
+          iPropId, pdwDuration);
+
+    return E_NOTIMPL;
 }

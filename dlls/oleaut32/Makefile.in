@@ -1,46 +1,29 @@
-EXTRADEFS = -D_OLEAUT32_ -DCOM_NO_WINDOWS_H
-TOPSRCDIR = @top_srcdir@
-TOPOBJDIR = ../..
-SRCDIR    = @srcdir@
-VPATH     = @srcdir@
 MODULE    = oleaut32.dll
-IMPORTLIB = liboleaut32.$(IMPLIBEXT)
-IMPORTS   = ole32 rpcrt4 user32 gdi32 advapi32 kernel32 ntdll
-DELAYIMPORTS = comctl32 urlmon
-EXTRALIBS = $(LIBUNICODE) -luuid
+IMPORTLIB = oleaut32
+IMPORTS   = uuid ole32 rpcrt4 user32 gdi32 advapi32
+DELAYIMPORTS = comctl32 urlmon windowscodecs
+EXTRADEFS = -D_OLEAUT32_
 
 C_SRCS = \
 	connpt.c \
 	dispatch.c \
 	hash.c \
-	oaidl_p.c \
 	oleaut.c \
 	olefont.c \
 	olepicture.c \
+	olepropframe.c \
 	recinfo.c \
-	regsvr.c \
 	safearray.c \
-	stubs.c \
-	tmarshal.c \
 	typelib.c \
-	typelib2.c \
 	usrmarshal.c \
 	varformat.c \
 	variant.c \
 	vartype.c
 
-C_SRCS16 = \
-	ole2disp.c \
-	typelib16.c
-
-SPEC_SRCS16 = \
-	ole2disp.spec \
-	typelib.spec
-
 RC_SRCS = oleaut32.rc
 
-SUBDIRS = tests
+IDL_SRCS = \
+	oleaut32_oaidl.idl \
+	oleaut32_ocidl.idl
 
-@MAKE_DLL_RULES@
-
-### Dependencies:
+dlldata_EXTRADEFS = -DENTRY_PREFIX=OLEAUTPS_ -DPROXY_DELEGATION -DWINE_REGISTER_DLL -DPROXY_CLSID=CLSID_PSFactoryBuffer

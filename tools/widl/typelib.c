@@ -2,6 +2,7 @@
  * IDL Compiler
  *
  * Copyright 2004 Ove Kaaven
+ * Copyright 2006 Jacek Caban for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,33 +16,40 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
+#include "wine/port.h"
+#include "wine/wpp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <stdarg.h>
+#ifdef HAVE_UNISTD_H
+# include <unistd.h>
+#endif
 #include <string.h>
-#include <assert.h>
 #include <ctype.h>
-#include <signal.h>
+
+#include "windef.h"
+#include "winbase.h"
 
 #include "widl.h"
 #include "utils.h"
 #include "parser.h"
 #include "header.h"
 #include "typelib.h"
+#include "widltypes.h"
+#include "typelib_struct.h"
+#include "typetree.h"
 
-int in_typelib = 0;
-
-static typelib_t *typelib;
 
 /* List of oleauto types that should be recognized by name.
- * (most of) these seem to be intrinsic types in mktyplib. */
-
-static struct oatype {
+ * (most of) these seem to be intrinsic types in mktyplib.
+ * This table MUST be alphabetically sorted on the kw field.
+ */
+static const struct oatype {
   const char *kw;
   unsigned short vt;
 } oatypes[] = {
@@ -64,9 +72,11 @@ static int kw_cmp_func(const void *s1, const void *s2)
         return strcmp(KWP(s1)->kw, KWP(s2)->kw);
 }
 
-static unsigned short builtin_vt(const char *kw)
+static unsigned short builtin_vt(const type_t *t)
 {
-  struct oatype key, *kwp;
+  const char *kw = t->name;
+  struct oatype key;
+  const struct oatype *kwp;
   key.kw = kw;
 #ifdef KW_BSEARCH
   kwp = bsearch(&key, oatypes, NTYPES, sizeof(oatypes[0]), kw_cmp_func);
@@ -83,6 +93,23 @@ static unsigned short builtin_vt(const char *kw)
   if (kwp) {
     return kwp->vt;
   }
+  if (is_string_type (t->attrs, t))
+  {
+    const type_t *elem_type;
+    if (is_array(t))
+      elem_type = type_array_get_element(t);
+    else
+      elem_type = type_pointer_get_ref(t);
+    if (type_get_type(elem_type) == TYPE_BASIC)
+    {
+      switch (type_basic_get_type(elem_type))
+      {
+      case TYPE_BASIC_CHAR: return VT_LPSTR;
+      case TYPE_BASIC_WCHAR: return VT_LPWSTR;
+      default: break;
+      }
+    }
+  }
   return 0;
 }
 
@@ -98,182 +125,260 @@ unsigned short get_type_vt(type_t *t)
 
   chat("get_type_vt: %p type->name %s\n", t, t->name);
   if (t->name) {
-    vt = builtin_vt(t->name);
+    vt = builtin_vt(t);
     if (vt) return vt;
   }
 
-  switch (t->type) {
-  case RPC_FC_BYTE:
-  case RPC_FC_USMALL:
-    return VT_UI1;
-  case RPC_FC_CHAR:
-  case RPC_FC_SMALL:
-    return VT_I1;
-  case RPC_FC_WCHAR:
-    return VT_I2; /* mktyplib seems to parse wchar_t as short */
-  case RPC_FC_SHORT:
-    return VT_I2;
-  case RPC_FC_USHORT:
-    return VT_UI2;
-  case RPC_FC_LONG:
-    if (t->ref && match(t->ref->name, "int")) return VT_INT;
-    return VT_I4;
-  case RPC_FC_ULONG:
-    if (t->ref && match(t->ref->name, "int")) return VT_UINT;
-    return VT_UI4;
-  case RPC_FC_HYPER:
-    if (t->sign < 0) return VT_UI8;
-    if (t->ref && match(t->ref->name, "MIDL_uhyper")) return VT_UI8;
-    return VT_I8;
-  case RPC_FC_FLOAT:
-    return VT_R4;
-  case RPC_FC_DOUBLE:
-    return VT_R8;
-  case RPC_FC_RP:
-  case RPC_FC_UP:
-  case RPC_FC_OP:
-  case RPC_FC_FP:
-    if(t->ref)
-      return VT_PTR;
+  if (type_is_alias(t) && is_attr(t->attrs, ATTR_PUBLIC))
+    return VT_USERDEFINED;
 
-    error("get_type_vt: unknown-deref-type: %d\n", t->ref->type);
+  switch (type_get_type(t)) {
+  case TYPE_BASIC:
+    switch (type_basic_get_type(t)) {
+    case TYPE_BASIC_BYTE:
+      return VT_UI1;
+    case TYPE_BASIC_CHAR:
+    case TYPE_BASIC_INT8:
+      if (type_basic_get_sign(t) > 0)
+        return VT_UI1;
+      else
+        return VT_I1;
+    case TYPE_BASIC_WCHAR:
+      return VT_I2; /* mktyplib seems to parse wchar_t as short */
+    case TYPE_BASIC_INT16:
+      if (type_basic_get_sign(t) > 0)
+        return VT_UI2;
+      else
+        return VT_I2;
+    case TYPE_BASIC_INT:
+      if (type_basic_get_sign(t) > 0)
+        return VT_UINT;
+      else
+        return VT_INT;
+    case TYPE_BASIC_INT32:
+    case TYPE_BASIC_LONG:
+    case TYPE_BASIC_ERROR_STATUS_T:
+      if (type_basic_get_sign(t) > 0)
+        return VT_UI4;
+      else
+        return VT_I4;
+    case TYPE_BASIC_INT64:
+    case TYPE_BASIC_HYPER:
+      if (type_basic_get_sign(t) > 0)
+        return VT_UI8;
+      else
+        return VT_I8;
+    case TYPE_BASIC_INT3264:
+      if (pointer_size == 8)
+      {
+        if (type_basic_get_sign(t) > 0)
+          return VT_UI8;
+        else
+          return VT_I8;
+      }
+      else
+      {
+        if (type_basic_get_sign(t) > 0)
+          return VT_UI4;
+        else
+          return VT_I4;
+      }
+    case TYPE_BASIC_FLOAT:
+      return VT_R4;
+    case TYPE_BASIC_DOUBLE:
+      return VT_R8;
+    case TYPE_BASIC_HANDLE:
+      error("handles can't be used in typelibs\n");
+    }
     break;
-  case RPC_FC_IP:
+
+  case TYPE_POINTER:
+    return VT_PTR;
+
+  case TYPE_ARRAY:
+    if (type_array_is_decl_as_ptr(t))
+    {
+      if (match(type_array_get_element(t)->name, "SAFEARRAY"))
+        return VT_SAFEARRAY;
+      return VT_PTR;
+    }
+    else
+      return VT_CARRAY;
+
+  case TYPE_INTERFACE:
     if(match(t->name, "IUnknown"))
       return VT_UNKNOWN;
     if(match(t->name, "IDispatch"))
       return VT_DISPATCH;
     return VT_USERDEFINED;
 
-  case RPC_FC_ENUM16:
-  case RPC_FC_STRUCT:
-  case RPC_FC_PSTRUCT:
-  case RPC_FC_CSTRUCT:
-  case RPC_FC_CPSTRUCT:
-  case RPC_FC_CVSTRUCT:
-  case RPC_FC_BOGUS_STRUCT:
+  case TYPE_ENUM:
+  case TYPE_STRUCT:
+  case TYPE_COCLASS:
+  case TYPE_MODULE:
+  case TYPE_UNION:
+  case TYPE_ENCAPSULATED_UNION:
     return VT_USERDEFINED;
-  case 0:
-    if(t->attrs)
-        return VT_USERDEFINED;
-    return 0;
-  default:
-    error("get_type_vt: unknown type: 0x%02x\n", t->type);
+
+  case TYPE_VOID:
+    return VT_VOID;
+
+  case TYPE_ALIAS:
+    /* aliases should be filtered out by the type_get_type call above */
+    assert(0);
+    break;
+
+  case TYPE_FUNCTION:
+    error("get_type_vt: functions not supported\n");
+    break;
+
+  case TYPE_BITFIELD:
+    error("get_type_vt: bitfields not supported\n");
+    break;
   }
   return 0;
 }
 
-unsigned short get_var_vt(var_t *v)
+static void tlb_read(int fd, void *buf, int count)
 {
-  unsigned short vt;
-
-  chat("get_var_vt: %p tname %s\n", v, v->tname);
-  if (v->tname) {
-    vt = builtin_vt(v->tname);
-    if (vt) return vt;
-  }
-
-  return get_type_vt(v->type);
+    if(read(fd, buf, count) < count)
+        error("error while reading importlib.\n");
 }
 
-void start_typelib(char *name, attr_t *attrs)
+static void tlb_lseek(int fd, off_t offset)
 {
-    in_typelib++;
-    if (!do_typelib) return;
-
-    typelib = xmalloc(sizeof(*typelib));
-    typelib->name = xstrdup(name);
-    typelib->filename = xstrdup(typelib_name);
-    typelib->attrs = attrs;
+    if(lseek(fd, offset, SEEK_SET) == -1)
+        error("lseek failed\n");
 }
 
-void end_typelib(void)
+static void msft_read_guid(int fd, MSFT_SegDir *segdir, int offset, GUID *guid)
 {
-    in_typelib--;
-    if (!typelib) return;
-
-    create_msft_typelib(typelib);
-    return;
+    tlb_lseek(fd, segdir->pGuidTab.offset+offset);
+    tlb_read(fd, guid, sizeof(GUID));
 }
 
-void add_interface(type_t *iface)
+static void read_msft_importlib(importlib_t *importlib, int fd)
 {
-    typelib_entry_t *entry;
-    if (!typelib) return;
+    MSFT_Header header;
+    MSFT_SegDir segdir;
+    int *typeinfo_offs;
+    int i;
 
-    chat("add interface: %s\n", iface->name);
-    entry = xmalloc(sizeof(*entry));
-    entry->kind = TKIND_INTERFACE;
-    entry->u.interface = iface;
-    LINK(entry, typelib->entry);
-    typelib->entry = entry;
+    importlib->allocated = 0;
+
+    tlb_lseek(fd, 0);
+    tlb_read(fd, &header, sizeof(header));
+
+    importlib->version = header.version;
+
+    typeinfo_offs = xmalloc(header.nrtypeinfos*sizeof(INT));
+    tlb_read(fd, typeinfo_offs, header.nrtypeinfos*sizeof(INT));
+    tlb_read(fd, &segdir, sizeof(segdir));
+
+    msft_read_guid(fd, &segdir, header.posguid, &importlib->guid);
+
+    importlib->ntypeinfos = header.nrtypeinfos;
+    importlib->importinfos = xmalloc(importlib->ntypeinfos*sizeof(importinfo_t));
+
+    for(i=0; i < importlib->ntypeinfos; i++) {
+        MSFT_TypeInfoBase base;
+        MSFT_NameIntro nameintro;
+        int len;
+
+        tlb_lseek(fd, sizeof(MSFT_Header) + header.nrtypeinfos*sizeof(INT) + sizeof(MSFT_SegDir)
+                 + typeinfo_offs[i]);
+        tlb_read(fd, &base, sizeof(base));
+
+        importlib->importinfos[i].importlib = importlib;
+        importlib->importinfos[i].flags = (base.typekind&0xf)<<24;
+        importlib->importinfos[i].offset = -1;
+        importlib->importinfos[i].id = i;
+
+        if(base.posguid != -1) {
+            importlib->importinfos[i].flags |= MSFT_IMPINFO_OFFSET_IS_GUID;
+            msft_read_guid(fd, &segdir, base.posguid, &importlib->importinfos[i].guid);
+        }
+        else memset( &importlib->importinfos[i].guid, 0, sizeof(importlib->importinfos[i].guid));
+
+        tlb_lseek(fd, segdir.pNametab.offset + base.NameOffset);
+        tlb_read(fd, &nameintro, sizeof(nameintro));
+
+        len = nameintro.namelen & 0xff;
+
+        importlib->importinfos[i].name = xmalloc(len+1);
+        tlb_read(fd, importlib->importinfos[i].name, len);
+        importlib->importinfos[i].name[len] = 0;
+    }
+
+    free(typeinfo_offs);
 }
 
-void add_coclass(class_t *cls)
+static int open_typelib(const char *name)
 {
-    typelib_entry_t *entry;
+    char *file_name;
+    int fd;
 
-    if (!typelib) return;
+    file_name = wpp_find_include(name, NULL);
+    if(!file_name)
+        return open(name, O_RDONLY | O_BINARY );
 
-    chat("add coclass: %s\n", cls->name);
-
-    entry = xmalloc(sizeof(*entry));
-    entry->kind = TKIND_COCLASS;
-    entry->u.class = cls;
-    LINK(entry, typelib->entry);
-    typelib->entry = entry;
+    fd = open(file_name, O_RDONLY | O_BINARY );
+    free(file_name);
+    return fd;
 }
 
-void add_module(type_t *module)
+static void read_importlib(importlib_t *importlib)
 {
-    typelib_entry_t *entry;
-    if (!typelib) return;
+    int fd;
+    INT magic;
 
-    chat("add module: %s\n", module->name);
-    entry = xmalloc(sizeof(*entry));
-    entry->kind = TKIND_MODULE;
-    entry->u.module = module;
-    LINK(entry, typelib->entry);
-    typelib->entry = entry;
+    fd = open_typelib(importlib->name);
+
+    /* widl extension: if importlib name has no .tlb extension, try using .tlb */
+    if(fd < 0) {
+        const char *p = strrchr(importlib->name, '.');
+        size_t len = p ? p - importlib->name : strlen(importlib->name);
+        if(strcmp(importlib->name + len, ".tlb")) {
+            char *tlb_name = xmalloc(len + 5);
+            memcpy(tlb_name, importlib->name, len);
+            strcpy(tlb_name + len, ".tlb");
+            fd = open_typelib(tlb_name);
+            free(tlb_name);
+        }
+    }
+
+    if(fd < 0)
+        error("Could not find importlib %s.\n", importlib->name);
+
+    tlb_read(fd, &magic, sizeof(magic));
+
+    switch(magic) {
+    case MSFT_MAGIC:
+        read_msft_importlib(importlib, fd);
+        break;
+    default:
+        error("Wrong or unsupported typelib magic %x\n", magic);
+    };
+
+    close(fd);
 }
 
-void add_struct(type_t *structure)
+void add_importlib(const char *name, typelib_t *typelib)
 {
-     typelib_entry_t *entry;
-     if (!typelib) return;
+    importlib_t *importlib;
 
-     chat("add struct: %s\n", structure->name);
-     entry = xmalloc(sizeof(*entry));
-     entry->kind = TKIND_RECORD;
-     entry->u.structure = structure;
-     LINK(entry, typelib->entry);
-     typelib->entry = entry;
-}
+    if(!typelib) return;
 
-void add_enum(type_t *enumeration)
-{
-     typelib_entry_t *entry;
-     if (!typelib) return;
+    LIST_FOR_EACH_ENTRY( importlib, &typelib->importlibs, importlib_t, entry )
+        if(!strcmp(name, importlib->name))
+            return;
 
-     chat("add enum: %s\n", enumeration->name);
-     entry = xmalloc(sizeof(*entry));
-     entry->kind = TKIND_ENUM;
-     entry->u.enumeration = enumeration;
-     LINK(entry, typelib->entry);
-     typelib->entry = entry;
-}
+    chat("add_importlib: %s\n", name);
 
-void add_typedef(type_t *tdef, var_t *name)
-{
-     typelib_entry_t *entry;
-     if (!typelib) return;
+    importlib = xmalloc(sizeof(*importlib));
+    memset( importlib, 0, sizeof(*importlib) );
+    importlib->name = xstrdup(name);
 
-     entry = xmalloc(sizeof(*entry));
-     entry->kind = TKIND_ALIAS;
-     entry->u.tdef = xmalloc(sizeof(*entry->u.tdef));
-     memcpy(entry->u.tdef, name, sizeof(*name));
-     entry->u.tdef->type = tdef;
-     entry->u.tdef->name = xstrdup(name->name);
-     LINK(entry, typelib->entry);
-     typelib->entry = entry;
+    read_importlib(importlib);
+    list_add_head( &typelib->importlibs, &importlib->entry );
 }

@@ -2,621 +2,275 @@
  *
  * Copyright (C) 2003-2004 Rok Mandeljc
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Library General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "dmime_private.h"
+#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmime);
-WINE_DECLARE_DEBUG_CHANNEL(dmfile);
 
-/*****************************************************************************
- * IDirectMusicGraphImpl implementation
- */
-/* IDirectMusicGraphImpl IUnknown part: */
-static HRESULT WINAPI IDirectMusicGraphImpl_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, UnknownVtbl, iface);
-	TRACE("(%p, %s, %p)\n", This, debugstr_guid(riid), ppobj);
-	
-	if (IsEqualIID (riid, &IID_IUnknown)) {
-		*ppobj = (LPVOID)&This->UnknownVtbl;
-		IUnknown_AddRef (iface);
-		return S_OK;	
-	} else if (IsEqualIID (riid, &IID_IDirectMusicGraph)) {
-		*ppobj = (LPVOID)&This->GraphVtbl;
-		IUnknown_AddRef (iface);
-		return S_OK;
-	} else if (IsEqualIID (riid, &IID_IDirectMusicObject)) {
-		*ppobj = (LPVOID)&This->ObjectVtbl;
-		IUnknown_AddRef (iface);
-		return S_OK;
-	} else if (IsEqualIID (riid, &IID_IPersistStream)) {
-		*ppobj = (LPVOID)&This->PersistStreamVtbl;
-		IUnknown_AddRef (iface);
-		return S_OK;
-	}
-	
-	WARN("(%p, %s, %p): not found\n", This, debugstr_guid(riid), ppobj);
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI IDirectMusicGraphImpl_IUnknown_AddRef (LPUNKNOWN iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, UnknownVtbl, iface);
-        ULONG ref = InterlockedIncrement(&This->ref);
-
-	TRACE("(%p): AddRef from %ld\n", This, ref - 1);
-
-	DMIME_LockModule();
-
-	return ref;
-}
-
-static ULONG WINAPI IDirectMusicGraphImpl_IUnknown_Release (LPUNKNOWN iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, UnknownVtbl, iface);
-	ULONG ref = InterlockedDecrement(&This->ref);
-	TRACE("(%p): ReleaseRef to %ld\n", This, ref);
-	
-	if (ref == 0) {
-		HeapFree(GetProcessHeap(), 0, This);
-	}
-
-	DMIME_UnlockModule();
-	
-	return ref;
-}
-
-static const IUnknownVtbl DirectMusicGraph_Unknown_Vtbl = {
-	IDirectMusicGraphImpl_IUnknown_QueryInterface,
-	IDirectMusicGraphImpl_IUnknown_AddRef,
-	IDirectMusicGraphImpl_IUnknown_Release
+struct IDirectMusicGraphImpl {
+  IDirectMusicGraph IDirectMusicGraph_iface;
+  struct dmobject dmobj;
+  LONG ref;
+  WORD              num_tools;
+  struct list       Tools;
 };
 
-/* IDirectMusicGraphImpl IDirectMusicGraph part: */
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicGraph_QueryInterface (LPDIRECTMUSICGRAPH iface, REFIID riid, LPVOID *ppobj) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, GraphVtbl, iface);
-	return IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+static inline IDirectMusicGraphImpl *impl_from_IDirectMusicGraph(IDirectMusicGraph *iface)
+{
+    return CONTAINING_RECORD(iface, IDirectMusicGraphImpl, IDirectMusicGraph_iface);
 }
 
-static ULONG WINAPI IDirectMusicGraphImpl_IDirectMusicGraph_AddRef (LPDIRECTMUSICGRAPH iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, GraphVtbl, iface);
-	return IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
+static inline IDirectMusicGraphImpl *impl_from_IPersistStream(IPersistStream *iface)
+{
+    return CONTAINING_RECORD(iface, IDirectMusicGraphImpl, dmobj.IPersistStream_iface);
 }
 
-static ULONG WINAPI IDirectMusicGraphImpl_IDirectMusicGraph_Release (LPDIRECTMUSICGRAPH iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, GraphVtbl, iface);
-	return IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
-}
+static HRESULT WINAPI DirectMusicGraph_QueryInterface(IDirectMusicGraph *iface, REFIID riid, void **ret_iface)
+{
+    IDirectMusicGraphImpl *This = impl_from_IDirectMusicGraph(iface);
 
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicGraph_StampPMsg (LPDIRECTMUSICGRAPH iface, DMUS_PMSG* pPMSG) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, GraphVtbl, iface);
-	FIXME("(%p, %p): stub\n", This, pPMSG);
-	return S_OK;
-}
+    TRACE("(%p, %s, %p)\n", This, debugstr_guid(riid), ret_iface);
 
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicGraph_InsertTool (LPDIRECTMUSICGRAPH iface, IDirectMusicTool* pTool, DWORD* pdwPChannels, DWORD cPChannels, LONG lIndex) {
-  ICOM_THIS_MULTI(IDirectMusicGraphImpl, GraphVtbl, iface);
+    *ret_iface = NULL;
 
-  HRESULT hr; 
-  struct list* pEntry = NULL;
-  struct list* pPrevEntry = NULL;
-  LPDMUS_PRIVATE_GRAPH_TOOL pIt = NULL;
-  LPDMUS_PRIVATE_GRAPH_TOOL pNewTool = NULL;
-
-  
-  FIXME("(%p, %p, %p, %ld, %li): use of pdwPChannels\n", This, pTool, pdwPChannels, cPChannels, lIndex);
-  
-  if (NULL == pTool) {
-    return E_POINTER;
-  }
-
-  if (0 > lIndex) {
-    lIndex = This->num_tools + lIndex;
-  }
-
-  pPrevEntry = &This->Tools;
-  LIST_FOR_EACH (pEntry, &This->Tools) {
-    pIt = LIST_ENTRY(pEntry, DMUS_PRIVATE_GRAPH_TOOL, entry);
-    if (pIt->dwIndex == lIndex) {
-      return DMUS_E_ALREADY_EXISTS;
+    if (IsEqualIID(riid, &IID_IUnknown) ||
+        IsEqualIID(riid, &IID_IDirectMusicGraph))
+    {
+        *ret_iface = &This->IDirectMusicGraph_iface;
     }
-    if (pIt->dwIndex > lIndex) {
-      break ;
-    }
-    pPrevEntry = pEntry;
-  }
+    else if (IsEqualIID(riid, &IID_IDirectMusicObject))
+        *ret_iface = &This->dmobj.IDirectMusicObject_iface;
+    else if (IsEqualIID(riid, &IID_IPersistStream))
+        *ret_iface = &This->dmobj.IPersistStream_iface;
 
-  ++This->num_tools;
-  pNewTool = HeapAlloc (GetProcessHeap (), HEAP_ZERO_MEMORY, sizeof(DMUS_PRIVATE_GRAPH_TOOL));
-  pNewTool->pTool = pTool;
-  pNewTool->dwIndex = lIndex;
-  IDirectMusicTool8_AddRef(pTool);
-  hr = IDirectMusicTool8_Init(pTool, iface);
-  list_add_tail (pPrevEntry->next, &pNewTool->entry);
+    if (*ret_iface)
+    {
+        IDirectMusicGraph_AddRef(iface);
+        return S_OK;
+    }
+
+    WARN("(%p, %s, %p): not found\n", This, debugstr_guid(riid), ret_iface);
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI DirectMusicGraph_AddRef(IDirectMusicGraph *iface)
+{
+    IDirectMusicGraphImpl *This = impl_from_IDirectMusicGraph(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p): %d\n", This, ref);
+
+    DMIME_LockModule();
+    return ref;
+}
+
+static ULONG WINAPI DirectMusicGraph_Release(IDirectMusicGraph *iface)
+{
+    IDirectMusicGraphImpl *This = impl_from_IDirectMusicGraph(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p): %d\n", This, ref);
+
+    if (ref == 0)
+        HeapFree(GetProcessHeap(), 0, This);
+
+    DMIME_UnlockModule();
+    return ref;
+}
+
+static HRESULT WINAPI DirectMusicGraph_StampPMsg(IDirectMusicGraph *iface, DMUS_PMSG *msg)
+{
+    IDirectMusicGraphImpl *This = impl_from_IDirectMusicGraph(iface);
+    FIXME("(%p, %p): stub\n", This, msg);
+    return S_OK;
+}
+
+static HRESULT WINAPI DirectMusicGraph_InsertTool(IDirectMusicGraph *iface, IDirectMusicTool* pTool, DWORD* pdwPChannels, DWORD cPChannels, LONG lIndex)
+{
+    IDirectMusicGraphImpl *This = impl_from_IDirectMusicGraph(iface);
+    struct list* pEntry = NULL;
+    struct list* pPrevEntry = NULL;
+    LPDMUS_PRIVATE_GRAPH_TOOL pIt = NULL;
+    LPDMUS_PRIVATE_GRAPH_TOOL pNewTool = NULL;
+
+    FIXME("(%p, %p, %p, %d, %i): use of pdwPChannels\n", This, pTool, pdwPChannels, cPChannels, lIndex);
+  
+    if (!pTool)
+        return E_POINTER;
+
+    if (lIndex < 0)
+        lIndex = This->num_tools + lIndex;
+
+    pPrevEntry = &This->Tools;
+    LIST_FOR_EACH(pEntry, &This->Tools)
+    {
+        pIt = LIST_ENTRY(pEntry, DMUS_PRIVATE_GRAPH_TOOL, entry);
+        if (pIt->dwIndex == lIndex)
+            return DMUS_E_ALREADY_EXISTS;
+
+        if (pIt->dwIndex > lIndex)
+          break ;
+        pPrevEntry = pEntry;
+    }
+
+    ++This->num_tools;
+    pNewTool = HeapAlloc (GetProcessHeap (), HEAP_ZERO_MEMORY, sizeof(DMUS_PRIVATE_GRAPH_TOOL));
+    pNewTool->pTool = pTool;
+    pNewTool->dwIndex = lIndex;
+    IDirectMusicTool8_AddRef(pTool);
+    IDirectMusicTool8_Init(pTool, iface);
+    list_add_tail (pPrevEntry->next, &pNewTool->entry);
 
 #if 0
   DWORD dwNum = 0;
-  hr = IDirectMusicTool8_GetMediaTypes(pTool, &dwNum);
+  IDirectMusicTool8_GetMediaTypes(pTool, &dwNum);
 #endif
- 
-  return DS_OK;
+
+    return DS_OK;
 }
 
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicGraph_GetTool (LPDIRECTMUSICGRAPH iface, DWORD dwIndex, IDirectMusicTool** ppTool) {
-  ICOM_THIS_MULTI(IDirectMusicGraphImpl, GraphVtbl, iface);
-  struct list* pEntry = NULL;
-  LPDMUS_PRIVATE_GRAPH_TOOL pIt = NULL;
+static HRESULT WINAPI DirectMusicGraph_GetTool(IDirectMusicGraph *iface, DWORD dwIndex, IDirectMusicTool** ppTool)
+{
+    IDirectMusicGraphImpl *This = impl_from_IDirectMusicGraph(iface);
+    struct list* pEntry = NULL;
+    LPDMUS_PRIVATE_GRAPH_TOOL pIt = NULL;
   
-  FIXME("(%p, %ld, %p): stub\n", This, dwIndex, ppTool);
+    FIXME("(%p, %d, %p): stub\n", This, dwIndex, ppTool);
 
-  LIST_FOR_EACH (pEntry, &This->Tools) {
-    pIt = LIST_ENTRY(pEntry, DMUS_PRIVATE_GRAPH_TOOL, entry);
-    if (pIt->dwIndex == dwIndex) {
-      *ppTool = pIt->pTool;
-      if (NULL != *ppTool) {
-	IDirectMusicTool8_AddRef((LPDIRECTMUSICTOOL8) *ppTool);
-      }
-      return S_OK;      
+    LIST_FOR_EACH (pEntry, &This->Tools)
+    {
+        pIt = LIST_ENTRY(pEntry, DMUS_PRIVATE_GRAPH_TOOL, entry);
+        if (pIt->dwIndex == dwIndex)
+        {
+            *ppTool = pIt->pTool;
+            if (*ppTool)
+                IDirectMusicTool_AddRef(*ppTool);
+            return S_OK;
+        }
+        if (pIt->dwIndex > dwIndex)
+            break ;
     }
-    if (pIt->dwIndex > dwIndex) {
-      break ;
-    }
-  }
 
-  return DMUS_E_NOT_FOUND;
+    return DMUS_E_NOT_FOUND;
 }
 
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicGraph_RemoveTool (LPDIRECTMUSICGRAPH iface, IDirectMusicTool* pTool) {
-  ICOM_THIS_MULTI(IDirectMusicGraphImpl, GraphVtbl, iface);
-  FIXME("(%p, %p): stub\n", This, pTool);
-  return S_OK;
+static HRESULT WINAPI DirectMusicGraph_RemoveTool(IDirectMusicGraph *iface, IDirectMusicTool* pTool)
+{
+    IDirectMusicGraphImpl *This = impl_from_IDirectMusicGraph(iface);
+    FIXME("(%p, %p): stub\n", This, pTool);
+    return S_OK;
 }
 
-static const IDirectMusicGraphVtbl DirectMusicGraph_Graph_Vtbl = {
-  IDirectMusicGraphImpl_IDirectMusicGraph_QueryInterface,
-  IDirectMusicGraphImpl_IDirectMusicGraph_AddRef,
-  IDirectMusicGraphImpl_IDirectMusicGraph_Release,
-  IDirectMusicGraphImpl_IDirectMusicGraph_StampPMsg,
-  IDirectMusicGraphImpl_IDirectMusicGraph_InsertTool,
-  IDirectMusicGraphImpl_IDirectMusicGraph_GetTool,
-  IDirectMusicGraphImpl_IDirectMusicGraph_RemoveTool
+static const IDirectMusicGraphVtbl DirectMusicGraphVtbl =
+{
+    DirectMusicGraph_QueryInterface,
+    DirectMusicGraph_AddRef,
+    DirectMusicGraph_Release,
+    DirectMusicGraph_StampPMsg,
+    DirectMusicGraph_InsertTool,
+    DirectMusicGraph_GetTool,
+    DirectMusicGraph_RemoveTool
 };
 
+static HRESULT WINAPI graph_IDirectMusicObject_ParseDescriptor(IDirectMusicObject *iface,
+        IStream *stream, DMUS_OBJECTDESC *desc)
+{
+    struct chunk_entry riff = {0};
+    HRESULT hr;
 
-/* IDirectMusicGraphImpl IDirectMusicObject part: */
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicObject_QueryInterface (LPDIRECTMUSICOBJECT iface, REFIID riid, LPVOID *ppobj) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, ObjectVtbl, iface);
-	return IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+    TRACE("(%p, %p, %p)\n", iface, stream, desc);
+
+    if (!stream)
+        return E_POINTER;
+    if (!desc || desc->dwSize != sizeof(*desc))
+        return E_INVALIDARG;
+
+    if ((hr = stream_get_chunk(stream, &riff)) != S_OK)
+        return hr;
+    if (riff.id != FOURCC_RIFF || riff.type != DMUS_FOURCC_TOOLGRAPH_FORM) {
+        TRACE("loading failed: unexpected %s\n", debugstr_chunk(&riff));
+        stream_skip_chunk(stream, &riff);
+        return DMUS_E_CHUNKNOTFOUND;
+    }
+
+    hr = dmobj_parsedescriptor(stream, &riff, desc,
+            DMUS_OBJ_OBJECT|DMUS_OBJ_NAME|DMUS_OBJ_CATEGORY|DMUS_OBJ_VERSION);
+    if (FAILED(hr))
+        return hr;
+
+    desc->guidClass = CLSID_DirectMusicGraph;
+    desc->dwValidData |= DMUS_OBJ_CLASS;
+
+    TRACE("returning descriptor:\n%s\n", debugstr_DMUS_OBJECTDESC (desc));
+    return S_OK;
 }
 
-static ULONG WINAPI IDirectMusicGraphImpl_IDirectMusicObject_AddRef (LPDIRECTMUSICOBJECT iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, ObjectVtbl, iface);
-	return IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
-}
-
-static ULONG WINAPI IDirectMusicGraphImpl_IDirectMusicObject_Release (LPDIRECTMUSICOBJECT iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, ObjectVtbl, iface);
-	return IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicObject_GetDescriptor (LPDIRECTMUSICOBJECT iface, LPDMUS_OBJECTDESC pDesc) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, ObjectVtbl, iface);
-	TRACE("(%p, %p)\n", This, pDesc);
-	/* I think we shouldn't return pointer here since then values can be changed; it'd be a mess */
-	memcpy (pDesc, This->pDesc, This->pDesc->dwSize);
-	return S_OK;
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicObject_SetDescriptor (LPDIRECTMUSICOBJECT iface, LPDMUS_OBJECTDESC pDesc) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, ObjectVtbl, iface);
-	TRACE("(%p, %p): setting descriptor:\n%s\n", This, pDesc, debugstr_DMUS_OBJECTDESC (pDesc));
-	
-	/* According to MSDN, we should copy only given values, not whole struct */	
-	if (pDesc->dwValidData & DMUS_OBJ_OBJECT)
-		memcpy (&This->pDesc->guidObject, &pDesc->guidObject, sizeof (pDesc->guidObject));
-	if (pDesc->dwValidData & DMUS_OBJ_CLASS)
-		memcpy (&This->pDesc->guidClass, &pDesc->guidClass, sizeof (pDesc->guidClass));		
-	if (pDesc->dwValidData & DMUS_OBJ_NAME)
-		lstrcpynW (This->pDesc->wszName, pDesc->wszName, DMUS_MAX_NAME);
-	if (pDesc->dwValidData & DMUS_OBJ_CATEGORY)
-		lstrcpynW (This->pDesc->wszCategory, pDesc->wszCategory, DMUS_MAX_CATEGORY);
-	if (pDesc->dwValidData & DMUS_OBJ_FILENAME)
-		lstrcpynW (This->pDesc->wszFileName, pDesc->wszFileName, DMUS_MAX_FILENAME);
-	if (pDesc->dwValidData & DMUS_OBJ_VERSION)
-		memcpy (&This->pDesc->vVersion, &pDesc->vVersion, sizeof (pDesc->vVersion));				
-	if (pDesc->dwValidData & DMUS_OBJ_DATE)
-		memcpy (&This->pDesc->ftDate, &pDesc->ftDate, sizeof (pDesc->ftDate));				
-	if (pDesc->dwValidData & DMUS_OBJ_MEMORY) {
-		memcpy (&This->pDesc->llMemLength, &pDesc->llMemLength, sizeof (pDesc->llMemLength));				
-		memcpy (This->pDesc->pbMemData, pDesc->pbMemData, sizeof (pDesc->pbMemData));
-	}
-	if (pDesc->dwValidData & DMUS_OBJ_STREAM) {
-		/* according to MSDN, we copy the stream */
-		IStream_Clone (pDesc->pStream, &This->pDesc->pStream);	
-	}
-	
-	/* add new flags */
-	This->pDesc->dwValidData |= pDesc->dwValidData;
-
-	return S_OK;
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IDirectMusicObject_ParseDescriptor (LPDIRECTMUSICOBJECT iface, LPSTREAM pStream, LPDMUS_OBJECTDESC pDesc) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, ObjectVtbl, iface);
-	DMUS_PRIVATE_CHUNK Chunk;
-	DWORD StreamSize, StreamCount, ListSize[1], ListCount[1];
-	LARGE_INTEGER liMove; /* used when skipping chunks */
-
-	TRACE("(%p, %p, %p)\n", This, pStream, pDesc);
-	
-	/* FIXME: should this be determined from stream? */
-	pDesc->dwValidData |= DMUS_OBJ_CLASS;
-	memcpy (&pDesc->guidClass, &CLSID_DirectMusicGraph, sizeof(CLSID));
-	
-	IStream_Read (pStream, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
-	TRACE_(dmfile)(": %s chunk (size = 0x%04lx)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
-	switch (Chunk.fccID) {	
-		case FOURCC_RIFF: {
-			IStream_Read (pStream, &Chunk.fccID, sizeof(FOURCC), NULL);				
-			TRACE_(dmfile)(": RIFF chunk of type %s", debugstr_fourcc(Chunk.fccID));
-			StreamSize = Chunk.dwSize - sizeof(FOURCC);
-			StreamCount = 0;
-			if (Chunk.fccID == DMUS_FOURCC_TOOLGRAPH_FORM) {
-				TRACE_(dmfile)(": graph form\n");
-				do {
-					IStream_Read (pStream, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
-					StreamCount += sizeof(FOURCC) + sizeof(DWORD) + Chunk.dwSize;
-					TRACE_(dmfile)(": %s chunk (size = 0x%04lx)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
-					switch (Chunk.fccID) {
-						case DMUS_FOURCC_GUID_CHUNK: {
-							TRACE_(dmfile)(": GUID chunk\n");
-							pDesc->dwValidData |= DMUS_OBJ_OBJECT;
-							IStream_Read (pStream, &pDesc->guidObject, Chunk.dwSize, NULL);
-							break;
-						}
-						case DMUS_FOURCC_VERSION_CHUNK: {
-							TRACE_(dmfile)(": version chunk\n");
-							pDesc->dwValidData |= DMUS_OBJ_VERSION;
-							IStream_Read (pStream, &pDesc->vVersion, Chunk.dwSize, NULL);
-							break;
-						}
-						case DMUS_FOURCC_CATEGORY_CHUNK: {
-							TRACE_(dmfile)(": category chunk\n");
-							pDesc->dwValidData |= DMUS_OBJ_CATEGORY;
-							IStream_Read (pStream, pDesc->wszCategory, Chunk.dwSize, NULL);
-							break;
-						}
-						case FOURCC_LIST: {
-							IStream_Read (pStream, &Chunk.fccID, sizeof(FOURCC), NULL);				
-							TRACE_(dmfile)(": LIST chunk of type %s", debugstr_fourcc(Chunk.fccID));
-							ListSize[0] = Chunk.dwSize - sizeof(FOURCC);
-							ListCount[0] = 0;
-							switch (Chunk.fccID) {
-								/* evil M$ UNFO list, which can (!?) contain INFO elements */
-								case DMUS_FOURCC_UNFO_LIST: {
-									TRACE_(dmfile)(": UNFO list\n");
-									do {
-										IStream_Read (pStream, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
-										ListCount[0] += sizeof(FOURCC) + sizeof(DWORD) + Chunk.dwSize;
-										TRACE_(dmfile)(": %s chunk (size = 0x%04lx)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
-										switch (Chunk.fccID) {
-											/* don't ask me why, but M$ puts INFO elements in UNFO list sometimes
-                                             (though strings seem to be valid unicode) */
-											case mmioFOURCC('I','N','A','M'):
-											case DMUS_FOURCC_UNAM_CHUNK: {
-												TRACE_(dmfile)(": name chunk\n");
-												pDesc->dwValidData |= DMUS_OBJ_NAME;
-												IStream_Read (pStream, pDesc->wszName, Chunk.dwSize, NULL);
-												break;
-											}
-											case mmioFOURCC('I','A','R','T'):
-											case DMUS_FOURCC_UART_CHUNK: {
-												TRACE_(dmfile)(": artist chunk (ignored)\n");
-												liMove.QuadPart = Chunk.dwSize;
-												IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL);
-												break;
-											}
-											case mmioFOURCC('I','C','O','P'):
-											case DMUS_FOURCC_UCOP_CHUNK: {
-												TRACE_(dmfile)(": copyright chunk (ignored)\n");
-												liMove.QuadPart = Chunk.dwSize;
-												IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL);
-												break;
-											}
-											case mmioFOURCC('I','S','B','J'):
-											case DMUS_FOURCC_USBJ_CHUNK: {
-												TRACE_(dmfile)(": subject chunk (ignored)\n");
-												liMove.QuadPart = Chunk.dwSize;
-												IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL);
-												break;
-											}
-											case mmioFOURCC('I','C','M','T'):
-											case DMUS_FOURCC_UCMT_CHUNK: {
-												TRACE_(dmfile)(": comment chunk (ignored)\n");
-												liMove.QuadPart = Chunk.dwSize;
-												IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL);
-												break;
-											}
-											default: {
-												TRACE_(dmfile)(": unknown chunk (irrevelant & skipping)\n");
-												liMove.QuadPart = Chunk.dwSize;
-												IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL);
-												break;						
-											}
-										}
-										TRACE_(dmfile)(": ListCount[0] = %ld < ListSize[0] = %ld\n", ListCount[0], ListSize[0]);
-									} while (ListCount[0] < ListSize[0]);
-									break;
-								}
-								default: {
-									TRACE_(dmfile)(": unknown (skipping)\n");
-									liMove.QuadPart = Chunk.dwSize - sizeof(FOURCC);
-									IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL);
-									break;						
-								}
-							}
-							break;
-						}	
-						default: {
-							TRACE_(dmfile)(": unknown chunk (irrevelant & skipping)\n");
-							liMove.QuadPart = Chunk.dwSize;
-							IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL);
-							break;						
-						}
-					}
-					TRACE_(dmfile)(": StreamCount[0] = %ld < StreamSize[0] = %ld\n", StreamCount, StreamSize);
-				} while (StreamCount < StreamSize);
-			} else {
-				TRACE_(dmfile)(": unexpected chunk; loading failed)\n");
-				liMove.QuadPart = StreamSize;
-				IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL); /* skip the rest of the chunk */
-				return E_FAIL;
-			}
-		
-			TRACE_(dmfile)(": reading finished\n");
-			break;
-		}
-		default: {
-			TRACE_(dmfile)(": unexpected chunk; loading failed)\n");
-			liMove.QuadPart = Chunk.dwSize;
-			IStream_Seek (pStream, liMove, STREAM_SEEK_CUR, NULL); /* skip the rest of the chunk */
-			return DMUS_E_INVALIDFILE;
-		}
-	}	
-	
-	TRACE(": returning descriptor:\n%s\n", debugstr_DMUS_OBJECTDESC (pDesc));
-	
-	return S_OK;
-}
-
-static const IDirectMusicObjectVtbl DirectMusicGraph_Object_Vtbl = {
-	IDirectMusicGraphImpl_IDirectMusicObject_QueryInterface,
-	IDirectMusicGraphImpl_IDirectMusicObject_AddRef,
-	IDirectMusicGraphImpl_IDirectMusicObject_Release,
-	IDirectMusicGraphImpl_IDirectMusicObject_GetDescriptor,
-	IDirectMusicGraphImpl_IDirectMusicObject_SetDescriptor,
-	IDirectMusicGraphImpl_IDirectMusicObject_ParseDescriptor
+static const IDirectMusicObjectVtbl dmobject_vtbl = {
+    dmobj_IDirectMusicObject_QueryInterface,
+    dmobj_IDirectMusicObject_AddRef,
+    dmobj_IDirectMusicObject_Release,
+    dmobj_IDirectMusicObject_GetDescriptor,
+    dmobj_IDirectMusicObject_SetDescriptor,
+    graph_IDirectMusicObject_ParseDescriptor
 };
 
-/* IDirectMusicGraphImpl IPersistStream part: */
-static HRESULT WINAPI IDirectMusicGraphImpl_IPersistStream_QueryInterface (LPPERSISTSTREAM iface, REFIID riid, LPVOID *ppobj) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, PersistStreamVtbl, iface);
-	return IDirectMusicGraphImpl_IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+static HRESULT WINAPI graph_IPersistStream_Load(IPersistStream *iface, IStream *stream)
+{
+    IDirectMusicGraphImpl *This = impl_from_IPersistStream(iface);
+
+    FIXME("(%p, %p): Loading not implemented yet\n", This, stream);
+
+    return IDirectMusicObject_ParseDescriptor(&This->dmobj.IDirectMusicObject_iface, stream,
+            &This->dmobj.desc);
 }
 
-static ULONG WINAPI IDirectMusicGraphImpl_IPersistStream_AddRef (LPPERSISTSTREAM iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, PersistStreamVtbl, iface);
-	return IDirectMusicGraphImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
-}
-
-static ULONG WINAPI IDirectMusicGraphImpl_IPersistStream_Release (LPPERSISTSTREAM iface) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, PersistStreamVtbl, iface);
-	return IDirectMusicGraphImpl_IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IPersistStream_GetClassID (LPPERSISTSTREAM iface, CLSID* pClassID) {
-	return E_NOTIMPL;
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IPersistStream_IsDirty (LPPERSISTSTREAM iface) {
-	return E_NOTIMPL;
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IPersistStream_Load (LPPERSISTSTREAM iface, IStream* pStm) {
-	ICOM_THIS_MULTI(IDirectMusicGraphImpl, PersistStreamVtbl, iface);
-	FOURCC chunkID;
-	DWORD chunkSize, StreamSize, StreamCount, ListSize[3], ListCount[3];
-	LARGE_INTEGER liMove; /* used when skipping chunks */
-
-	FIXME("(%p, %p): Loading not implemented yet\n", This, pStm);
-	IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);
-	IStream_Read (pStm, &chunkSize, sizeof(DWORD), NULL);
-	TRACE_(dmfile)(": %s chunk (size = %ld)", debugstr_fourcc (chunkID), chunkSize);
-	switch (chunkID) {	
-		case FOURCC_RIFF: {
-			IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);				
-			TRACE_(dmfile)(": RIFF chunk of type %s", debugstr_fourcc(chunkID));
-			StreamSize = chunkSize - sizeof(FOURCC);
-			StreamCount = 0;
-			switch (chunkID) {
-				case DMUS_FOURCC_TOOLGRAPH_FORM: {
-					TRACE_(dmfile)(": graph form\n");
-					do {
-						IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);
-						IStream_Read (pStm, &chunkSize, sizeof(FOURCC), NULL);
-						StreamCount += sizeof(FOURCC) + sizeof(DWORD) + chunkSize;
-						TRACE_(dmfile)(": %s chunk (size = %ld)", debugstr_fourcc (chunkID), chunkSize);
-						switch (chunkID) {
-							case DMUS_FOURCC_GUID_CHUNK: {
-								TRACE_(dmfile)(": GUID chunk\n");
-								This->pDesc->dwValidData |= DMUS_OBJ_OBJECT;
-								IStream_Read (pStm, &This->pDesc->guidObject, chunkSize, NULL);
-								break;
-							}
-							case DMUS_FOURCC_VERSION_CHUNK: {
-								TRACE_(dmfile)(": version chunk\n");
-								This->pDesc->dwValidData |= DMUS_OBJ_VERSION;
-								IStream_Read (pStm, &This->pDesc->vVersion, chunkSize, NULL);
-								break;
-							}
-							case DMUS_FOURCC_CATEGORY_CHUNK: {
-								TRACE_(dmfile)(": category chunk\n");
-								This->pDesc->dwValidData |= DMUS_OBJ_CATEGORY;
-								IStream_Read (pStm, This->pDesc->wszCategory, chunkSize, NULL);
-								break;
-							}
-							case FOURCC_LIST: {
-								IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);				
-								TRACE_(dmfile)(": LIST chunk of type %s", debugstr_fourcc(chunkID));
-								ListSize[0] = chunkSize - sizeof(FOURCC);
-								ListCount[0] = 0;
-								switch (chunkID) {
-									case DMUS_FOURCC_UNFO_LIST: {
-										TRACE_(dmfile)(": UNFO list\n");
-										do {
-											IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);
-											IStream_Read (pStm, &chunkSize, sizeof(FOURCC), NULL);
-											ListCount[0] += sizeof(FOURCC) + sizeof(DWORD) + chunkSize;
-											TRACE_(dmfile)(": %s chunk (size = %ld)", debugstr_fourcc (chunkID), chunkSize);
-											switch (chunkID) {
-												/* don't ask me why, but M$ puts INFO elements in UNFO list sometimes
-                                              (though strings seem to be valid unicode) */
-												case mmioFOURCC('I','N','A','M'):
-												case DMUS_FOURCC_UNAM_CHUNK: {
-													TRACE_(dmfile)(": name chunk\n");
-													This->pDesc->dwValidData |= DMUS_OBJ_NAME;
-													IStream_Read (pStm, This->pDesc->wszName, chunkSize, NULL);
-													break;
-												}
-												case mmioFOURCC('I','A','R','T'):
-												case DMUS_FOURCC_UART_CHUNK: {
-													TRACE_(dmfile)(": artist chunk (ignored)\n");
-													liMove.QuadPart = chunkSize;
-													IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-													break;
-												}
-												case mmioFOURCC('I','C','O','P'):
-												case DMUS_FOURCC_UCOP_CHUNK: {
-													TRACE_(dmfile)(": copyright chunk (ignored)\n");
-													liMove.QuadPart = chunkSize;
-													IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-													break;
-												}
-												case mmioFOURCC('I','S','B','J'):
-												case DMUS_FOURCC_USBJ_CHUNK: {
-													TRACE_(dmfile)(": subject chunk (ignored)\n");
-													liMove.QuadPart = chunkSize;
-													IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-													break;
-												}
-												case mmioFOURCC('I','C','M','T'):
-												case DMUS_FOURCC_UCMT_CHUNK: {
-													TRACE_(dmfile)(": comment chunk (ignored)\n");
-													liMove.QuadPart = chunkSize;
-													IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-													break;
-												}
-												default: {
-													TRACE_(dmfile)(": unknown chunk (irrevelant & skipping)\n");
-													liMove.QuadPart = chunkSize;
-													IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-													break;						
-												}
-											}
-											TRACE_(dmfile)(": ListCount[0] = %ld < ListSize[0] = %ld\n", ListCount[0], ListSize[0]);
-										} while (ListCount[0] < ListSize[0]);
-										break;
-									}
-									default: {
-										TRACE_(dmfile)(": unknown (skipping)\n");
-										liMove.QuadPart = chunkSize - sizeof(FOURCC);
-										IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-										break;						
-									}
-								}
-								break;
-							}	
-							default: {
-								TRACE_(dmfile)(": unknown chunk (irrevelant & skipping)\n");
-								liMove.QuadPart = chunkSize;
-								IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-								break;						
-							}
-						}
-						TRACE_(dmfile)(": StreamCount[0] = %ld < StreamSize[0] = %ld\n", StreamCount, StreamSize);
-					} while (StreamCount < StreamSize);
-					break;
-				}
-				default: {
-					TRACE_(dmfile)(": unexpected chunk; loading failed)\n");
-					liMove.QuadPart = StreamSize;
-					IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL); /* skip the rest of the chunk */
-					return E_FAIL;
-				}
-			}
-			TRACE_(dmfile)(": reading finished\n");
-			break;
-		}
-		default: {
-			TRACE_(dmfile)(": unexpected chunk; loading failed)\n");
-			liMove.QuadPart = chunkSize;
-			IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL); /* skip the rest of the chunk */
-			return E_FAIL;
-		}
-	}
-
-	return S_OK;
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IPersistStream_Save (LPPERSISTSTREAM iface, IStream* pStm, BOOL fClearDirty) {
-	return E_NOTIMPL;
-}
-
-static HRESULT WINAPI IDirectMusicGraphImpl_IPersistStream_GetSizeMax (LPPERSISTSTREAM iface, ULARGE_INTEGER* pcbSize) {
-	return E_NOTIMPL;
-}
-
-static const IPersistStreamVtbl DirectMusicGraph_PersistStream_Vtbl = {
-	IDirectMusicGraphImpl_IPersistStream_QueryInterface,
-	IDirectMusicGraphImpl_IPersistStream_AddRef,
-	IDirectMusicGraphImpl_IPersistStream_Release,
-	IDirectMusicGraphImpl_IPersistStream_GetClassID,
-	IDirectMusicGraphImpl_IPersistStream_IsDirty,
-	IDirectMusicGraphImpl_IPersistStream_Load,
-	IDirectMusicGraphImpl_IPersistStream_Save,
-	IDirectMusicGraphImpl_IPersistStream_GetSizeMax
+static const IPersistStreamVtbl persiststream_vtbl = {
+    dmobj_IPersistStream_QueryInterface,
+    dmobj_IPersistStream_AddRef,
+    dmobj_IPersistStream_Release,
+    dmobj_IPersistStream_GetClassID,
+    unimpl_IPersistStream_IsDirty,
+    graph_IPersistStream_Load,
+    unimpl_IPersistStream_Save,
+    unimpl_IPersistStream_GetSizeMax
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicGraphImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) {
-  IDirectMusicGraphImpl* obj;
+HRESULT WINAPI create_dmgraph(REFIID riid, void **ret_iface)
+{
+    IDirectMusicGraphImpl* obj;
+    HRESULT hr;
+
+    *ret_iface = NULL;
   
-  obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicGraphImpl));
-  if (NULL == obj) {
-    *ppobj = NULL;
-    return E_OUTOFMEMORY;
-  }
-  obj->UnknownVtbl = &DirectMusicGraph_Unknown_Vtbl;
-  obj->GraphVtbl = &DirectMusicGraph_Graph_Vtbl;
-  obj->ObjectVtbl = &DirectMusicGraph_Object_Vtbl;
-  obj->PersistStreamVtbl = &DirectMusicGraph_PersistStream_Vtbl;
-  obj->pDesc = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DMUS_OBJECTDESC));
-  DM_STRUCT_INIT(obj->pDesc);
-  obj->pDesc->dwValidData |= DMUS_OBJ_CLASS;
-  memcpy (&obj->pDesc->guidClass, &CLSID_DirectMusicGraph, sizeof (CLSID));
-  obj->ref = 0; /* will be inited by QueryInterface */
-  list_init (&obj->Tools);
-  
-  return IDirectMusicGraphImpl_IUnknown_QueryInterface ((LPUNKNOWN)&obj->UnknownVtbl, lpcGUID, ppobj);
+    obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicGraphImpl));
+    if (!obj)
+        return E_OUTOFMEMORY;
+
+    obj->IDirectMusicGraph_iface.lpVtbl = &DirectMusicGraphVtbl;
+    obj->ref = 1;
+    dmobject_init(&obj->dmobj, &CLSID_DirectMusicGraph, (IUnknown *)&obj->IDirectMusicGraph_iface);
+    obj->dmobj.IDirectMusicObject_iface.lpVtbl = &dmobject_vtbl;
+    obj->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
+    list_init(&obj->Tools);
+
+    hr = IDirectMusicGraph_QueryInterface(&obj->IDirectMusicGraph_iface, riid, ret_iface);
+    IDirectMusicGraph_Release(&obj->IDirectMusicGraph_iface);
+
+    return hr;
 }
