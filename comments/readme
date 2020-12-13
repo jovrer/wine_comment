@@ -1,0 +1,9 @@
+1, /tools/wrc/lex.yy.c:9221  
+	expected ‘;’, ‘,’ or ‘)’ before numeric constant
+   yyconst char * yystr  ==>  yyconst char * yystr1
+
+2, dlls/ntdll/signal_i386.c:604
+	error: ‘VIF_MASK’ undeclared (first use in this function)
+
+	#define VIF_MASK 0x00080000
+	#define VIP_MASK 0x00100000
